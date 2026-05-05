@@ -262,8 +262,10 @@ Rules:
 - Q2: return the FULL-MODULE count only (e.g. "700 total, 400 full module" -> 400)
 - Q3: total team FTEs (e.g. "24" -> 24)
 - Q4: FTEs per single implementation (e.g. "3" -> 3.0)
-- Q6-Q11: use the MIDPOINT of any range given (e.g. "1-4 weeks" -> 2.0, "4 weeks" -> 4.0)
-         return 0 if the answer is "ongoing" or "not discrete"
+- Q6 = Inception/Discovery phase ONLY. Q7 = Solutioning/BRD. Q8 = Config. Q9 = Data Migration. Q10 = Testing. Q11 = Cutover.
+  CRITICAL: map each Q exactly to its corresponding output key — do NOT shift answers between adjacent Qs.
+  Use the MIDPOINT of any range given (e.g. "1-4 weeks" -> 2.0, "4 weeks" -> 4.0, "2 days" -> 0.3).
+  Return 0 if the answer is "ongoing" or "not discrete".
 - Q12: annual cost in USD only as a number (e.g. "$40,000" -> 40000, "£65,000" -> convert to USD at 1.25)
 - Q14: net new FTEs as integer (e.g. "Net 0" -> 0, "+3" -> 3, "No change" -> 0)
 
@@ -436,16 +438,47 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
             row_num = _find_row_for_label(ws, *label_fragments) or fallback_row
             safe_set(ws, row_num, 3, value)
 
-        smart_set(inp, "implementations", "full-module", "impls",
-                  fallback_row=5,  value=p.get("impls_per_year") or data.impls_per_year)
-        smart_set(inp, "team size", "team ftes", "headcount",
-                  fallback_row=6,  value=p.get("team_ftes") or data.team_ftes)
-        smart_set(inp, "ftes per", "ftes/impl", "fte per impl", "ftes assigned",
-                  fallback_row=7,  value=p.get("ftes_per_impl") or data.ftes_per_impl)
-        smart_set(inp, "annual fte cost", "fully-loaded", "fte cost",
-                  fallback_row=8,  value=p.get("fte_cost_usd") or data.fte_cost_usd)
-        # C9 (working hrs/week) and C10 (weeks/year) intentionally untouched —
-        # template defaults (40h, 52w) are the right answer 99% of the time.
+        # ── Client data rows ─────────────────────────────────────────────────
+        # Two common template label styles exist in the wild:
+        #  • build_roi_model.py style: "Full-module implementations / year"
+        #  • Manually created template: "Total projects per year"
+        # We search for either; fallback row numbers match build_roi_model.py layout.
+        smart_set(
+            inp,
+            "implementations", "full-module", "impls per year",
+            "total projects", "projects per year",   # manual-template label
+            fallback_row=5,
+            value=p.get("impls_per_year") or data.impls_per_year,
+        )
+        # NOTE: do NOT include "headcount" here — that word also appears in
+        # "New headcount planned" (row 8) and would match the wrong row.
+        smart_set(
+            inp,
+            "team size", "team fte", "implementation team",
+            fallback_row=6,
+            value=p.get("team_ftes") or data.team_ftes,
+        )
+        smart_set(
+            inp,
+            "ftes per", "ftes/impl", "fte per impl", "ftes assigned",
+            fallback_row=7,
+            value=p.get("ftes_per_impl") or data.ftes_per_impl,
+        )
+        smart_set(
+            inp,
+            "annual fte cost", "fully-loaded", "fte cost",
+            fallback_row=8,
+            value=p.get("fte_cost_usd") or data.fte_cost_usd,
+        )
+        smart_set(
+            inp,
+            "new headcount", "headcount planned", "planned headcount",
+            "new hires", "net headcount",
+            fallback_row=9,  # row varies by template; search first
+            value=p.get("new_headcount") or data.new_headcount,
+        )
+        # Working hrs/week and weeks/year intentionally untouched —
+        # template defaults (40h, 52w) are correct 99% of the time.
 
         smart_set(inp, "inception", "discovery",
                   fallback_row=14, value=p.get("inception_weeks") or data.inception_weeks)

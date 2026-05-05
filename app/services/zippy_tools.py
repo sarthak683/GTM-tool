@@ -341,13 +341,46 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "q6_inception_weeks": {
                     "type": "string",
-                    "description": "e.g. '1-4 weeks'",
+                    "description": (
+                        "PHASE 1 — Inception / Discovery duration "
+                        "(the AE's answer to Q6 only). e.g. '1-4 weeks' or '2 days'."
+                    ),
                 },
-                "q7_solutioning_weeks": {"type": "string"},
-                "q8_config_weeks": {"type": "string"},
-                "q9_data_migration_weeks": {"type": "string"},
-                "q10_testing_weeks": {"type": "string"},
-                "q11_cutover_weeks": {"type": "string"},
+                "q7_solutioning_weeks": {
+                    "type": "string",
+                    "description": (
+                        "PHASE 2 — Solutioning / BRD duration "
+                        "(the AE's answer to Q7 only). e.g. '2 weeks' or '0 if ongoing'."
+                    ),
+                },
+                "q8_config_weeks": {
+                    "type": "string",
+                    "description": (
+                        "PHASE 3 — Configuration & Workflow Setup duration "
+                        "(the AE's answer to Q8 only). e.g. '3-5 weeks'."
+                    ),
+                },
+                "q9_data_migration_weeks": {
+                    "type": "string",
+                    "description": (
+                        "PHASE 4 — Data Migration / Preparation duration "
+                        "(the AE's answer to Q9 only). e.g. '2-4 weeks'."
+                    ),
+                },
+                "q10_testing_weeks": {
+                    "type": "string",
+                    "description": (
+                        "PHASE 5 — Testing / UAT duration "
+                        "(the AE's answer to Q10 only). e.g. '1-3 weeks'."
+                    ),
+                },
+                "q11_cutover_weeks": {
+                    "type": "string",
+                    "description": (
+                        "PHASE 6 — Cutover & Production Go-Live duration "
+                        "(the AE's answer to Q11 only). e.g. '1 week'."
+                    ),
+                },
                 "q12_fte_cost_usd": {
                     "type": "string",
                     "description": "e.g. '$40,000'",
