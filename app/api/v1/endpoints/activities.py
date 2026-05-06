@@ -1,7 +1,9 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Query
 from sqlalchemy import or_, select
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
@@ -10,8 +12,25 @@ from app.models.deal import Deal
 from app.models.meeting import Meeting
 from app.repositories.activity import ActivityRepository
 from app.schemas.common import PaginatedResponse
+from app.database import AsyncSessionLocal
+from app.services.tasks import backfill_open_task_assignments, refresh_system_tasks_for_entity
 
 router = APIRouter(prefix="/activities", tags=["activities"])
+logger = logging.getLogger(__name__)
+
+
+async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact_id: UUID | None) -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            if contact_id:
+                await refresh_system_tasks_for_entity(session, "contact", contact_id)
+            if deal_id:
+                await refresh_system_tasks_for_entity(session, "deal", deal_id)
+            await backfill_open_task_assignments(session)
+            await session.commit()
+        except Exception as exc:  # pragma: no cover - background safety net
+            logger.warning("activity-triggered task refresh failed for deal=%s contact=%s: %s", deal_id, contact_id, exc)
+            await session.rollback()
 
 
 @router.get("/", response_model=PaginatedResponse[ActivityRead])
@@ -55,7 +74,7 @@ async def list_activities(
 
 
 @router.post("/", response_model=ActivityRead, status_code=201)
-async def create_activity(payload: ActivityCreate, session: DBSession, current_user: CurrentUser):
+async def create_activity(payload: ActivityCreate, session: DBSession, current_user: CurrentUser, background_tasks: BackgroundTasks):
     # Stamp the creator so manual call / LinkedIn / note activities have rep
     # attribution, without requiring the frontend to send it.
     data = payload.model_dump()
@@ -63,7 +82,10 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
         data["created_by_id"] = current_user.id
     if not data.get("source"):
         data["source"] = "manual"
-    return await ActivityRepository(session).create(data)
+    activity = await ActivityRepository(session).create(data)
+    if activity.deal_id or activity.contact_id:
+        background_tasks.add_task(_refresh_tasks_after_activity_background, activity.deal_id, activity.contact_id)
+    return activity
 
 
 @router.get("/{activity_id}", response_model=ActivityRead)

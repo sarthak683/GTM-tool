@@ -162,6 +162,7 @@ def _normalize_meeting_attendees(attendees: Any) -> list[dict[str, Any]]:
             "name": (item.get("name") or item.get("full_name") or "").strip(),
             "title": (item.get("title") or "").strip(),
             "email": (item.get("email") or "").strip().lower(),
+            "linkedin_url": (item.get("linkedin_url") or item.get("linkedin") or "").strip(),
         })
     return normalized
 
@@ -210,7 +211,7 @@ def _build_stakeholder_card(
     question_bank = _ROLE_QUESTION_BANK[role_key]
 
     return {
-        "contact_id": (stakeholder or {}).get("id"),
+        "contact_id": (stakeholder or {}).get("id") or (attendee or {}).get("contact_id"),
         "name": (
             (attendee or {}).get("name")
             or (stakeholder or {}).get("name")
@@ -218,7 +219,7 @@ def _build_stakeholder_card(
         ),
         "title": title,
         "email": (attendee or {}).get("email") or (stakeholder or {}).get("email"),
-        "linkedin_url": (stakeholder or {}).get("linkedin_url"),
+        "linkedin_url": (stakeholder or {}).get("linkedin_url") or (attendee or {}).get("linkedin_url"),
         "persona": persona,
         "role": role,
         "role_label": _COMMITTEE_ROLE_LABELS.get(role, "Stakeholder"),
@@ -617,6 +618,7 @@ async def _auto_link_attendees_to_deal(
         return 0
 
     linked = 0
+    attendees_changed = False
     for attendee in attendees:
         if not isinstance(attendee, dict):
             continue
@@ -659,6 +661,30 @@ async def _auto_link_attendees_to_deal(
         if not contact:
             continue
 
+        next_contact_id = str(contact.id) if contact.id else attendee.get("contact_id")
+        next_name = f"{contact.first_name} {contact.last_name}".strip() or name
+        if attendee.get("contact_id") != next_contact_id:
+            attendee["contact_id"] = next_contact_id
+            attendees_changed = True
+        if next_name and attendee.get("name") != next_name:
+            attendee["name"] = next_name
+            attendees_changed = True
+        if contact.title:
+            if attendee.get("title") != contact.title:
+                attendee["title"] = contact.title
+                attendees_changed = True
+        elif title:
+            contact.title = title
+            session.add(contact)
+            attendees_changed = True
+        if contact.linkedin_url:
+            if attendee.get("linkedin_url") != contact.linkedin_url:
+                attendee["linkedin_url"] = contact.linkedin_url
+                attendees_changed = True
+        if attendee.get("matched") is not True:
+            attendee["matched"] = True
+            attendees_changed = True
+
         # Check if already linked
         existing_link = await session.execute(
             sm_select(DealContact).where(
@@ -671,9 +697,11 @@ async def _auto_link_attendees_to_deal(
             await session.flush()
             linked += 1
 
-    if linked:
+    if linked or attendees_changed:
+        meeting.attendees = attendees
+        session.add(meeting)
         await session.commit()
-        logger.info("pre_meeting_intel: auto-linked %d attendees to deal %s", linked, deal_id)
+        logger.info("pre_meeting_intel: refreshed attendee CRM links for deal %s (new_links=%d)", deal_id, linked)
 
     return linked
 
@@ -906,7 +934,16 @@ async def run_pre_meeting_intelligence(
     if website_pages and website_pages.get("pages_scraped", 0) > 0:
         website_analysis = await _analyse_website_pages(ai, name, website_pages.get("text", ""))
 
-    # ── 9. Stakeholder profiles ───────────────────────────────────────────────
+    # ── 9. Auto-link attendees first, so stakeholder cards use CRM title and LinkedIn
+    # instead of letting the AI infer designation from a bare calendar attendee.
+    await _auto_link_attendees_to_deal(
+        session,
+        meeting=meeting,
+        deal_id=meeting.deal_id,
+        company_id=meeting.company_id,
+    )
+
+    # ── 9b. Stakeholder profiles ──────────────────────────────────────────────
     stakeholders: list[dict] = []
     if company:
         contact_repo = ContactRepository(session)
@@ -925,14 +962,6 @@ async def run_pre_meeting_intelligence(
                 "linkedin_url": c.linkedin_url,
                 "email_verified": c.email_verified,
             })
-
-    # ── 9b. Auto-link meeting attendees to deal contacts ─────────────────────
-    await _auto_link_attendees_to_deal(
-        session,
-        meeting=meeting,
-        deal_id=meeting.deal_id,
-        company_id=meeting.company_id,
-    )
 
     # ── 9c. First-party CRM signals (transcripts, emails, calls, outreach) ───
     crm_signals = await _collect_crm_signals(

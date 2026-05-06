@@ -318,6 +318,7 @@ async def list_workspace_tasks(
     include_closed: bool = Query(default=False),
     task_type: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
+    deal_id: UUID | None = Query(default=None),
     scope: str = Query(default="mine"),
 ):
     if task_type and task_type not in {"manual", "system"}:
@@ -351,6 +352,13 @@ async def list_workspace_tasks(
         stmt = stmt.where(Task.task_type == task_type)
     if entity_type:
         stmt = stmt.where(Task.entity_type == entity_type)
+    if deal_id:
+        stmt = stmt.where(
+            or_(
+                and_(Task.entity_type == "deal", Task.entity_id == deal_id),
+                Task.action_payload["deal_id"].astext == str(deal_id),
+            )
+        )
 
     tasks = (await session.execute(stmt)).scalars().all()
     return await _build_workspace_task_reads(session, tasks)

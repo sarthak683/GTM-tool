@@ -9,11 +9,13 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact, ContactRead
 from app.models.outreach import OutreachSequence
+from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.services.contact_tracking import apply_contact_tracking
 
@@ -97,8 +99,18 @@ class ContactRepository(BaseRepository[Contact]):
         This replaces the two-call pattern (GET /contacts + GET /companies)
         that the frontend was forced to use when company_name wasn't in the response.
         """
-        base_stmt = select(Contact, Company.name.label("company_name")).outerjoin(
-            Company, Contact.company_id == Company.id
+        ae_user = aliased(User)
+        sdr_user = aliased(User)
+        base_stmt = (
+            select(
+                Contact,
+                Company.name.label("company_name"),
+                ae_user.name.label("assigned_to_name"),
+                sdr_user.name.label("sdr_name"),
+            )
+            .outerjoin(Company, Contact.company_id == Company.id)
+            .outerjoin(ae_user, Contact.assigned_to_id == ae_user.id)
+            .outerjoin(sdr_user, Contact.sdr_id == sdr_user.id)
         )
         count_stmt = select(func.count(Contact.id)).select_from(Contact).outerjoin(
             Company, Contact.company_id == Company.id
@@ -274,9 +286,11 @@ class ContactRepository(BaseRepository[Contact]):
         ).all()
 
         result: list[ContactRead] = []
-        for contact, company_name in rows:
+        for contact, company_name, assigned_to_name, sdr_name in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
+            read.assigned_to_name = assigned_to_name
+            read.sdr_name = sdr_name
             result.append(read)
 
         await apply_contact_tracking(self.session, result)

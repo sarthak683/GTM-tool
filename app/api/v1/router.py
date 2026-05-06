@@ -33,6 +33,7 @@ from app.api.v1.endpoints import (
     prospecting,
     reminders,
     sales_resources,
+    sales_reports,
     settings,
     signals,
     tasks,
@@ -68,6 +69,7 @@ router.include_router(battlecards.router)
 router.include_router(webhooks.router)
 router.include_router(custom_demo.router)
 router.include_router(sales_resources.router)
+router.include_router(sales_reports.router)
 router.include_router(account_sourcing.router)
 router.include_router(angel_mapping.router)
 router.include_router(settings.router)

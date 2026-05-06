@@ -1363,14 +1363,19 @@ export default function PreMeetingAssistance() {
           ? intelFilter[0] === "has_intel"
           : undefined;
 
-      // "Upcoming" and "overdue" are virtual slices of scheduled meetings.
+      // "Upcoming", "overdue", and "past" are virtual slices of scheduled meetings.
       // Send the temporal slice to the API so pagination and totals line up.
-      const apiStatusFilter = statusFilter.includes("overdue")
-        ? Array.from(new Set(statusFilter.filter((s) => s !== "overdue").concat(["scheduled"])))
+      const apiStatusFilter = statusFilter.some((status) => status === "overdue" || status === "past")
+        ? Array.from(new Set(statusFilter.flatMap((s) => {
+            if (s === "overdue") return ["scheduled"];
+            if (s === "past") return ["scheduled", "completed"];
+            return [s];
+          })))
         : statusFilter;
       const temporalStatusFilter = Array.from(new Set(statusFilter.flatMap((status) => {
         if (status === "scheduled") return ["upcoming"];
         if (status === "overdue") return ["overdue"];
+        if (status === "past") return ["overdue"];
         return [];
       })));
 
@@ -1384,7 +1389,7 @@ export default function PreMeetingAssistance() {
           assigneeId: assigneeFilter,
           linkState: linkFilter,
           hasIntel: hasIntelFilter,
-          order: statusFilter.length === 1 && statusFilter[0] === "completed" ? "desc" : "asc",
+          order: statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "desc" : "asc",
           q: debouncedSearch || undefined,
           internalScope: showInternal ? "only" : "exclude",
         }),
@@ -1569,9 +1574,12 @@ export default function PreMeetingAssistance() {
         const scheduledTime = isValidDateValue(m.scheduled_at) ? new Date(m.scheduled_at as string).getTime() : null;
         const isOverdue = m.status === "scheduled" && scheduledTime !== null && scheduledTime < now;
         const isUpcoming = m.status === "scheduled" && (scheduledTime === null || scheduledTime >= now);
-        const matches = statusFilter.some((s) =>
-          s === "overdue" ? isOverdue : s === "scheduled" ? isUpcoming : s === m.status
-        );
+        const matches = statusFilter.some((s) => {
+          if (s === "past") return m.status === "completed" || isOverdue;
+          if (s === "overdue") return isOverdue;
+          if (s === "scheduled") return isUpcoming;
+          return s === m.status;
+        });
         if (!matches) return false;
       }
       if (intelFilter.length > 0) {
@@ -1597,7 +1605,7 @@ export default function PreMeetingAssistance() {
     return [...filtered].sort((a, b) => {
       const ta = isValidDateValue(a.scheduled_at) ? new Date(a.scheduled_at as string).getTime() : 0;
       const tb = isValidDateValue(b.scheduled_at) ? new Date(b.scheduled_at as string).getTime() : 0;
-      return statusFilter.length === 1 && statusFilter[0] === "completed" ? tb - ta : ta - tb;
+      return statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? tb - ta : ta - tb;
     });
   }, [filtered, statusFilter]);
 
@@ -1608,10 +1616,10 @@ export default function PreMeetingAssistance() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ fontSize: 22, fontWeight: 800, color: colors.text, marginBottom: 4, letterSpacing: "-0.01em" }}>
-              Pre-Meeting Assistance
+              Meetings
             </h2>
             <p className="crm-muted" style={{ maxWidth: 620, lineHeight: 1.6, margin: 0, fontSize: 13 }}>
-              Prep for upcoming calls with account intel, stakeholder talk tracks, and recent activity. Beacon auto-generates the brief 12 hours before each meeting.
+              Prep upcoming calls with account intel, stakeholder talk tracks, and recent activity. Use Past to review completed or overdue meetings in the same workspace.
             </p>
           </div>
 
@@ -1655,7 +1663,7 @@ export default function PreMeetingAssistance() {
             const hasIntel = !!(next.research_data);
             return (
               <a
-                href={`/pre-meeting-assistance#${next.id}`}
+                href={`/meetings#${next.id}`}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1715,7 +1723,7 @@ export default function PreMeetingAssistance() {
             <div style={{ display: "grid", gap: 8 }}>
               {prepMonitor.unlinked.slice(0, 8).map((meeting) => {
                 const suggestedCompanyName = suggestCompanyNameFromMeetingTitle(meeting.title);
-                const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(suggestedCompanyName)}&returnTo=${encodeURIComponent(`/pre-meeting-assistance#${meeting.id}`)}`;
+                const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(suggestedCompanyName)}&returnTo=${encodeURIComponent(`/meetings#${meeting.id}`)}`;
                 return (
                   <div key={meeting.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "center", padding: "10px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff" }}>
                     <div style={{ minWidth: 0 }}>
@@ -1782,6 +1790,7 @@ export default function PreMeetingAssistance() {
             label="Status"
             options={[
               { value: "scheduled", label: "Upcoming" },
+              { value: "past", label: "Past" },
               { value: "overdue", label: "Overdue" },
               { value: "completed", label: "Completed" },
               { value: "cancelled", label: "Cancelled" },

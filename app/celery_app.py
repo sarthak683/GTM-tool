@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.tasks.crm_import",
         "app.tasks.personal_email_sync",
         "app.tasks.cadence_scheduler",
+        "app.tasks.sales_reports",
     ],
 )
 
@@ -61,6 +62,10 @@ celery_app.conf.update(
         "advance-multichannel-cadence": {
             "task": "app.tasks.cadence_scheduler.advance_multichannel_cadence",
             "schedule": 1800,  # every 30 minutes
+        },
+        "send-us-pod-call-report-daily": {
+            "task": "app.tasks.sales_reports.send_us_pod_call_report",
+            "schedule": crontab(hour=14, minute=30),  # US morning; reports the prior America/Chicago day
         },
     },
 )

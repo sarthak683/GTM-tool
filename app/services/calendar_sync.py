@@ -281,7 +281,7 @@ async def sync_calendar_events(
             contact_detail_rows = (await session.execute(
                 select(
                     Contact.id, Contact.first_name, Contact.last_name,
-                    Contact.email, Contact.title,
+                    Contact.email, Contact.title, Contact.linkedin_url,
                 ).where(Contact.id.in_(matched_contact_ids[:8]))
             )).all() if matched_contact_ids else []
             contact_details_by_id = {
@@ -296,6 +296,7 @@ async def sync_calendar_events(
                     "name": f"{row.first_name} {row.last_name}".strip() if row else _infer_display_name(attendee_email),
                     "email": attendee_email,
                     "title": row.title if row else None,
+                    "linkedin_url": row.linkedin_url if row else None,
                     "matched": bool(contact_id),
                 })
 

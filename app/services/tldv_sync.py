@@ -683,10 +683,13 @@ def _build_attendee_payloads(attendees: list[dict[str, Any]], contacts: list[Con
         contact = contacts_by_email.get(email)
         payloads.append(
             {
-                "name": attendee.get("name"),
+                "name": f"{contact.first_name} {contact.last_name}".strip() if contact else attendee.get("name"),
                 "email": email or None,
                 "role": attendee.get("role"),
                 "contact_id": str(contact.id) if contact and contact.id else None,
+                "title": contact.title if contact else None,
+                "linkedin_url": contact.linkedin_url if contact else None,
+                "matched": bool(contact),
             }
         )
     return payloads

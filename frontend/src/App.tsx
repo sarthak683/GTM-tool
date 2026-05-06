@@ -90,7 +90,8 @@ export default function App() {
                   Keep them as aliases so bookmarks and sidebar labels continue to work. */}
               <Route path="prospecting" element={<Contacts />} />
               <Route path="contacts/:id" element={<ContactDetail />} />
-              <Route path="meetings" element={<Meetings />} />
+              <Route path="meetings" element={<PreMeetingAssistance />} />
+              <Route path="meetings/manage" element={<Meetings />} />
               <Route path="pre-meeting-assistance" element={<PreMeetingAssistance />} />
               <Route path="meetings/:id" element={<MeetingDetail />} />
               <Route path="deals/:id" element={<DealDetail />} />

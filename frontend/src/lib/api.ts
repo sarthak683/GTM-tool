@@ -773,12 +773,14 @@ export const tasksApi = {
     includeClosed?: boolean;
     taskType?: "manual" | "system";
     entityType?: "company" | "contact" | "deal";
+    dealId?: string;
     scope?: "mine" | "team";
   }) => {
     const search = new URLSearchParams();
     search.set("include_closed", params?.includeClosed ? "true" : "false");
     if (params?.taskType) search.set("task_type", params.taskType);
     if (params?.entityType) search.set("entity_type", params.entityType);
+    if (params?.dealId) search.set("deal_id", params.dealId);
     if (params?.scope) search.set("scope", params.scope);
     return request<TaskWorkspaceItem[]>(`/api/v1/tasks/workspace?${search}`);
   },

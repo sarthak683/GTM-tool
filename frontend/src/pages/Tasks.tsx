@@ -600,6 +600,11 @@ export default function TasksPage() {
   const [entitySearch, setEntitySearch] = useState("");
   const [entityOptions, setEntityOptions] = useState<GlobalSearchItem[]>([]);
   const [entitySearching, setEntitySearching] = useState(false);
+  const [dealFilter, setDealFilter] = useState(() => searchParams.get("deal") || "");
+  const [dealFilterLabel, setDealFilterLabel] = useState("");
+  const [dealSearch, setDealSearch] = useState("");
+  const [dealOptions, setDealOptions] = useState<GlobalSearchItem[]>([]);
+  const [dealSearching, setDealSearching] = useState(false);
   const isAdmin = user?.role === "admin";
 
   // Sync filter state to URL
@@ -611,14 +616,20 @@ export default function TasksPage() {
       entityFilter !== "all" ? next.set("entity", entityFilter) : next.delete("entity");
       dueDateFilter !== "all" ? next.set("due", dueDateFilter) : next.delete("due");
       queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
+      dealFilter ? next.set("deal", dealFilter) : next.delete("deal");
       showCreateTask ? next.set("new", "task") : next.delete("new");
       return next;
     }, { replace: true });
-  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, showCreateTask]);
+  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, dealFilter, showCreateTask]);
 
   useEffect(() => {
     if (searchParams.get("new") === "task") setShowCreateTask(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    const dealParam = searchParams.get("deal") || "";
+    if (dealParam && dealParam !== dealFilter) setDealFilter(dealParam);
+  }, [searchParams, dealFilter]);
 
   useEffect(() => {
     if (!showCreateTask || entitySearch.trim().length < 2) {
@@ -647,6 +658,33 @@ export default function TasksPage() {
     };
   }, [createTaskForm.entity_type, entitySearch, showCreateTask]);
 
+  useEffect(() => {
+    if (dealSearch.trim().length < 2) {
+      setDealOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(async () => {
+      setDealSearching(true);
+      try {
+        const result = await globalSearchApi.search(dealSearch.trim());
+        const options = result.sections
+          .flatMap((section) => section.items)
+          .filter((item) => item.kind === "deal")
+          .slice(0, 8);
+        if (!cancelled) setDealOptions(options);
+      } catch {
+        if (!cancelled) setDealOptions([]);
+      } finally {
+        if (!cancelled) setDealSearching(false);
+      }
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [dealSearch]);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -654,9 +692,14 @@ export default function TasksPage() {
         includeClosed: true,
         taskType: typeFilter === "all" ? undefined : typeFilter,
         entityType: entityFilter === "all" ? undefined : entityFilter,
+        dealId: dealFilter || undefined,
         scope: isAdmin ? queueScope : "mine",
       });
       setTasks(rows);
+      if (dealFilter && !dealFilterLabel) {
+        const matched = rows.find((task) => task.entity_type === "deal" && task.entity_id === dealFilter);
+        if (matched) setDealFilterLabel(matched.entity_name);
+      }
     } finally {
       setLoading(false);
     }
@@ -664,7 +707,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     void load();
-  }, [typeFilter, entityFilter, queueScope, isAdmin]);
+  }, [typeFilter, entityFilter, queueScope, dealFilter, isAdmin]);
 
   const visibleTasks = useMemo(() => {
     let filtered = statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter);
@@ -843,7 +886,7 @@ export default function TasksPage() {
             </button>
           </div>
         ) : null}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 220px))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12, alignItems: "start" }}>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as TaskStatusFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="open">Open only</option>
             <option value="completed">Completed</option>
@@ -870,6 +913,47 @@ export default function TasksPage() {
             <option value="upcoming">Upcoming later</option>
             <option value="unscheduled">No due date</option>
           </select>
+          <div style={{ position: "relative" }}>
+            <div style={{ position: "relative" }}>
+              <input
+                value={dealFilter ? (dealFilterLabel || "Selected deal") : dealSearch}
+                onChange={(event) => {
+                  setDealFilter("");
+                  setDealFilterLabel("");
+                  setDealSearch(event.target.value);
+                }}
+                placeholder="Filter by deal"
+                style={{ width: "100%", height: 44, borderRadius: 12, border: `1px solid ${dealFilter ? "#bfe4cf" : colors.border}`, padding: "0 36px 0 12px", fontSize: 13, background: "#fff", boxSizing: "border-box" }}
+              />
+              {(dealFilter || dealSearch) && (
+                <button
+                  type="button"
+                  onClick={() => { setDealFilter(""); setDealFilterLabel(""); setDealSearch(""); setDealOptions([]); }}
+                  aria-label="Clear deal filter"
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: colors.faint, cursor: "pointer", display: "inline-flex", padding: 4 }}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {(dealOptions.length > 0 || dealSearching) && !dealFilter ? (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 30, border: `1px solid ${colors.border}`, borderRadius: 12, background: "#fff", boxShadow: "0 14px 30px rgba(15,23,42,0.12)", overflow: "hidden" }}>
+                {dealSearching ? (
+                  <div style={{ padding: 12, color: colors.faint, fontSize: 12 }}>Searching deals...</div>
+                ) : dealOptions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => { setDealFilter(item.id); setDealFilterLabel(item.title); setDealSearch(""); setDealOptions([]); setEntityFilter("all"); }}
+                    style={{ width: "100%", border: "none", background: "transparent", padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "grid", gap: 2 }}
+                  >
+                    <span style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>{item.title}</span>
+                    {item.subtitle && <span style={{ color: colors.faint, fontSize: 11.5 }}>{item.subtitle}</span>}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
 
