@@ -1146,12 +1146,14 @@ function MultiSelectDropdown({
   selected,
   onChange,
   placeholder,
+  selectionMode = "multi",
 }: {
   label: string;
   options: { value: string; label: string }[];
   selected: string[];
   onChange: (values: string[]) => void;
   placeholder: string;
+  selectionMode?: "multi" | "single";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1177,6 +1179,12 @@ function MultiSelectDropdown({
   );
 
   function toggle(value: string) {
+    if (selectionMode === "single") {
+      onChange([value]);
+      setOpen(false);
+      setQuery("");
+      return;
+    }
     if (selected.includes(value)) {
       onChange(selected.filter((v) => v !== value));
     } else {
@@ -1798,6 +1806,7 @@ export default function PreMeetingAssistance() {
             selected={statusFilter}
             onChange={setStatusFilter}
             placeholder="All statuses"
+            selectionMode="single"
           />
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
