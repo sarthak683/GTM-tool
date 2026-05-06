@@ -1930,7 +1930,7 @@ export default function PreMeetingAssistance() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ fontSize: 12, color: colors.faint, fontWeight: 600 }}>
-            {totalMeetings} meeting{totalMeetings !== 1 ? "s" : ""} · {statusFilter.length === 1 && statusFilter[0] === "completed" ? "sorted by most recent" : "sorted by soonest first"}
+            {totalMeetings} meeting{totalMeetings !== 1 ? "s" : ""} · {statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "sorted by most recent" : "sorted by soonest first"}
           </div>
           {sorted.map((m) => {
             const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
