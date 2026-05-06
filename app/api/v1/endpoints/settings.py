@@ -56,7 +56,14 @@ from app.services.deal_stages import (
     get_configured_deal_stage_ids,
     normalize_deal_stage_settings,
 )
-from app.services.gmail_oauth import GMAIL_SEND_SCOPE, build_gmail_connect_url, create_gmail_oauth_state, decode_gmail_oauth_state, exchange_gmail_code
+from app.services.gmail_oauth import (
+    GMAIL_SEND_SCOPE,
+    GOOGLE_EMAIL_SCOPE,
+    build_gmail_connect_url,
+    create_gmail_oauth_state,
+    decode_gmail_oauth_state,
+    exchange_gmail_code,
+)
 from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
 from app.services.permissions import normalize_role_permissions
 
@@ -893,7 +900,7 @@ async def get_report_sender_connect_url(admin: AdminUser, session: DBSession):
         raise ForbiddenError("Set the report sender email before connecting Gmail.")
 
     state = create_gmail_oauth_state(str(admin.id), flow="report_sender")
-    return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=GMAIL_SEND_SCOPE))
+    return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=f"{GOOGLE_EMAIL_SCOPE} {GMAIL_SEND_SCOPE}"))
 
 
 @router.get("/email-sync/google/callback")
@@ -906,6 +913,7 @@ async def gmail_callback(
     if not payload:
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
     flow = str(payload.get("flow") or "shared").lower()
+    failure_query = "report_sender=error" if flow == "report_sender" else "gmail=error"
 
     try:
         gmail_info = await exchange_gmail_code(code)
@@ -932,7 +940,7 @@ async def gmail_callback(
                 row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
             session.add(row)
             await session.commit()
-        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
+        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{failure_query}")
 
     if flow == "personal":
         user_id = payload.get("sub")

@@ -10,9 +10,11 @@ from app.config import settings
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GOOGLE_EMAIL_SCOPE = "openid email"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -73,15 +75,28 @@ async def exchange_gmail_code(code: str) -> dict[str, Any]:
         token_resp.raise_for_status()
         token_data = token_resp.json()
 
-        profile_resp = await client.get(
-            GMAIL_PROFILE_URL,
-            headers={"Authorization": f"Bearer {token_data['access_token']}"},
-        )
-        profile_resp.raise_for_status()
-        profile = profile_resp.json()
+        email_address = None
+        auth_headers = {"Authorization": f"Bearer {token_data['access_token']}"}
+
+        profile_resp = await client.get(GMAIL_PROFILE_URL, headers=auth_headers)
+        if profile_resp.status_code < 400:
+            email_address = profile_resp.json().get("emailAddress")
+
+        if not email_address:
+            userinfo_resp = await client.get(GOOGLE_USERINFO_URL, headers=auth_headers)
+            if userinfo_resp.status_code < 400:
+                email_address = userinfo_resp.json().get("email")
+
+        if not email_address and token_data.get("id_token"):
+            id_claims = jwt.decode(token_data["id_token"], options={"verify_signature": False})
+            email_address = id_claims.get("email")
+
+        if not email_address:
+            profile_resp.raise_for_status()
+            raise ValueError("Google OAuth response did not include an email address")
 
     return {
-        "email_address": profile.get("emailAddress"),
+        "email_address": email_address,
         "token_data": {
             "token": token_data.get("access_token"),
             "refresh_token": token_data.get("refresh_token"),

@@ -238,6 +238,9 @@ export default function SettingsPage() {
     if (reportSenderStatus === "connected") {
       setMessage(`Report sender connected${connectedEmail ? ` (${connectedEmail})` : ""}. Beacon can now send scheduled reports from this Gmail account.`);
       loadSettings();
+    } else if (reportSenderStatus === "error") {
+      setError("Report sender Gmail connection failed. Please try again.");
+      loadSettings();
     }
     if (gmailStatus || gmailConnected || reportSenderStatus) {
       params.delete("gmail");
