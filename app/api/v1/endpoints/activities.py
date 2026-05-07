@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -37,11 +38,14 @@ async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact
 async def list_activities(
     session: DBSession,
     pagination: Pagination,
-    _user: CurrentUser,
+    current_user: CurrentUser,
     deal_id: Optional[UUID] = Query(default=None),
     contact_id: Optional[UUID] = Query(default=None),
     company_id: Optional[UUID] = Query(default=None),
     type: Optional[str] = Query(default=None),
+    created_by_id: Optional[UUID] = Query(default=None),
+    created_by_me: bool = Query(default=False, description="Shortcut for created_by_id=current_user.id"),
+    since: Optional[str] = Query(default=None, description="ISO datetime — only activities at or after this moment"),
 ):
     repo = ActivityRepository(session)
     filters = []
@@ -64,6 +68,25 @@ async def list_activities(
         )
     if type:
         filters.append(Activity.type == type)
+    # Per-rep filter — supports the "Calls Logged" tile on the Contacts page
+    # showing TODAY'S real call count for the logged-in rep, instead of the
+    # page-bounded contact-derived count which silently drops to 0 when the
+    # paginated view rotates (the 2026-05-07 "6 -> 0" Mahesh saw).
+    effective_creator = created_by_id or (current_user.id if created_by_me else None)
+    if effective_creator:
+        filters.append(Activity.created_by_id == effective_creator)
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            # Compare against naive-UTC created_at, so explicitly convert to
+            # UTC. astimezone() without an arg uses the pod's local timezone
+            # which we cannot guarantee is UTC.
+            if since_dt.tzinfo is not None:
+                since_dt = since_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            filters.append(Activity.created_at >= since_dt)
+        except ValueError:
+            # Bad input — ignore the filter rather than 500-ing the dashboard.
+            logger.warning("activities.list: invalid since=%r — ignoring", since)
     items, total = await repo.list_paginated(
         *filters,
         skip=pagination.skip,

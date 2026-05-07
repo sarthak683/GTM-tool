@@ -1,3 +1,4 @@
+import html
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -388,8 +389,6 @@ def _render_report_html(report: dict[str, Any]) -> str:
     into a wall of digits (per Sarthak's screenshot 2026-05-07). HTML tables
     survive that environment because alignment is structural, not visual.
     """
-    import html as _html
-
     headers = [
         "Rep", "Calls", "Connected", "VM", "No answer", "Callback",
         "Failed", "Unknown", "7d avg", "Talk min", "Contacts", "Deals", "Flags",
@@ -401,7 +400,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
     td_style_text = "padding:6px 10px;border-bottom:1px solid #eef2f7;font-size:13px;color:#1f2a37;"
     td_style_num = td_style_text + "text-align:right;font-variant-numeric:tabular-nums;"
 
-    header_html = "".join(f'<th style="{th_style}">{_html.escape(h)}</th>' for h in headers)
+    header_html = "".join(f'<th style="{th_style}">{html.escape(h)}</th>' for h in headers)
     rows_html = []
     for row in report["rows"]:
         flags = ", ".join(row["flags"]) if row["flags"] else "—"
@@ -422,13 +421,13 @@ def _render_report_html(report: dict[str, Any]) -> str:
         ]
         rows_html.append(
             "<tr>"
-            + "".join(f'<td style="{style}">{_html.escape(str(value))}</td>' for value, style in cells)
+            + "".join(f'<td style="{style}">{html.escape(str(value))}</td>' for value, style in cells)
             + "</tr>"
         )
 
     return f"""
-    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">US Pod Daily Call Report — {_html.escape(report['report_date'])}</h2>
-    <p style="margin:0 0 16px 0;color:#64748b;font-size:13px;">Reporting timezone: {_html.escape(report['timezone'])}</p>
+    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">US Pod Daily Call Report — {html.escape(report['report_date'])}</h2>
+    <p style="margin:0 0 16px 0;color:#64748b;font-size:13px;">Reporting timezone: {html.escape(report['timezone'])}</p>
     <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5ebf3;border-radius:8px;overflow:hidden;">
       <thead><tr>{header_html}</tr></thead>
       <tbody>{''.join(rows_html)}</tbody>

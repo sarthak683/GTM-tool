@@ -347,6 +347,10 @@ export default function Contacts() {
   const [uploadingProspects, setUploadingProspects] = useState(false);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  // Rep-scoped count of calls the logged-in user has created since local
+  // midnight. Replaces the broken page-bounded contact-derived counter that
+  // would show 0 the moment pagination rotated past the just-called rows.
+  const [myCallsTodayCount, setMyCallsTodayCount] = useState(0);
   const [tableColumns, setTableColumns] = useState<ContactTableColumnKey[]>(() => normalizeContactTableColumns(localStorage.getItem("crm.contacts.tableColumns")));
   const [draggedColumn, setDraggedColumn] = useState<ContactTableColumnKey | null>(null);
   const [editingTimezoneId, setEditingTimezoneId] = useState<string | null>(null);
@@ -457,6 +461,24 @@ export default function Contacts() {
       return next;
     }, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const loadMyCallsToday = async () => {
+    if (!user?.id) {
+      setMyCallsTodayCount(0);
+      return;
+    }
+    // Local-midnight ISO so the count matches what the rep "started today" —
+    // not UTC midnight, which would give Indian reps a stale count after IST
+    // 5:30am UTC rollover.
+    const localMidnight = new Date();
+    localMidnight.setHours(0, 0, 0, 0);
+    try {
+      const total = await activitiesApi.myCountSince(localMidnight.toISOString(), "call");
+      setMyCallsTodayCount(total);
+    } catch {
+      setMyCallsTodayCount(0);
+    }
+  };
 
   const loadContacts = () => {
     setLoading(true);
@@ -657,6 +679,14 @@ export default function Contacts() {
   useEffect(() => {
     setPage(1);
   }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter]);
+
+  // Load the rep-scoped daily call count once on mount and whenever the
+  // logged-in user changes. Subsequent updates happen inline after each
+  // disposition save (see saveCallDisposition).
+  useEffect(() => {
+    void loadMyCallsToday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   useEffect(() => {
     if (tab !== "contacts") return;
@@ -886,6 +916,10 @@ export default function Contacts() {
           call_outcome: "attempted",
         } as Partial<Activity>);
         setCurrentCallActivityId(created.id);
+        // Reflect this dial in the "My Calls Today" tile immediately. Without
+        // this, the tile only ticks up after disposition save — which makes
+        // back-to-back dials feel like the counter is broken.
+        void loadMyCallsToday();
       } catch {
         // Don't block the rep if the timeline write fails; saveCallDisposition
         // will fall back to creating a new row.
@@ -957,6 +991,10 @@ export default function Contacts() {
       setCallContact(null);
       setCurrentCallActivityId(null);
       loadContacts();
+      // Refresh the rep-scoped tile so it reflects the just-saved call. It
+      // queries activities directly so it doesn't depend on which page of
+      // contacts is currently visible.
+      void loadMyCallsToday();
     } catch {
       toast.error("Failed to save call disposition.", "Error");
     } finally {
@@ -1076,9 +1114,9 @@ export default function Contacts() {
               </div>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#1e3a8a", lineHeight: 1 }}>
-                  {callsLoggedCount}
+                  {myCallsTodayCount}
                 </div>
-                <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2, fontWeight: 600 }}>Calls Logged</div>
+                <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2, fontWeight: 600 }}>My Calls Today</div>
               </div>
             </div>
             {/* Emails opened */}

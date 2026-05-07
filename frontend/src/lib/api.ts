@@ -726,6 +726,21 @@ export const activitiesApi = {
     if (contactId) params.set("contact_id", contactId);
     return requestList<Activity>(`/api/v1/activities/?${params}`);
   },
+  // Total count of activities the logged-in rep created since `sinceIso`,
+  // optionally filtered by type. Reads `total` from the paginated response so
+  // the page-bounded contact-derived counter on Contacts.tsx can be replaced
+  // with a real rep-scoped figure. Uses requestPaginated so the .total field
+  // survives the unwrap that requestList does.
+  myCountSince: async (sinceIso: string, type?: string) => {
+    const params = new URLSearchParams({
+      created_by_me: "true",
+      since: sinceIso,
+      limit: "1",
+    });
+    if (type) params.set("type", type);
+    const res = await requestPaginated<Activity>(`/api/v1/activities/?${params}`);
+    return res.total ?? 0;
+  },
   create: (data: Partial<Activity>) =>
     request<Activity>("/api/v1/activities/", {
       method: "POST",
