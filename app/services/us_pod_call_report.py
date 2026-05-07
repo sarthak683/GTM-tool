@@ -92,7 +92,12 @@ def _outcome_bucket(activity: Activity) -> str:
         return "callback"
     if outcome in {"voicemail", "left_voicemail"}:
         return "voicemail"
-    if outcome in {"missed", "no_answer", "not_answered", "busy"}:
+    # "attempted" is the manual-call FE's default state — the rep dialed and
+    # didn't connect. Semantically equivalent to no-answer/missed for the
+    # report, so it counts in the "No answer" column instead of falling into
+    # "Unknown" and triggering the misleading "many calls missing outcome"
+    # flag every day.
+    if outcome in {"missed", "no_answer", "not_answered", "busy", "attempted"}:
         return "not_answered"
     if outcome == "failed":
         return "failed"
@@ -329,6 +334,7 @@ async def build_us_pod_call_report(
     }
     report["subject"] = _report_subject(report)
     report["body"] = _render_report_text(report)
+    report["html_body"] = _render_report_html(report)
     return report
 
 
@@ -374,6 +380,68 @@ def _render_report_text(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_report_html(report: dict[str, Any]) -> str:
+    """Render the report as an HTML table.
+
+    The plain-text version uses fixed-width column padding which Gmail's
+    mobile clients render with a proportional font, collapsing the columns
+    into a wall of digits (per Sarthak's screenshot 2026-05-07). HTML tables
+    survive that environment because alignment is structural, not visual.
+    """
+    import html as _html
+
+    headers = [
+        "Rep", "Calls", "Connected", "VM", "No answer", "Callback",
+        "Failed", "Unknown", "7d avg", "Talk min", "Contacts", "Deals", "Flags",
+    ]
+    th_style = (
+        "padding:6px 10px;border-bottom:1px solid #d4dbe4;background:#f4f7fb;"
+        "font-size:12px;color:#475569;text-align:left;font-weight:600;"
+    )
+    td_style_text = "padding:6px 10px;border-bottom:1px solid #eef2f7;font-size:13px;color:#1f2a37;"
+    td_style_num = td_style_text + "text-align:right;font-variant-numeric:tabular-nums;"
+
+    header_html = "".join(f'<th style="{th_style}">{_html.escape(h)}</th>' for h in headers)
+    rows_html = []
+    for row in report["rows"]:
+        flags = ", ".join(row["flags"]) if row["flags"] else "—"
+        cells = [
+            (row["rep_name"], td_style_text),
+            (row["calls"], td_style_num),
+            (row["connected_calls"], td_style_num),
+            (row["voicemail"], td_style_num),
+            (row["not_answered"], td_style_num),
+            (row["callback"], td_style_num),
+            (row["failed"], td_style_num),
+            (row["unknown_outcome"], td_style_num),
+            (row["avg_calls_last_7_days"], td_style_num),
+            (row["duration_minutes"], td_style_num),
+            (row["unique_contacts"], td_style_num),
+            (row["unique_deals"], td_style_num),
+            (flags, td_style_text + "color:#7a8ca1;font-size:12px;"),
+        ]
+        rows_html.append(
+            "<tr>"
+            + "".join(f'<td style="{style}">{_html.escape(str(value))}</td>' for value, style in cells)
+            + "</tr>"
+        )
+
+    return f"""
+    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">US Pod Daily Call Report — {_html.escape(report['report_date'])}</h2>
+    <p style="margin:0 0 16px 0;color:#64748b;font-size:13px;">Reporting timezone: {_html.escape(report['timezone'])}</p>
+    <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5ebf3;border-radius:8px;overflow:hidden;">
+      <thead><tr>{header_html}</tr></thead>
+      <tbody>{''.join(rows_html)}</tbody>
+    </table>
+    <h3 style="margin:24px 0 6px 0;font-size:13px;color:#475569;text-transform:uppercase;letter-spacing:0.04em;">Counting logic</h3>
+    <ul style="margin:0;padding-left:20px;color:#475569;font-size:13px;line-height:1.6;">
+      <li>Includes activities where type or medium is <code>call</code>.</li>
+      <li>Credits the user who logged/made the call first, then Aircall user name, then deal/contact owner fallback.</li>
+      <li>Uses the America/Chicago calendar day so the report matches US pod working days.</li>
+    </ul>
+    """.strip()
+
+
 async def send_us_pod_call_report_email(
     session: AsyncSession,
     report_date: date | None = None,
@@ -415,6 +483,7 @@ async def send_us_pod_call_report_email(
             to=recipient,
             subject=report["subject"],
             body=report["body"],
+            html_body=report.get("html_body"),
             from_name="Beacon Sales Ops",
         )
         send_results.append({"to": recipient, **result})

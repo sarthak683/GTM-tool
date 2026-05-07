@@ -875,8 +875,9 @@ export default function Contacts() {
       // current. Without this, dialing twice without saving in between would
       // produce only one activity (the second save's create call), losing the
       // first attempt entirely. Outcome stays "attempted" until the rep saves.
+      const contactLabel = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
+      const dialIso = new Date().toISOString();
       try {
-        const contactLabel = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
         const created = await activitiesApi.create({
           type: "call",
           source: "manual",
@@ -888,6 +889,18 @@ export default function Contacts() {
       } catch {
         // Don't block the rep if the timeline write fails; saveCallDisposition
         // will fall back to creating a new row.
+      }
+      // Stamp the contact row too so the contact-list "called" chip flips on
+      // the dial, not on disposition save. Without this, activity count and
+      // contact-list badge count disagree (rep sees 6 activities but 0
+      // touched contacts, which is the "6 -> 0" Mahesh reported on 2026-05-07).
+      try {
+        await contactsApi.update(contact.id, {
+          call_status: "attempted",
+          call_last_at: dialIso,
+        });
+      } catch {
+        // Same rule as above — disposition save will retry the contact stamp.
       }
     }
   };

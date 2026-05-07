@@ -73,16 +73,21 @@ def _build_raw_message(
     subject: str,
     body: str,
     from_name: str,
+    html_body: str | None = None,
 ) -> str:
     message = EmailMessage()
     message["To"] = to
     message["From"] = f"{from_name} <{from_email}>"
     message["Subject"] = subject
     message.set_content(body)
+    # Prefer caller-supplied HTML when given (e.g. structured tables that don't
+    # round-trip through monospace text). Fall back to escaping the plain text
+    # so text-only callers still render legibly.
+    inner_html = html_body if html_body else _plain_text_to_html(body)
     message.add_alternative(
         f"""
         <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#24324a;">
-          <div style="font-size:15px;line-height:1.65;">{_plain_text_to_html(body)}</div>
+          <div style="font-size:15px;line-height:1.65;">{inner_html}</div>
           <hr style="border:none;border-top:1px solid #e5ebf3;margin:28px 0;">
           <p style="font-size:11px;color:#8a98ad;">Sent by Beacon Sales Ops</p>
         </div>
@@ -100,6 +105,7 @@ async def send_gmail_email(
     subject: str,
     body: str,
     from_name: str = "Beacon Sales Ops",
+    html_body: str | None = None,
 ) -> tuple[dict[str, Any], dict]:
     if not _has_send_scope(token_data):
         return (
@@ -117,6 +123,7 @@ async def send_gmail_email(
         subject=subject,
         body=body,
         from_name=from_name,
+        html_body=html_body,
     )
 
     async with httpx.AsyncClient(timeout=30) as client:
