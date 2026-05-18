@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
 
+    # Sales reports: production sends to the normal recipient list. Non-production
+    # environments are restricted to this allowlist so staging can test real sends
+    # without accidentally emailing the team.
+    SALES_REPORT_NONPROD_RECIPIENTS: str = "sarthak@beacon.li"
+    SALES_REPORT_ENABLE_NONPROD_SCHEDULED_SENDS: bool = False
+
     # Gmail shared inbox (email-to-activity sync)
     GMAIL_SHARED_INBOX: str = ""  # e.g. sales@beacon.li
     GMAIL_CREDENTIALS_JSON: str = ""  # Path to OAuth credentials.json

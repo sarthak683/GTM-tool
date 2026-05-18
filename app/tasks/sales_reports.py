@@ -30,8 +30,10 @@ async def _async_send_us_pod_call_report(
     # Import locally so the module load doesn't bind the engine to whatever
     # loop happens to be active at Celery worker import time.
     from app.database import AsyncSessionLocal, engine
+    from app.config import settings
     from app.services.us_pod_call_report import (
         current_report_local_date,
+        is_production_environment,
         is_weekend_report_day,
         scheduled_report_type,
         send_us_pod_call_report_email,
@@ -43,6 +45,18 @@ async def _async_send_us_pod_call_report(
         return {
             "status": "skipped",
             "reason": "weekend",
+            "local_date": current_report_local_date().isoformat(),
+            "report_type": resolved_report_type,
+        }
+    if (
+        not parsed_date
+        and recipients is None
+        and not is_production_environment()
+        and not settings.SALES_REPORT_ENABLE_NONPROD_SCHEDULED_SENDS
+    ):
+        return {
+            "status": "skipped",
+            "reason": "nonprod_scheduled_reports_disabled",
             "local_date": current_report_local_date().isoformat(),
             "report_type": resolved_report_type,
         }

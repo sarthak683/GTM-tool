@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.clients.gmail_sender import send_gmail_email
+from app.config import settings
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import Deal
@@ -38,6 +39,35 @@ US_POD_REPORT_RECIPIENTS = [
     "pulkit@beacon.li",
     "sarthak@beacon.li",
 ]
+
+
+def is_production_environment() -> bool:
+    return settings.ENVIRONMENT.strip().lower() == "production"
+
+
+def _nonprod_report_recipient_allowlist() -> list[str]:
+    recipients = [
+        email.strip().lower()
+        for email in settings.SALES_REPORT_NONPROD_RECIPIENTS.split(",")
+        if email.strip()
+    ]
+    return recipients or ["sarthak@beacon.li"]
+
+
+def _resolve_report_recipients(recipients: list[str] | None) -> tuple[list[str], list[str]]:
+    requested = recipients or US_POD_REPORT_RECIPIENTS
+    if is_production_environment():
+        return requested, []
+
+    allowed = set(_nonprod_report_recipient_allowlist())
+    safe_recipients = [recipient for recipient in requested if recipient.lower() in allowed]
+    blocked_recipients = [recipient for recipient in requested if recipient.lower() not in allowed]
+
+    if recipients is None:
+        safe_recipients = _nonprod_report_recipient_allowlist()
+        blocked_recipients = []
+
+    return safe_recipients, blocked_recipients
 
 
 @dataclass
@@ -568,7 +598,20 @@ async def send_us_pod_call_report_email(
         report = await build_us_pod_weekly_call_report(session, report_date)
     else:
         report = await build_us_pod_call_report(session, report_date)
-    report["recipients"] = recipients or US_POD_REPORT_RECIPIENTS
+    safe_recipients, blocked_recipients = _resolve_report_recipients(recipients)
+    report["recipients"] = safe_recipients
+    if blocked_recipients:
+        report["blocked_recipients"] = blocked_recipients
+    if not safe_recipients:
+        report["send_results"] = [
+            {
+                "status": "blocked",
+                "error": "Non-production report recipient is not in the allowed recipient list.",
+                "blocked_recipients": blocked_recipients,
+            }
+        ]
+        return report
+
     settings_row = await session.get(WorkspaceSettings, 1)
     if (
         not settings_row
