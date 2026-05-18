@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 
+from app.core.analytics_defaults import DEFAULT_STAGE_PROBABILITIES
 from app.core.dependencies import CurrentUser, DBSession
 from app.models.activity import Activity
 from app.models.company import Company
@@ -22,22 +23,6 @@ from app.services.deal_stages import get_configured_deal_stages
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
-DEFAULT_STAGE_PROBABILITIES: dict[str, float] = {
-    "reprospect": 0.1,
-    "demo_scheduled": 0.2,
-    "demo_done": 0.3,
-    "qualified_lead": 0.4,
-    "poc_agreed": 0.55,
-    "poc_wip": 0.65,
-    "poc_done": 0.75,
-    "commercial_negotiation": 0.85,
-    "msa_review": 0.9,
-    "workshop": 0.7,
-    "on_hold": 0.15,
-    "nurture": 0.1,
-    "closed_won": 1.0,
-    "closed": 1.0,
-}
 PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"}
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
 REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
@@ -64,6 +49,7 @@ class SalesSummary(BaseModel):
     # Milestone-based counts (deduplicated: first time per company)
     demo_done_count: int = 0
     poc_agreed_count: int = 0
+    poc_wip_count: int = 0
     poc_done_count: int = 0
     closed_won_count: int = 0
     closed_won_value: float = 0.0
@@ -641,7 +627,7 @@ async def sales_dashboard(
             if row.close_date_est < today:
                 overdue_close_count += 1
             if row.close_date_est <= today + timedelta(days=window_days):
-                forecast_amount += amount
+                forecast_amount += weighted_amount
             month_key = row.close_date_est.strftime("%Y-%m")
             month_bucket = forecast_by_month.setdefault(
                 month_key,
@@ -1172,7 +1158,7 @@ async def sales_dashboard(
         .where(
             CompanyStageMilestone.first_reached_at >= window_start,
             CompanyStageMilestone.first_reached_at <= window_end,
-            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_done", "closed_won"]),
+            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_wip", "poc_done", "closed_won"]),
         )
     )
     if filter_rep_ids:
@@ -1186,6 +1172,7 @@ async def sales_dashboard(
 
     ms_demo_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "demo_done")
     ms_poc_agreed = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_agreed")
+    ms_poc_wip = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_wip")
     ms_poc_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_done")
     ms_closed_won = sum(1 for r in milestone_summary_rows if r.milestone_key == "closed_won")
     ms_closed_won_value = sum(_to_float(r.deal_value) for r in milestone_summary_rows if r.milestone_key == "closed_won")
@@ -1307,6 +1294,7 @@ async def sales_dashboard(
             stale_deal_count=stale_deal_count,
             demo_done_count=ms_demo_done,
             poc_agreed_count=ms_poc_agreed,
+            poc_wip_count=ms_poc_wip,
             poc_done_count=ms_poc_done,
             closed_won_count=ms_closed_won,
             closed_won_value=round(ms_closed_won_value, 2),

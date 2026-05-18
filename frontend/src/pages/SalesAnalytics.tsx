@@ -1525,7 +1525,12 @@ export default function SalesAnalytics() {
     tone: "blue" | "green" | "amber" | "red";
     icon: LucideIcon;
     deals?: MilestoneDealRow[];
-  }> = data ? [
+  }> = data ? (() => {
+    const summaryWithPocWip = data.summary as typeof data.summary & { poc_wip_count?: number };
+    const pocProcuredCount = data.summary.poc_agreed_count + (summaryWithPocWip.poc_wip_count ?? 0);
+    const pocProcuredDeals = (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed" || d.milestone_key === "poc_wip");
+
+    return [
     {
       label: "Open Pipeline",
       value: formatShortCurrency(data.summary.pipeline_amount),
@@ -1543,7 +1548,7 @@ export default function SalesAnalytics() {
     {
       label: "Forecast Window",
       value: formatShortCurrency(data.summary.forecast_amount),
-      hint: `Pipeline scheduled to land inside the next ${data.window_days} days`,
+      hint: `Weighted pipeline expected to land inside the next ${data.window_days} days`,
       tone: "amber" as const,
       icon: CalendarRange,
     },
@@ -1577,12 +1582,12 @@ export default function SalesAnalytics() {
       deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_done"),
     },
     {
-      label: "POC Agreed",
-      value: String(data.summary.poc_agreed_count),
-      hint: "Unique companies that agreed to a POC for the first time in this window",
+      label: "POC WIP",
+      value: String(pocProcuredCount),
+      hint: "Unique companies that entered POC Agreed or POC WIP for the first time in this window",
       tone: "blue" as const,
       icon: ArrowUpRight,
-      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed"),
+      deals: pocProcuredDeals,
     },
     {
       label: "POC Done",
@@ -1608,7 +1613,8 @@ export default function SalesAnalytics() {
       icon: TrendingUp,
       deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
     },
-  ] : [];
+    ];
+  })() : [];
 
   const visibleRepActivity = useMemo(
     () => (!hideDeveloper ? data?.rep_activity ?? [] : (data?.rep_activity ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
