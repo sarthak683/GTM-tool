@@ -94,6 +94,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "contact_phone": [
         "direct mobile personal",
         "mobile",
+        "mobile phone",
         "phone",
         "phone number",
         "direct phone",
@@ -103,6 +104,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
         "hq direct line",
         "direct line",
     ],
+    "contact_timezone": ["timezone", "time zone", "timezones", "time zones"],
     "linkedin_url": ["linkedin", "linkedin url", "linkedin profile"],
     "next_steps": ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
@@ -127,7 +129,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "who_they_are": ["who they are"],
     "tier": ["tier", "account tier"],
     "email_confidence": ["email confidence"],
-    "direct_mobile": ["direct mobile personal", "direct mobile", "direct  mobile personal"],
+    "direct_mobile": ["direct mobile personal", "direct mobile", "direct  mobile personal", "mobile phone"],
     "hq_direct_line": ["hq direct line"],
     "hq_switchboard": ["hq switchboard toll free", "hq switchboard", "hq switchboard  toll free"],
     "tenure_role": ["tenure role"],
@@ -435,5 +437,15 @@ def parse_tabular_file(filename: str, content: bytes) -> list[dict[str, str]]:
 def parse_prospect_upload_file(filename: str, content: bytes) -> list[dict[str, str]]:
     lower_name = (filename or "").lower()
     if lower_name.endswith(".xlsx"):
-        return parse_prospect_xlsx(content)
+        # Prefer the strict Beacon-template parser (sheet name "Prospecting",
+        # grouped section labels in row 1, headers in row 2). If the file
+        # isn't that shape — common for Apollo / Sales Nav exports where the
+        # sheet has a single header row and any name — fall back to the
+        # permissive parser used for Account Sourcing uploads. Either way the
+        # caller gets back a list of normalized-header dicts, so downstream
+        # row_to_contact_fields / row_to_company_fields handle both.
+        rows = parse_prospect_xlsx(content)
+        if rows:
+            return rows
+        return parse_xlsx(content)
     return parse_csv(content)

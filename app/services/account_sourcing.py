@@ -129,8 +129,9 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "contact_phone":  [
         "direct mobile personal", "mobile", "phone", "phone number",
         "direct phone", "cell", "cell phone", "personal phone",
-        "hq direct line", "direct line",
+        "hq direct line", "direct line", "mobile phone",
     ],
+    "contact_timezone": ["timezone", "time zone", "timezones", "time zones"],
     "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile"],
     "next_steps":     ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
@@ -156,7 +157,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
     # Rich columns from the Beacon "The 100" workbook
     "tier":           ["tier", "account tier"],
     "email_confidence": ["email confidence"],
-    "direct_mobile":  ["direct mobile personal", "direct mobile", "direct  mobile personal"],
+    "direct_mobile":  ["direct mobile personal", "direct mobile", "direct  mobile personal", "mobile phone"],
     "hq_direct_line": ["hq direct line"],
     "hq_switchboard": ["hq switchboard toll free", "hq switchboard", "hq switchboard  toll free"],
     "tenure_role":    ["tenure role"],
@@ -1032,6 +1033,37 @@ def _split_contact_name(name: str) -> tuple[str, str]:
     return parts[0], " ".join(parts[1:])
 
 
+_UPLOADED_TIMEZONE_TO_IANA: dict[str, str] = {
+    "AEST": "Australia/Sydney",
+    "CET": "Europe/Berlin",
+    "COT": "America/Bogota",
+    "CST": "America/Chicago",
+    "EET": "Europe/Athens",
+    "EST": "America/New_York",
+    "GMT": "Europe/London",
+    "GST": "Asia/Dubai",
+    "IST": "Asia/Kolkata",
+    "JST": "Asia/Tokyo",
+    "MST": "America/Denver",
+    "NZST": "Pacific/Auckland",
+    "PST": "America/Los_Angeles",
+    "SGT": "Asia/Singapore",
+}
+
+
+def _normalize_uploaded_timezone(value: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", (value or "").strip())
+    if not cleaned:
+        return None
+    if "/" in cleaned and cleaned in set(_UPLOADED_TIMEZONE_TO_IANA.values()):
+        return cleaned
+    # Workbooks sometimes contain redundant forms like "EST / EST". Take the
+    # first token because all supported abbreviations are single-zone for our
+    # prospecting use case.
+    token = re.split(r"[/,;|]", cleaned, maxsplit=1)[0].strip().upper()
+    return _UPLOADED_TIMEZONE_TO_IANA.get(token)
+
+
 def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -> Optional[dict[str, Any]]:
     contact_name = _find(row, "contact_name")
     first = _find(row, "contact_first_name")
@@ -1118,18 +1150,20 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         or (prospecting.get("why_now") if isinstance(prospecting, dict) else None)
     )
 
-    inferred_timezone = None
+    uploaded_timezone = _normalize_uploaded_timezone(_find(row, "contact_timezone"))
+    inferred_timezone = uploaded_timezone
     try:
         from app.services.timezone_infer import infer_timezone
 
-        inferred_timezone = infer_timezone(
-            phone=phone,
-            company_hq=contact_location or company_fields.get("headquarters"),
-            company_region=company_fields.get("region"),
-            company_name=company_fields.get("name"),
-        )
+        if not inferred_timezone:
+            inferred_timezone = infer_timezone(
+                phone=phone,
+                company_hq=contact_location or company_fields.get("headquarters"),
+                company_region=company_fields.get("region"),
+                company_name=company_fields.get("name"),
+            )
     except Exception:
-        inferred_timezone = None
+        inferred_timezone = uploaded_timezone
 
     base_fields = {
         "first_name": first[:120],
