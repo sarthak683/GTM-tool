@@ -897,8 +897,6 @@ export default function Contacts() {
     if (contact.phone) {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
-      } else {
-        window.location.href = `tel:${contact.phone}`;
       }
       // Log the dial as an activity *immediately*, so back-to-back dials each
       // get their own row. Disposition save will UPDATE whichever row is
@@ -3277,9 +3275,9 @@ function PreCallIntelPanel({
         )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#546679" }}>
           {contact.phone && (
-            <a href={`tel:${contact.phone}`} style={{ color: "#175089", textDecoration: "none", fontWeight: 600 }}>
+            <span style={{ color: "#175089", fontWeight: 600 }}>
               {contact.phone}
-            </a>
+            </span>
           )}
           {contact.timezone && <span>TZ: {contact.timezone}</span>}
           {contact.outreach_lane && (
