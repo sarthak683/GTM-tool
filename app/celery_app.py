@@ -69,9 +69,9 @@ celery_app.conf.update(
         },
         "send-us-pod-call-report-daily": {
             "task": "app.tasks.sales_reports.send_us_pod_call_report",
-            # Weekdays only. The task sends a weekly report on Friday and skips
-            # weekends defensively if beat is ever misconfigured.
-            "schedule": crontab(hour=14, minute=30, day_of_week="mon-fri"),
+            # 07:00 IST (01:30 UTC), after the 06:00 IST US-pod EOD cutoff.
+            # The task sends a weekly report on Friday and skips weekends defensively.
+            "schedule": crontab(hour=1, minute=30, day_of_week="mon-fri"),
         },
     },
 )

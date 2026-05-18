@@ -33,6 +33,7 @@ async def _async_send_us_pod_call_report(
     from app.config import settings
     from app.services.us_pod_call_report import (
         current_report_local_date,
+        default_report_date,
         is_production_environment,
         is_weekend_report_day,
         scheduled_report_type,
@@ -46,6 +47,14 @@ async def _async_send_us_pod_call_report(
             "status": "skipped",
             "reason": "weekend",
             "local_date": current_report_local_date().isoformat(),
+            "report_type": resolved_report_type,
+        }
+    if not parsed_date and default_report_date().weekday() >= 5:
+        return {
+            "status": "skipped",
+            "reason": "report_period_weekend",
+            "local_date": current_report_local_date().isoformat(),
+            "report_date": default_report_date().isoformat(),
             "report_type": resolved_report_type,
         }
     if (

@@ -22,6 +22,8 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 REPORT_TIMEZONE = ZoneInfo("America/Chicago")
+REPORT_CUTOFF_TIMEZONE = ZoneInfo("Asia/Kolkata")
+REPORT_CUTOFF_HOUR = 6
 LOOKBACK_DAYS = 7
 
 US_POD_REPS = [
@@ -80,17 +82,29 @@ class ResolvedRep:
 
 
 def default_report_date(now: datetime | None = None) -> date:
+    return _latest_completed_report_cutoff(now).astimezone(REPORT_TIMEZONE).date()
+
+
+def _latest_completed_report_cutoff(now: datetime | None = None) -> datetime:
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
-    return reference.astimezone(REPORT_TIMEZONE).date() - timedelta(days=1)
+    local_reference = reference.astimezone(REPORT_CUTOFF_TIMEZONE)
+    cutoff_date = local_reference.date()
+    if local_reference.time() < time(REPORT_CUTOFF_HOUR):
+        cutoff_date -= timedelta(days=1)
+    return datetime.combine(
+        cutoff_date,
+        time(REPORT_CUTOFF_HOUR),
+        tzinfo=REPORT_CUTOFF_TIMEZONE,
+    )
 
 
 def current_report_local_date(now: datetime | None = None) -> date:
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
-    return reference.astimezone(REPORT_TIMEZONE).date()
+    return reference.astimezone(REPORT_CUTOFF_TIMEZONE).date()
 
 
 def is_weekend_report_day(now: datetime | None = None) -> bool:
@@ -107,20 +121,33 @@ def weekly_report_period(report_date: date | None = None) -> tuple[date, date]:
     return start_date, end_date
 
 
-def _utc_bounds_for_local_day(day: date) -> tuple[datetime, datetime]:
-    local_start = datetime.combine(day, time.min).replace(tzinfo=REPORT_TIMEZONE)
-    local_end = local_start + timedelta(days=1)
+def _utc_bounds_for_report_day(day: date) -> tuple[datetime, datetime]:
+    local_end = datetime.combine(
+        day + timedelta(days=1),
+        time(REPORT_CUTOFF_HOUR),
+        tzinfo=REPORT_CUTOFF_TIMEZONE,
+    )
+    local_start = local_end - timedelta(days=1)
     return (
         local_start.astimezone(timezone.utc).replace(tzinfo=None),
         local_end.astimezone(timezone.utc).replace(tzinfo=None),
     )
 
 
-def _activity_local_date(activity: Activity) -> date:
+def _activity_report_date(activity: Activity) -> date:
     created_at = activity.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    return created_at.astimezone(REPORT_TIMEZONE).date()
+    local_created_at = created_at.astimezone(REPORT_CUTOFF_TIMEZONE)
+    report_period_start = local_created_at.date()
+    if local_created_at.time() < time(REPORT_CUTOFF_HOUR):
+        report_period_start -= timedelta(days=1)
+    report_cutoff_end = datetime.combine(
+        report_period_start + timedelta(days=1),
+        time(REPORT_CUTOFF_HOUR),
+        tzinfo=REPORT_CUTOFF_TIMEZONE,
+    )
+    return report_cutoff_end.astimezone(REPORT_TIMEZONE).date()
 
 
 def _normalize(value: str | None) -> str:
@@ -333,8 +360,8 @@ async def _build_us_pod_call_report_for_period(
     target_date = period_end
     start_date = target_date - timedelta(days=LOOKBACK_DAYS - 1)
     query_start_date = min(start_date, period_start)
-    start_utc, _ = _utc_bounds_for_local_day(query_start_date)
-    _, end_utc = _utc_bounds_for_local_day(target_date)
+    start_utc, _ = _utc_bounds_for_report_day(query_start_date)
+    _, end_utc = _utc_bounds_for_report_day(target_date)
 
     reps = await _resolve_reps(session)
     rep_ids = {rep.user_id for rep in reps if rep.user_id}
@@ -389,7 +416,7 @@ async def _build_us_pod_call_report_for_period(
         if not rep_id or rep_id not in rep_ids:
             continue
 
-        activity_day = _activity_local_date(activity)
+        activity_day = _activity_report_date(activity)
         if start_date <= activity_day <= target_date:
             daily_counts[rep_id][activity_day] += 1
 
@@ -464,7 +491,7 @@ async def _build_us_pod_call_report_for_period(
         "report_date": target_date.isoformat(),
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
-        "timezone": "America/Chicago",
+        "timezone": "Asia/Kolkata cutoff at 06:00; report day labeled in America/Chicago",
         "lookback_days": LOOKBACK_DAYS,
         "recipients": US_POD_REPORT_RECIPIENTS,
         "rows": rows,
@@ -520,7 +547,7 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "- Includes activities where type or medium is call.",
             "- Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.",
             "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
-            "- Uses the America/Chicago calendar day so the report matches US pod working days.",
+            "- Uses a 6:00 AM IST cutoff so the report matches the US pod end of day.",
         ]
     )
     return "\n".join(lines)
@@ -582,7 +609,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
       <li>Includes activities where type or medium is <code>call</code>.</li>
       <li>Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.</li>
       <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
-      <li>Uses the America/Chicago calendar day so the report matches US pod working days.</li>
+      <li>Uses a 6:00 AM IST cutoff so the report matches the US pod end of day.</li>
     </ul>
     """.strip()
 
