@@ -69,7 +69,9 @@ celery_app.conf.update(
         },
         "send-us-pod-call-report-daily": {
             "task": "app.tasks.sales_reports.send_us_pod_call_report",
-            "schedule": crontab(hour=14, minute=30),  # US morning; reports the prior America/Chicago day
+            # Weekdays only. The task sends a weekly report on Friday and skips
+            # weekends defensively if beat is ever misconfigured.
+            "schedule": crontab(hour=14, minute=30, day_of_week="mon-fri"),
         },
     },
 )

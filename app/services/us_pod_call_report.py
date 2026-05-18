@@ -56,6 +56,27 @@ def default_report_date(now: datetime | None = None) -> date:
     return reference.astimezone(REPORT_TIMEZONE).date() - timedelta(days=1)
 
 
+def current_report_local_date(now: datetime | None = None) -> date:
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return reference.astimezone(REPORT_TIMEZONE).date()
+
+
+def is_weekend_report_day(now: datetime | None = None) -> bool:
+    return current_report_local_date(now).weekday() >= 5
+
+
+def scheduled_report_type(now: datetime | None = None) -> str:
+    return "weekly" if current_report_local_date(now).weekday() == 4 else "daily"
+
+
+def weekly_report_period(report_date: date | None = None) -> tuple[date, date]:
+    end_date = report_date or default_report_date()
+    start_date = end_date - timedelta(days=end_date.weekday())
+    return start_date, end_date
+
+
 def _utc_bounds_for_local_day(day: date) -> tuple[datetime, datetime]:
     local_start = datetime.combine(day, time.min).replace(tzinfo=REPORT_TIMEZONE)
     local_end = local_start + timedelta(days=1)
@@ -192,11 +213,14 @@ def _activity_rep_id(
     contact_owner: dict[UUID, UUID | None],
 ) -> UUID | None:
     source = _normalize(activity.source)
-    if source == "manual":
-        if activity.contact_id and contact_owner.get(activity.contact_id) in rep_ids:
-            return contact_owner.get(activity.contact_id)
-        if activity.deal_id and deal_owner.get(activity.deal_id) in rep_ids:
-            return deal_owner.get(activity.deal_id)
+    medium = _normalize(activity.medium)
+    kind = _normalize(activity.type)
+    if (
+        activity.created_by_id in rep_ids
+        and source == "manual"
+        and (medium in {"call", "linkedin"} or kind in {"call", "linkedin"})
+    ):
+        return activity.created_by_id
 
     if activity.created_by_id in rep_ids:
         return activity.created_by_id
@@ -248,8 +272,38 @@ async def build_us_pod_call_report(
     report_date: date | None = None,
 ) -> dict[str, Any]:
     target_date = report_date or default_report_date()
+    return await _build_us_pod_call_report_for_period(
+        session,
+        period_start=target_date,
+        period_end=target_date,
+        report_type="daily",
+    )
+
+
+async def build_us_pod_weekly_call_report(
+    session: AsyncSession,
+    report_date: date | None = None,
+) -> dict[str, Any]:
+    period_start, period_end = weekly_report_period(report_date)
+    return await _build_us_pod_call_report_for_period(
+        session,
+        period_start=period_start,
+        period_end=period_end,
+        report_type="weekly",
+    )
+
+
+async def _build_us_pod_call_report_for_period(
+    session: AsyncSession,
+    *,
+    period_start: date,
+    period_end: date,
+    report_type: str,
+) -> dict[str, Any]:
+    target_date = period_end
     start_date = target_date - timedelta(days=LOOKBACK_DAYS - 1)
-    start_utc, _ = _utc_bounds_for_local_day(start_date)
+    query_start_date = min(start_date, period_start)
+    start_utc, _ = _utc_bounds_for_local_day(query_start_date)
     _, end_utc = _utc_bounds_for_local_day(target_date)
 
     reps = await _resolve_reps(session)
@@ -309,7 +363,7 @@ async def build_us_pod_call_report(
         if start_date <= activity_day <= target_date:
             daily_counts[rep_id][activity_day] += 1
 
-        if activity_day != target_date:
+        if not (period_start <= activity_day <= period_end):
             continue
 
         metrics = target_metrics[rep_id]
@@ -376,7 +430,10 @@ async def build_us_pod_call_report(
         )
 
     report = {
+        "report_type": report_type,
         "report_date": target_date.isoformat(),
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
         "timezone": "America/Chicago",
         "lookback_days": LOOKBACK_DAYS,
         "recipients": US_POD_REPORT_RECIPIENTS,
@@ -389,12 +446,20 @@ async def build_us_pod_call_report(
 
 
 def _report_subject(report: dict[str, Any]) -> str:
+    if report.get("report_type") == "weekly":
+        return f"US Pod Weekly Call Report - {report['period_start']} to {report['period_end']}"
+    return f"US Pod Daily Call Report - {report['report_date']}"
+
+
+def _report_title(report: dict[str, Any]) -> str:
+    if report.get("report_type") == "weekly":
+        return f"US Pod Weekly Call Report - {report['period_start']} to {report['period_end']}"
     return f"US Pod Daily Call Report - {report['report_date']}"
 
 
 def _render_report_text(report: dict[str, Any]) -> str:
     lines = [
-        f"US Pod Daily Call Report - {report['report_date']}",
+        _report_title(report),
         f"Reporting timezone: {report['timezone']}",
         "",
         "Rep                 Calls  Connected  VM  No answer  Callback  Failed  Unknown  7d avg  Talk min  Contacts  Deals  Flags",
@@ -423,7 +488,7 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "",
             "Counting logic:",
             "- Includes activities where type or medium is call.",
-            "- Credits manual CRM calls to the assigned contact/deal owner first, then the user who logged the activity.",
+            "- Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.",
             "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
             "- Uses the America/Chicago calendar day so the report matches US pod working days.",
         ]
@@ -476,7 +541,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
         )
 
     return f"""
-    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">US Pod Daily Call Report — {html.escape(report['report_date'])}</h2>
+    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">{html.escape(_report_title(report))}</h2>
     <p style="margin:0 0 16px 0;color:#64748b;font-size:13px;">Reporting timezone: {html.escape(report['timezone'])}</p>
     <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5ebf3;border-radius:8px;overflow:hidden;">
       <thead><tr>{header_html}</tr></thead>
@@ -485,7 +550,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
     <h3 style="margin:24px 0 6px 0;font-size:13px;color:#475569;text-transform:uppercase;letter-spacing:0.04em;">Counting logic</h3>
     <ul style="margin:0;padding-left:20px;color:#475569;font-size:13px;line-height:1.6;">
       <li>Includes activities where type or medium is <code>call</code>.</li>
-      <li>Credits manual CRM calls to the assigned contact/deal owner first, then the user who logged the activity.</li>
+      <li>Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.</li>
       <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
       <li>Uses the America/Chicago calendar day so the report matches US pod working days.</li>
     </ul>
@@ -495,8 +560,15 @@ def _render_report_html(report: dict[str, Any]) -> str:
 async def send_us_pod_call_report_email(
     session: AsyncSession,
     report_date: date | None = None,
+    *,
+    report_type: str = "daily",
+    recipients: list[str] | None = None,
 ) -> dict[str, Any]:
-    report = await build_us_pod_call_report(session, report_date)
+    if report_type == "weekly":
+        report = await build_us_pod_weekly_call_report(session, report_date)
+    else:
+        report = await build_us_pod_call_report(session, report_date)
+    report["recipients"] = recipients or US_POD_REPORT_RECIPIENTS
     settings_row = await session.get(WorkspaceSettings, 1)
     if (
         not settings_row
@@ -526,7 +598,7 @@ async def send_us_pod_call_report_email(
 
     send_results = []
     token_data = settings_row.report_sender_token_data
-    for recipient in US_POD_REPORT_RECIPIENTS:
+    for recipient in report["recipients"]:
         result, token_data = await send_gmail_email(
             token_data=token_data,
             from_email=settings_row.report_sender_email,
