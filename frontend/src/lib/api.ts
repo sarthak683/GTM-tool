@@ -1746,15 +1746,15 @@ export const assignmentsApi = {
       method: "PATCH",
       body: JSON.stringify({ user_id: userId, role }),
     }),
-  bulkAssignCompanies: (ids: string[], userId: string | null) =>
-    request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-companies", {
+  bulkAssignCompanies: (ids: string[], userId: string | null, role: "ae" | "sdr" = "ae") =>
+    request<{ updated: number; skipped?: number; user_id: string | null; role?: "ae" | "sdr" }>("/api/v1/assignments/bulk-companies", {
       method: "PATCH",
-      body: JSON.stringify({ ids, user_id: userId }),
+      body: JSON.stringify({ ids, user_id: userId, role }),
     }),
-  bulkAssignContacts: (ids: string[], userId: string | null) =>
-    request<{ updated: number; user_id: string | null }>("/api/v1/assignments/bulk-contacts", {
+  bulkAssignContacts: (ids: string[], userId: string | null, role: "ae" | "sdr" = "ae") =>
+    request<{ updated: number; skipped?: number; user_id: string | null; role?: "ae" | "sdr" }>("/api/v1/assignments/bulk-contacts", {
       method: "PATCH",
-      body: JSON.stringify({ ids, user_id: userId }),
+      body: JSON.stringify({ ids, user_id: userId, role }),
     }),
 };
 

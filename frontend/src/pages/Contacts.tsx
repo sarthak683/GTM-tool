@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary, LifecycleStep, LifecycleStepState } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -321,6 +321,8 @@ export default function Contacts() {
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
+  const [bulkClaimingSdr, setBulkClaimingSdr] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
@@ -373,6 +375,24 @@ export default function Contacts() {
       .filter((column): column is typeof CONTACT_TABLE_COLUMNS[number] => Boolean(column)),
     [tableColumns],
   );
+  const visibleCompanySelectionOptions = useMemo(() => {
+    const byCompany = new Map<string, { id: string; name: string; count: number }>();
+    for (const contact of contacts) {
+      if (!contact.company_id) continue;
+      const current = byCompany.get(contact.company_id);
+      if (current) {
+        current.count += 1;
+      } else {
+        byCompany.set(contact.company_id, {
+          id: contact.company_id,
+          name: contact.company_name || "Unnamed company",
+          count: 1,
+        });
+      }
+    }
+    return Array.from(byCompany.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [contacts]);
+  const allVisibleSelected = contacts.length > 0 && contacts.every((contact) => selectedContactIds.has(contact.id));
 
   const columnMenuItems = useMemo(() => {
     const ordered = tableColumns
@@ -703,6 +723,15 @@ export default function Contacts() {
     loadContacts();
   }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id]);
 
+  useEffect(() => {
+    if (contacts.length === 0 || selectedContactIds.size === 0) return;
+    const visibleIds = new Set(contacts.map((contact) => contact.id));
+    setSelectedContactIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [contacts, selectedContactIds.size]);
+
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
   // 2/5 · 1 overdue" text without N+1 requests.
@@ -862,6 +891,55 @@ export default function Contacts() {
       setMappings((prev) => prev.filter((m) => m.id !== id));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete mapping");
+    }
+  };
+
+  const toggleContactSelection = (contactId: string) => {
+    setSelectedContactIds((current) => {
+      const next = new Set(current);
+      if (next.has(contactId)) {
+        next.delete(contactId);
+      } else {
+        next.add(contactId);
+      }
+      return next;
+    });
+  };
+
+  const toggleVisibleContactSelection = () => {
+    setSelectedContactIds((current) => {
+      if (allVisibleSelected) return new Set();
+      const next = new Set(current);
+      for (const contact of contacts) next.add(contact.id);
+      return next;
+    });
+  };
+
+  const selectVisibleCompanyContacts = (companyId: string) => {
+    setSelectedContactIds((current) => {
+      const next = new Set(current);
+      for (const contact of contacts) {
+        if (contact.company_id === companyId) next.add(contact.id);
+      }
+      return next;
+    });
+  };
+
+  const bulkClaimSelectedSdr = async () => {
+    if (!user || user.role !== "sdr" || selectedContactIds.size === 0) return;
+    setBulkClaimingSdr(true);
+    try {
+      const result = await assignmentsApi.bulkAssignContacts(Array.from(selectedContactIds), user.id, "sdr");
+      toast.success(
+        `${result.updated} SDR assignment${result.updated === 1 ? "" : "s"} claimed${result.skipped ? `, ${result.skipped} skipped` : ""}.`,
+        "SDR claim complete",
+      );
+      setSelectedContactIds(new Set());
+      await loadContacts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to claim selected prospects.", "Claim failed");
+    } finally {
+      setBulkClaimingSdr(false);
     }
   };
 
@@ -1520,6 +1598,45 @@ export default function Contacts() {
                       );
                     })}
                   </div>
+                  {user?.role === "sdr" && (
+                    <div style={{ marginTop: 10, border: "1px solid #dce8f4", background: "#ffffff", borderRadius: 14, padding: 10, display: "grid", gap: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ color: "#35546f", fontSize: 12, fontWeight: 800 }}>
+                          {selectedContactIds.size} selected for SDR claim
+                        </span>
+                        <button
+                          type="button"
+                          onClick={toggleVisibleContactSelection}
+                          style={{ border: "1px solid #c8d9e8", background: "#f7fbff", color: "#175089", borderRadius: 10, height: 32, padding: "0 10px", fontSize: 12, fontWeight: 800 }}
+                        >
+                          {allVisibleSelected ? "Clear" : "Select page"}
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) selectVisibleCompanyContacts(e.target.value);
+                            e.currentTarget.value = "";
+                          }}
+                          style={{ minWidth: 0, flex: 1, height: 34, border: "1px solid #c8d9e8", borderRadius: 10, color: "#35546f", fontSize: 12, fontWeight: 750, padding: "0 8px", background: "#fff" }}
+                        >
+                          <option value="">Select company on page</option>
+                          {visibleCompanySelectionOptions.map((company) => (
+                            <option key={company.id} value={company.id}>{company.name} ({company.count})</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => void bulkClaimSelectedSdr()}
+                          disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
+                          style={{ height: 34, border: "none", borderRadius: 10, background: selectedContactIds.size ? "#175089" : "#d9e4ef", color: "#fff", padding: "0 12px", fontSize: 12, fontWeight: 850 }}
+                        >
+                          {bulkClaimingSdr ? "Claiming..." : "Claim SDR"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ padding: 12, display: "grid", gap: 12 }}>
@@ -1543,6 +1660,15 @@ export default function Contacts() {
                           <div key={c.id} className="prospect-mobile-card">
                             <div style={{ padding: 14, display: "grid", gap: 12 }}>
                               <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+                                {user?.role === "sdr" && (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedContactIds.has(c.id)}
+                                    onChange={() => toggleContactSelection(c.id)}
+                                    aria-label={`Select ${name}`}
+                                    style={{ marginTop: 13, width: 18, height: 18, accentColor: "#175089", flexShrink: 0 }}
+                                  />
+                                )}
                                 <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
                                   {getInitials(name)}
                                 </div>
@@ -1933,6 +2059,107 @@ export default function Contacts() {
               );
             })()}
 
+            {user?.role === "sdr" && contacts.length > 0 && (
+              <div
+                className="prospect-desktop-only"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  border: "1px solid #cfe0f2",
+                  background: "#f7fbff",
+                  borderRadius: 14,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ color: "#24455f", fontSize: 13, fontWeight: 800 }}>
+                    {selectedContactIds.size} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleVisibleContactSelection}
+                    style={{
+                      height: 34,
+                      border: "1px solid #bfd6ee",
+                      background: "#ffffff",
+                      color: "#175089",
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {allVisibleSelected ? "Clear page" : "Select visible page"}
+                  </button>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) selectVisibleCompanyContacts(e.target.value);
+                      e.currentTarget.value = "";
+                    }}
+                    style={{
+                      height: 34,
+                      minWidth: 220,
+                      border: "1px solid #bfd6ee",
+                      background: "#ffffff",
+                      color: "#24455f",
+                      borderRadius: 10,
+                      padding: "0 10px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      outline: "none",
+                    }}
+                  >
+                    <option value="">Select visible company...</option>
+                    {visibleCompanySelectionOptions.map((company) => (
+                      <option key={company.id} value={company.id}>{company.name} ({company.count})</option>
+                    ))}
+                  </select>
+                  {selectedContactIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedContactIds(new Set())}
+                      style={{
+                        height: 34,
+                        border: "1px solid #dce8f4",
+                        background: "#fff",
+                        color: "#64748b",
+                        borderRadius: 10,
+                        padding: "0 12px",
+                        fontSize: 12,
+                        fontWeight: 750,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void bulkClaimSelectedSdr()}
+                  disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
+                  style={{
+                    height: 36,
+                    border: "none",
+                    background: selectedContactIds.size ? "#175089" : "#d9e4ef",
+                    color: "#ffffff",
+                    borderRadius: 11,
+                    padding: "0 14px",
+                    fontSize: 13,
+                    fontWeight: 850,
+                    cursor: selectedContactIds.size && !bulkClaimingSdr ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {bulkClaimingSdr ? "Claiming..." : "Claim selected as SDR"}
+                </button>
+              </div>
+            )}
+
             {/* Contacts Table */}
             {loading ? (
               <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
@@ -1947,6 +2174,17 @@ export default function Contacts() {
                   <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
                       <tr>
+                        {user?.role === "sdr" && (
+                          <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff", width: 44 }}>
+                            <input
+                              type="checkbox"
+                              checked={allVisibleSelected}
+                              onChange={toggleVisibleContactSelection}
+                              aria-label="Select all visible prospects"
+                              style={{ width: 16, height: 16, accentColor: "#175089" }}
+                            />
+                          </th>
+                        )}
                         {visibleColumns.map((column) => (
                           <th key={column.key} style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff" }}>{column.label}</th>
                         ))}
@@ -1955,6 +2193,17 @@ export default function Contacts() {
                     <tbody>
                       {contacts.map((c) => (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
+                          {user?.role === "sdr" && (
+                            <td onClick={(e) => e.stopPropagation()} style={{ width: 44 }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedContactIds.has(c.id)}
+                                onChange={() => toggleContactSelection(c.id)}
+                                aria-label={`Select ${c.first_name} ${c.last_name}`}
+                                style={{ width: 16, height: 16, accentColor: "#175089" }}
+                              />
+                            </td>
+                          )}
                           {visibleColumns.map((column) => {
                             switch (column.key) {
                               case "name":

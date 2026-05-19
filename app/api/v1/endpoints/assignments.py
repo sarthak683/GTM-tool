@@ -14,7 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlmodel import select
 
-from app.core.dependencies import AdminUser, CurrentUser, DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
@@ -32,6 +32,7 @@ class AssignRequest(BaseModel):
 class BulkAssignRequest(BaseModel):
     ids: List[UUID]
     user_id: Optional[UUID] = None  # None = unassign
+    role: Optional[str] = None      # "ae" (default) or "sdr"
 
 
 def _validate_assignment_user(user: User, *, role: str) -> None:
@@ -258,71 +259,150 @@ async def assign_contact(
 async def bulk_assign_companies(
     body: BulkAssignRequest,
     session: DBSession,
-    _admin: AdminUser,
+    actor: CurrentUser,
 ):
-    """Bulk assign multiple companies to a sales rep. Admin only."""
+    """Bulk assign multiple companies to a sales rep.
+
+    Admins can assign/reassign any AE/SDR slot. Non-admin reps can only
+    bulk self-claim unassigned slots, or bulk release slots they own.
+    """
+    is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
     user = None
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
-        _validate_assignment_user(user, role="ae")
+        _validate_assignment_user(user, role=role_key)
+    if actor.role != "admin" and not (
+        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
+    ):
+        raise ForbiddenError(
+            "Only admins can bulk reassign accounts. You can bulk claim unassigned "
+            f"{role_key.upper()} slots or release your own assignments."
+        )
 
     updated = 0
+    skipped = 0
     for cid in body.ids:
         company = (
             await session.execute(select(Company).where(Company.id == cid))
         ).scalar_one_or_none()
         if not company:
+            skipped += 1
+            continue
+        current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
+        if actor.role != "admin" and not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            skipped += 1
             continue
         if user:
-            company.assigned_to_id = user.id
-            company.assigned_rep = user.name
-            company.assigned_rep_email = user.email
-            company.assigned_rep_name = user.name
+            if is_sdr:
+                company.sdr_id = user.id
+                company.sdr_email = user.email
+                company.sdr_name = user.name
+            else:
+                company.assigned_to_id = user.id
+                company.assigned_rep = user.name
+                company.assigned_rep_email = user.email
+                company.assigned_rep_name = user.name
         else:
-            company.assigned_to_id = None
-            company.assigned_rep = None
-            company.assigned_rep_email = None
-            company.assigned_rep_name = None
+            if is_sdr:
+                company.sdr_id = None
+                company.sdr_email = None
+                company.sdr_name = None
+            else:
+                company.assigned_to_id = None
+                company.assigned_rep = None
+                company.assigned_rep_email = None
+                company.assigned_rep_name = None
+
+        contacts = (
+            await session.execute(select(Contact).where(Contact.company_id == company.id))
+        ).scalars().all()
+        for contact in contacts:
+            if is_sdr:
+                contact.sdr_id = company.sdr_id
+                contact.sdr_name = company.sdr_name
+            else:
+                contact.assigned_to_id = company.assigned_to_id
+                contact.assigned_rep_email = company.assigned_rep_email
+            contact.updated_at = datetime.utcnow()
+            session.add(contact)
         company.updated_at = datetime.utcnow()
         session.add(company)
         updated += 1
 
     await session.commit()
-    return {"updated": updated, "user_id": str(body.user_id) if body.user_id else None}
+    return {"updated": updated, "skipped": skipped, "user_id": str(body.user_id) if body.user_id else None, "role": role_key}
 
 
 @router.patch("/bulk-contacts")
 async def bulk_assign_contacts(
     body: BulkAssignRequest,
     session: DBSession,
-    _admin: AdminUser,
+    actor: CurrentUser,
 ):
-    """Bulk assign multiple contacts to a sales rep. Admin only."""
+    """Bulk assign multiple contacts to a sales rep.
+
+    Admins can assign/reassign any AE/SDR slot. Non-admin reps can only
+    bulk self-claim unassigned slots, or bulk release slots they own.
+    """
+    is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
     user = None
     if body.user_id:
         user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
         if not user:
             raise NotFoundError("User not found")
-        _validate_assignment_user(user, role="ae")
+        _validate_assignment_user(user, role=role_key)
+    if actor.role != "admin" and not (
+        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
+    ):
+        raise ForbiddenError(
+            "Only admins can bulk reassign contacts. You can bulk claim unassigned "
+            f"{role_key.upper()} slots or release your own assignments."
+        )
 
     updated = 0
+    skipped = 0
     for cid in body.ids:
         contact = (
             await session.execute(select(Contact).where(Contact.id == cid))
         ).scalar_one_or_none()
         if not contact:
+            skipped += 1
+            continue
+        current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
+        if actor.role != "admin" and not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            skipped += 1
             continue
         if user:
-            contact.assigned_to_id = user.id
-            contact.assigned_rep_email = user.email
+            if is_sdr:
+                contact.sdr_id = user.id
+                contact.sdr_name = user.name
+            else:
+                contact.assigned_to_id = user.id
+                contact.assigned_rep_email = user.email
         else:
-            contact.assigned_to_id = None
-            contact.assigned_rep_email = None
+            if is_sdr:
+                contact.sdr_id = None
+                contact.sdr_name = None
+            else:
+                contact.assigned_to_id = None
+                contact.assigned_rep_email = None
         contact.updated_at = datetime.utcnow()
         session.add(contact)
         updated += 1
 
     await session.commit()
-    return {"updated": updated, "user_id": str(body.user_id) if body.user_id else None}
+    return {"updated": updated, "skipped": skipped, "user_id": str(body.user_id) if body.user_id else None, "role": role_key}
