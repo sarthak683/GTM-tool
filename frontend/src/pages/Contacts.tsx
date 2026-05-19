@@ -375,13 +375,8 @@ export default function Contacts() {
       setMyCallsTodayCount(0);
       return;
     }
-    // Local-midnight ISO so the count matches what the rep "started today" —
-    // not UTC midnight, which would give Indian reps a stale count after IST
-    // 5:30am UTC rollover.
-    const localMidnight = new Date();
-    localMidnight.setHours(0, 0, 0, 0);
     try {
-      const total = await activitiesApi.myCountSince(localMidnight.toISOString(), "call");
+      const total = await activitiesApi.myCallsToday();
       setMyCallsTodayCount(total);
     } catch {
       setMyCallsTodayCount(0);

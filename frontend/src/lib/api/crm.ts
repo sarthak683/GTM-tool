@@ -283,6 +283,10 @@ export const activitiesApi = {
     const res = await requestPaginated<Activity>(`/api/v1/activities/?${params}`);
     return res.total ?? 0;
   },
+  myCallsToday: async () => {
+    const res = await request<{ total: number }>("/api/v1/activities/me/calls-today");
+    return res.total ?? 0;
+  },
   create: (data: Partial<Activity>) =>
     request<Activity>("/api/v1/activities/", {
       method: "POST",

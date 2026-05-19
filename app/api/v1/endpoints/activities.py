@@ -1,11 +1,12 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
@@ -18,6 +19,8 @@ from app.services.tasks import backfill_open_task_assignments, refresh_system_ta
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 logger = logging.getLogger(__name__)
+REPORT_CUTOFF_TIMEZONE = ZoneInfo("Asia/Kolkata")
+REPORT_CUTOFF_HOUR = 6
 
 
 async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact_id: UUID | None) -> None:
@@ -94,6 +97,42 @@ async def list_activities(
         order_by=Activity.created_at.desc(),
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
+
+
+@router.get("/me/calls-today")
+async def my_calls_today(session: DBSession, current_user: CurrentUser):
+    reference = datetime.now(timezone.utc)
+    local_reference = reference.astimezone(REPORT_CUTOFF_TIMEZONE)
+    period_start_date = local_reference.date()
+    if local_reference.time() < time(REPORT_CUTOFF_HOUR):
+        period_start_date -= timedelta(days=1)
+    period_start = datetime.combine(
+        period_start_date,
+        time(REPORT_CUTOFF_HOUR),
+        tzinfo=REPORT_CUTOFF_TIMEZONE,
+    ).astimezone(timezone.utc).replace(tzinfo=None)
+    period_end = reference.replace(tzinfo=None)
+
+    total = (
+        await session.execute(
+            select(func.count(Activity.id)).where(
+                Activity.created_by_id == current_user.id,
+                or_(
+                    func.lower(Activity.type) == "call",
+                    func.lower(Activity.medium) == "call",
+                ),
+                Activity.created_at >= period_start,
+                Activity.created_at < period_end,
+            )
+        )
+    ).scalar_one()
+    return {
+        "total": int(total or 0),
+        "timezone": str(REPORT_CUTOFF_TIMEZONE),
+        "cutoff_hour": REPORT_CUTOFF_HOUR,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+    }
 
 
 @router.post("/", response_model=ActivityRead, status_code=201)
