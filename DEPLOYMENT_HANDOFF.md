@@ -322,6 +322,46 @@ kubectl --kubeconfig C:\gtm-prototype\tmp\beacon-test-kubeconfig.yaml -n gtm-pro
 - Backend, worker, beat, and priority-worker generally move together on the backend image tag.
 - Frontend can move independently.
 
+### Helm releases are in a `failed` state on both staging and prod (as of 2026-05-19)
+
+Both Helm releases (`gtm/gtm` and `gtm/gtm-prod`) have drifted: someone ran `kubectl set image` directly on the running Deployments, which transferred ownership of `.spec.template.spec.containers[*].image` from the `helm` field manager to `kubectl-set` under Kubernetes server-side-apply. As a result, the documented `helm upgrade` flow above will currently fail with:
+
+```
+Error: UPGRADE FAILED: ... conflict with "kubectl-set" using apps/v1:
+.spec.template.spec.containers[name="copilot"].image
+```
+
+Until the field-manager state is reset, **the operational deploy flow is `kubectl set image`**, not `helm upgrade`. To deploy a new image to either environment, run:
+
+```powershell
+# Replace <NS> with `gtm` (staging) or `gtm-prod` (prod), and <TAG> with the image tag.
+kubectl -n <NS> --kubeconfig $KCFG set image deploy/gtm-backend-deployment copilot=beacon.azurecr.io/gtm-be:<TAG> run-migrations=beacon.azurecr.io/gtm-be:<TAG>
+kubectl -n <NS> --kubeconfig $KCFG set image deploy/gtm-frontend-deployment copilot=beacon.azurecr.io/gtm-fe:<TAG>
+kubectl -n <NS> --kubeconfig $KCFG set image deploy/gtm-worker-deployment copilot=beacon.azurecr.io/gtm-be:<TAG>
+kubectl -n <NS> --kubeconfig $KCFG set image deploy/gtm-priority-worker-deployment copilot=beacon.azurecr.io/gtm-be:<TAG>
+kubectl -n <NS> --kubeconfig $KCFG set image deploy/gtm-beat-deployment copilot=beacon.azurecr.io/gtm-be:<TAG>
+```
+
+Then wait for rollouts and smoke-test (same `kubectl rollout status` and `curl` lines as the documented verification steps).
+
+To restore the documented `helm upgrade` flow, the next operator needs to reclaim the `helm` field manager for the conflicting fields. The cleanest path is:
+
+```powershell
+# Render the chart locally and re-apply it with the helm field manager, forcing conflicts.
+& $HELM template gtm $CHART -n <NS> -f <VALUES> --set-string backend.image=beacon.azurecr.io/gtm-be:<CURRENT_TAG> --set-string frontend.image=beacon.azurecr.io/gtm-fe:<CURRENT_TAG> | kubectl -n <NS> --kubeconfig $KCFG apply --server-side --force-conflicts --field-manager=helm -f -
+# Then run a fresh helm upgrade — it should succeed because the image fields are now owned by `helm` again.
+```
+
+Helm's own `--force` and `--take-ownership` flags were both tried and don't help here — `--force` is incompatible with server-side apply in current Helm, and `--take-ownership` does not actually claim the conflicting subfield.
+
+### Build pitfall: wrong-content image under correct tag
+
+`docker buildx build .` uses the Dockerfile at `.` (the current directory). If you launch the frontend build without `cd C:\gtm-prototype\frontend` first, buildx will use the repo-root backend Dockerfile while tagging the result as `beacon.azurecr.io/gtm-fe:<TAG>`. Both the build and the `--push` step return exit code 0. The break only surfaces at deploy time as a stuck readiness probe (`connect: connection refused on :80`) because the "frontend" container has no nginx.
+
+Diagnostic: `kubectl describe pod <stuck-pod>` and compare the `Image:` line (what was requested) to the `Image ID:` line (what was actually pulled). If `Image: gtm-fe:...` but `Image ID: gtm-be@sha256:...`, the build was sourced from the wrong directory.
+
+Always run frontend builds with an explicit `cd C:\gtm-prototype\frontend` immediately preceding the `docker buildx build` command. The same applies for any future builds — keep the `cd` and the `docker buildx build` in the same one-liner so CWD drift across shell sessions can't bite you.
+
 ### Personal inbox and calendar sync
 
 Current state of the production investigation:
