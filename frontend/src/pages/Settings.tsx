@@ -93,6 +93,7 @@ export default function SettingsPage() {
   const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
   const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
+  const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
   const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
@@ -917,6 +918,21 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSendSalesReportTest = async () => {
+    setSendingSalesReportTest(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await settingsApi.sendSalesReportTest();
+      const recipients = result.recipients?.join(", ") || "configured recipients";
+      setMessage(`Test report sent to ${recipients}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test report");
+    } finally {
+      setSendingSalesReportTest(false);
+    }
+  };
+
   const handleTriggerTldvSync = async () => {
     setTriggeringTldv(true);
     setError(null);
@@ -1690,6 +1706,10 @@ export default function SettingsPage() {
             </div>
 
             <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div style={{ border: "1px solid #d8e7f8", borderRadius: 14, padding: 16, background: "#f7fbff", color: "#34516d", fontSize: 13, lineHeight: 1.7 }}>
+                The normal setup is <strong>7:00 AM Asia/Kolkata</strong> with a <strong>6:00 AM Asia/Kolkata</strong> cutoff. That means the report is sent after the US team's working day ends. In staging, scheduled and test sends are restricted to the non-production allowlist below, so production recipients do not get test emails.
+              </div>
+
               <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable scheduled call reports</div>
@@ -1707,14 +1727,17 @@ export default function SettingsPage() {
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send timezone</span>
                   <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>IANA timezone used for the send clock, e.g. Asia/Kolkata or America/Chicago.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send hour</span>
                   <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>24-hour local hour in the send timezone. Use 7 for 7 AM.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send minute</span>
                   <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Minute after the hour. Use 0 for exactly 7:00.</span>
                 </label>
               </div>
 
@@ -1722,19 +1745,23 @@ export default function SettingsPage() {
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Business-day cutoff timezone</span>
                   <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used to decide which calls belong to a sales day.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Cutoff hour</span>
                   <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Hour when the sales day ends. Use 6 for 6 AM IST.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Report label timezone</span>
                   <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used for the date printed in the report subject/title.</span>
                 </label>
               </div>
 
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send days</div>
+                <div className="crm-muted" style={{ fontSize: 12 }}>Days when the scheduler is allowed to send. Keep Saturday/Sunday off unless the team explicitly works weekends.</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => {
                     const active = Boolean(salesReportSettings?.send_days.includes(day));
@@ -1753,6 +1780,7 @@ export default function SettingsPage() {
                   <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }}>
                     {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => <option key={day} value={day}>{day.toUpperCase()}</option>)}
                   </select>
+                  <span className="crm-muted" style={{ fontSize: 12 }}>On this send day, Beacon sends the weekly report instead of the daily report.</span>
                 </label>
                 <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e7eaf5", borderRadius: 14, padding: 14 }}>
                   <input type="checkbox" checked={Boolean(salesReportSettings?.skip_weekends)} onChange={(e) => updateSalesReportField("skip_weekends", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
@@ -1763,6 +1791,7 @@ export default function SettingsPage() {
               <label style={{ display: "grid", gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Production recipients</span>
                 <textarea value={(salesReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
+                <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails for production scheduled reports. Staging does not send to this full list.</span>
               </label>
 
               <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
@@ -1774,6 +1803,7 @@ export default function SettingsPage() {
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Non-production allowed recipients</span>
                   <textarea value={(salesReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Only these addresses can receive staging report emails. Keep this as your email while testing.</span>
                 </label>
               </div>
 
@@ -1784,7 +1814,11 @@ export default function SettingsPage() {
               )}
 
               {isAdmin ? (
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <button className="crm-button soft" type="button" onClick={handleSendSalesReportTest} disabled={sendingSalesReportTest || !salesReportSettings}>
+                    {sendingSalesReportTest ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
+                    Send test report
+                  </button>
                   <button className="crm-button primary" type="button" onClick={handleSaveSalesReportSettings} disabled={savingSalesReportSettings || !salesReportSettings}>
                     {savingSalesReportSettings ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
                     Save report settings

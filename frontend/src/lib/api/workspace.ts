@@ -795,6 +795,10 @@ export const settingsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  sendSalesReportTest: () =>
+    request<{ report_date: string; report_type: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/us-pod-call-report/send", {
+      method: "POST",
+    }),
   getSyncSchedule: () =>
     request<SyncScheduleSettings>("/api/v1/settings/sync-schedule"),
   updateSyncSchedule: (data: Partial<SyncScheduleSettings>) =>
