@@ -1718,7 +1718,10 @@ textarea:focus {
   .crm-content {
     padding: 16px;
     overflow: visible;
+    padding-bottom: 80px;
   }
+
+  .mobile-nav { display: flex !important; }
 
   .crm-page {
     gap: 16px;
@@ -1899,17 +1902,11 @@ textarea:focus {
   .desktop-only { display: none !important; }
   .mobile-only { display: block !important; }
 
-  .crm-topbar {
-    padding: 10px 12px;
-    min-height: 56px;
-  }
-
-  .crm-title {
-    font-size: 18px;
-  }
+  .mobile-nav { display: flex !important; }
 
   .crm-content {
     padding: 8px;
+    padding-bottom: 80px;
   }
 
   .crm-page {

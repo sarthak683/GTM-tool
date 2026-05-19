@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
+import MobileNav from "./MobileNav";
 import GlobalSearchModal from "./GlobalSearchModal";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { useAuth } from "../../lib/AuthContext";
@@ -271,6 +272,7 @@ export default function Layout() {
             <Outlet />
           </div>
         </section>
+        <MobileNav />
       </main>
     </div>
   );
