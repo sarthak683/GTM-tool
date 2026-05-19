@@ -325,10 +325,6 @@ export default function Contacts() {
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
   const [callStatus, setCallStatus] = useState("attempted");
-  // Tracks the Activity row created the moment we dial. Each click on the
-  // Call button opens a fresh row (so back-to-back dials each get their own
-  // entry); the disposition save then UPDATEs whichever row is current.
-  const [currentCallActivityId, setCurrentCallActivityId] = useState<string | null>(null);
   const [savingDisposition, setSavingDisposition] = useState(false);
   const [precallBrief, setPrecallBrief] = useState<PreCallBrief | null>(null);
   const [precallLoading, setPrecallLoading] = useState(false);
@@ -892,47 +888,9 @@ export default function Contacts() {
     setCallStatus("attempted");
     setCallDisposition("");
     setCallNotes("");
-    setCurrentCallActivityId(null);
-    // Trigger dial
     if (contact.phone) {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
-      }
-      // Log the dial as an activity *immediately*, so back-to-back dials each
-      // get their own row. Disposition save will UPDATE whichever row is
-      // current. Without this, dialing twice without saving in between would
-      // produce only one activity (the second save's create call), losing the
-      // first attempt entirely. Outcome stays "attempted" until the rep saves.
-      const contactLabel = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
-      const dialIso = new Date().toISOString();
-      try {
-        const created = await activitiesApi.create({
-          type: "call",
-          source: "manual",
-          content: `Dialed ${contactLabel} (awaiting disposition)`,
-          contact_id: contact.id,
-          call_outcome: "attempted",
-        } as Partial<Activity>);
-        setCurrentCallActivityId(created.id);
-        // Reflect this dial in the "My Calls Today" tile immediately. Without
-        // this, the tile only ticks up after disposition save — which makes
-        // back-to-back dials feel like the counter is broken.
-        void loadMyCallsToday();
-      } catch {
-        // Don't block the rep if the timeline write fails; saveCallDisposition
-        // will fall back to creating a new row.
-      }
-      // Stamp the contact row too so the contact-list "called" chip flips on
-      // the dial, not on disposition save. Without this, activity count and
-      // contact-list badge count disagree (rep sees 6 activities but 0
-      // touched contacts, which is the "6 -> 0" Mahesh reported on 2026-05-07).
-      try {
-        await contactsApi.update(contact.id, {
-          call_status: "attempted",
-          call_last_at: dialIso,
-        });
-      } catch {
-        // Same rule as above — disposition save will retry the contact stamp.
       }
     }
   };
@@ -964,29 +922,20 @@ export default function Contacts() {
           : {}),
       });
 
-      // Update the activity row that openCallSidebar created on dial. Falls
-      // back to creating a fresh row if for any reason the dial-time write
-      // didn't land (offline, race, etc.) — never lose the rep's disposition.
+      // Count/log the manual call only after the rep commits the disposition.
       const dispositionLabel = formatCallDisposition(callDisposition);
       const contactLabel = `${callContact.first_name ?? ""} ${callContact.last_name ?? ""}`.trim();
       const activityContent = callNotes
         ? `${dispositionLabel} call with ${contactLabel}: ${callNotes}`
         : `${dispositionLabel} call with ${contactLabel}`;
       try {
-        if (currentCallActivityId) {
-          await activitiesApi.update(currentCallActivityId, {
-            content: activityContent,
-            call_outcome: callStatus || undefined,
-          } as Partial<Activity>);
-        } else {
-          await activitiesApi.create({
-            type: "call",
-            source: "manual",
-            content: activityContent,
-            contact_id: callContact.id,
-            call_outcome: callStatus || undefined,
-          } as Partial<Activity>);
-        }
+        await activitiesApi.create({
+          type: "call",
+          source: "manual",
+          content: activityContent,
+          contact_id: callContact.id,
+          call_outcome: callStatus || undefined,
+        } as Partial<Activity>);
       } catch {
         // Non-fatal — contact state already saved above; warn the rep so they
         // know to check the timeline manually.
@@ -995,7 +944,6 @@ export default function Contacts() {
 
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
-      setCurrentCallActivityId(null);
       loadContacts();
       // Refresh the rep-scoped tile so it reflects the just-saved call. It
       // queries activities directly so it doesn't depend on which page of
