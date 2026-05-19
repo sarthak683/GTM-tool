@@ -669,7 +669,7 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "- Includes activities where type or medium is call.",
             "- Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.",
             "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
-            "- Uses a 6:00 AM IST cutoff so the report matches the US pod end of day.",
+            f"- Uses {report['timezone']} so the report matches the configured US pod business day.",
         ]
     )
     return "\n".join(lines)
@@ -731,7 +731,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
       <li>Includes activities where type or medium is <code>call</code>.</li>
       <li>Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.</li>
       <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
-      <li>Uses a 6:00 AM IST cutoff so the report matches the US pod end of day.</li>
+      <li>Uses {html.escape(report['timezone'])} so the report matches the configured US pod business day.</li>
     </ul>
     """.strip()
 
