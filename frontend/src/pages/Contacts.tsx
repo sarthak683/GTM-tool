@@ -1033,9 +1033,96 @@ export default function Contacts() {
 
   return (
     <>
+      <style>{`
+        .prospect-mobile-only { display: none; }
+        @media (max-width: 760px) {
+          .contacts-page {
+            padding: 0 0 88px !important;
+            gap: 12px !important;
+          }
+          .prospect-desktop-only {
+            display: none !important;
+          }
+          .prospect-mobile-only {
+            display: block !important;
+          }
+          .prospect-mobile-shell {
+            margin: -4px -10px 0;
+            background: #f4f8fc;
+            min-height: calc(100vh - 56px);
+          }
+          .prospect-mobile-top {
+            position: sticky;
+            top: 0;
+            z-index: 12;
+            padding: 12px 12px 10px;
+            background: rgba(244, 248, 252, 0.96);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #dde8f4;
+          }
+          .prospect-mobile-search {
+            width: 100%;
+            height: 46px;
+            border-radius: 14px;
+            border: 1px solid #cfe0f3;
+            background: #ffffff;
+            padding: 0 12px 0 42px;
+            color: #102a43;
+            font-size: 15px;
+            font-weight: 650;
+            outline: none;
+            box-shadow: 0 8px 22px rgba(16, 42, 67, 0.06);
+          }
+          .prospect-mobile-search::placeholder {
+            color: #7b91a8;
+            font-weight: 600;
+          }
+          .prospect-mobile-card {
+            background: #ffffff;
+            border: 1px solid #dce8f4;
+            border-radius: 18px;
+            box-shadow: 0 10px 26px rgba(16, 42, 67, 0.08);
+            overflow: hidden;
+          }
+          .prospect-mobile-call {
+            min-height: 48px;
+            border-radius: 14px;
+            border: 1px solid #a9cdf8;
+            background: linear-gradient(135deg, #0f5fb8, #174ea6);
+            color: #ffffff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 15px;
+            font-weight: 800;
+            box-shadow: 0 10px 20px rgba(23, 80, 137, 0.18);
+          }
+          .prospect-mobile-call:disabled {
+            background: #eef3f8;
+            color: #8ea1b4;
+            border-color: #d9e4ef;
+            box-shadow: none;
+          }
+          .prospect-mobile-secondary {
+            height: 40px;
+            border-radius: 12px;
+            border: 1px solid #d7e4f0;
+            background: #f8fbff;
+            color: #35546f;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12.5px;
+            font-weight: 750;
+            text-decoration: none;
+          }
+        }
+      `}</style>
       <div className="crm-page contacts-page space-y-6">
         {/* ── Tab switcher + action bar ──────────────────────────────── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="prospect-desktop-only" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
           {/* Row 1 — tab cards */}
           {/* SDR Activity Cards — replace single large contacts count */}
@@ -1320,7 +1407,236 @@ export default function Contacts() {
         {/* ═══════════════════════════════════════════════════════════════ */}
         {tab === "contacts" && (
           <>
+            <div className="prospect-mobile-only">
+              <div className="prospect-mobile-shell">
+                <div className="prospect-mobile-top">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 850, color: "#102a43", lineHeight: 1.1 }}>Prospects</div>
+                      <div style={{ fontSize: 12, color: "#6f8297", fontWeight: 650, marginTop: 2 }}>
+                        {contactsTotal} total · {myCallsTodayCount} calls today
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOwnerScope(ownerScope === "mine" ? "all" : "mine")}
+                      style={{
+                        height: 36,
+                        padding: "0 12px",
+                        borderRadius: 12,
+                        border: ownerScope === "mine" ? "1px solid #ffb995" : "1px solid #d3e0ed",
+                        background: ownerScope === "mine" ? "#fff3ec" : "#ffffff",
+                        color: ownerScope === "mine" ? "#b85024" : "#35546f",
+                        fontSize: 12,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {ownerScope === "mine" ? "My list" : "All reps"}
+                    </button>
+                  </div>
+                  <div style={{ position: "relative" }}>
+                    <Search size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#6f8297", pointerEvents: "none" }} />
+                    <input
+                      className="prospect-mobile-search"
+                      placeholder="Search name, company, phone..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
+                    <button
+                      type="button"
+                      onClick={() => setCallDispositionFilter([])}
+                      style={{
+                        height: 32,
+                        padding: "0 10px",
+                        borderRadius: 999,
+                        border: callDispositionFilter.length === 0 ? "1px solid #175089" : "1px solid #d3e0ed",
+                        background: callDispositionFilter.length === 0 ? "#eaf2ff" : "#ffffff",
+                        color: callDispositionFilter.length === 0 ? "#175089" : "#536a82",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      All outcomes
+                    </button>
+                    {CALL_DISPOSITION_FILTER_OPTIONS.slice(0, 4).map((option) => {
+                      const active = callDispositionFilter.includes(option.value);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setCallDispositionFilter(active ? callDispositionFilter.filter((value) => value !== option.value) : [option.value])}
+                          style={{
+                            height: 32,
+                            padding: "0 10px",
+                            borderRadius: 999,
+                            border: active ? "1px solid #175089" : "1px solid #d3e0ed",
+                            background: active ? "#eaf2ff" : "#ffffff",
+                            color: active ? "#175089" : "#536a82",
+                            fontSize: 12,
+                            fontWeight: 800,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ padding: 12, display: "grid", gap: 12 }}>
+                  {loading ? (
+                    <div className="prospect-mobile-card" style={{ padding: 18, textAlign: "center", color: "#6f8297", fontSize: 13, fontWeight: 700 }}>
+                      Loading prospects...
+                    </div>
+                  ) : contacts.length === 0 ? (
+                    <div className="prospect-mobile-card" style={{ padding: 22, textAlign: "center" }}>
+                      <Users size={30} style={{ margin: "0 auto 10px", color: "#9fb0c2" }} />
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d" }}>No prospects found</div>
+                      <div style={{ fontSize: 12.5, color: "#7a8ea4", marginTop: 5 }}>Try another name, company, or call outcome.</div>
+                    </div>
+                  ) : (
+                    <>
+                      {contacts.map((c) => {
+                        const name = `${c.first_name ?? ""} ${c.last_name ?? ""}`.trim() || "Unnamed prospect";
+                        const phoneLabel = c.phone || "No phone number saved";
+                        const callLabel = c.call_disposition ? formatCallDisposition(c.call_disposition) : c.call_status && c.call_status !== "none" ? formatCallDisposition(c.call_status) : "Not called yet";
+                        return (
+                          <div key={c.id} className="prospect-mobile-card">
+                            <div style={{ padding: 14, display: "grid", gap: 12 }}>
+                              <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+                                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
+                                  {getInitials(name)}
+                                </div>
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: 16, fontWeight: 850, color: "#1d2b3c", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {name}
+                                  </div>
+                                  <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                                    <Building2 size={13} style={{ color: "#6f8297", flexShrink: 0 }} />
+                                    {c.company_name ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => c.company_id ? navigate(`/account-sourcing/${c.company_id}`) : undefined}
+                                        style={{
+                                          border: "none",
+                                          background: "transparent",
+                                          padding: 0,
+                                          color: "#2467a8",
+                                          fontSize: 13,
+                                          fontWeight: 750,
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
+                                          minWidth: 0,
+                                        }}
+                                      >
+                                        {c.company_name}
+                                      </button>
+                                    ) : (
+                                      <span style={{ color: "#9aaabd", fontSize: 13, fontWeight: 700 }}>No company mapped</span>
+                                    )}
+                                  </div>
+                                  {c.title && (
+                                    <div style={{ color: "#71839a", fontSize: 12.5, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {c.title}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div style={{ border: "1px solid #e5eef7", background: "#f8fbff", borderRadius: 14, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 10.5, color: "#71839a", fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Phone</div>
+                                  <div style={{ marginTop: 2, color: c.phone ? "#102a43" : "#96a7ba", fontSize: 15, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {phoneLabel}
+                                  </div>
+                                </div>
+                                <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
+                                  {callLabel}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                className="prospect-mobile-call"
+                                disabled={!c.phone}
+                                onClick={() => { if (c.phone) void openCallSidebar(c); }}
+                                title={c.phone ? c.phone : "No phone number"}
+                              >
+                                <Phone size={17} />
+                                Call prospect
+                              </button>
+
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                                <a
+                                  className="prospect-mobile-secondary"
+                                  href={c.email ? gmailComposeUrl(c.email) : undefined}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => { if (!c.email) e.preventDefault(); }}
+                                  style={{ opacity: c.email ? 1 : 0.55 }}
+                                >
+                                  <Mail size={14} />
+                                  Email
+                                </a>
+                                <a
+                                  className="prospect-mobile-secondary"
+                                  href={c.linkedin_url || undefined}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => { if (!c.linkedin_url) e.preventDefault(); }}
+                                  style={{ opacity: c.linkedin_url ? 1 : 0.55 }}
+                                >
+                                  <Link2 size={14} />
+                                  LinkedIn
+                                </a>
+                                <button
+                                  type="button"
+                                  className="prospect-mobile-secondary"
+                                  onClick={() => navigate(`/contacts/${c.id}`)}
+                                >
+                                  <ChevronRight size={14} />
+                                  Details
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <div className="prospect-mobile-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => setPage((current) => Math.max(1, current - 1))}
+                          disabled={page <= 1}
+                          style={{ height: 40, padding: "0 14px", borderRadius: 12, border: "1px solid #dce8f4", background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? "#9eb0c3" : "#35546f", fontSize: 13, fontWeight: 800 }}
+                        >
+                          Previous
+                        </button>
+                        <span style={{ color: "#71839a", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
+                          Page {page} / {Math.max(contactsPages, 1)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPage((current) => Math.min(Math.max(contactsPages, 1), current + 1))}
+                          disabled={page >= contactsPages}
+                          style={{ height: 40, padding: "0 14px", borderRadius: 12, border: "1px solid #dce8f4", background: page >= contactsPages ? "#f7f9fc" : "#fff", color: page >= contactsPages ? "#9eb0c3" : "#35546f", fontSize: 13, fontWeight: 800 }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div
+              className="prospect-desktop-only"
               style={{
                 background: "#fff8e8",
                 border: "1px solid #f5ddaa",
@@ -1361,7 +1677,7 @@ export default function Contacts() {
                 label: u.name || u.email,
               }));
               return (
-                <div style={{
+                <div className="prospect-desktop-only" style={{
                   display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
                   background: "#fff", borderRadius: 14,
                   border: "1px solid #e8eef5",
@@ -1584,14 +1900,14 @@ export default function Contacts() {
 
             {/* Contacts Table */}
             {loading ? (
-              <div className="crm-panel p-14 text-center crm-muted">Loading contacts...</div>
+              <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
             ) : contacts.length === 0 ? (
-              <div className="crm-panel p-14 text-center text-[#6f8297]">
+              <div className="crm-panel p-14 text-center text-[#6f8297] prospect-desktop-only">
                 <Users className="h-12 w-12 mx-auto mb-4 opacity-30" />
                 No contacts match your search.
               </div>
             ) : (
-              <div className="crm-panel overflow-hidden contacts-table-panel">
+              <div className="crm-panel overflow-hidden contacts-table-panel prospect-desktop-only">
                 <div className="overflow-x-auto">
                   <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
