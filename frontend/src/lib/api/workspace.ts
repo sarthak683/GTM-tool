@@ -16,6 +16,7 @@ import type {
   ProspectStageSettings,
   ReportSenderSettings,
   RolePermissionsSettings,
+  SalesReportSettings,
   SalesResource,
   SyncScheduleSettings,
   TaskComment,
@@ -786,6 +787,13 @@ export const settingsApi = {
   disconnectReportSender: () =>
     request<{ status: string }>("/api/v1/settings/report-sender/google", {
       method: "DELETE",
+    }),
+  getSalesReportSettings: () =>
+    request<SalesReportSettings>("/api/v1/settings/sales-report"),
+  updateSalesReportSettings: (data: Partial<SalesReportSettings>) =>
+    request<SalesReportSettings>("/api/v1/settings/sales-report", {
+      method: "PATCH",
+      body: JSON.stringify(data),
     }),
   getSyncSchedule: () =>
     request<SyncScheduleSettings>("/api/v1/settings/sync-schedule"),

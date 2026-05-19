@@ -573,6 +573,24 @@ export interface ReportSenderSettings {
   has_send_scope: boolean;
 }
 
+export interface SalesReportSettings {
+  enabled: boolean;
+  recipients: string[];
+  send_timezone: string;
+  send_hour: number;
+  send_minute: number;
+  cutoff_timezone: string;
+  cutoff_hour: number;
+  report_label_timezone: string;
+  send_days: string[];
+  weekly_report_day: string;
+  skip_weekends: boolean;
+  nonprod_scheduled_enabled: boolean;
+  nonprod_recipients: string[];
+  last_scheduled_send_key?: string | null;
+  last_scheduled_send_at?: string | null;
+}
+
 export interface DealStageSetting {
   id: string;
   label: string;

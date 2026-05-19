@@ -25,6 +25,8 @@ REPORT_TIMEZONE = ZoneInfo("America/Chicago")
 REPORT_CUTOFF_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REPORT_CUTOFF_HOUR = 6
 LOOKBACK_DAYS = 7
+DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+WEEKDAY_TO_KEY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 US_POD_REPS = [
     {"name": "Pravalika Jamalpur", "email": "pravalika@beacon.li", "aliases": ["pravalika"]},
@@ -42,31 +44,129 @@ US_POD_REPORT_RECIPIENTS = [
     "sarthak@beacon.li",
 ]
 
+DEFAULT_SALES_REPORT_SETTINGS = {
+    "enabled": True,
+    "recipients": US_POD_REPORT_RECIPIENTS,
+    "send_timezone": "Asia/Kolkata",
+    "send_hour": 7,
+    "send_minute": 0,
+    "cutoff_timezone": "Asia/Kolkata",
+    "cutoff_hour": 6,
+    "report_label_timezone": "America/Chicago",
+    "send_days": ["mon", "tue", "wed", "thu", "fri"],
+    "weekly_report_day": "fri",
+    "skip_weekends": True,
+    "nonprod_scheduled_enabled": False,
+    "nonprod_recipients": ["sarthak@beacon.li"],
+    "last_scheduled_send_key": None,
+    "last_scheduled_send_at": None,
+}
+
+
+def _zone_name(value: object, fallback: str) -> str:
+    name = str(value or fallback).strip() or fallback
+    try:
+        ZoneInfo(name)
+        return name
+    except Exception:
+        return fallback
+
+
+def normalize_sales_report_settings(value: dict | None) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    merged = {**DEFAULT_SALES_REPORT_SETTINGS, **raw}
+
+    def _emails(items: object, fallback: list[str]) -> list[str]:
+        if isinstance(items, str):
+            source = items.split(",")
+        elif isinstance(items, list):
+            source = items
+        else:
+            source = fallback
+        cleaned = []
+        for item in source:
+            email = str(item or "").strip().lower()
+            if email and "@" in email and email not in cleaned:
+                cleaned.append(email)
+        return cleaned or fallback
+
+    send_days = [
+        str(day or "").strip().lower()[:3]
+        for day in (merged.get("send_days") if isinstance(merged.get("send_days"), list) else DEFAULT_SALES_REPORT_SETTINGS["send_days"])
+    ]
+    send_days = [day for day in send_days if day in DAY_KEYS] or DEFAULT_SALES_REPORT_SETTINGS["send_days"]
+    weekly_report_day = str(merged.get("weekly_report_day") or "fri").strip().lower()[:3]
+    if weekly_report_day not in DAY_KEYS:
+        weekly_report_day = "fri"
+
+    return {
+        "enabled": bool(merged.get("enabled")),
+        "recipients": _emails(merged.get("recipients"), US_POD_REPORT_RECIPIENTS),
+        "send_timezone": _zone_name(merged.get("send_timezone"), "Asia/Kolkata"),
+        "send_hour": max(0, min(23, int(merged.get("send_hour") or 0))),
+        "send_minute": max(0, min(59, int(merged.get("send_minute") or 0))),
+        "cutoff_timezone": _zone_name(merged.get("cutoff_timezone"), "Asia/Kolkata"),
+        "cutoff_hour": max(0, min(23, int(merged.get("cutoff_hour") or 0))),
+        "report_label_timezone": _zone_name(merged.get("report_label_timezone"), "America/Chicago"),
+        "send_days": send_days,
+        "weekly_report_day": weekly_report_day,
+        "skip_weekends": bool(merged.get("skip_weekends")),
+        "nonprod_scheduled_enabled": bool(merged.get("nonprod_scheduled_enabled")),
+        "nonprod_recipients": _emails(merged.get("nonprod_recipients"), ["sarthak@beacon.li"]),
+        "last_scheduled_send_key": merged.get("last_scheduled_send_key"),
+        "last_scheduled_send_at": merged.get("last_scheduled_send_at"),
+    }
+
+
+async def load_sales_report_settings(session: AsyncSession) -> dict[str, Any]:
+    row = await session.get(WorkspaceSettings, 1)
+    raw = None
+    if row and isinstance(row.sync_schedule_settings, dict):
+        raw = row.sync_schedule_settings.get("sales_report")
+    return normalize_sales_report_settings(raw if isinstance(raw, dict) else None)
+
+
+def _report_zone(config: dict[str, Any] | None, key: str, fallback: ZoneInfo) -> ZoneInfo:
+    if not config:
+        return fallback
+    return ZoneInfo(_zone_name(config.get(key), fallback.key))
+
+
+def _cutoff_hour(config: dict[str, Any] | None) -> int:
+    if not config:
+        return REPORT_CUTOFF_HOUR
+    return max(0, min(23, int(config.get("cutoff_hour", REPORT_CUTOFF_HOUR))))
+
 
 def is_production_environment() -> bool:
     return settings.ENVIRONMENT.strip().lower() == "production"
 
 
-def _nonprod_report_recipient_allowlist() -> list[str]:
+def _nonprod_report_recipient_allowlist(report_settings: dict[str, Any] | None = None) -> list[str]:
     recipients = [
         email.strip().lower()
         for email in settings.SALES_REPORT_NONPROD_RECIPIENTS.split(",")
         if email.strip()
     ]
-    return recipients or ["sarthak@beacon.li"]
+    configured = normalize_sales_report_settings(report_settings).get("nonprod_recipients") if report_settings else None
+    return recipients or configured or ["sarthak@beacon.li"]
 
 
-def _resolve_report_recipients(recipients: list[str] | None) -> tuple[list[str], list[str]]:
-    requested = recipients or US_POD_REPORT_RECIPIENTS
+def _resolve_report_recipients(
+    recipients: list[str] | None,
+    report_settings: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str]]:
+    config = normalize_sales_report_settings(report_settings)
+    requested = recipients or config["recipients"]
     if is_production_environment():
         return requested, []
 
-    allowed = set(_nonprod_report_recipient_allowlist())
+    allowed = set(_nonprod_report_recipient_allowlist(config))
     safe_recipients = [recipient for recipient in requested if recipient.lower() in allowed]
     blocked_recipients = [recipient for recipient in requested if recipient.lower() not in allowed]
 
     if recipients is None:
-        safe_recipients = _nonprod_report_recipient_allowlist()
+        safe_recipients = _nonprod_report_recipient_allowlist(config)
         blocked_recipients = []
 
     return safe_recipients, blocked_recipients
@@ -81,51 +181,59 @@ class ResolvedRep:
     matched: bool
 
 
-def default_report_date(now: datetime | None = None) -> date:
-    return _latest_completed_report_cutoff(now).astimezone(REPORT_TIMEZONE).date()
+def default_report_date(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> date:
+    label_tz = _report_zone(report_settings, "report_label_timezone", REPORT_TIMEZONE)
+    return _latest_completed_report_cutoff(now, report_settings).astimezone(label_tz).date()
 
 
-def _latest_completed_report_cutoff(now: datetime | None = None) -> datetime:
+def _latest_completed_report_cutoff(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> datetime:
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
-    local_reference = reference.astimezone(REPORT_CUTOFF_TIMEZONE)
+    cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
+    cutoff_hour = _cutoff_hour(report_settings)
+    local_reference = reference.astimezone(cutoff_tz)
     cutoff_date = local_reference.date()
-    if local_reference.time() < time(REPORT_CUTOFF_HOUR):
+    if local_reference.time() < time(cutoff_hour):
         cutoff_date -= timedelta(days=1)
     return datetime.combine(
         cutoff_date,
-        time(REPORT_CUTOFF_HOUR),
-        tzinfo=REPORT_CUTOFF_TIMEZONE,
+        time(cutoff_hour),
+        tzinfo=cutoff_tz,
     )
 
 
-def current_report_local_date(now: datetime | None = None) -> date:
+def current_report_local_date(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> date:
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
-    return reference.astimezone(REPORT_CUTOFF_TIMEZONE).date()
+    cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
+    return reference.astimezone(cutoff_tz).date()
 
 
-def is_weekend_report_day(now: datetime | None = None) -> bool:
-    return current_report_local_date(now).weekday() >= 5
+def is_weekend_report_day(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> bool:
+    return current_report_local_date(now, report_settings).weekday() >= 5
 
 
-def scheduled_report_type(now: datetime | None = None) -> str:
-    return "weekly" if current_report_local_date(now).weekday() == 4 else "daily"
+def scheduled_report_type(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> str:
+    settings = normalize_sales_report_settings(report_settings)
+    weekday_key = WEEKDAY_TO_KEY[current_report_local_date(now, settings).weekday()]
+    return "weekly" if weekday_key == settings["weekly_report_day"] else "daily"
 
 
-def weekly_report_period(report_date: date | None = None) -> tuple[date, date]:
-    end_date = report_date or default_report_date()
+def weekly_report_period(report_date: date | None = None, report_settings: dict[str, Any] | None = None) -> tuple[date, date]:
+    end_date = report_date or default_report_date(report_settings=report_settings)
     start_date = end_date - timedelta(days=end_date.weekday())
     return start_date, end_date
 
 
-def _utc_bounds_for_report_day(day: date) -> tuple[datetime, datetime]:
+def _utc_bounds_for_report_day(day: date, report_settings: dict[str, Any] | None = None) -> tuple[datetime, datetime]:
+    cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
+    cutoff_hour = _cutoff_hour(report_settings)
     local_end = datetime.combine(
         day + timedelta(days=1),
-        time(REPORT_CUTOFF_HOUR),
-        tzinfo=REPORT_CUTOFF_TIMEZONE,
+        time(cutoff_hour),
+        tzinfo=cutoff_tz,
     )
     local_start = local_end - timedelta(days=1)
     return (
@@ -134,20 +242,23 @@ def _utc_bounds_for_report_day(day: date) -> tuple[datetime, datetime]:
     )
 
 
-def _activity_report_date(activity: Activity) -> date:
+def _activity_report_date(activity: Activity, report_settings: dict[str, Any] | None = None) -> date:
     created_at = activity.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    local_created_at = created_at.astimezone(REPORT_CUTOFF_TIMEZONE)
+    cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
+    cutoff_hour = _cutoff_hour(report_settings)
+    label_tz = _report_zone(report_settings, "report_label_timezone", REPORT_TIMEZONE)
+    local_created_at = created_at.astimezone(cutoff_tz)
     report_period_start = local_created_at.date()
-    if local_created_at.time() < time(REPORT_CUTOFF_HOUR):
+    if local_created_at.time() < time(cutoff_hour):
         report_period_start -= timedelta(days=1)
     report_cutoff_end = datetime.combine(
         report_period_start + timedelta(days=1),
-        time(REPORT_CUTOFF_HOUR),
-        tzinfo=REPORT_CUTOFF_TIMEZONE,
+        time(cutoff_hour),
+        tzinfo=cutoff_tz,
     )
-    return report_cutoff_end.astimezone(REPORT_TIMEZONE).date()
+    return report_cutoff_end.astimezone(label_tz).date()
 
 
 def _normalize(value: str | None) -> str:
@@ -327,26 +438,32 @@ async def _load_owner_maps(
 async def build_us_pod_call_report(
     session: AsyncSession,
     report_date: date | None = None,
+    report_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    target_date = report_date or default_report_date()
+    config = normalize_sales_report_settings(report_settings or await load_sales_report_settings(session))
+    target_date = report_date or default_report_date(report_settings=config)
     return await _build_us_pod_call_report_for_period(
         session,
         period_start=target_date,
         period_end=target_date,
         report_type="daily",
+        report_settings=config,
     )
 
 
 async def build_us_pod_weekly_call_report(
     session: AsyncSession,
     report_date: date | None = None,
+    report_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    period_start, period_end = weekly_report_period(report_date)
+    config = normalize_sales_report_settings(report_settings or await load_sales_report_settings(session))
+    period_start, period_end = weekly_report_period(report_date, report_settings=config)
     return await _build_us_pod_call_report_for_period(
         session,
         period_start=period_start,
         period_end=period_end,
         report_type="weekly",
+        report_settings=config,
     )
 
 
@@ -356,12 +473,14 @@ async def _build_us_pod_call_report_for_period(
     period_start: date,
     period_end: date,
     report_type: str,
+    report_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    config = normalize_sales_report_settings(report_settings)
     target_date = period_end
     start_date = target_date - timedelta(days=LOOKBACK_DAYS - 1)
     query_start_date = min(start_date, period_start)
-    start_utc, _ = _utc_bounds_for_report_day(query_start_date)
-    _, end_utc = _utc_bounds_for_report_day(target_date)
+    start_utc, _ = _utc_bounds_for_report_day(query_start_date, config)
+    _, end_utc = _utc_bounds_for_report_day(target_date, config)
 
     reps = await _resolve_reps(session)
     rep_ids = {rep.user_id for rep in reps if rep.user_id}
@@ -416,7 +535,7 @@ async def _build_us_pod_call_report_for_period(
         if not rep_id or rep_id not in rep_ids:
             continue
 
-        activity_day = _activity_report_date(activity)
+        activity_day = _activity_report_date(activity, config)
         if start_date <= activity_day <= target_date:
             daily_counts[rep_id][activity_day] += 1
 
@@ -491,9 +610,12 @@ async def _build_us_pod_call_report_for_period(
         "report_date": target_date.isoformat(),
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
-        "timezone": "Asia/Kolkata cutoff at 06:00; report day labeled in America/Chicago",
+        "timezone": (
+            f"{config['cutoff_timezone']} cutoff at {int(config['cutoff_hour']):02d}:00; "
+            f"report day labeled in {config['report_label_timezone']}"
+        ),
         "lookback_days": LOOKBACK_DAYS,
-        "recipients": US_POD_REPORT_RECIPIENTS,
+        "recipients": config["recipients"],
         "rows": rows,
     }
     report["subject"] = _report_subject(report)
@@ -621,11 +743,12 @@ async def send_us_pod_call_report_email(
     report_type: str = "daily",
     recipients: list[str] | None = None,
 ) -> dict[str, Any]:
+    report_settings = await load_sales_report_settings(session)
     if report_type == "weekly":
-        report = await build_us_pod_weekly_call_report(session, report_date)
+        report = await build_us_pod_weekly_call_report(session, report_date, report_settings=report_settings)
     else:
-        report = await build_us_pod_call_report(session, report_date)
-    safe_recipients, blocked_recipients = _resolve_report_recipients(recipients)
+        report = await build_us_pod_call_report(session, report_date, report_settings=report_settings)
+    safe_recipients, blocked_recipients = _resolve_report_recipients(recipients, report_settings)
     report["recipients"] = safe_recipients
     if blocked_recipients:
         report["blocked_recipients"] = blocked_recipients

@@ -32,6 +32,7 @@ import type {
   ProspectStageSettings,
   GmailSyncSettings,
   ReportSenderSettings,
+  SalesReportSettings,
   OutreachContentSettings,
   OutreachTemplateStep,
   PreMeetingAutomationSettings,
@@ -39,7 +40,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "sync-schedule";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -90,6 +91,8 @@ export default function SettingsPage() {
   const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
   const [syncSchedule, setSyncSchedule] = useState<SyncScheduleSettings | null>(null);
   const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
+  const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
+  const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
   const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
@@ -138,9 +141,10 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, reportSenderData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
+      const [gmailData, reportSenderData, salesReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         settingsApi.getGmailSync(),
         settingsApi.getReportSender().catch(() => null),
+        settingsApi.getSalesReportSettings().catch(() => null),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
@@ -157,6 +161,7 @@ export default function SettingsPage() {
         setReportSender(reportSenderData);
         setReportSenderEmail(reportSenderData.sender_email || "sarthak@beacon.li");
       }
+      if (salesReportData) setSalesReportSettings(salesReportData);
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
@@ -875,6 +880,43 @@ export default function SettingsPage() {
     }
   };
 
+  const updateSalesReportField = <K extends keyof SalesReportSettings>(field: K, value: SalesReportSettings[K]) => {
+    if (!salesReportSettings) return;
+    setSalesReportSettings({ ...salesReportSettings, [field]: value });
+  };
+
+  const updateSalesReportList = (field: "recipients" | "nonprod_recipients", value: string) => {
+    updateSalesReportField(
+      field,
+      value.split(",").map((item) => item.trim()).filter(Boolean) as SalesReportSettings[typeof field],
+    );
+  };
+
+  const toggleSalesReportDay = (day: string) => {
+    if (!salesReportSettings) return;
+    const current = new Set(salesReportSettings.send_days);
+    if (current.has(day)) current.delete(day);
+    else current.add(day);
+    const ordered = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].filter((item) => current.has(item));
+    setSalesReportSettings({ ...salesReportSettings, send_days: ordered });
+  };
+
+  const handleSaveSalesReportSettings = async () => {
+    if (!salesReportSettings) return;
+    setSavingSalesReportSettings(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateSalesReportSettings(salesReportSettings);
+      setSalesReportSettings(updated);
+      setMessage("Sales report settings saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save sales report settings");
+    } finally {
+      setSavingSalesReportSettings(false);
+    }
+  };
+
   const handleTriggerTldvSync = async () => {
     setTriggeringTldv(true);
     setError(null);
@@ -954,6 +996,7 @@ export default function SettingsPage() {
               {tabButton("pipeline", "Pipeline", <GripVertical size={15} />)}
               {tabButton("permissions", "Permissions", <Users size={15} />)}
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
+              {tabButton("reports", "Reports", <CalendarDays size={15} />)}
               {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
             </div>
           </aside>
@@ -1630,6 +1673,125 @@ export default function SettingsPage() {
                 <p className="crm-muted" style={{ fontSize: 13 }}>
                   Only admins can change workspace permissions. Everyone else can review the current guardrails here.
                 </p>
+              )}
+            </div>
+          </div>
+        ) : activeTab === "reports" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div>
+              <div className="crm-chip" style={{ marginBottom: 12, background: "#eef8ff", color: "#145d97", borderColor: "#d7ebfb" }}>
+                <CalendarDays size={14} />
+                Reports
+              </div>
+              <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Daily sales report settings</h3>
+              <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                Control when the US pod call report is sent, which business-day cutoff it uses, and who receives production versus staging/test emails.
+              </p>
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable scheduled call reports</div>
+                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>When off, manual preview/send endpoints still work, but the scheduled report will skip.</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(salesReportSettings?.enabled)}
+                  disabled={!isAdmin || !salesReportSettings}
+                  onChange={(event) => updateSalesReportField("enabled", event.target.checked)}
+                />
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send timezone</span>
+                  <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send hour</span>
+                  <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send minute</span>
+                  <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Business-day cutoff timezone</span>
+                  <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Cutoff hour</span>
+                  <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Report label timezone</span>
+                  <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                </label>
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send days</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => {
+                    const active = Boolean(salesReportSettings?.send_days.includes(day));
+                    return (
+                      <button key={day} type="button" className={`crm-button ${active ? "primary" : "soft"}`} onClick={() => toggleSalesReportDay(day)} disabled={!isAdmin || !salesReportSettings} style={{ textTransform: "uppercase" }}>
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Weekly report day</span>
+                  <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }}>
+                    {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => <option key={day} value={day}>{day.toUpperCase()}</option>)}
+                  </select>
+                </label>
+                <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e7eaf5", borderRadius: 14, padding: 14 }}>
+                  <input type="checkbox" checked={Boolean(salesReportSettings?.skip_weekends)} onChange={(e) => updateSalesReportField("skip_weekends", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Skip weekend report periods</span>
+                </label>
+              </div>
+
+              <label style={{ display: "grid", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Production recipients</span>
+                <textarea value={(salesReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
+              </label>
+
+              <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Staging safety</div>
+                <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <input type="checkbox" checked={Boolean(salesReportSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateSalesReportField("nonprod_scheduled_enabled", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
+                  <span className="crm-muted" style={{ fontSize: 13 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Non-production allowed recipients</span>
+                  <textarea value={(salesReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
+                </label>
+              </div>
+
+              {salesReportSettings?.last_scheduled_send_at && (
+                <div className="crm-muted" style={{ fontSize: 13 }}>
+                  Last scheduled send: {new Date(salesReportSettings.last_scheduled_send_at).toLocaleString()} ({salesReportSettings.last_scheduled_send_key})
+                </div>
+              )}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button className="crm-button primary" type="button" onClick={handleSaveSalesReportSettings} disabled={savingSalesReportSettings || !salesReportSettings}>
+                    {savingSalesReportSettings ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
+                    Save report settings
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 13 }}>Only admins can change report settings.</p>
               )}
             </div>
           </div>

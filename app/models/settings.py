@@ -419,3 +419,37 @@ class ReportSenderSettingsRead(SQLModel):
 
 class ReportSenderSettingsUpdate(SQLModel):
     sender_email: str
+
+
+class SalesReportSettingsRead(SQLModel):
+    enabled: bool
+    recipients: list[str]
+    send_timezone: str
+    send_hour: int
+    send_minute: int
+    cutoff_timezone: str
+    cutoff_hour: int
+    report_label_timezone: str
+    send_days: list[str]
+    weekly_report_day: str
+    skip_weekends: bool
+    nonprod_scheduled_enabled: bool
+    nonprod_recipients: list[str]
+    last_scheduled_send_key: Optional[str] = None
+    last_scheduled_send_at: Optional[str] = None
+
+
+class SalesReportSettingsUpdate(SQLModel):
+    enabled: Optional[bool] = None
+    recipients: Optional[list[str]] = None
+    send_timezone: Optional[str] = None
+    send_hour: Optional[int] = None
+    send_minute: Optional[int] = None
+    cutoff_timezone: Optional[str] = None
+    cutoff_hour: Optional[int] = None
+    report_label_timezone: Optional[str] = None
+    send_days: Optional[list[str]] = None
+    weekly_report_day: Optional[str] = None
+    skip_weekends: Optional[bool] = None
+    nonprod_scheduled_enabled: Optional[bool] = None
+    nonprod_recipients: Optional[list[str]] = None
