@@ -517,7 +517,10 @@ export default function Contacts() {
       sdrId: sdrFilter.length ? sdrFilter : undefined,
       // Owner filter: any selected user matches contacts they own as AE OR SDR.
       // ownerScope === "mine" still wins when set; otherwise the multi-select drives.
-      ownerId: ownerScope === "mine"
+      // Search is intentionally global: reps often search for a specific
+      // prospect before claiming/owning them, so do not hide exact matches
+      // behind the "My list" ownership filter.
+      ownerId: ownerScope === "mine" && !debouncedSearch
         ? user?.id
         : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
@@ -1133,9 +1136,13 @@ export default function Contacts() {
           }
           .prospect-desktop-only {
             display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
           }
           .prospect-mobile-only {
             display: block !important;
+            position: relative;
+            z-index: 20;
           }
           .prospect-mobile-shell {
             margin: -4px -10px 0;
@@ -1152,6 +1159,8 @@ export default function Contacts() {
             border-bottom: 1px solid #dde8f4;
           }
           .prospect-mobile-search {
+            position: relative;
+            z-index: 3;
             width: 100%;
             height: 46px;
             border-radius: 14px;
@@ -1551,9 +1560,12 @@ export default function Contacts() {
                     <Search size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#6f8297", pointerEvents: "none" }} />
                     <input
                       className="prospect-mobile-search"
-                      placeholder="Search name, company, phone..."
+                      placeholder="Search any name, email, company, phone..."
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
+                      onFocus={() => setShowAddProspect(false)}
+                      autoComplete="off"
+                      inputMode="search"
                     />
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>

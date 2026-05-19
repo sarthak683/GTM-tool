@@ -4,10 +4,11 @@ Contact repository.
 Key addition over the base: list_with_company_name() runs a LEFT JOIN against
 companies so the frontend gets company_name in a single API call instead of two.
 """
+import re
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -70,6 +71,18 @@ def _parse_uuid_values(value: str | None) -> list[UUID]:
         except ValueError:
             continue
     return parsed
+
+
+def _like_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_tokens(value: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-z0-9@.+'-]+", value.lower())
+        if token
+    ]
 
 
 class ContactRepository(BaseRepository[Contact]):
@@ -167,15 +180,62 @@ class ContactRepository(BaseRepository[Contact]):
             count_stmt = count_stmt.where(combined_filter)
 
         normalized_q = (q or "").strip()
+        search_rank = None
         if normalized_q:
-            pattern = f"%{normalized_q}%"
+            lowered_q = " ".join(normalized_q.lower().split())
+            escaped_q = _like_escape(lowered_q)
+            digits_q = re.sub(r"\D+", "", normalized_q)
+            tokens = _search_tokens(normalized_q)
+
+            first = func.lower(func.coalesce(Contact.first_name, ""))
+            last = func.lower(func.coalesce(Contact.last_name, ""))
+            email = func.lower(func.coalesce(Contact.email, ""))
+            title = func.lower(func.coalesce(Contact.title, ""))
+            company_name = func.lower(func.coalesce(Company.name, ""))
+            full_name = func.lower(func.trim(func.concat(func.coalesce(Contact.first_name, ""), " ", func.coalesce(Contact.last_name, ""))))
+            reverse_name = func.lower(func.trim(func.concat(func.coalesce(Contact.last_name, ""), " ", func.coalesce(Contact.first_name, ""))))
+            phone_digits = func.regexp_replace(func.coalesce(Contact.phone, ""), r"[^0-9]", "", "g")
+            search_blob = func.concat_ws(
+                " ",
+                first,
+                last,
+                email,
+                func.lower(func.coalesce(Contact.phone, "")),
+                title,
+                company_name,
+            )
+            exact_name = or_(full_name == lowered_q, reverse_name == lowered_q)
+            email_exact = email == lowered_q if "@" in lowered_q else false()
+            email_prefix = email.like(f"{escaped_q}%", escape="\\")
+            phone_match = phone_digits.like(f"%{digits_q}%") if len(digits_q) >= 4 else false()
+            token_filter = and_(
+                *[search_blob.like(f"%{_like_escape(token)}%", escape="\\") for token in tokens]
+            ) if tokens else false()
+            first_last_token_match = (
+                and_(
+                    first.like(f"{_like_escape(tokens[0])}%", escape="\\"),
+                    last.like(f"{_like_escape(tokens[-1])}%", escape="\\"),
+                )
+                if len(tokens) >= 2
+                else false()
+            )
             search_filter = or_(
-                Contact.first_name.ilike(pattern),
-                Contact.last_name.ilike(pattern),
-                Contact.email.ilike(pattern),
-                Contact.title.ilike(pattern),
-                Company.name.ilike(pattern),
-                func.concat(Contact.first_name, " ", Contact.last_name).ilike(pattern),
+                exact_name,
+                email_exact,
+                phone_match,
+                first_last_token_match,
+                email_prefix,
+                token_filter,
+            )
+            search_rank = case(
+                (exact_name, 0),
+                (email_exact, 1),
+                (phone_digits == digits_q, 2) if len(digits_q) >= 4 else (false(), 2),
+                (first_last_token_match, 3),
+                (full_name.like(f"{escaped_q}%", escape="\\"), 4),
+                (email_prefix, 5),
+                (company_name.like(f"{escaped_q}%", escape="\\"), 6),
+                else_=9,
             )
             base_stmt = base_stmt.where(search_filter)
             count_stmt = count_stmt.where(search_filter)
@@ -279,7 +339,11 @@ class ContactRepository(BaseRepository[Contact]):
         rows = (
             await self.session.execute(
                 base_stmt
-                .order_by(Contact.created_at.desc(), Contact.id.desc())
+                .order_by(
+                    *((search_rank.asc(),) if search_rank is not None else ()),
+                    Contact.created_at.desc(),
+                    Contact.id.desc(),
+                )
                 .offset(skip)
                 .limit(limit)
             )
