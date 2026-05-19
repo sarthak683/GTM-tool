@@ -341,6 +341,13 @@ export default function Contacts() {
   const [linkedinSuggestionLoading, setLinkedinSuggestionLoading] = useState(false);
   const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
+  const [autoCreateCompaniesOnImport, setAutoCreateCompaniesOnImport] = useState(false);
+  // Upload progress UI: phase = "uploading" while bytes are on the wire,
+  // "processing" once they're all delivered and the server is parsing.
+  // percent applies to the "uploading" phase only; "processing" is rendered
+  // as an indeterminate stripe.
+  const [uploadProgress, setUploadProgress] = useState<{ phase: "uploading" | "processing"; percent: number } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsSettings | null>(null);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   // Rep-scoped count of calls the logged-in user has created since local
@@ -437,7 +444,7 @@ export default function Contacts() {
   const [showAddInvestor, setShowAddInvestor] = useState(false);
   const [newInvestor, setNewInvestor] = useState({ name: "", current_role: "", current_company: "" });
   const [showAddProspect, setShowAddProspect] = useState(false);
-  const [aircallEnabled, setAircallEnabled] = useState<boolean>(() => localStorage.getItem("crm.aircall.enabled") !== "false");
+  const [aircallEnabled, setAircallEnabled] = useState<boolean>(() => localStorage.getItem("crm.aircall.enabled") === "true");
   const toggleAircall = () => {
     const next = !aircallEnabled;
     setAircallEnabled(next);
@@ -520,15 +527,22 @@ export default function Contacts() {
 
   const handleProspectUpload = async (file: File) => {
     setUploadingProspects(true);
+    setUploadError(null);
+    setUploadProgress({ phase: "uploading", percent: 0 });
     try {
-      const result = await contactsApi.importCsv(file);
+      const result = await contactsApi.importCsv(
+        file,
+        autoCreateCompaniesOnImport,
+        (phase, percent) => setUploadProgress({ phase, percent }),
+      );
       setImportSummary(result);
       setPage(1);
       loadContacts();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : "Failed to import prospects");
+      setUploadError(err instanceof Error ? err.message : "Failed to import prospects");
     } finally {
       setUploadingProspects(false);
+      setUploadProgress(null);
     }
   };
 
@@ -888,7 +902,7 @@ export default function Contacts() {
     setCallStatus("attempted");
     setCallDisposition("");
     setCallNotes("");
-    if (contact.phone) {
+    if (aircallEnabled && contact.phone) {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
       }
@@ -941,7 +955,6 @@ export default function Contacts() {
         // know to check the timeline manually.
         toast.error("Call logged but timeline write failed — check activity feed.", "Partial save");
       }
-
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
       loadContacts();
@@ -1278,6 +1291,28 @@ export default function Contacts() {
                 </button>
 
                 <label
+                  title="When checked, any prospect whose company doesn't already exist will have an account created in Account Sourcing automatically. The new accounts are tagged for ICP review and queued for enrichment."
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 10px", borderRadius: 10,
+                    border: "1px solid #d6e0ec", background: "#f6f9fd",
+                    color: "#2c4a63", fontSize: 12, fontWeight: 600,
+                    cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer",
+                    whiteSpace: "nowrap", flexShrink: 0,
+                    opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={autoCreateCompaniesOnImport}
+                    disabled={uploadingProspects || !canMigrateProspects}
+                    onChange={(e) => setAutoCreateCompaniesOnImport(e.target.checked)}
+                    style={{ accentColor: "#175089", cursor: "pointer" }}
+                  />
+                  Auto-create accounts
+                </label>
+
+                <label
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     height: 38, padding: "0 14px", borderRadius: 10,
@@ -1337,7 +1372,7 @@ export default function Contacts() {
                 <button
                   type="button"
                   onClick={toggleAircall}
-                  title={aircallEnabled ? "AirCall calling is enabled for this browser." : "AirCall is disconnected/off for this browser. Click to enable when configured."}
+                  title={aircallEnabled ? "Aircall calling is enabled for this browser." : "Aircall is off by default. Turn it on only when you want to dial through Aircall."}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     height: 38, padding: "0 14px", borderRadius: 10,
@@ -1349,7 +1384,7 @@ export default function Contacts() {
                   }}
                 >
                   <PhoneCall size={14} />
-                  {aircallEnabled ? "AirCall: Connected" : "AirCall: Disconnected"}
+                  {aircallEnabled ? "Aircall: On" : "Aircall: Off"}
                 </button>
                 <button
                   type="button"
@@ -2564,6 +2599,81 @@ export default function Contacts() {
         onClose={() => setShowSequenceSettings(false)}
       />
 
+      {uploadProgress && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md border border-[#d9e1ec]">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <Loader2 size={16} className="animate-spin" color="#175089" />
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1d2b3c" }}>
+                {uploadProgress.phase === "uploading" ? "Uploading prospects" : "Processing on server"}
+              </h3>
+            </div>
+            <p style={{ fontSize: 12.5, color: "#6b7e92", marginBottom: 14 }}>
+              {uploadProgress.phase === "uploading"
+                ? `Sending file… ${uploadProgress.percent}%`
+                : "File received. Parsing rows, matching companies, and queuing enrichment. This usually takes a few seconds."}
+            </p>
+            {/* Bar: determinate during upload, indeterminate (striped pulse) during processing */}
+            <div style={{ width: "100%", height: 8, background: "#eef3f9", borderRadius: 6, overflow: "hidden", position: "relative" }}>
+              {uploadProgress.phase === "uploading" ? (
+                <div
+                  style={{
+                    width: `${uploadProgress.percent}%`,
+                    height: "100%",
+                    background: "linear-gradient(90deg, #175089, #2c79c9)",
+                    transition: "width 120ms ease-out",
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    background:
+                      "repeating-linear-gradient(90deg, #2c79c9 0 12px, #5fa6f0 12px 24px)",
+                    backgroundSize: "48px 100%",
+                    animation: "indeterminate-stripe 1s linear infinite",
+                  }}
+                />
+              )}
+            </div>
+            <style>{`@keyframes indeterminate-stripe { 0% { background-position: 0 0; } 100% { background-position: 48px 0; } }`}</style>
+          </div>
+        </div>
+      )}
+
+      {uploadError && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setUploadError(null)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md border border-[#f0c8c8]" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <AlertTriangle size={16} color="#b94a24" />
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#b94a24" }}>Upload failed</h3>
+            </div>
+            <p style={{ fontSize: 13, color: "#5b3320", marginBottom: 4, lineHeight: 1.5 }}>
+              {uploadError}
+            </p>
+            {/* Suggest the most common fix in plain language */}
+            {/no rows found/i.test(uploadError) && (
+              <p style={{ fontSize: 12.5, color: "#856044", marginTop: 10, lineHeight: 1.5, background: "#fff6ee", padding: "10px 12px", borderRadius: 8, border: "1px solid #f1d3b0" }}>
+                Tip: this usually means the file's headers weren't recognized. Make sure the first row has columns like <code>Company Name</code>, <code>First Name</code>, <code>Last Name</code>, <code>Email</code>. For <code>.xlsx</code> exports from Apollo / Sales Nav, saving the sheet as <strong>CSV</strong> in Excel often resolves the issue.
+              </p>
+            )}
+            <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setUploadError(null)}
+                style={{
+                  border: "1px solid #d9c1ae", background: "#fff", color: "#5b3320",
+                  borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {importSummary && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setImportSummary(null)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-2xl border border-[#d9e1ec]" onClick={(e) => e.stopPropagation()}>
@@ -2603,6 +2713,42 @@ export default function Contacts() {
                 </div>
                 <div style={{ color: "#6b4a00", fontSize: 13, lineHeight: 1.5 }}>
                   {importSummary.warning_count} row{importSummary.warning_count === 1 ? "" : "s"} look{importSummary.warning_count === 1 ? "s" : ""} like a role mailbox (e.g. support@, info@) or placeholder name. We imported them anyway — review and clean them up in Prospecting if needed.
+                </div>
+              </div>
+            )}
+
+            {(importSummary.created_company_count ?? 0) > 0 && importSummary.created_companies && (
+              <div style={{ marginTop: 14, border: "1px solid #b8d8c0", background: "#f1faf3", borderRadius: 14, padding: "14px 16px" }}>
+                <div style={{ color: "#1f6b3a", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 8 }}>
+                  New accounts created
+                </div>
+                <div style={{ color: "#23553a", fontSize: 13, lineHeight: 1.6 }}>
+                  {importSummary.created_company_count} account{importSummary.created_company_count === 1 ? "" : "s"} {importSummary.created_company_count === 1 ? "was" : "were"} created in Account Sourcing for prospects whose company didn't exist yet. ICP enrichment is queued — review them under Account Sourcing → Pending ICP review.
+                </div>
+                <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
+                  {importSummary.created_companies.map((company) => (
+                    <div
+                      key={company.id}
+                      style={{
+                        border: "1px solid #c8e6cf",
+                        background: "#ffffff",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div style={{ color: "#1d2b3c", fontWeight: 700, fontSize: 13 }}>{company.name}</div>
+                        <div style={{ color: "#4e7560", fontSize: 12, marginTop: 2 }}>
+                          {company.domain ? formatDomain(company.domain) : "Domain pending"} · {company.contacts_count} prospect{company.contacts_count === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -2760,15 +2906,15 @@ export default function Contacts() {
 
       {/* ── Call Disposition Sidebar ─────────────────────────────────── */}
       {callContact && (
-        <div style={{
+        <div className="prospect-call-drawer-shell" style={{
           position: "fixed", inset: 0, zIndex: 200,
           display: "flex", justifyContent: "flex-end",
         }}>
           {/* Dim backdrop — clicking it does NOT close (must fill disposition first) */}
-          <div style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} />
+          <div className="prospect-call-drawer-backdrop" style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} />
 
           {/* Panel */}
-          <div style={{
+          <div className="prospect-call-drawer-panel" style={{
             width: 400, maxWidth: "100vw",
             background: "#fff",
             borderLeft: "1px solid #d5e3ef",
@@ -2777,19 +2923,19 @@ export default function Contacts() {
             overflowY: "auto",
           }}>
             {/* Header */}
-            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div className="prospect-call-drawer-header" style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5" }}>
+              <div className="prospect-call-drawer-titleline" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <div className="prospect-call-drawer-heading" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div className="prospect-call-drawer-icon" style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <PhoneCall size={16} color="#fff" />
                   </div>
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Call in progress</div>
-                    <div style={{ fontSize: 12, color: "#7a96b0" }}>{callContact.first_name} {callContact.last_name}</div>
+                    <div className="prospect-call-drawer-contact-name" style={{ fontSize: 12, color: "#7a96b0" }}>{callContact.first_name} {callContact.last_name}</div>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
+                <div className="prospect-call-drawer-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="prospect-call-drawer-required" style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
                     Disposition required
                   </span>
                   <button
@@ -2813,6 +2959,20 @@ export default function Contacts() {
                   </button>
                 </div>
               </div>
+              <div className="prospect-call-drawer-quickfacts">
+                {callContact.phone && (
+                  <div className="prospect-call-drawer-quickfact">
+                    <Phone size={13} />
+                    <span>{callContact.phone}</span>
+                  </div>
+                )}
+                {callContact.company_name && (
+                  <div className="prospect-call-drawer-quickfact">
+                    <Building2 size={13} />
+                    <span>{callContact.company_name}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Pre-call intel — rich, data-driven panel fetched from
@@ -2826,7 +2986,7 @@ export default function Contacts() {
             />
 
             {/* Disposition form */}
-            <div style={{ padding: "16px 22px", flex: 1 }}>
+            <div className="prospect-call-drawer-form" style={{ padding: "16px 22px", flex: 1 }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Log this call</div>
 
               <div style={{ marginBottom: 12 }}>
@@ -2872,6 +3032,7 @@ export default function Contacts() {
               </div>
 
               <button
+                className="prospect-call-drawer-save"
                 onClick={() => void saveCallDisposition()}
                 disabled={!callDisposition || savingDisposition}
                 style={{

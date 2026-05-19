@@ -376,13 +376,23 @@ export interface ProspectImportMissingCompany {
   contacts_count: number;
 }
 
+export interface ProspectImportCreatedCompany {
+  id: string;
+  name: string;
+  domain?: string;
+  contacts_count: number;
+}
+
 export interface ProspectImportResponse {
   imported_rows: number;
   created_count: number;
   updated_count: number;
   skipped_count: number;
+  warning_count?: number;
   missing_company_count: number;
   missing_companies: ProspectImportMissingCompany[];
+  created_company_count?: number;
+  created_companies?: ProspectImportCreatedCompany[];
   message: string;
 }
 

@@ -41,12 +41,12 @@ const AIRCALL_STORAGE_KEY = "crm.aircall.enabled";
 
 function AircallToggleListener() {
   const [enabled, setEnabled] = useState<boolean>(() => {
-    return localStorage.getItem(AIRCALL_STORAGE_KEY) !== "false";
+    return localStorage.getItem(AIRCALL_STORAGE_KEY) === "true";
   });
 
   useEffect(() => {
     function handleToggle() {
-      setEnabled(localStorage.getItem(AIRCALL_STORAGE_KEY) !== "false");
+      setEnabled(localStorage.getItem(AIRCALL_STORAGE_KEY) === "true");
     }
     window.addEventListener("crm:aircall:toggle", handleToggle);
     return () => window.removeEventListener("crm:aircall:toggle", handleToggle);

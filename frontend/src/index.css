@@ -1566,6 +1566,10 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.prospect-call-drawer-quickfacts {
+  display: none;
+}
+
 @keyframes fade-enter {
   from {
     opacity: 0;
@@ -1574,6 +1578,110 @@ textarea:focus {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (max-width: 720px) {
+  .prospect-call-drawer-shell {
+    align-items: flex-end !important;
+    justify-content: center !important;
+  }
+
+  .prospect-call-drawer-backdrop {
+    position: absolute !important;
+    inset: 0 !important;
+    flex: none !important;
+  }
+
+  .prospect-call-drawer-panel {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    max-height: 92dvh !important;
+    border-left: none !important;
+    border-top: 1px solid #d5e3ef !important;
+    border-radius: 22px 22px 0 0 !important;
+    box-shadow: 0 -18px 46px rgba(14, 38, 66, 0.22) !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+  }
+
+  .prospect-call-drawer-header {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 2 !important;
+    padding: 16px 16px 12px !important;
+    background: #ffffff !important;
+  }
+
+  .prospect-call-drawer-titleline {
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
+  .prospect-call-drawer-heading {
+    min-width: 0 !important;
+    flex: 1 !important;
+  }
+
+  .prospect-call-drawer-icon {
+    width: 34px !important;
+    height: 34px !important;
+    flex: 0 0 auto !important;
+  }
+
+  .prospect-call-drawer-contact-name {
+    max-width: 52vw !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .prospect-call-drawer-actions {
+    flex-shrink: 0 !important;
+  }
+
+  .prospect-call-drawer-required {
+    display: none !important;
+  }
+
+  .prospect-call-drawer-quickfacts {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    margin-top: 12px !important;
+  }
+
+  .prospect-call-drawer-quickfact {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #e0eaf3;
+    border-radius: 10px;
+    background: #f7fbff;
+    color: #24455f;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 9px 10px;
+  }
+
+  .prospect-call-drawer-quickfact span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prospect-call-drawer-form {
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .prospect-call-drawer-save {
+    position: sticky !important;
+    bottom: 0 !important;
+    min-height: 46px !important;
+    box-shadow: 0 -10px 22px rgba(255, 255, 255, 0.92) !important;
   }
 }
 

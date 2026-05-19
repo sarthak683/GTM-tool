@@ -6,6 +6,13 @@ export type ProspectImportMissingCompany = {
   contacts_count: number;
 };
 
+export type ProspectImportCreatedCompany = {
+  id: string;
+  name: string;
+  domain?: string;
+  contacts_count: number;
+};
+
 export type ProspectImportSummary = {
   imported_rows: number;
   created_count: number;
@@ -14,6 +21,8 @@ export type ProspectImportSummary = {
   warning_count?: number;
   missing_company_count: number;
   missing_companies: ProspectImportMissingCompany[];
+  created_company_count?: number;
+  created_companies?: ProspectImportCreatedCompany[];
   message: string;
 };
 

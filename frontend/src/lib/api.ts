@@ -238,24 +238,76 @@ export const contactsApi = {
     request<void>("/api/v1/contacts/bulk", { method: "DELETE" }),
   discover: (companyId: string) =>
     request<Contact[]>(`/api/v1/contacts/discover/${companyId}`, { method: "POST" }),
-  importCsv: (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return fetch(`${BASE}/api/v1/contacts/import-csv`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: form,
-    }).then(async (r) => {
-      if (r.status === 401) {
-        localStorage.removeItem("beacon_token");
-        window.location.href = "/login";
-        throw new Error("Session expired");
+  importCsv: (
+    file: File,
+    autoCreateCompanies = false,
+    onProgress?: (phase: "uploading" | "processing", percent: number) => void,
+  ) => {
+    // We use XMLHttpRequest instead of fetch here purely for upload progress
+    // events — fetch can't report bytes-sent for streamed bodies, and the
+    // user wants a visible progress indicator. onProgress fires for both
+    // phases: "uploading" reports real bytes (0..100), "processing" fires
+    // once at 100 when the upload completes and the server begins parsing.
+    return new Promise<ProspectImportResponse>((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file);
+      // Opt-in: when true, the backend creates Company rows for any prospect
+      // rows whose company doesn't already exist, tags them for ICP review,
+      // and queues enrichment. Default (false) preserves the 553d929
+      // behavior of importing orphans with company_id=NULL.
+      if (autoCreateCompanies) {
+        form.append("auto_create_companies", "true");
       }
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({ detail: r.statusText }));
-        throw new Error(err.detail ?? "Upload failed");
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${BASE}/api/v1/contacts/import-csv`);
+      const headers = getAuthHeaders();
+      for (const [k, v] of Object.entries(headers)) {
+        xhr.setRequestHeader(k, v);
       }
-      return r.json() as Promise<ProspectImportResponse>;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          const pct = Math.min(100, Math.round((e.loaded / e.total) * 100));
+          onProgress("uploading", pct);
+        }
+      };
+      xhr.upload.onload = () => {
+        // Bytes are all the way on the wire; backend now parses/persists.
+        // We can't see real progress past this point — the response handles
+        // completion. Mark indeterminate so the UI shows a working spinner.
+        if (onProgress) onProgress("processing", 100);
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 401) {
+          localStorage.removeItem("beacon_token");
+          window.location.href = "/login";
+          reject(new Error("Session expired"));
+          return;
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as ProspectImportResponse);
+          } catch {
+            reject(new Error("Server returned an invalid response."));
+          }
+          return;
+        }
+        // Surface the server's `detail` if available, otherwise the status.
+        let detail = xhr.statusText || "Upload failed";
+        try {
+          const body = JSON.parse(xhr.responseText) as { detail?: string };
+          if (body.detail) detail = body.detail;
+        } catch {
+          // non-JSON body — keep statusText
+        }
+        reject(new Error(detail));
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload."));
+      xhr.onabort = () => reject(new Error("Upload aborted."));
+
+      xhr.send(form);
     });
   },
 };

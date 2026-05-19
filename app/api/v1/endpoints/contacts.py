@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlmodel import SQLModel, select
 
@@ -38,6 +38,13 @@ class ProspectImportMissingCompany(SQLModel):
     contacts_count: int = 0
 
 
+class ProspectImportCreatedCompany(SQLModel):
+    id: UUID
+    name: str
+    domain: Optional[str] = None
+    contacts_count: int = 0
+
+
 class ProspectImportResponse(SQLModel):
     imported_rows: int
     created_count: int
@@ -46,6 +53,8 @@ class ProspectImportResponse(SQLModel):
     warning_count: int = 0
     missing_company_count: int
     missing_companies: list[ProspectImportMissingCompany]
+    created_company_count: int = 0
+    created_companies: list[ProspectImportCreatedCompany] = []
     message: str
 
 
@@ -84,12 +93,57 @@ async def _get_or_create_uploaded_placeholder_company(
     session: DBSession,
     row: dict[str, str],
     current_user: CurrentUser,
+    auto_create: bool = False,
+    sourcing_batch_id: UUID | None = None,
 ) -> tuple[Company | None, bool]:
-    # Accounts are only created via Account Sourcing (manual add or workbook upload).
-    # Prospect imports match to existing accounts only; unmatched rows import with
-    # company_id=NULL and get linked later when the matching account is added.
+    # Default behavior matches 553d929: accounts are created only via Account
+    # Sourcing, and unmatched prospect rows import with company_id=NULL until
+    # the proper account is added (backfill_orphans_for_company re-links them).
+    #
+    # When auto_create=True the caller is opting into a narrower carve-out:
+    # if the 3-layer matcher in _resolve_uploaded_company (domain → exact name
+    # → fuzzy normalized name) finds nothing, we create a Company row inline
+    # so the rep's prospects are searchable by company name immediately.
+    #
+    # The DB has a BEFORE INSERT trigger (prevent_unbatched_company_insert)
+    # that rejects any company row with sourcing_batch_id IS NULL. So when we
+    # auto-create, the caller must supply a SourcingBatch — that's why this
+    # function takes sourcing_batch_id. The batch puts the new accounts in
+    # Account Sourcing under a labelled group ("Prospect import: <file>") so
+    # ops can review them as a unit.
     company = await _resolve_uploaded_company(session, row)
-    return company, False
+    if company or not auto_create:
+        return company, False
+
+    if sourcing_batch_id is None:
+        # Defensive: auto_create=True but caller forgot the batch. Treat as
+        # "no match", same as the default path, rather than 500-ing the upload.
+        return None, False
+
+    company_fields = row_to_company_fields(row)
+    name = (company_fields.get("name") or "").strip()
+    if not name:
+        return None, False
+
+    raw_domain = (company_fields.get("domain") or "").strip().lower()
+    domain = raw_domain or _placeholder_company_domain(name)
+
+    enrichment_sources = {
+        "created_from": "prospect_csv_upload",
+        "uploaded_by": current_user.email,
+        "uploaded_at": datetime.utcnow().isoformat(),
+        "pending_icp_review": True,
+    }
+
+    company = Company(
+        name=name,
+        domain=domain,
+        enrichment_sources=enrichment_sources,
+        sourcing_batch_id=sourcing_batch_id,
+    )
+    session.add(company)
+    await session.flush()  # populate company.id before the caller links contacts
+    return company, True
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
@@ -499,6 +553,7 @@ async def import_contacts_csv(
     current_user: CurrentUser,
     session: DBSession,
     file: UploadFile = File(...),
+    auto_create_companies: bool = Form(False),
 ):
     await require_workspace_permission(session, current_user, "prospect_migration")
 
@@ -521,9 +576,53 @@ async def import_contacts_csv(
     warning_count = 0
     touched_company_ids: set[UUID] = set()
     missing_companies: dict[str, ProspectImportMissingCompany] = {}
+    # Track companies the importer just created (only populated when
+    # auto_create_companies=True). Keyed by company id so we can queue ICP
+    # enrichment once per company and return a deduped summary to the caller.
+    created_companies: dict[UUID, ProspectImportCreatedCompany] = {}
+
+    # The DB trigger prevent_unbatched_company_insert requires every new
+    # company row to carry a sourcing_batch_id. When auto_create is on, we
+    # lazily create a single SourcingBatch the first time we need to insert
+    # a company, so all newly-created accounts land in Account Sourcing under
+    # one labelled group. If auto_create is off, or if every prospect's
+    # company already exists, no batch is created — no pollution.
+    from app.models.sourcing_batch import SourcingBatch
+
+    auto_create_batch: SourcingBatch | None = None
+
+    async def _ensure_auto_create_batch() -> UUID | None:
+        nonlocal auto_create_batch
+        if not auto_create_companies:
+            return None
+        if auto_create_batch is not None:
+            return auto_create_batch.id
+        auto_create_batch = SourcingBatch(
+            filename=f"Prospect import: {file.filename or 'upload.csv'}",
+            status="completed",  # we inline the work; no Celery batch task runs
+            total_rows=len(rows),
+            created_by_id=current_user.id,
+            created_by_name=current_user.name,
+            created_by_email=current_user.email,
+            meta={
+                "created_from": "prospect_csv_upload",
+                "pending_icp_review": True,
+                "upload_mode": "inline_from_contacts_import",
+            },
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(auto_create_batch)
+        await session.flush()  # populate batch id
+        return auto_create_batch.id
 
     for row in rows:
-        company, created_placeholder_company = await _get_or_create_uploaded_placeholder_company(session, row, current_user)
+        batch_id_for_row = await _ensure_auto_create_batch() if auto_create_companies else None
+        company, created_placeholder_company = await _get_or_create_uploaded_placeholder_company(
+            session, row, current_user,
+            auto_create=auto_create_companies,
+            sourcing_batch_id=batch_id_for_row,
+        )
         company_fields = row_to_company_fields(row)
         company_context = {
             "name": company.name if company else company_fields.get("name"),
@@ -571,15 +670,20 @@ async def import_contacts_csv(
             }
             contact_fields["enrichment_data"] = raw_enrichment
 
-        if created_placeholder_company:
-            key = f"{(company_fields.get('domain') or '').strip().lower()}::{(company_fields.get('name') or '').strip().lower()}"
-            current = missing_companies.get(key)
-            if current:
-                current.contacts_count += 1
+        if created_placeholder_company and company is not None and company.id is not None:
+            # The auto-create branch fired for this row. Track the new
+            # company so we can queue ICP enrichment after commit and surface
+            # it in the response. Do NOT add it to missing_companies — the
+            # account now exists, so the rep should see it under "newly
+            # created", not under "still needs to be added".
+            existing_created = created_companies.get(company.id)
+            if existing_created:
+                existing_created.contacts_count += 1
             else:
-                missing_companies[key] = ProspectImportMissingCompany(
-                    name=(company_fields.get("name") or "Unknown company").strip(),
-                    domain=(company_fields.get("domain") or "").strip() or None,
+                created_companies[company.id] = ProspectImportCreatedCompany(
+                    id=company.id,
+                    name=company.name,
+                    domain=(company.domain or None),
                     contacts_count=1,
                 )
 
@@ -669,10 +773,49 @@ async def import_contacts_csv(
     await session.commit()
 
     missing_rows = sorted(missing_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+    created_rows = sorted(created_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+
+    # If we lazy-created a SourcingBatch but ended up creating zero companies
+    # (e.g. every prospect's company turned out to exist after all), delete
+    # the empty batch so Account Sourcing doesn't show an orphan "0 created"
+    # entry. If we did create companies, sync the counters to reflect the
+    # actual work done.
+    if auto_create_batch is not None:
+        if created_rows:
+            auto_create_batch.created_companies = len(created_rows)
+            auto_create_batch.processed_rows = len(created_rows)
+            auto_create_batch.updated_at = datetime.utcnow()
+            session.add(auto_create_batch)
+            await session.commit()
+        else:
+            await session.delete(auto_create_batch)
+            await session.commit()
+
+    # Queue ICP enrichment for the freshly-created accounts so they don't sit
+    # in Account Sourcing as bare placeholders. Uses the same single-company
+    # task the re-enrich button on AccountSourcing calls. Best-effort: if
+    # Celery is unreachable the import already succeeded, so we just log.
+    if created_rows:
+        try:
+            from app.tasks.enrichment import icp_research_single_task
+
+            for created in created_rows:
+                icp_research_single_task.delay(str(created.id))
+        except Exception:  # noqa: BLE001 — Celery brokers can fail in many ways
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to queue ICP enrichment for %d auto-created companies",
+                len(created_rows),
+            )
+
     message_parts = ["Prospects imported successfully."]
     if warning_count:
         message_parts.append(
             f"{warning_count} row{'s' if warning_count != 1 else ''} look{'s' if warning_count == 1 else ''} like a role mailbox or placeholder — review them in Prospecting."
+        )
+    if created_rows:
+        message_parts.append(
+            f"Beacon created {len(created_rows)} new account{'s' if len(created_rows) != 1 else ''} in Account Sourcing — ICP review pending."
         )
     if missing_rows:
         message_parts.append("Some prospects were imported without a company match. Add those accounts in Account Sourcing, then map the prospects to the company.")
@@ -685,6 +828,8 @@ async def import_contacts_csv(
         warning_count=warning_count,
         missing_company_count=len(missing_rows),
         missing_companies=missing_rows,
+        created_company_count=len(created_rows),
+        created_companies=created_rows,
         message=" ".join(message_parts),
     )
 

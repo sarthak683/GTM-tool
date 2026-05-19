@@ -244,12 +244,144 @@ export default function AccountSourcingContactDetail() {
   };
 
   return (
-    <div style={pageStyle}>
-      <div style={wrapStyle}>
-        <div style={heroCardStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
-            <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+    <>
+      <style>{`
+        @media (max-width: 760px) {
+          .prospect-detail-page {
+            padding: 0 !important;
+            background: #f4f8fc !important;
+          }
+          .prospect-detail-wrap {
+            max-width: none !important;
+            padding: 10px 10px 88px !important;
+          }
+          .prospect-detail-hero {
+            border-radius: 18px !important;
+            padding: 14px !important;
+            box-shadow: 0 10px 26px rgba(16, 42, 67, 0.08) !important;
+          }
+          .prospect-detail-hero-row {
+            display: grid !important;
+            gap: 14px !important;
+          }
+          .prospect-detail-title-row {
+            gap: 12px !important;
+            flex-wrap: nowrap !important;
+          }
+          .prospect-detail-avatar {
+            width: 56px !important;
+            height: 56px !important;
+            border-radius: 16px !important;
+            font-size: 16px !important;
+          }
+          .prospect-detail-name {
+            font-size: 25px !important;
+            line-height: 1.1 !important;
+            letter-spacing: 0 !important;
+          }
+          .prospect-detail-subtitle {
+            margin-top: 6px !important;
+            font-size: 13.5px !important;
+            line-height: 1.45 !important;
+          }
+          .prospect-detail-provenance,
+          .prospect-detail-chips,
+          .prospect-detail-progress,
+          .prospect-detail-enrichment,
+          .prospect-detail-company-inline,
+          .prospect-detail-actions-desktop {
+            display: none !important;
+          }
+          .prospect-detail-primary-actions {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+            margin-top: 12px !important;
+          }
+          .prospect-detail-call-button {
+            grid-column: 1 / -1 !important;
+            width: 100% !important;
+          }
+          .prospect-detail-call-button > * {
+            width: 100% !important;
+            min-height: 50px !important;
+            border-radius: 14px !important;
+            background: linear-gradient(135deg, #0f5fb8, #174ea6) !important;
+            color: #ffffff !important;
+            border-color: #a9cdf8 !important;
+            justify-content: center !important;
+            font-size: 15px !important;
+            font-weight: 850 !important;
+            box-shadow: 0 10px 20px rgba(23, 80, 137, 0.18) !important;
+          }
+          .prospect-detail-secondary-action {
+            width: 100% !important;
+          }
+          .prospect-detail-secondary-action,
+          .prospect-detail-secondary-action > * {
+            min-height: 42px !important;
+            justify-content: center !important;
+            border-radius: 13px !important;
+            font-size: 12.5px !important;
+            font-weight: 800 !important;
+          }
+          .prospect-detail-mobile-card {
+            display: block !important;
+            margin-top: 12px !important;
+            border: 1px solid #dce8f4 !important;
+            background: #ffffff !important;
+            border-radius: 16px !important;
+            padding: 12px !important;
+          }
+          .prospect-detail-mobile-grid {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+          }
+          .prospect-detail-metric-grid {
+            grid-template-columns: 1fr 1fr !important;
+            gap: 10px !important;
+          }
+          .prospect-detail-main-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+          .prospect-detail-main-grid > div {
+            min-width: 0 !important;
+          }
+          .prospect-detail-section {
+            border-radius: 16px !important;
+            padding: 14px !important;
+          }
+          .prospect-detail-outreach-section {
+            display: none !important;
+          }
+          .prospect-detail-notes-row {
+            display: grid !important;
+          }
+          .prospect-detail-notes-row textarea {
+            width: 100% !important;
+          }
+          .prospect-detail-notes-row button {
+            width: 100% !important;
+            margin-top: 8px !important;
+          }
+          .prospect-detail-raw-row {
+            grid-template-columns: 1fr !important;
+            gap: 5px !important;
+          }
+          .prospect-detail-playbook-grid,
+          .prospect-detail-signal-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+      <div className="prospect-detail-page" style={pageStyle}>
+        <div className="prospect-detail-wrap" style={wrapStyle}>
+          <div className="prospect-detail-hero" style={heroCardStyle}>
+            <div className="prospect-detail-hero-row" style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", padding: 0, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: "inherit" }}>
                   <ArrowLeft size={15} /> Back
                 </button>
@@ -260,22 +392,24 @@ export default function AccountSourcingContactDetail() {
                 ) : null}
               </div>
 
-              <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
-                <div className={`flex h-20 w-20 shrink-0 items-center justify-center rounded-[22px] text-[22px] font-extrabold ${avatarColor(fullName || "Prospect")}`}>
+              <div className="prospect-detail-title-row" style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div className={`prospect-detail-avatar flex h-20 w-20 shrink-0 items-center justify-center rounded-[22px] text-[22px] font-extrabold ${avatarColor(fullName || "Prospect")}`}>
                   {getInitials(fullName || "Prospect")}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <h1 style={{ margin: 0, color: colors.text, fontSize: 38, letterSpacing: 0.2, lineHeight: 1.05 }}>{fullName || "Unnamed prospect"}</h1>
-                  <div style={{ marginTop: 10, color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 840 }}>
+                  <h1 className="prospect-detail-name" style={{ margin: 0, color: colors.text, fontSize: 38, letterSpacing: 0.2, lineHeight: 1.05 }}>{fullName || "Unnamed prospect"}</h1>
+                  <div className="prospect-detail-subtitle" style={{ marginTop: 10, color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 840 }}>
                     {contact.title || "No title yet"} {company ? `at ${company.name}` : ""}. This view combines uploaded prospecting context, company research, and the saved prospect-level outreach sequence.
                   </div>
-                  <ProvenanceBar
-                    source={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.source as string | null | undefined}
-                    uploadedBy={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.uploaded_by as string | null | undefined}
-                    createdAt={contact.created_at}
-                    updatedAt={contact.updated_at}
-                  />
-                  <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div className="prospect-detail-provenance">
+                    <ProvenanceBar
+                      source={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.source as string | null | undefined}
+                      uploadedBy={(contact.enrichment_data as Record<string, unknown> | null | undefined)?.uploaded_by as string | null | undefined}
+                      createdAt={contact.created_at}
+                      updatedAt={contact.updated_at}
+                    />
+                  </div>
+                  <div className="prospect-detail-chips" style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Chip label={prettify(contact.outreach_lane || company?.recommended_outreach_lane)} tone={toneForLane(contact.outreach_lane || company?.recommended_outreach_lane)} />
                     <span
                       style={{
@@ -297,6 +431,7 @@ export default function AccountSourcingContactDetail() {
                     <Chip label={contact.warm_intro_strength ? `Warm path ${contact.warm_intro_strength}/5` : Object.keys(displayWarmPath).length > 0 ? "Account warm path" : "Direct motion"} tone={Object.keys(displayWarmPath).length > 0 ? "warm" : "neutral"} />
                   </div>
                   <div
+                    className="prospect-detail-progress"
                     style={{
                       marginTop: 14,
                       maxWidth: 840,
@@ -320,6 +455,7 @@ export default function AccountSourcingContactDetail() {
                   </div>
                   {(companyNeedsEnrichment || canCreateCompanyFromProspect) ? (
                     <div
+                      className="prospect-detail-enrichment"
                       style={{
                         marginTop: 14,
                         maxWidth: 840,
@@ -367,24 +503,52 @@ export default function AccountSourcingContactDetail() {
                       </button>
                     </div>
                   ) : null}
-                  <div style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
-                    {company ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
-                    {contact.email ? <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={`Email ${contact.email}`} tone="primary" /> : null}
+                  <div className="prospect-detail-primary-actions" style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
+                    {company ? <span className="prospect-detail-company-inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
+                    {contact.email ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label="Email" tone="primary" /></span> : null}
                     {contact.phone ? (
-                      <ContactActionButton
-                        icon={<Phone size={14} />}
-                        onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
-                        label={`Call ${contact.phone}`}
-                        tone="green"
-                      />
+                      <span className="prospect-detail-call-button" style={{ display: "inline-flex" }}>
+                        <ContactActionButton
+                          icon={<Phone size={14} />}
+                          onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                          label={`Call ${contact.phone}`}
+                          tone="green"
+                        />
+                      </span>
                     ) : null}
-                    {contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="Open LinkedIn" tone="primary" /> : null}
+                    {contact.linkedin_url ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" /></span> : null}
+                    <button
+                      type="button"
+                      className="prospect-detail-secondary-action"
+                      onClick={() => setShowTasksModal(true)}
+                      style={{ border: `1px solid #d5e5ff`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      <CheckCircle2 size={14} />
+                      Tasks
+                    </button>
+                  </div>
+                  <div className="prospect-detail-mobile-card" style={{ display: "none" }}>
+                    <div style={{ fontSize: 11, color: colors.faint, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Call context</div>
+                    <div style={{ marginTop: 8, color: colors.text, fontSize: 18, fontWeight: 850 }}>{contact.phone || "No phone saved"}</div>
+                    <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.45 }}>
+                      {company?.name || contact.company_name || "Company not mapped"} · {contact.timezone || "No timezone"}
+                    </div>
+                    <div className="prospect-detail-mobile-grid" style={{ marginTop: 10, display: "none" }}>
+                      <div style={{ borderRadius: 12, border: `1px solid ${trackingTone.border}`, background: trackingTone.soft, padding: 10 }}>
+                        <div style={{ color: trackingTone.color, fontSize: 11, fontWeight: 850 }}>Stage</div>
+                        <div style={{ color: trackingTone.color, fontSize: 12.5, fontWeight: 850, marginTop: 3 }}>{getProspectTrackingStage(contact)}</div>
+                      </div>
+                      <div style={{ borderRadius: 12, border: "1px solid #dce8f4", background: "#f8fbff", padding: 10 }}>
+                        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 850 }}>Last signal</div>
+                        <div style={{ color: colors.text, fontSize: 12.5, fontWeight: 850, marginTop: 3 }}>{formatDate(contact.tracking_last_activity_at || contact.updated_at)}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+            <div className="prospect-detail-actions-desktop" style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
             <button
               type="button"
               onClick={() => setShowTasksModal(true)}
@@ -443,7 +607,7 @@ export default function AccountSourcingContactDetail() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <div className="prospect-detail-metric-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           <MetricCard
             label="Auto Stage"
             value={getProspectTrackingStage(contact)}
@@ -492,9 +656,10 @@ export default function AccountSourcingContactDetail() {
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(320px, 1fr)", gap: 16, alignItems: "start" }}>
+        <div className="prospect-detail-main-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(320px, 1fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
-            <Section title="Prospect Outreach" icon={<Send size={15} color={colors.primary} />}>
+            <div className="prospect-detail-outreach-section">
+              <Section title="Prospect Outreach" icon={<Send size={15} color={colors.primary} />}>
               <div
                 style={{
                   borderRadius: 14,
@@ -509,7 +674,8 @@ export default function AccountSourcingContactDetail() {
                 Launch, edit, and configure prospect-specific outreach directly here. Advanced settings lets you override timing for this prospect only before the sequence starts.
               </div>
               <OutreachDrawer contact={contact} onClose={() => {}} mode="inline" />
-            </Section>
+              </Section>
+            </div>
 
             <Section title="Automation Signals" icon={<UserRound size={15} color={colors.primary} />}>
               <div
@@ -525,7 +691,7 @@ export default function AccountSourcingContactDetail() {
               >
                 Beacon keeps this prospect current automatically. Instantly updates email stages and replies, Aircall logs call outcomes, and Beacon turns those signals into the stage and momentum you see on this page.
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <div className="prospect-detail-signal-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                 <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, background: "#ffffff", padding: "12px 14px" }}>
                   <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.35 }}>EMAIL SIGNALS</div>
                   <div style={{ marginTop: 6, color: colors.text, fontWeight: 700 }}>{prettify(contact.sequence_status || contact.instantly_status)}</div>
@@ -622,7 +788,7 @@ export default function AccountSourcingContactDetail() {
             </Section>}
 
             <Section title="Notes" icon={<MessageSquare size={15} color={colors.primary} />}>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <div className="prospect-detail-notes-row" style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                 <textarea
                   value={noteInput}
                   onChange={(e) => setNoteInput(e.target.value)}
@@ -695,7 +861,7 @@ export default function AccountSourcingContactDetail() {
             </Section>
 
             <Section title="Sales Playbook" icon={<Send size={15} color={colors.primary} />}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+              <div className="prospect-detail-playbook-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
                 <ListCard title="Hooks To Use" items={planHooks} empty="No personalization hooks saved yet." />
                 <ListCard
                   title="Conversation Starter"
@@ -726,7 +892,7 @@ export default function AccountSourcingContactDetail() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {Object.entries(displayRawRow).map(([key, value]) => (
-                    <div key={key} style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 10, borderRadius: 14, border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", padding: "11px 13px" }}>
+                    <div className="prospect-detail-raw-row" key={key} style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 10, borderRadius: 14, border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", padding: "11px 13px" }}>
                       <div style={{ color: colors.faint, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.35 }}>{key}</div>
                       <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.55 }}>{String(value)}</div>
                     </div>
@@ -852,7 +1018,7 @@ export default function AccountSourcingContactDetail() {
           void load();
         }}
       />
-
-    </div>
+      </div>
+    </>
   );
 }
