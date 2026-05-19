@@ -1529,6 +1529,7 @@ export default function Pipeline() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState<PipelineTab>("deal");
+  const [mobileStage, setMobileStage] = useState<string>("all");
   const [dealBoard, setDealBoard] = useState<Record<string, Deal[]>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -2350,7 +2351,7 @@ export default function Pipeline() {
   return (
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
-        <div className="pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
+        <div className="desktop-only pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
@@ -2608,7 +2609,7 @@ export default function Pipeline() {
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
+          <div className="desktop-only" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
               <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}` }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
@@ -2621,7 +2622,7 @@ export default function Pipeline() {
 
 
           <div
-            className="pipeline-board-scroll"
+            className="desktop-only pipeline-board-scroll"
 
             style={{ flex: 1, minHeight: 0, height: 0, overflowX: "auto", overflowY: "hidden", padding: "16px 16px 8px 20px", scrollbarGutter: "stable both-edges" }}
           >
@@ -2657,6 +2658,74 @@ export default function Pipeline() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mobile-only" style={{ padding: "4px 2px 80px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="mobile-card" style={{ position: "sticky", top: 0, zIndex: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2744" }}>{tab === "deal" ? "Pipeline" : "Prospects"}</div>
+              <div style={{ fontSize: 12, color: "#7a96b0" }}>{summary.total} {tab === "deal" ? "deals" : "prospects"} · {summary.active} active</div>
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button onClick={() => { setTab("deal"); setMobileStage("all"); }} style={{ padding: "6px 12px", borderRadius: 8, border: tab === "deal" ? "1px solid #c5d6ff" : "1px solid #dce8f4", background: tab === "deal" ? "#eef4ff" : "#fff", color: tab === "deal" ? "#3555c4" : "#55657a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Deals</button>
+              <button onClick={() => { setTab("prospect"); setMobileStage("all"); }} style={{ padding: "6px 12px", borderRadius: 8, border: tab === "prospect" ? "1px solid #c5d6ff" : "1px solid #dce8f4", background: tab === "prospect" ? "#eef4ff" : "#fff", color: tab === "prospect" ? "#3555c4" : "#55657a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Prospects</button>
+            </div>
+          </div>
+          <div className="mobile-filter-scroll">
+            <span onClick={() => setMobileStage("all")} className="mobile-filter-chip" style={{ background: mobileStage === "all" ? "#eef4ff" : "#fff", color: mobileStage === "all" ? "#3555c4" : "#55657a", borderColor: mobileStage === "all" ? "#c5d6ff" : "#d5e3ef" }}>All ({summary.total})</span>
+            {(tab === "deal" ? stages : effectiveProspectStages).map(s => (
+              <span key={s.id} onClick={() => setMobileStage(s.id)} className="mobile-filter-chip" style={{ background: mobileStage === s.id ? "#eef4ff" : "#fff", color: mobileStage === s.id ? "#3555c4" : "#55657a", borderColor: mobileStage === s.id ? "#c5d6ff" : "#d5e3ef" }}>{s.label} ({(tab === "deal" ? filteredDealBoard[s.id]?.length ?? 0 : filteredProspects[s.id as ProspectStageId]?.length ?? 0)})</span>
+            ))}
+          </div>
+        </div>
+        {tab === "deal" ? (
+          stages.filter(s => mobileStage === "all" || s.id === mobileStage).map(stage => {
+            const items = filteredDealBoard[stage.id] ?? [];
+            if (!items.length) return null;
+            return (
+              <div key={stage.id}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: stage.color ?? "#64748b", padding: "6px 4px 4px" }}>{stage.label} ({items.length})</div>
+                {items.map(deal => (
+                  <div key={deal.id} className="mobile-card" onClick={() => { setSelectedDeal(deal); setSearchParams(c => { c.set("deal", deal.id); return c; }, { replace: true }); }} style={{ cursor: "pointer" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#1f2d3d", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.name}</div>
+                        <div style={{ fontSize: 12, color: "#71859b" }}>{deal.company_id ? companyMap.get(deal.company_id)?.name ?? "Unknown" : "No company"}</div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                        <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrency(deal.value)}</span>
+                        {(() => { const p = companyMap.get(deal.company_id!)?.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })
+        ) : (
+          effectiveProspectStages.filter(s => mobileStage === "all" || s.id === mobileStage).map(stage => {
+            const items = filteredProspects[stage.id as ProspectStageId] ?? [];
+            if (!items.length) return null;
+            return (
+              <div key={stage.id}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: "#64748b", padding: "6px 4px 4px" }}>{stage.label} ({items.length})</div>
+                {items.map(contact => (
+                  <div key={contact.id} className="mobile-card" onClick={() => setSelectedProspect(contact)} style={{ cursor: "pointer" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#1f2d3d", marginBottom: 4 }}>{contact.first_name} {contact.last_name}</div>
+                        <div style={{ fontSize: 12, color: "#71859b" }}>{contact.title || contact.company_name || "No title"}</div>
+                        {contact.company_id && companyMap.has(contact.company_id) && <div style={{ fontSize: 11, color: "#96a7ba" }}>{companyMap.get(contact.company_id)?.name}</div>}
+                      </div>
+                      <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>{stage.label}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })
+        )}
       </div>
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}

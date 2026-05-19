@@ -198,7 +198,7 @@ export default function TeamManagement() {
               <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table className="crm-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #edf0f5" }}>
                   <th style={{ textAlign: "left", padding: "14px 20px", fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Member</th>
@@ -217,7 +217,7 @@ export default function TeamManagement() {
                   const RoleIcon = meta.icon;
                   return (
                     <tr key={u.id} style={{ borderBottom: "1px solid #f4f6f9" }}>
-                      <td style={{ padding: "14px 20px" }}>
+                      <td data-label="Member" style={{ padding: "14px 20px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                           {u.avatar_url ? (
                             <img
@@ -242,7 +242,7 @@ export default function TeamManagement() {
                           </div>
                         </div>
                       </td>
-                      <td style={{ padding: "14px 16px" }}>
+                      <td data-label="Role" style={{ padding: "14px 16px" }}>
                         <span style={{
                           display: "inline-flex", alignItems: "center", gap: 4,
                           padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
@@ -253,7 +253,7 @@ export default function TeamManagement() {
                           {meta.label}
                         </span>
                       </td>
-                      <td style={{ padding: "14px 16px" }}>
+                      <td data-label="Status" style={{ padding: "14px 16px" }}>
                         <span style={{
                           display: "inline-flex", alignItems: "center", gap: 4,
                           fontSize: 12, fontWeight: 500,
@@ -263,11 +263,11 @@ export default function TeamManagement() {
                           {u.is_active ? "Active" : "Deactivated"}
                         </span>
                       </td>
-                      <td style={{ padding: "14px 16px", fontSize: 13, color: "#55657a" }}>
+                      <td data-label="Joined" style={{ padding: "14px 16px", fontSize: 13, color: "#55657a" }}>
                         {new Date(u.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       </td>
                       {canManageTeam && (
-                        <td style={{ padding: "14px 20px", textAlign: "right" }}>
+                        <td data-label="Actions" style={{ padding: "14px 20px", textAlign: "right" }}>
                           {updating === u.id ? (
                             <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "#7f8fa5" }} />
                           ) : isMe ? (

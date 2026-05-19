@@ -743,7 +743,7 @@ export default function Meetings() {
       ) : (
         <div style={{ ...styles.panel, overflow: "hidden" }}>
           <div className="meetings-table-wrap" style={{ overflowX: "auto" }}>
-            <table style={styles.table}>
+            <table className="crm-table" style={styles.table}>
               <thead>
                 <tr>
                   <th style={styles.th}>Title</th>
@@ -772,7 +772,7 @@ export default function Meetings() {
                   const invalidSchedule = Boolean(m.scheduled_at && !isValidDateValue(m.scheduled_at));
                   return (
                   <tr key={m.id} style={{ borderLeft: meetingTiming(m) === "overdue" ? "3px solid #dc2626" : "3px solid transparent" }}>
-                    <td style={styles.td}>
+                    <td data-label="Title" style={styles.td}>
                       <div style={{ display: "grid", gap: 6 }}>
                         <Link
                           to={`/meetings/${m.id}`}
@@ -824,7 +824,7 @@ export default function Meetings() {
                         </div>
                       </div>
                     </td>
-                    <td style={styles.td}>
+                    <td data-label="Company" style={styles.td}>
                       {m.company_id ? (
                         <span style={{ fontWeight: 600, color: "#1f3144" }}>{companyName[m.company_id] ?? "—"}</span>
                       ) : m.is_internal ? (
@@ -851,57 +851,8 @@ export default function Meetings() {
                         </Link>
                       )}
                     </td>
-                    <td style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
-                    <td style={styles.td}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <span style={{ color: invalidSchedule ? "#b25a1d" : undefined, fontWeight: invalidSchedule ? 800 : undefined }}>
-                          {formatOptionalDate(m.scheduled_at)}
-                        </span>
-                        {invalidSchedule && (
-                          <span style={{ color: "#b25a1d", fontSize: 11, lineHeight: 1.35 }}>
-                            Imported calendar value is not a valid date. Open and fix before prep.
-                          </span>
-                        )}
-                        <TldvRecordingLink
-                          meetingId={m.id}
-                          externalSource={m.external_source}
-                          hasRecording={true}
-                        />
-                      </div>
-                    </td>
-                    <td style={styles.td}>
-                      <span style={{ ...styles.statusChip, background: timingToneStyle.bg, color: timingToneStyle.color, borderColor: timingToneStyle.border }}>
-                        {timingLabel(m)}
-                      </span>
-                    </td>
-                    <td style={styles.td}>
-                      <div style={{ display: "grid", gap: 6, alignItems: "start" }}>
-                        <span
-                          title={prepBlocked ? needsReviewReason : "Prep is ready to open."}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            width: "fit-content",
-                            padding: "3px 8px",
-                            borderRadius: 999,
-                            border: hasBrief ? "1px solid #c7e8d3" : prepBlocked ? "1px solid #ffd8b4" : "1px solid #ffe3b3",
-                            background: hasBrief ? "#ecf8f0" : prepBlocked ? "#fff6ec" : "#fff8e6",
-                            color: hasBrief ? "#15803d" : prepBlocked ? "#b25a1d" : "#9a6b00",
-                            fontSize: 11,
-                            fontWeight: 800,
-                          }}
-                        >
-                          {hasBrief ? "Brief ready" : prepBlocked ? "Needs link" : "Brief needed"}
-                        </span>
-                        <Link
-                          to={prepBlocked ? `/meetings/${m.id}` : `/pre-meeting-assistance#${m.id}`}
-                          style={{ fontSize: 12, fontWeight: 800, color: prepBlocked ? "#b25a1d" : "#1f6feb", textDecoration: "none" }}
-                        >
-                          {prepBlocked ? "Review link" : "Open prep"}
-                        </Link>
-                      </div>
-                    </td>
-                    <td style={styles.td}>
+                    <td data-label="Type" style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
+                    <td data-label="Added by" style={styles.td}>
                       {(() => {
                         // Map the meeting's sync metadata to a compact
                         // "who added this" cell: source label, adder name
@@ -958,7 +909,7 @@ export default function Meetings() {
                         );
                       })()}
                     </td>
-                    <td style={styles.td}>{m.meeting_score ?? "-"}</td>
+                    <td data-label="Score" style={styles.td}>{m.meeting_score ?? "-"}</td>
                   </tr>
                 );
                 })}

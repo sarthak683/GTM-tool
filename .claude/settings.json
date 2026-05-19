@@ -7,7 +7,17 @@
       "Bash(python -c \"from app.clients.web_search import WebSearchClient; print\\(''web_search OK''\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''c:/gtm-prototype/app/services/icp_intelligence.py''\\).read\\(\\)\\); print\\(''icp_intelligence.py: OK''\\)\")",
       "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/companies?size=100)",
-      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/batches)"
+      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/batches)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl logs *)",
+      "Bash(kubectl rollout status *)",
+      "Bash(kubectl --kubeconfig * get *)",
+      "Bash(kubectl --kubeconfig * describe *)",
+      "Bash(kubectl --kubeconfig * logs *)",
+      "Bash(kubectl --kubeconfig * rollout status *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)"
     ]
   },
   "hooks": {

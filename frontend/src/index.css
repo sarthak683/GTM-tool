@@ -1896,37 +1896,45 @@ textarea:focus {
 }
 
 @media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: block !important; }
+
   .crm-topbar {
-    padding: 12px;
-    min-height: 64px;
+    padding: 10px 12px;
+    min-height: 56px;
   }
 
   .crm-title {
-    font-size: 20px;
+    font-size: 18px;
   }
 
   .crm-content {
-    padding: 10px;
+    padding: 8px;
   }
 
   .crm-page {
-    gap: 12px;
+    gap: 8px;
   }
 
   .crm-panel {
-    padding: 14px;
+    padding: 12px;
+    border-radius: 14px;
   }
 
   .crm-button {
     font-size: 13px;
     padding: 10px 14px;
-    min-height: 42px;
+    min-height: 44px;
   }
 
-  .crm-button.soft,
-  .crm-button.primary {
+  .crm-toolbar {
+    padding: 10px;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .crm-toolbar-actions {
     width: 100%;
-    justify-content: center;
   }
 
   .crm-table {
@@ -1934,9 +1942,7 @@ textarea:focus {
     font-size: 12px;
   }
 
-  .crm-table thead {
-    display: none;
-  }
+  .crm-table thead { display: none; }
 
   .crm-table tbody tr {
     display: block;
@@ -1956,9 +1962,7 @@ textarea:focus {
     border-bottom: 1px solid #edf2f7;
   }
 
-  .crm-table tbody td:last-child {
-    border-bottom: none;
-  }
+  .crm-table tbody td:last-child { border-bottom: none; }
 
   .crm-table tbody td::before {
     content: attr(data-label);
@@ -1971,12 +1975,62 @@ textarea:focus {
     flex-shrink: 0;
   }
 
-  .crm-toolbar {
-    padding: 12px;
+  .mobile-touch-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    min-height: 46px !important;
+    border-radius: 14px !important;
+    font-size: 14px !important;
+    font-weight: 800 !important;
+    padding: 12px 18px !important;
+    width: 100% !important;
   }
 
-  .crm-toolbar-actions {
-    width: 100%;
+  .mobile-card {
+    background: #fff;
+    border: 1px solid #dce8f4;
+    border-radius: 16px;
+    padding: 14px;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 14px rgba(17,34,68,0.05);
+  }
+
+  .mobile-section-header {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #7f8fa5;
+    margin-bottom: 4px;
+  }
+
+  .mobile-section-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1d2b3c;
+  }
+
+  .mobile-filter-scroll {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-filter-chip {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid #d5e3ef;
+    background: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    color: #55657a;
+    white-space: nowrap;
+    cursor: pointer;
   }
 
   .pipeline-page {
@@ -1992,7 +2046,7 @@ textarea:focus {
     flex-shrink: 0;
     padding: 12px;
     gap: 10px;
-    max-height: 280px;
+    max-height: 240px;
   }
 
   .pipeline-board-scroll {
@@ -2042,60 +2096,10 @@ textarea:focus {
   .dashboard-kpi-card {
     padding: 12px;
   }
+}
 
-  .sales-analytics-hero {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .meetings-page-toolbar {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .meetings-page-toolbar > * {
-    width: 100%;
-  }
-
-  .premeeting-filter-bar {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .premeeting-filter-bar > * {
-    width: 100%;
-  }
-
-  .team-mgmt-stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-  }
-
-  .team-mgmt-table {
-    min-width: 0;
-    font-size: 12px;
-  }
-
-  .companies-importer-panel {
-    padding: 12px;
-  }
-
-  .companies-importer-controls {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .import-main-card {
-    padding: 14px;
-  }
-
-  .prospect-call-drawer-panel {
-    border-radius: 18px 18px 0 0;
-  }
-
-  .prospect-call-drawer-header {
-    padding: 14px 14px 10px;
-  }
+@media (min-width: 769px) {
+  .mobile-only { display: none !important; }
 }
 
 ::-webkit-scrollbar {

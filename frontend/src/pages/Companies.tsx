@@ -390,7 +390,7 @@ export default function Companies() {
               <tbody>
                 {filtered.map((c) => (
                   <tr key={c.id}>
-                    <td>
+                    <td data-label="Company">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[13px] font-extrabold ${avatarColor(c.name)}`}>
                           {getInitials(c.name)}
@@ -403,10 +403,10 @@ export default function Companies() {
                         </div>
                       </div>
                     </td>
-                    <td>{c.industry ?? <span className="text-[#96a7ba]">-</span>}</td>
-                    <td className="tabular">{c.employee_count?.toLocaleString() ?? <span className="text-[#96a7ba]">-</span>}</td>
-                    <td>{c.funding_stage ?? <span className="text-[#96a7ba]">-</span>}</td>
-                    <td>
+                    <td data-label="Industry">{c.industry ?? <span className="text-[#96a7ba]">-</span>}</td>
+                    <td data-label="Employees" className="tabular">{c.employee_count?.toLocaleString() ?? <span className="text-[#96a7ba]">-</span>}</td>
+                    <td data-label="Funding">{c.funding_stage ?? <span className="text-[#96a7ba]">-</span>}</td>
+                    <td data-label="ICP Fit">
                       {c.icp_score != null ? (
                         <div className="flex items-center gap-2.5">
                           <div className="h-2 w-28 bg-[#edf3fa] rounded-full overflow-hidden">
@@ -418,7 +418,7 @@ export default function Companies() {
                         <span className="text-[#96a7ba]">-</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Tier">
                       {c.icp_tier ? (
                         <div className="flex items-center justify-between gap-2">
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold capitalize" style={TIER_STYLE[c.icp_tier] ?? TIER_STYLE.cold}>
@@ -433,7 +433,7 @@ export default function Companies() {
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td data-label="">
                       {isAdmin ? (
                         <button
                           onClick={(e) => {

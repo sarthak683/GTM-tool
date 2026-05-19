@@ -287,11 +287,11 @@ export default function ImportPage() {
                   const isDup = dupNames.has(rowName) || dupDomains.has(rowDomain);
                   return (
                     <tr key={idx} style={isDup ? { background: "#fffbf0" } : undefined}>
-                      <td style={{ width: 28, paddingRight: 0 }}>
+                      <td style={{ width: 28, paddingRight: 0 }} data-label="">
                         {isDup && <AlertTriangle size={13} style={{ color: "#c48a1a" }} />}
                       </td>
                       {previewHeaders.map((h) => (
-                        <td key={`${idx}-${h}`} style={isDup ? { color: "#8a6a1a" } : undefined}>
+                        <td key={`${idx}-${h}`} data-label={h} style={isDup ? { color: "#8a6a1a" } : undefined}>
                           {row[h] || <span className="text-[#96a7ba]">-</span>}
                         </td>
                       ))}
