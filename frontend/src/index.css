@@ -1895,6 +1895,209 @@ textarea:focus {
   }
 }
 
+@media (max-width: 768px) {
+  .crm-topbar {
+    padding: 12px;
+    min-height: 64px;
+  }
+
+  .crm-title {
+    font-size: 20px;
+  }
+
+  .crm-content {
+    padding: 10px;
+  }
+
+  .crm-page {
+    gap: 12px;
+  }
+
+  .crm-panel {
+    padding: 14px;
+  }
+
+  .crm-button {
+    font-size: 13px;
+    padding: 10px 14px;
+    min-height: 42px;
+  }
+
+  .crm-button.soft,
+  .crm-button.primary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .crm-table {
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .crm-table thead {
+    display: none;
+  }
+
+  .crm-table tbody tr {
+    display: block;
+    border: 1px solid #d9e1ec;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    padding: 12px 14px;
+    background: #fbfdff;
+    box-shadow: 0 4px 12px rgba(17,34,68,0.04);
+  }
+
+  .crm-table tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .crm-table tbody td:last-child {
+    border-bottom: none;
+  }
+
+  .crm-table tbody td::before {
+    content: attr(data-label);
+    font-weight: 700;
+    font-size: 11px;
+    color: #7f8fa5;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+
+  .crm-toolbar {
+    padding: 12px;
+  }
+
+  .crm-toolbar-actions {
+    width: 100%;
+  }
+
+  .pipeline-page {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .pipeline-sidebar {
+    width: 100%;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid #e8eef5;
+    flex-shrink: 0;
+    padding: 12px;
+    gap: 10px;
+    max-height: 280px;
+  }
+
+  .pipeline-board-scroll {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .pipeline-board-row {
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 0 20px;
+  }
+
+  .pipeline-board-row > div {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+    flex: none;
+  }
+
+  .pipeline-drag-overlay {
+    position: relative;
+    margin: 0;
+  }
+
+  .deal-card {
+    padding: 12px;
+  }
+
+  .pipeline-toolbar-shell {
+    margin: 10px 0;
+  }
+
+  .pipeline-toolbar-inner {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .dashboard-chart-main,
+  .dashboard-chart-side {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .dashboard-kpi-card {
+    padding: 12px;
+  }
+
+  .sales-analytics-hero {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .meetings-page-toolbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .meetings-page-toolbar > * {
+    width: 100%;
+  }
+
+  .premeeting-filter-bar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .premeeting-filter-bar > * {
+    width: 100%;
+  }
+
+  .team-mgmt-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .team-mgmt-table {
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .companies-importer-panel {
+    padding: 12px;
+  }
+
+  .companies-importer-controls {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .import-main-card {
+    padding: 14px;
+  }
+
+  .prospect-call-drawer-panel {
+    border-radius: 18px 18px 0 0;
+  }
+
+  .prospect-call-drawer-header {
+    padding: 14px 14px 10px;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

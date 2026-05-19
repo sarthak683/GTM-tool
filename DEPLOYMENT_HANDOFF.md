@@ -468,3 +468,49 @@ A couple of important rules while doing this:
 - Do not deploy prod with a different tag than the one you validated in staging.
 
 If you want, I can also turn this into a single reusable `deploy-staging.ps1` and `deploy-prod.ps1` pair for you.
+|
+
+
+Backup
+
+  Created and ran a full compressed prod DB backup:
+
+  - Path: tmp/prod-db-backups/beacon-prod-20260503-015141.dump
+  - Metadata: tmp/prod-db-backups/beacon-prod-20260503-015141.txt
+  - Size: 19.41 MB
+  - Prod DB logical size was about 55 MB, so this is cheap enough to keep regularly.
+
+  Added backup tooling:
+
+  - scripts/backup_prod_postgres.ps1
+      - Uses pg_dump -Fc
+      - Keeps latest 14 backups by default
+      - Writes to tmp/prod-db-backups
+  - docs/PROD_BACKUPS.md
+      - Explains backup/restore flow
+      - Notes targeted cleanup backups
+
+I added the blob-upload path, but I cannot complete the actual upload from this machine yet because there is no Azure
+  access available here:
+
+  - Az PowerShell modules are not installed
+  - no PROD_BACKUP_BLOB_CONTAINER_SAS_URL env var exists
+  - no storage connection string/key is present in repo/env
+
+  What I did implement:
+
+  - scripts/upload_backup_to_blob.ps1
+  - Updated scripts/backup_prod_postgres.ps1 so future backups auto-upload if PROD_BACKUP_BLOB_CONTAINER_SAS_URL is set.
+  - Updated docs/PROD_BACKUPS.md with upload and retention guidance.
+
+  To finish the upload, provide a private Azure Blob container SAS URL with write/create permissions, then run:
+
+  $env:PROD_BACKUP_BLOB_CONTAINER_SAS_URL = "https://<account>.blob.core.windows.net/<container>?<sas>"
+  powershell -ExecutionPolicy Bypass -File .\scripts\upload_backup_to_blob.ps1 `
+    -ContainerSasUrl $env:PROD_BACKUP_BLOB_CONTAINER_SAS_URL `
+    -Files @(
+      "C:\gtm-prototype\tmp\prod-db-backups\beacon-prod-20260503-015141.dump",
+      "C:\gtm-prototype\tmp\prod-db-backups\beacon-prod-20260503-015141.txt"
+    )
+
+  After that, every run of backup_prod_postgres.ps1 will upload automatically.

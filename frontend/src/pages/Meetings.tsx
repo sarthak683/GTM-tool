@@ -518,7 +518,30 @@ export default function Meetings() {
 
   return (
     <div style={styles.page}>
-      <div style={{ ...styles.panel, ...styles.toolbar }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .meetings-page-toolbar {
+            flex-direction: column !important;
+            gap: 10px !important;
+            padding: 12px !important;
+          }
+          .meetings-filter-bar {
+            flex-direction: column !important;
+            gap: 8px !important;
+            padding: 10px !important;
+          }
+          .meetings-filter-input {
+            min-width: 0 !important;
+            max-width: none !important;
+            flex: 1 1 auto !important;
+          }
+          .meetings-table-wrap {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+        }
+      `}</style>
+      <div className="meetings-page-toolbar" style={{ ...styles.panel, ...styles.toolbar }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={styles.chip}>
@@ -545,11 +568,11 @@ export default function Meetings() {
           a "More filters" disclosure.  Most reps only need search / status / assignee
           / show-internal; keeping the bar dense was visual noise we lived with too
           long. */}
-      <div style={{ ...styles.panel, position: "relative", zIndex: 20, overflow: "visible", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="meetings-filter-bar" style={{ ...styles.panel, position: "relative", zIndex: 20, overflow: "visible", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Free-text search: matches meeting title, linked company name,
               and any text inside the attendees JSON (names + emails). */}
-          <div style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
+          <div className="meetings-filter-input" style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7a8ea4" }} />
             <input
               type="text"
@@ -719,7 +742,7 @@ export default function Meetings() {
         </div>
       ) : (
         <div style={{ ...styles.panel, overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
+          <div className="meetings-table-wrap" style={{ overflowX: "auto" }}>
             <table style={styles.table}>
               <thead>
                 <tr>

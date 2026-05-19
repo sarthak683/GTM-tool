@@ -136,6 +136,17 @@ export default function TeamManagement() {
 
   return (
     <div style={{ background: "#f4f7fb", minHeight: "100%", padding: "32px 28px 40px" }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .team-mgmt-stats-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 10px !important;
+          }
+          .team-mgmt-table {
+            min-width: 0 !important;
+          }
+        }
+      `}</style>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
         {/* Header */}
         <div style={{ marginBottom: 24 }}>
@@ -161,7 +172,7 @@ export default function TeamManagement() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
+        <div className="team-mgmt-stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
             <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Total Members</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1d2b3c", marginTop: 4 }}>{users.length}</div>

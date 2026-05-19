@@ -1613,6 +1613,24 @@ export default function PreMeetingAssistance() {
 
   return (
     <div className="crm-page" style={{ display: "grid", gap: 18 }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .premeeting-filter-bar {
+            flex-direction: column !important;
+            gap: 8px !important;
+            padding: 10px !important;
+          }
+          .premeeting-filter-bar > * {
+            width: 100% !important;
+          }
+          .premeeting-card {
+            padding: 12px !important;
+          }
+          .premeeting-card-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
       {/* Header */}
       <section className="crm-panel" style={{ padding: 22, display: "grid", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
@@ -1755,7 +1773,7 @@ export default function PreMeetingAssistance() {
       )}
 
       {/* Filter bar — primary controls visible, advanced filters behind disclosure */}
-      <section className="crm-panel" style={{ position: "relative", zIndex: 20, overflow: "visible", padding: 16, display: "grid", gap: 10 }}>
+      <section className="crm-panel premeeting-filter-bar" style={{ position: "relative", zIndex: 20, overflow: "visible", padding: 16, display: "grid", gap: 10 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: colors.faint }} />

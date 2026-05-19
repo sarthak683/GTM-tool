@@ -2350,7 +2350,7 @@ export default function Pipeline() {
   return (
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
-        <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
+        <div className="pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
@@ -2625,7 +2625,7 @@ export default function Pipeline() {
 
             style={{ flex: 1, minHeight: 0, height: 0, overflowX: "auto", overflowY: "hidden", padding: "16px 16px 8px 20px", scrollbarGutter: "stable both-edges" }}
           >
-            <div style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%", minHeight: 0, alignItems: "stretch" }}>
+            <div className="pipeline-board-row" style={{ display: "flex", gap: 12, minWidth: "max-content", height: "100%", minHeight: 0, alignItems: "stretch" }}>
               {(tab === "deal" ? stages : effectiveProspectStages).map((stage, index) => {
                 const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : effectiveProspectStages[index - 1]?.group) === "active" && stage.group === "closed";
                 const dealItems = filteredDealBoard[stage.id] ?? [];

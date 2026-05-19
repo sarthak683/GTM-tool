@@ -1773,6 +1773,18 @@ export default function SalesAnalytics() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "6px 2px 18px" }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .sales-analytics-hero {
+            flex-direction: column !important;
+          }
+          .sales-analytics-hero > div {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+          }
+        }
+      `}</style>
       <section
         className="crm-panel"
         style={{
@@ -1782,7 +1794,7 @@ export default function SalesAnalytics() {
           gap: 18,
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "start" }}>
+        <div className="sales-analytics-hero" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 900 }}>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
             <h2 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>

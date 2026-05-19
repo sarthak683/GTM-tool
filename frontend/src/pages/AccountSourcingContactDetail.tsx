@@ -8,7 +8,9 @@ import {
   Globe,
   Loader2,
   Mail,
+  PenLine,
   Phone,
+  Plus,
   RefreshCw,
   Send,
   Sparkles,
@@ -70,6 +72,12 @@ export default function AccountSourcingContactDetail() {
   const [editingDomain, setEditingDomain] = useState(false);
   const [domainInput, setDomainInput] = useState("");
   const [domainSaving, setDomainSaving] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phoneSaving, setPhoneSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -243,6 +251,32 @@ export default function AccountSourcingContactDetail() {
     }
   };
 
+  const handleSaveEmail = async () => {
+    if (!contact) return;
+    const trimmed = emailInput.trim();
+    setEmailSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { email: trimmed || undefined });
+      setContact(updated);
+      setEditingEmail(false);
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const handleSavePhone = async () => {
+    if (!contact) return;
+    const trimmed = phoneInput.trim();
+    setPhoneSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { phone: trimmed || undefined });
+      setContact(updated);
+      setEditingPhone(false);
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
   return (
     <>
       <style>{`
@@ -373,6 +407,15 @@ export default function AccountSourcingContactDetail() {
           .prospect-detail-playbook-grid,
           .prospect-detail-signal-grid {
             grid-template-columns: 1fr !important;
+          }
+          .prospect-detail-edit-inline {
+            width: 100% !important;
+            flex-wrap: wrap !important;
+          }
+          .prospect-detail-edit-inline input {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+            margin-bottom: 6px !important;
           }
         }
       `}</style>
@@ -505,17 +548,81 @@ export default function AccountSourcingContactDetail() {
                   ) : null}
                   <div className="prospect-detail-primary-actions" style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
                     {company ? <span className="prospect-detail-company-inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
-                    {contact.email ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label="Email" tone="primary" /></span> : null}
-                    {contact.phone ? (
-                      <span className="prospect-detail-call-button" style={{ display: "inline-flex" }}>
+                    {editingEmail ? (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          autoFocus
+                          value={emailInput}
+                          onChange={(e) => setEmailInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
+                          placeholder="email@example.com"
+                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
+                        />
+                        <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          {emailSaving ? "Saving..." : "Save"}
+                        </button>
+                        <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          Cancel
+                        </button>
+                      </span>
+                    ) : contact.email ? (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label="Email" tone="primary" />
+                        <button type="button" onClick={() => { setEmailInput(contact.email || ""); setEditingEmail(true); }}
+                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                          <PenLine size={14} />
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
+                        <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 12, padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          <Plus size={14} /> Add email
+                        </button>
+                      </span>
+                    )}
+                    {editingPhone ? (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          autoFocus
+                          value={phoneInput}
+                          onChange={(e) => setPhoneInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
+                          placeholder="+1 555-123-4567"
+                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
+                        />
+                        <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          {phoneSaving ? "Saving..." : "Save"}
+                        </button>
+                        <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          Cancel
+                        </button>
+                      </span>
+                    ) : contact.phone ? (
+                      <span className="prospect-detail-call-button" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <ContactActionButton
                           icon={<Phone size={14} />}
                           onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
                           label={`Call ${contact.phone}`}
                           tone="green"
                         />
+                        <button type="button" onClick={() => { setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
+                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                          <PenLine size={14} />
+                        </button>
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
+                        <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 12, padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          <Plus size={14} /> Add phone
+                        </button>
+                      </span>
+                    )}
                     {contact.linkedin_url ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" /></span> : null}
                     <button
                       type="button"
@@ -528,20 +635,80 @@ export default function AccountSourcingContactDetail() {
                     </button>
                   </div>
                   <div className="prospect-detail-mobile-card" style={{ display: "none" }}>
-                    <div style={{ fontSize: 11, color: colors.faint, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Call context</div>
-                    <div style={{ marginTop: 8, color: colors.text, fontSize: 18, fontWeight: 850 }}>{contact.phone || "No phone saved"}</div>
-                    <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.45 }}>
-                      {company?.name || contact.company_name || "Company not mapped"} · {contact.timezone || "No timezone"}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: colors.faint, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Contact info</div>
                     </div>
-                    <div className="prospect-detail-mobile-grid" style={{ marginTop: 10, display: "none" }}>
-                      <div style={{ borderRadius: 12, border: `1px solid ${trackingTone.border}`, background: trackingTone.soft, padding: 10 }}>
-                        <div style={{ color: trackingTone.color, fontSize: 11, fontWeight: 850 }}>Stage</div>
-                        <div style={{ color: trackingTone.color, fontSize: 12.5, fontWeight: 850, marginTop: 3 }}>{getProspectTrackingStage(contact)}</div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Mail size={14} color={colors.sub} />
+                        {editingEmail ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                            <input autoFocus value={emailInput} onChange={(e) => setEmailInput(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
+                              placeholder="email@example.com"
+                              style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
+                            <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              {emailSaving ? "..." : "Save"}
+                            </button>
+                            <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
+                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : contact.email ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+                            <span style={{ color: colors.text, fontSize: 14, fontWeight: 700, flex: 1 }}>{contact.email}</span>
+                            <button type="button" onClick={(e) => { e.preventDefault(); setEmailInput(contact.email || ""); setEditingEmail(true); }}
+                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                              <PenLine size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
+                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                            <Plus size={12} /> Add email
+                          </button>
+                        )}
                       </div>
-                      <div style={{ borderRadius: 12, border: "1px solid #dce8f4", background: "#f8fbff", padding: 10 }}>
-                        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 850 }}>Last signal</div>
-                        <div style={{ color: colors.text, fontSize: 12.5, fontWeight: 850, marginTop: 3 }}>{formatDate(contact.tracking_last_activity_at || contact.updated_at)}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Phone size={14} color={colors.sub} />
+                        {editingPhone ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                            <input autoFocus value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
+                              placeholder="+1 555-123-4567"
+                              style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
+                            <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              {phoneSaving ? "..." : "Save"}
+                            </button>
+                            <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
+                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : contact.phone ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+                            <button type="button" onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                              style={{ color: colors.green, fontSize: 14, fontWeight: 800, flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                              {contact.phone}
+                            </button>
+                            <button type="button" onClick={(e) => { e.preventDefault(); setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
+                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                              <PenLine size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
+                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                            <Plus size={12} /> Add phone
+                          </button>
+                        )}
                       </div>
+                    </div>
+                    <div style={{ marginTop: 8, color: colors.sub, fontSize: 12.5, lineHeight: 1.45 }}>
+                      {company?.name || contact.company_name || "Company not mapped"} · {contact.timezone || "No timezone"}
                     </div>
                   </div>
                 </div>
@@ -908,17 +1075,82 @@ export default function AccountSourcingContactDetail() {
               <KV label="Momentum" value={`${getProspectTrackingScore(contact)} · ${getProspectTrackingSummary(contact)}`} />
               <KV label="Name" value={fullName} />
               <KV label="Title" value={contact.title} />
-              <KV label="Email" value={contact.email ? <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={contact.email} tone="primary" /> : undefined} />
+              <KV
+                label="Email"
+                value={editingEmail ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      autoFocus
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
+                      placeholder="email@example.com"
+                      style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                    />
+                    <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {emailSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
+                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : contact.email ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={contact.email} tone="primary" />
+                    <button type="button" onClick={() => { setEmailInput(contact.email || ""); setEditingEmail(true); }}
+                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      <PenLine size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
+                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Plus size={12} /> Add email
+                  </button>
+                )}
+              />
               <KV
                 label="Phone"
-                value={contact.phone ? (
-                  <ContactActionButton
-                    icon={<Phone size={14} />}
-                    onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
-                    label={contact.phone}
-                    tone="green"
-                  />
-                ) : undefined}
+                value={editingPhone ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      autoFocus
+                      value={phoneInput}
+                      onChange={(e) => setPhoneInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
+                      placeholder="+1 555-123-4567"
+                      style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                    />
+                    <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {phoneSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
+                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : contact.phone ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <ContactActionButton
+                      icon={<Phone size={14} />}
+                      onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                      label={contact.phone}
+                      tone="green"
+                    />
+                    <button type="button" onClick={() => { setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
+                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      <PenLine size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
+                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Plus size={12} /> Add phone
+                  </button>
+                )}
               />
               <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
               <KV
