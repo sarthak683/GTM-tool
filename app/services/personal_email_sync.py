@@ -49,15 +49,30 @@ FREE_EMAIL_PROVIDERS = {
     "protonmail.com",
 }
 AUTOMATED_EMAIL_LOCAL_PARTS = {
+    "accountspayable",
+    "accounts",
+    "billing",
     "bounce",
+    "drive-shares-dm-noreply",
+    "drive-shares-noreply",
+    "invoice",
     "mailer-daemon",
+    "meetings-noreply",
     "no-reply",
     "noreply",
     "notification",
     "notifications",
     "postmaster",
+    "receipts",
 }
-AUTOMATED_SUBJECT_PREFIXES = (
+AUTOMATED_EMAIL_LOCAL_MARKERS = (
+    "noreply",
+    "no-reply",
+    "mailer-daemon",
+    "notification",
+    "notifications",
+)
+AUTOMATED_SUBJECT_MARKERS = (
     "accepted:",
     "canceled:",
     "cancelled:",
@@ -65,8 +80,23 @@ AUTOMATED_SUBJECT_PREFIXES = (
     "delivery status notification",
     "failure notice",
     "invitation:",
+    "meeting notes",
+    "notes:",
+    "out of office",
+    "problem with the notes:",
+    "submission of invoice",
+    "unable to record",
     "updated invitation:",
     "undeliverable:",
+    "your action items from",
+    "your upcoming meetings",
+)
+ADMIN_SUBJECT_WORDS = (
+    "bill",
+    "billing",
+    "invoice",
+    "payment",
+    "receipt",
 )
 
 def _normalize_domain(value: str | None) -> str:
@@ -88,12 +118,17 @@ def _is_internal_address(addr: str, internal_domain: str) -> bool:
 
 def _is_automated_email(msg: EmailMessage) -> bool:
     subject = (msg.subject or "").strip().lower()
-    if any(subject.startswith(prefix) for prefix in AUTOMATED_SUBJECT_PREFIXES):
+    normalized_subject = re.sub(r"^(re|fw|fwd):\s*", "", subject)
+    if any(marker in normalized_subject for marker in AUTOMATED_SUBJECT_MARKERS):
+        return True
+    if any(re.search(rf"\b{re.escape(word)}\b", normalized_subject) for word in ADMIN_SUBJECT_WORDS):
         return True
     addresses = [msg.from_addr, *msg.to_addrs, *msg.cc_addrs]
     for addr in addresses:
         local = (addr or "").split("@", 1)[0].strip().lower()
         if local in AUTOMATED_EMAIL_LOCAL_PARTS:
+            return True
+        if any(marker in local for marker in AUTOMATED_EMAIL_LOCAL_MARKERS):
             return True
     return False
 
