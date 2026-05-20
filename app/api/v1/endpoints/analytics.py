@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.analytics_defaults import DEFAULT_STAGE_PROBABILITIES
 from app.core.dependencies import CurrentUser, DBSession
