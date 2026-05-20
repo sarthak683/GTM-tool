@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
@@ -1412,6 +1412,15 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
           ) : activeTab === "meddpicc" ? (
             <MeddpiccPanel
               qualification={deal.qualification}
+              flags={deal.flags}
+              forecastCategory={deal.forecast_category}
+              flagCounts={{
+                green: deal.flag_green_count,
+                yellow: deal.flag_yellow_count,
+                red: deal.flag_red_count,
+              }}
+              flagBlockers={deal.flag_blockers}
+              flagYellows={deal.flag_yellows}
               autoFilling={autoFillingMeddpicc}
               onAutoFill={async () => {
                 setAutoFillingMeddpicc(true);
@@ -1702,14 +1711,65 @@ function FieldRow({ label, icon, children }: { label: string; icon: React.ReactN
 
 // ── MEDDPICC Scorecard Panel ────────────────────────────────────────────────
 
+type FlagColor = "green" | "yellow" | "red";
+type ForecastCategory = "commit" | "best_case" | "pipeline";
+
+const FLAG_PALETTE: Record<FlagColor, { dot: string; bg: string; border: string; fg: string; label: string }> = {
+  green: { dot: "#22c55e", bg: "#ecfdf3", border: "#bbf7d0", fg: "#15803d", label: "GREEN" },
+  yellow: { dot: "#f59e0b", bg: "#fffbeb", border: "#fde68a", fg: "#92400e", label: "YELLOW" },
+  red: { dot: "#ef4444", bg: "#fef2f2", border: "#fecaca", fg: "#991b1b", label: "RED" },
+};
+
+const FORECAST_META: Record<ForecastCategory, { label: string; sub: string; color: string; bg: string; border: string }> = {
+  commit: {
+    label: "Commit",
+    sub: "Every element defensible with evidence",
+    color: "#15803d",
+    bg: "#ecfdf3",
+    border: "#bbf7d0",
+  },
+  best_case: {
+    label: "Best Case",
+    sub: "Yellows need an action + date to move to Green",
+    color: "#92400e",
+    bg: "#fffbeb",
+    border: "#fde68a",
+  },
+  pipeline: {
+    label: "Pipeline only",
+    sub: "Reds are known gaps — resolve them or disqualify",
+    color: "#991b1b",
+    bg: "#fef2f2",
+    border: "#fecaca",
+  },
+};
+
+// Translate stored MEDDPICC level (0-3) into a flag color when the backend
+// hasn't supplied one (older cached payloads).
+function deriveFlagFromLevel(level: number): FlagColor {
+  if (level <= 0) return "red";
+  if (level >= 3) return "green";
+  return "yellow";
+}
+
 function MeddpiccPanel({
   qualification,
+  flags,
+  forecastCategory,
+  flagCounts,
+  flagBlockers,
+  flagYellows,
   autoFilling,
   onAutoFill,
   onUpdate,
   onUpdateDetail,
 }: {
   qualification?: DealQualification;
+  flags?: Record<string, "green" | "yellow" | "red">;
+  forecastCategory?: ForecastCategory;
+  flagCounts?: { green?: number; yellow?: number; red?: number };
+  flagBlockers?: string[];
+  flagYellows?: string[];
   autoFilling: boolean;
   onAutoFill: () => Promise<void>;
   onUpdate: (meddpicc: Record<string, number>) => Promise<void>;
@@ -1794,6 +1854,16 @@ function MeddpiccPanel({
           </button>
         </div>
       </div>
+
+      {/* Flag Matrix — forecast-call rubric */}
+      <FlagMatrixCard
+        meddpicc={meddpicc}
+        flags={flags}
+        forecastCategory={forecastCategory}
+        flagCounts={flagCounts}
+        flagBlockers={flagBlockers}
+        flagYellows={flagYellows}
+      />
 
       {/* Dimension cards */}
       {MEDDPICC_DIMENSIONS.map((dim) => {
@@ -1980,6 +2050,205 @@ function MeddpiccPanel({
       })}
     </div>
   );
+}
+
+// ── Flag Matrix Card ────────────────────────────────────────────────────────
+//
+// Renders the deal review rubric described in the GTM playbook: each of the 8
+// MEDDPICC elements gets a Green / Yellow / Red flag. The Green/Yellow/Red
+// labels are derived server-side (see app/services/deal_flags.py) and fall
+// back to a level-based mapping when the backend hasn't supplied them yet.
+
+function FlagMatrixCard({
+  meddpicc,
+  flags,
+  forecastCategory,
+  flagCounts,
+  flagBlockers,
+  flagYellows,
+}: {
+  meddpicc: Record<string, number>;
+  flags?: Record<string, "green" | "yellow" | "red">;
+  forecastCategory?: ForecastCategory;
+  flagCounts?: { green?: number; yellow?: number; red?: number };
+  flagBlockers?: string[];
+  flagYellows?: string[];
+}) {
+  const rows = MEDDPICC_DIMENSIONS.map((dim) => {
+    const flag = (flags?.[dim.key] ?? deriveFlagFromLevel(meddpicc[dim.key] ?? 0)) as FlagColor;
+    return { ...dim, flag };
+  });
+
+  // Forecast bucket header — when the backend hasn't sent one, derive it.
+  const greens = flagCounts?.green ?? rows.filter((r) => r.flag === "green").length;
+  const yellows = flagCounts?.yellow ?? rows.filter((r) => r.flag === "yellow").length;
+  const reds = flagCounts?.red ?? rows.filter((r) => r.flag === "red").length;
+  const bucket: ForecastCategory =
+    forecastCategory ?? (reds > 0 ? "pipeline" : yellows === 0 ? "commit" : "best_case");
+  const bucketMeta = FORECAST_META[bucket];
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${bucketMeta.border}`,
+        borderRadius: 14,
+        overflow: "hidden",
+        background: "#fff",
+      }}
+    >
+      {/* Header — forecast bucket + counts */}
+      <div
+        style={{
+          padding: "14px 18px",
+          background: bucketMeta.bg,
+          borderBottom: `1px solid ${bucketMeta.border}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: bucketMeta.color, letterSpacing: 0.6 }}>
+            FORECAST CATEGORY
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: bucketMeta.color, marginTop: 2 }}>
+            {bucketMeta.label}
+          </div>
+          <div style={{ fontSize: 11, color: "#55687d", marginTop: 2 }}>{bucketMeta.sub}</div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <FlagCountChip color="green" count={greens} />
+          <FlagCountChip color="yellow" count={yellows} />
+          <FlagCountChip color="red" count={reds} />
+        </div>
+      </div>
+
+      {/* Matrix table */}
+      <div style={{ padding: "12px 18px" }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1f2d3d", marginBottom: 8 }}>
+          Flag Matrix
+        </div>
+        <div style={{ fontSize: 11, color: "#7a8ca1", marginBottom: 12, lineHeight: 1.6 }}>
+          Use this on every deal review. Green = proven with written or recorded evidence. Yellow = assumed but
+          not validated — needs a specific action and date. Red = missing or unknown.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) repeat(3, 1fr)", gap: 0, border: "1px solid #e8eef5", borderRadius: 10, overflow: "hidden" }}>
+          {/* Column headers */}
+          <div style={cellStyle({ header: true })}>Element</div>
+          <div style={cellStyle({ header: true, color: FLAG_PALETTE.green.fg, bg: FLAG_PALETTE.green.bg })}>● GREEN</div>
+          <div style={cellStyle({ header: true, color: FLAG_PALETTE.yellow.fg, bg: FLAG_PALETTE.yellow.bg })}>● YELLOW</div>
+          <div style={cellStyle({ header: true, color: FLAG_PALETTE.red.fg, bg: FLAG_PALETTE.red.bg })}>● RED</div>
+
+          {rows.map((row) => (
+            <FlagRow key={row.key} label={row.label} flag={row.flag} />
+          ))}
+        </div>
+
+        {/* Action prompts */}
+        {(flagBlockers?.length || flagYellows?.length) ? (
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            {flagBlockers && flagBlockers.length > 0 && (
+              <div style={{ fontSize: 11, color: "#991b1b" }}>
+                <b>Reds to resolve:</b> {flagBlockers.join(", ")}
+              </div>
+            )}
+            {flagYellows && flagYellows.length > 0 && (
+              <div style={{ fontSize: 11, color: "#92400e" }}>
+                <b>Yellows needing action + date:</b> {flagYellows.join(", ")}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FlagCountChip({ color, count }: { color: FlagColor; count: number }) {
+  const p = FLAG_PALETTE[color];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 10px",
+        borderRadius: 999,
+        background: p.bg,
+        border: `1px solid ${p.border}`,
+        color: p.fg,
+        fontSize: 11,
+        fontWeight: 800,
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.dot }} />
+      {count} {p.label}
+    </span>
+  );
+}
+
+function FlagRow({ label, flag }: { label: string; flag: FlagColor }) {
+  const cells: FlagColor[] = ["green", "yellow", "red"];
+  return (
+    <>
+      <div style={cellStyle({ label: true })}>{label}</div>
+      {cells.map((cellColor) => {
+        const active = cellColor === flag;
+        const p = FLAG_PALETTE[cellColor];
+        return (
+          <div
+            key={cellColor}
+            style={cellStyle({
+              bg: active ? p.bg : "#fff",
+              color: active ? p.fg : "#cbd5e1",
+              border: active ? `2px solid ${p.dot}` : undefined,
+            })}
+          >
+            {active ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: p.dot }} />
+                Current
+              </span>
+            ) : (
+              <span style={{ fontSize: 16, opacity: 0.35 }}>○</span>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function cellStyle({
+  header,
+  label,
+  bg,
+  color,
+  border,
+}: {
+  header?: boolean;
+  label?: boolean;
+  bg?: string;
+  color?: string;
+  border?: string;
+}): CSSProperties {
+  return {
+    padding: header ? "8px 10px" : "10px 12px",
+    background: bg ?? (header ? "#f8fafc" : label ? "#fbfdff" : "#fff"),
+    color: color ?? (header ? "#475569" : "#1f2d3d"),
+    fontSize: header ? 10 : 12,
+    fontWeight: header ? 800 : label ? 700 : 500,
+    letterSpacing: header ? 0.4 : 0,
+    borderBottom: "1px solid #eef2f7",
+    borderRight: "1px solid #eef2f7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: header || !label ? "center" : "flex-start",
+    minHeight: header ? 32 : 44,
+    outline: border,
+    outlineOffset: -2,
+  };
 }
 
 // ── Activity Panel ──────────────────────────────────────────────────────────

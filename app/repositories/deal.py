@@ -20,6 +20,19 @@ from app.models.deal import (
 )
 from app.models.user import User
 from app.repositories.base import BaseRepository
+from app.services.deal_flags import compute_deal_flags
+
+
+def _apply_flag_fields(read: DealRead, qualification: Any) -> None:
+    """Populate the flag-matrix fields on a DealRead from raw qualification JSONB."""
+    summary = compute_deal_flags(qualification)
+    read.flags = summary["flags"]
+    read.forecast_category = summary["forecast_category"]
+    read.flag_green_count = summary["green_count"]
+    read.flag_yellow_count = summary["yellow_count"]
+    read.flag_red_count = summary["red_count"]
+    read.flag_blockers = summary["flag_blockers"]
+    read.flag_yellows = summary["flag_yellows"]
 
 
 class DealRepository(BaseRepository[Deal]):
@@ -341,6 +354,7 @@ class DealRepository(BaseRepository[Deal]):
             read.assigned_rep_name = rep_name
             read.contact_count = cc or 0
             read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+            _apply_flag_fields(read, deal.qualification)
             read.seller_engagement_at = seller_engagement.get(deal.id)
             read.client_engagement_at = client_engagement.get(deal.id)
             read.seller_engagement_signal = seller_signal.get(deal.id)
@@ -393,6 +407,7 @@ class DealRepository(BaseRepository[Deal]):
         read.assigned_rep_name = rep_name
         read.contact_count = cc or 0
         read.meddpicc_score = compute_meddpicc_score(deal.qualification)
+        _apply_flag_fields(read, deal.qualification)
         read.seller_engagement_at = seller_engagement.get(deal.id)
         read.client_engagement_at = client_engagement.get(deal.id)
         read.seller_engagement_signal = seller_signal.get(deal.id)

@@ -146,6 +146,15 @@ class DealRead(DealBase):
     commit_to_deal: bool = False
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_refresh_requested_at: Optional[datetime] = None
+    # Flag matrix — derived from qualification.meddpicc + meddpicc_details.
+    # Populated alongside meddpicc_score in DealRepository.
+    flags: Optional[dict[str, str]] = None  # e.g. {"metrics": "green", "champion": "yellow", ...}
+    forecast_category: Optional[str] = None  # "commit" | "best_case" | "pipeline"
+    flag_green_count: Optional[int] = None
+    flag_yellow_count: Optional[int] = None
+    flag_red_count: Optional[int] = None
+    flag_blockers: Optional[list[str]] = None
+    flag_yellows: Optional[list[str]] = None
 
 
 class DealUpdate(SQLModel):

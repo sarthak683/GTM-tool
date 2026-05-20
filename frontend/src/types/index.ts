@@ -187,6 +187,14 @@ export interface Deal {
   seller_engagement_reason?: string;
   client_engagement_reason?: string;
   commit_to_deal?: boolean;
+  // Flag matrix — derived server-side from qualification.meddpicc
+  flags?: Record<string, "green" | "yellow" | "red">;
+  forecast_category?: "commit" | "best_case" | "pipeline";
+  flag_green_count?: number;
+  flag_yellow_count?: number;
+  flag_red_count?: number;
+  flag_blockers?: string[];
+  flag_yellows?: string[];
 }
 
 export interface MeddpiccAiDimension {
