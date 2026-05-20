@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   CalendarDays,
@@ -24,7 +24,7 @@ const NAV = [
   { to: "/tasks", label: "Tasks", description: "Work the queue and accept Beacon recommendations.", icon: CheckSquare },
 ];
 
-export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { isAdmin, user } = useAuth();
   const [canManageTeam, setCanManageTeam] = useState(isAdmin);
   const [openTaskCount, setOpenTaskCount] = useState(0);
@@ -164,3 +164,5 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
     </aside>
   );
 }
+
+export default memo(Sidebar);

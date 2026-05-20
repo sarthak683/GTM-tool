@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, MessageSquare, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react";
 
 import { authApi, tasksApi } from "../../lib/api";
@@ -398,7 +398,7 @@ function isMeaningfulTaskTitle(value: string) {
   return title.length >= 3 && !/^[\d\s.,_-]+$/.test(title);
 }
 
-export default function TaskCenterModal({
+function TaskCenterModal({
   isOpen,
   onClose,
   entityType,
@@ -914,3 +914,5 @@ export default function TaskCenterModal({
     </>
   );
 }
+
+export default memo(TaskCenterModal);

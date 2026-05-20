@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { NavLink } from "react-router-dom";
 import { CalendarDays, ChartColumnBig, CheckSquare, KanbanSquare, Radar, Search } from "lucide-react";
 
@@ -9,7 +10,7 @@ const NAV = [
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
 ];
 
-export default function MobileNav() {
+function MobileNav() {
   return (
     <nav className="mobile-nav" style={{
       display: "none",
@@ -54,3 +55,5 @@ export default function MobileNav() {
     </nav>
   );
 }
+
+export default memo(MobileNav);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -22,7 +22,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/settings": { title: "Settings", subtitle: "Configure shared workflows, inboxes, and workspace defaults" },
 };
 
-export default function Layout() {
+function Layout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, logout, isAdmin } = useAuth();
@@ -277,3 +277,5 @@ export default function Layout() {
     </div>
   );
 }
+
+export default memo(Layout);

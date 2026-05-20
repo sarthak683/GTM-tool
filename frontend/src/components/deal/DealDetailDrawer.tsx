@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
@@ -309,7 +309,7 @@ function EngagementPanel({
   );
 }
 
-export default function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert, onCompanyUpdated }: Props) {
+function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert, onCompanyUpdated }: Props) {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -1695,6 +1695,8 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
     </>
   );
 }
+
+export default memo(DealDetailDrawer);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

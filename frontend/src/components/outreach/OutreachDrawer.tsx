@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { CSSProperties, memo, useEffect, useMemo, useState } from "react";
 import { outreachApi } from "../../lib/api";
 import type { Contact, OutreachSequence, OutreachStep } from "../../types";
 import {
@@ -81,7 +81,7 @@ const palette = {
 
 const DEFAULT_SENDING_ACCOUNT = "mahesh@beacon.li";
 
-export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
+function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
   const isOpen = !!contact;
   const isInline = mode === "inline";
 
@@ -1123,6 +1123,8 @@ export default function OutreachDrawer({ contact, onClose, mode = "drawer" }: Pr
     </>
   );
 }
+
+export default memo(OutreachDrawer);
 
 // ── Step Timeline ─────────────────────────────────────────────────────────────
 
