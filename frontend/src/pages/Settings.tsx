@@ -994,7 +994,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="crm-page" style={{ maxWidth: 1160, display: "grid", gap: 20 }}>
+    <div className="crm-page" style={{ maxWidth: 1160, display: "grid", gap: 20, paddingBottom: 80 }}>
       <section className="crm-panel" style={{ padding: 28, display: "grid", gap: 18 }}>
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Workspace settings</h2>

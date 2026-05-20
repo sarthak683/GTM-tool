@@ -135,7 +135,7 @@ export default function TeamManagement() {
   const sdrs = users.filter((u) => u.role === "sdr");
 
   return (
-    <div style={{ background: "#f4f7fb", minHeight: "100%", padding: "32px 28px 40px" }}>
+    <div className="crm-page" style={{ padding: "20px 10px 80px" }}>
       <style>{`
         @media (max-width: 768px) {
           .team-mgmt-stats-grid {

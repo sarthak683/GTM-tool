@@ -304,7 +304,7 @@ function TaskWorkspaceCard({
   const templates = getTaskTemplates(task);
 
   return (
-    <div className="crm-panel" style={{ padding: 18, borderRadius: 16, boxShadow: "none", display: "grid", gap: 12 }}>
+    <div className="crm-panel" style={{ padding: 18, boxShadow: "none", display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "start" }}>
           {isOpen && (

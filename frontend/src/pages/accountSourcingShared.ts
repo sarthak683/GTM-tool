@@ -80,7 +80,7 @@ export const containerStyle: CSSProperties = {
 export const cardStyle: CSSProperties = {
   background: colors.card,
   border: `1px solid ${colors.border}`,
-  borderRadius: 16,
+  borderRadius: 22,
   boxShadow: "0 6px 20px rgba(17,34,68,0.05)",
 };
 

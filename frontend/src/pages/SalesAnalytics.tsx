@@ -2140,6 +2140,16 @@ export default function SalesAnalytics() {
         </div>
       ) : !data ? null : (
         <>
+          {data.summary.active_deals === 0 && (data.rep_activity ?? []).reduce((s, r) => s + (r.total ?? 0), 0) === 0 && (
+            <div className="crm-panel" style={{ padding: 32, textAlign: "center" }}>
+              <BarChart3 size={36} style={{ margin: "0 auto 12px", color: "#687b92", opacity: 0.4 }} />
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#1f3144", marginBottom: 6 }}>No data available for this period</div>
+              <div style={{ fontSize: 13, color: "#6f8095", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
+                There are no active deals or logged activities in the selected window. Try a wider date range or different rep/geography filters.
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
             {metricCards.map((card) => (
               <MetricCard key={card.label} {...card} />

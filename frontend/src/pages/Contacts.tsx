@@ -2074,8 +2074,20 @@ export default function Contacts() {
               <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
             ) : contacts.length === 0 ? (
               <div className="crm-panel p-14 text-center text-[#6f8297] prospect-desktop-only">
-                <Users className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                No contacts match your search.
+                {contactsTotal === 0 ? (
+                  <>
+                    <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.35 }} />
+                    <div style={{ fontSize: 16, fontWeight: 800, color: "#25384d", marginBottom: 8 }}>No prospects found</div>
+                    <div style={{ fontSize: 13, color: "#7a8ea4", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
+                      Upload a CSV from the Migrate Prospects button above, or add prospects manually with Add Prospect.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.25 }} />
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#4a6580" }}>No contacts match your search</div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="crm-panel overflow-hidden contacts-table-panel prospect-desktop-only">

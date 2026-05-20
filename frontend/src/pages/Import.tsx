@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, FileSpreadsheet, RefreshCw, Upload } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, Loader2, RefreshCw, Upload } from "lucide-react";
 import { companiesApi, prospectingApi, type ProspectingBatch } from "../lib/api";
 
 export default function ImportPage() {
@@ -16,6 +16,7 @@ export default function ImportPage() {
   const [dupNames, setDupNames] = useState<Set<string>>(new Set());
   const [dupDomains, setDupDomains] = useState<Set<string>>(new Set());
   const [checkingDups, setCheckingDups] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     if (!polling || !batch?.batch_id) return;
@@ -164,6 +165,7 @@ export default function ImportPage() {
       return;
     }
 
+    setPreviewing(true);
     try {
       await buildPreview(file);
     } catch {
@@ -173,6 +175,8 @@ export default function ImportPage() {
       setPreviewTotalRows(0);
       setPreviewValidRows(0);
       setHasValidColumn(false);
+    } finally {
+      setPreviewing(false);
     }
   };
 
@@ -251,6 +255,13 @@ export default function ImportPage() {
           </div>
         </div>
       </section>
+
+      {previewing && (
+        <section className="crm-panel" style={{ padding: 24, display: "flex", alignItems: "center", gap: 12, color: "#647a91" }}>
+          <Loader2 size={18} className="animate-spin" />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Uploading and previewing...</span>
+        </section>
+      )}
 
       {previewRows.length > 0 && (
         <section className="crm-panel overflow-hidden" style={{ padding: 0 }}>
