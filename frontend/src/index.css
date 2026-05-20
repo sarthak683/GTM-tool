@@ -1721,6 +1721,33 @@ textarea:focus {
     padding-bottom: 80px;
   }
 
+  /* Pipeline-specific shell: on desktop the pipeline uses absolute
+     positioning so its column rail can scroll horizontally inside a fixed
+     viewport. On mobile we need it to flow normally (single column, full
+     viewport width) — otherwise the absolute box collapses inside the auto-
+     height parent and the board renders as a narrow centered column with
+     empty side gutters, which is what reps were seeing on iPhone. */
+  .crm-content--pipeline {
+    position: static !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    padding-bottom: 80px !important;
+  }
+
+  .crm-content-inner--pipeline {
+    position: static !important;
+    inset: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  .crm-content-inner--pipeline > * {
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
   .mobile-nav { display: flex !important; }
 
   .crm-page {

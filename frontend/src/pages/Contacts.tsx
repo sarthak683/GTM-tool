@@ -1009,10 +1009,20 @@ export default function Contacts() {
     <>
       <style>{`
         .prospect-mobile-only { display: none; }
-        @media (max-width: 760px) {
+        /* Breakpoint aligned with the global mobile layout switch in index.css
+           (1080px). Earlier the mobile view only kicked in <=760px, leaving a
+           broken middle band 760-1080px where the desktop sidebar was hidden
+           but the desktop grid still rendered cramped. */
+        @media (max-width: 1080px) {
           .contacts-page {
+            /* No side padding: let the mobile shell paint edge-to-edge. The
+               surrounding .crm-content keeps its own padding on desktop; on
+               mobile we already reset it to 8px via the global rule. */
             padding: 0 0 88px !important;
             gap: 12px !important;
+            margin: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
           }
           .prospect-desktop-only {
             display: none !important;
@@ -1025,9 +1035,16 @@ export default function Contacts() {
             z-index: 20;
           }
           .prospect-mobile-shell {
-            margin: -4px -10px 0;
+            /* Edge-to-edge: counter the .crm-content padding so the sticky
+               search bar and cards run flush to the viewport edges. Use
+               calc(-1 * padding) instead of fixed -10px so the shell tracks
+               whatever the parent decides to use. */
+            margin: 0 calc(-1 * env(safe-area-inset-left, 0)) 0;
+            margin-left: -8px;
+            margin-right: -8px;
+            margin-top: -8px;
             background: #f4f8fc;
-            min-height: calc(100vh - 56px);
+            min-height: calc(100dvh - 56px);
           }
           .prospect-mobile-top {
             position: sticky;

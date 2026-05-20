@@ -824,8 +824,164 @@ export default function TasksPage() {
     await load();
   };
 
+  // ── Mobile-only: a strict subset of the desktop workspace. Show only the
+  // current user's open tasks, sorted with overdue first, then due-today,
+  // then upcoming, then unscheduled. One CTA per card: Complete. Filters,
+  // pagination, team queue, and task creation all stay desktop-only.
+  const mobileTasks = useMemo(() => {
+    const openTasks = tasks.filter((task) => task.status === "open");
+    const bucketRank: Record<string, number> = { overdue: 0, today: 1, tomorrow: 2, this_week: 3, upcoming: 4 };
+    return openTasks.slice().sort((a, b) => {
+      const aBadge = getDueBadge(a.due_at, a.status);
+      const bBadge = getDueBadge(b.due_at, b.status);
+      const aRank = aBadge ? bucketRank[aBadge.bucket] ?? 5 : 6;
+      const bRank = bBadge ? bucketRank[bBadge.bucket] ?? 5 : 6;
+      if (aRank !== bRank) return aRank - bRank;
+      const aDue = a.due_at ? new Date(a.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+      const bDue = b.due_at ? new Date(b.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+      return aDue - bDue;
+    });
+  }, [tasks]);
+
   return (
-    <div className="crm-page" style={{ display: "grid", gap: 18 }}>
+    <>
+      <style>{`
+        .tasks-mobile-only { display: none; }
+        @media (max-width: 1080px) {
+          .tasks-desktop-only {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
+          .tasks-mobile-only {
+            display: block !important;
+            margin: -8px -8px 0;
+            background: #f4f8fc;
+            min-height: calc(100dvh - 56px);
+            padding: 0 0 88px;
+          }
+          .tasks-mobile-header {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            padding: 14px 14px 12px;
+            background: rgba(244, 248, 252, 0.96);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #dde8f4;
+          }
+          .tasks-mobile-list {
+            display: grid;
+            gap: 12px;
+            padding: 14px 12px 0;
+          }
+          .tasks-mobile-card {
+            background: #fff;
+            border: 1px solid #dce8f4;
+            border-radius: 16px;
+            padding: 14px;
+            box-shadow: 0 6px 18px rgba(16, 42, 67, 0.06);
+            display: grid;
+            gap: 10px;
+          }
+          .tasks-mobile-complete {
+            min-height: 46px;
+            border-radius: 12px;
+            border: none;
+            background: ${colors.green};
+            color: #fff;
+            font-size: 14px;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 6px 14px rgba(31, 143, 95, 0.22);
+          }
+          .tasks-mobile-complete:disabled {
+            background: #cfddd6;
+            box-shadow: none;
+          }
+          .tasks-mobile-entity-link {
+            color: ${colors.primary};
+            text-decoration: none;
+            font-weight: 700;
+          }
+        }
+      `}</style>
+
+      {/* ── Mobile: minimal open-task list ──────────────────────────────── */}
+      <div className="tasks-mobile-only">
+        <div className="tasks-mobile-header">
+          <div style={{ fontSize: 18, fontWeight: 850, color: "#102a43", lineHeight: 1.1 }}>My tasks</div>
+          <div style={{ fontSize: 12.5, color: "#6f8297", fontWeight: 650, marginTop: 3 }}>
+            {loading
+              ? "Loading…"
+              : `${mobileTasks.length} open · ${summary.overdue} overdue · ${summary.dueToday} due today`}
+          </div>
+        </div>
+        <div className="tasks-mobile-list">
+          {loading ? (
+            <div className="tasks-mobile-card" style={{ textAlign: "center", color: colors.faint, fontWeight: 700 }}>
+              Loading tasks…
+            </div>
+          ) : mobileTasks.length === 0 ? (
+            <div className="tasks-mobile-card" style={{ textAlign: "center" }}>
+              <CheckCircle2 size={28} style={{ margin: "0 auto 6px", color: colors.green }} />
+              <div style={{ fontWeight: 800, color: colors.text }}>You're all caught up.</div>
+              <div style={{ fontSize: 12.5, color: colors.faint, marginTop: 4 }}>
+                New recommendations and assignments will appear here.
+              </div>
+            </div>
+          ) : (
+            mobileTasks.map((task) => {
+              const dueBadge = getDueBadge(task.due_at, task.status);
+              const priorityStyle = PRIORITY_STYLE[task.priority] ?? PRIORITY_STYLE.normal;
+              return (
+                <div key={task.id} className="tasks-mobile-card">
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {dueBadge && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 999,
+                        background: dueBadge.tone.background, color: dueBadge.tone.color,
+                        border: `1px solid ${dueBadge.tone.border}`,
+                      }}>
+                        {dueBadge.label}
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 999,
+                      background: priorityStyle.bg, color: priorityStyle.color,
+                      border: `1px solid ${priorityStyle.border}`, textTransform: "uppercase", letterSpacing: 0.4,
+                    }}>
+                      {task.priority}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: colors.text, lineHeight: 1.35 }}>
+                    {task.title}
+                  </div>
+                  {task.entity_name && (
+                    <Link to={task.entity_link} className="tasks-mobile-entity-link" style={{ fontSize: 13 }}>
+                      {task.entity_name}
+                      {task.entity_subtitle ? ` · ${displayEntitySubtitle(task.entity_subtitle)}` : ""}
+                    </Link>
+                  )}
+                  <button
+                    type="button"
+                    className="tasks-mobile-complete"
+                    onClick={() => completeTask(task)}
+                  >
+                    <CheckCircle2 size={16} />
+                    Mark complete
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* ── Desktop: full task workspace ─────────────────────────────────── */}
+      <div className="tasks-desktop-only crm-page" style={{ display: "grid", gap: 18 }}>
       <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
@@ -1173,6 +1329,7 @@ export default function TasksPage() {
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
