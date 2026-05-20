@@ -345,6 +345,10 @@ def _meeting_rep_id(row, *, deal_owner: dict[UUID, UUID | None]) -> UUID | None:
     return row.owner_user_id or deal_owner.get(row.deal_id)
 
 
+def _is_crm_linked_meeting(row) -> bool:
+    return bool(row.company_id or row.deal_id)
+
+
 def _meeting_reporting_timestamp(row, *, window_end: datetime) -> datetime:
     if row.scheduled_at and row.scheduled_at <= window_end:
         return row.scheduled_at
@@ -661,6 +665,7 @@ async def sales_activity_drilldown(
     if metric in {"meetings", "total"}:
         meeting_stmt = select(Meeting).where(
             Meeting.is_internal.is_(False),
+            or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
             or_(
                 (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
                 Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
@@ -870,6 +875,7 @@ async def sales_dashboard(
                 Meeting.is_internal,
             ).where(
                 Meeting.is_internal.is_(False),
+                or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
                 or_(
                     (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
                     Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
@@ -1234,6 +1240,8 @@ async def sales_dashboard(
     _SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
     candidate_rows = []
     for row in meetings_rows:
+        if not _is_crm_linked_meeting(row):
+            continue
         if row.status == "cancelled":
             continue
         source = str(row.external_source or "").strip().lower()

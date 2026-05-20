@@ -58,6 +58,8 @@ AUTOMATED_EMAIL_LOCAL_PARTS = {
     "invoice",
     "mailer-daemon",
     "meetings-noreply",
+    "notetaker",
+    "notetaker-updates",
     "no-reply",
     "noreply",
     "notification",
@@ -74,6 +76,7 @@ AUTOMATED_EMAIL_LOCAL_MARKERS = (
 )
 AUTOMATED_SUBJECT_MARKERS = (
     "accepted:",
+    "automatic reply:",
     "canceled:",
     "cancelled:",
     "declined:",
@@ -85,6 +88,8 @@ AUTOMATED_SUBJECT_MARKERS = (
     "out of office",
     "problem with the notes:",
     "submission of invoice",
+    "we couldn't record your meeting",
+    "we could not record your meeting",
     "unable to record",
     "updated invitation:",
     "undeliverable:",
