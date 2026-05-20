@@ -154,6 +154,33 @@ def _is_active_deal_stage(stage: str | None) -> bool:
     }
 
 
+def _is_trackable_sales_account(company: Company) -> bool:
+    """Return True only for real CRM accounts, not empty domain placeholders."""
+    return any(
+        [
+            company.sourcing_batch_id,
+            company.assigned_to_id,
+            company.assigned_rep_email,
+            company.sdr_id,
+            company.sdr_email,
+            company.outreach_plan,
+            company.prospecting_profile,
+            company.enrichment_cache,
+            company.enriched_at,
+            company.icp_score is not None,
+            company.icp_tier,
+            company.description,
+            company.account_thesis,
+            company.why_now,
+            company.beacon_angle,
+            company.recommended_outreach_lane,
+            company.outreach_status,
+            company.disposition,
+            company.last_outreach_at,
+        ]
+    )
+
+
 async def _load_existing_thread_segments(
     session: AsyncSession,
     *,
@@ -518,16 +545,14 @@ async def process_personal_emails(
         return stats
 
     # Pre-load all company domains for fast lookup (avoid N+1 queries)
-    all_companies_result = await session.execute(
-        select(Company.id, Company.name, Company.domain)
-    )
-    company_domain_map: dict[str, tuple[UUID, str]] = {}  # domain → (id, name)
+    all_companies_result = await session.execute(select(Company))
+    company_domain_map: dict[str, tuple[UUID, str, bool]] = {}  # domain → (id, name, trackable)
     all_company_names: list[str] = []
     company_name_candidates: list[tuple[str, UUID, str]] = []
-    for row in all_companies_result.all():
+    for row in all_companies_result.scalars().all():
         d = _normalize_domain(row.domain)
         if d:
-            company_domain_map[d] = (row.id, row.name)
+            company_domain_map[d] = (row.id, row.name, _is_trackable_sales_account(row))
         all_company_names.append(row.name)
         normalized_name = _normalize_name_key(row.name)
         if len(normalized_name) >= 4:
@@ -701,9 +726,10 @@ async def process_personal_emails(
             company_domain_deal_candidates: set[UUID] = set()
             for domain in external_domains:
                 if domain in company_domain_map:
-                    company_id, _ = company_domain_map[domain]
+                    company_id, _, is_trackable_account = company_domain_map[domain]
                     matched_company_id = company_id
-                    deterministic_account_match_id = company_id
+                    if is_trackable_account:
+                        deterministic_account_match_id = company_id
                     domain_matched_company_ids.add(company_id)
                     # Find deals linked to this company
                     deal_result = await session.execute(
@@ -824,7 +850,7 @@ async def process_personal_emails(
                 )
                 if company:
                     company_id = company.id
-                    company_domain_map[domain] = (company.id, company.name)
+                    company_domain_map[domain] = (company.id, company.name, _is_trackable_sales_account(company))
             display_name = msg.from_name if addr == msg.from_addr else None
             contact = await _get_or_create_contact_by_email(
                 session, addr, display_name, company_id, sync_user.id,
@@ -905,7 +931,7 @@ async def _gap_fill_contacts(
     all_addrs: set[str],
     connection: UserEmailConnection,
     sync_user_id: UUID,
-    company_domain_map: dict[str, tuple[UUID, str]],
+    company_domain_map: dict[str, tuple[UUID, str, bool]],
     contact_email_map: dict[str, UUID],
     stats: dict,
     matched_company_id: UUID | None = None,
@@ -935,7 +961,7 @@ async def _gap_fill_contacts(
             company = await _get_or_create_company_by_domain(session, domain)
             if company:
                 company_id = company.id
-                company_domain_map[domain] = (company.id, company.name)
+                company_domain_map[domain] = (company.id, company.name, _is_trackable_sales_account(company))
         if not company_id and domain in FREE_EMAIL_PROVIDERS:
             continue
 
