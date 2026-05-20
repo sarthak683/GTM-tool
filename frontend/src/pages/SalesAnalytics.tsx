@@ -37,6 +37,8 @@ import {
   tasksApi,
   type SalesHighlight,
   type MonthlyUniqueFunnelRow,
+  type SalesActivityDrilldown,
+  type SalesActivityDrilldownRow,
   type SalesDashboard,
   type SalesForecastRow,
   type SalesPipelineOwnerRow,
@@ -58,6 +60,7 @@ import {
 const WINDOW_OPTIONS = [30, 90, 180] as const;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
+type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total";
 
 function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
   if (!user) return false;
@@ -370,6 +373,114 @@ function HighlightDealsModal({
   );
 }
 
+function ActivityDrilldownModal({
+  title,
+  data,
+  loading,
+  error,
+  onClose,
+}: {
+  title: string;
+  data: SalesActivityDrilldown | null;
+  loading: boolean;
+  error: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 130,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(1040px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#4561d5", textTransform: "uppercase" }}>Source validation</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+            <p style={{ margin: "6px 0 0", fontSize: 13, color: "#62748a", lineHeight: 1.5 }}>
+              Showing the latest source rows for this metric. The dashboard count remains the source of truth; this view is sampled and paginated for fast validation.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {loading ? (
+            <div style={{ minHeight: 260, display: "grid", placeItems: "center", gap: 10, color: "#6f8095" }}>
+              <LoaderCircle size={22} className="spin" />
+              <span>Loading source rows...</span>
+            </div>
+          ) : error ? (
+            <div style={{ minHeight: 220, display: "grid", placeItems: "center", color: "#b45454", padding: 24, textAlign: "center" }}>{error}</div>
+          ) : !data || data.rows.length === 0 ? (
+            <div style={{ minHeight: 220, display: "grid", placeItems: "center", color: "#6f8095", padding: 24, textAlign: "center" }}>No source rows found for this metric.</div>
+          ) : (
+            <>
+              <div style={{ padding: "12px 22px", background: "#fafbfd", borderBottom: "1px solid #ebeff5", fontSize: 12, color: "#62748a", fontWeight: 700 }}>
+                Showing {data.rows.length} latest rows{data.has_more ? " · more available" : ""}
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#fff", position: "sticky", top: 0 }}>
+                    <th style={thSty}>When</th>
+                    <th style={thSty}>Source</th>
+                    <th style={thSty}>Person / Company</th>
+                    <th style={thSty}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((row) => (
+                    <tr key={`${row.kind}-${row.id}`} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                      <td style={{ ...tdSty, whiteSpace: "nowrap", color: "#62748a" }}>{formatSnapshotTime(row.occurred_at)}</td>
+                      <td style={tdSty}>
+                        <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 999, background: "#eef4ff", color: "#3555c4", fontSize: 11, fontWeight: 800 }}>
+                          {row.direction || row.activity_type}
+                        </span>
+                        <p style={{ margin: "6px 0 0", fontSize: 11, color: "#8a9cb2" }}>{row.source || row.kind}</p>
+                      </td>
+                      <td style={tdSty}>
+                        <p style={{ margin: 0, fontWeight: 800, color: "#1d2b3a" }}>{row.contact_name || row.contact_email || row.company_name || "—"}</p>
+                        <p style={{ margin: "4px 0 0", color: "#62748a" }}>{row.company_name || row.deal_name || "—"}</p>
+                      </td>
+                      <td style={{ ...tdSty, color: "#3f5065" }}>
+                        <p style={{ margin: 0, fontWeight: 700 }}>{row.subject || row.call_outcome || "—"}</p>
+                        <p style={{ margin: "5px 0 0", fontSize: 12, color: "#75869a" }}>
+                          {row.from_email ? `From ${row.from_email}` : row.call_outcome ? `Outcome ${row.call_outcome}` : row.deal_name || ""}
+                          {row.to_email ? ` · To ${row.to_email}` : ""}
+                        </p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const thSty: React.CSSProperties = {
   textAlign: "left", fontSize: 10, fontWeight: 800, letterSpacing: "0.1em",
   color: "#8a9cb2", textTransform: "uppercase", padding: "10px 22px 8px",
@@ -555,7 +666,13 @@ function HighlightsCard({
   );
 }
 
-function RepActivityTable({ rows }: { rows: SalesRepActivityRow[] }) {
+function RepActivityTable({
+  rows,
+  onOpenMetric,
+}: {
+  rows: SalesRepActivityRow[];
+  onOpenMetric: (row: SalesRepActivityRow, metric: SalesActivityMetric) => void;
+}) {
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No rep activity yet for this time range.</p>;
   }
@@ -584,13 +701,13 @@ function RepActivityTable({ rows }: { rows: SalesRepActivityRow[] }) {
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 10 }}>
-            <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" />
-            <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" />
-            <StatPill label="Connected" value={row.connected_calls} tone="#edf9f8" text="#15736d" />
-            <StatPill label="Live Calls" value={row.live_calls} tone="#f4efff" text="#6b4bd6" />
-            <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" />
-            <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" />
-            <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" />
+            <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" onClick={() => onOpenMetric(row, "emails")} />
+            <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" onClick={() => onOpenMetric(row, "calls")} />
+            <StatPill label="Connected" value={row.connected_calls} tone="#edf9f8" text="#15736d" onClick={() => onOpenMetric(row, "connected_calls")} />
+            <StatPill label="Live Calls" value={row.live_calls} tone="#f4efff" text="#6b4bd6" onClick={() => onOpenMetric(row, "live_calls")} />
+            <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
+            <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
+            <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" onClick={() => onOpenMetric(row, "total")} />
           </div>
         </div>
       ))}
@@ -598,12 +715,42 @@ function RepActivityTable({ rows }: { rows: SalesRepActivityRow[] }) {
   );
 }
 
-function StatPill({ label, value, tone, text }: { label: string; value: string | number; tone: string; text: string }) {
+function StatPill({
+  label,
+  value,
+  tone,
+  text,
+  onClick,
+}: {
+  label: string;
+  value: string | number;
+  tone: string;
+  text: string;
+  onClick?: () => void;
+}) {
+  const numericValue = Number(value || 0);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", padding: "10px 8px", borderRadius: 12, background: tone }}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick || numericValue <= 0}
+      title={numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        alignItems: "center",
+        padding: "10px 8px",
+        borderRadius: 12,
+        background: tone,
+        border: "1px solid transparent",
+        cursor: onClick && numericValue > 0 ? "pointer" : "default",
+        opacity: numericValue > 0 ? 1 : 0.72,
+      }}
+    >
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
-    </div>
+    </button>
   );
 }
 
@@ -1424,6 +1571,10 @@ export default function SalesAnalytics() {
   const [forecastCustomFrom, setForecastCustomFrom] = useState("");
   const [forecastCustomTo, setForecastCustomTo] = useState("");
   const [data, setData] = useState<SalesDashboard | null>(null);
+  const [activityDrilldown, setActivityDrilldown] = useState<SalesActivityDrilldown | null>(null);
+  const [activityDrilldownTitle, setActivityDrilldownTitle] = useState("");
+  const [activityDrilldownLoading, setActivityDrilldownLoading] = useState(false);
+  const [activityDrilldownError, setActivityDrilldownError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [boardDeals, setBoardDeals] = useState<Deal[] | null>(null);
@@ -1517,6 +1668,36 @@ export default function SalesAnalytics() {
 
     return () => { cancelled = true; };
   }, [forecastGranularity, forecastCustomFrom, forecastCustomTo, windowDays, repFilter, geographyFilter, fromDate, toDate]);
+
+  const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
+    const labelByMetric: Record<SalesActivityMetric, string> = {
+      emails: "Emails",
+      calls: "Calls",
+      connected_calls: "Connected calls",
+      live_calls: "Live calls",
+      linkedin_reachouts: "LinkedIn",
+      meetings: "Meetings",
+      total: "Touches",
+    };
+    setActivityDrilldown(null);
+    setActivityDrilldownError("");
+    setActivityDrilldownTitle(`${row.rep_name} · ${labelByMetric[metric]}`);
+    setActivityDrilldownLoading(true);
+    analyticsApi
+      .salesActivityDrilldown(
+        metric,
+        windowDays,
+        row.user_id,
+        geographyFilter,
+        fromDate || undefined,
+        toDate || undefined,
+        50,
+        0,
+      )
+      .then(setActivityDrilldown)
+      .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load source rows"))
+      .finally(() => setActivityDrilldownLoading(false));
+  };
 
   const metricCards: Array<{
     label: string;
@@ -1972,7 +2153,7 @@ export default function SalesAnalytics() {
               title="Rep Activity Leaderboard"
               subtitle="Weekly-touch totals by rep across email, calls, connected/live conversations, LinkedIn, and meetings, alongside the live pipeline they own."
             >
-              <RepActivityTable rows={visibleRepActivity} />
+              <RepActivityTable rows={visibleRepActivity} onOpenMetric={handleOpenActivityMetric} />
             </SectionCard>
 
             <SectionCard
@@ -2139,6 +2320,19 @@ export default function SalesAnalytics() {
           onCreateTasks={() => void createHighlightTasks()}
           onClose={() => {
             if (!highlightLoading) setHighlightModal(null);
+          }}
+        />
+      )}
+      {(activityDrilldownLoading || activityDrilldown || activityDrilldownError) && (
+        <ActivityDrilldownModal
+          title={activityDrilldownTitle}
+          data={activityDrilldown}
+          loading={activityDrilldownLoading}
+          error={activityDrilldownError}
+          onClose={() => {
+            setActivityDrilldown(null);
+            setActivityDrilldownError("");
+            setActivityDrilldownLoading(false);
           }}
         />
       )}

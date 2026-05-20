@@ -192,6 +192,41 @@ class SalesDashboardRead(BaseModel):
     quota: QuotaState
 
 
+class SalesActivityDrilldownRow(BaseModel):
+    id: UUID
+    kind: Literal["activity", "meeting"]
+    activity_type: str
+    occurred_at: datetime
+    rep_user_id: Optional[UUID] = None
+    rep_name: str
+    source: Optional[str] = None
+    subject: Optional[str] = None
+    direction: Optional[str] = None
+    from_email: Optional[str] = None
+    to_email: Optional[str] = None
+    call_outcome: Optional[str] = None
+    call_duration: Optional[int] = None
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+    company_name: Optional[str] = None
+    deal_name: Optional[str] = None
+
+
+class SalesActivityDrilldownRead(BaseModel):
+    generated_at: datetime
+    metric: str
+    window_days: int
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    rep_user_id: Optional[UUID] = None
+    rep_name: Optional[str] = None
+    returned_count: int
+    has_more: bool
+    limit: int
+    offset: int
+    rows: list[SalesActivityDrilldownRow]
+
+
 def _to_float(value) -> float:
     return float(value or 0)
 
@@ -225,6 +260,19 @@ def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
         weeks.append(cursor)
         cursor += timedelta(days=7)
     return weeks
+
+
+def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
+    now = datetime.utcnow()
+    if from_date:
+        window_start = datetime.fromisoformat(from_date)
+    else:
+        window_start = now - timedelta(days=window_days)
+    if to_date:
+        window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
+    else:
+        window_end = now
+    return window_start, window_end
 
 
 def _stage_probability(stage_id: str) -> float:
@@ -449,6 +497,265 @@ async def monthly_funnel_summary(
     return await _load_monthly_unique_funnel(session, months=months)
 
 
+@router.get("/sales-activity-drilldown", response_model=SalesActivityDrilldownRead)
+async def sales_activity_drilldown(
+    session: DBSession,
+    _user: CurrentUser,
+    metric: Annotated[
+        Literal["emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "meetings", "total"],
+        Query(description="Activity metric to inspect"),
+    ],
+    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    rep_id: Annotated[Optional[UUID], Query()] = None,
+    geography: Annotated[list[str], Query()] = [],
+    from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
+    to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
+
+    user_rows = (await session.execute(select(User.id, User.name, User.email))).all()
+    users = {row.id: row.name for row in user_rows}
+    user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
+    user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+
+    deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id)
+    if filter_geographies:
+        deal_stmt = deal_stmt.where(Deal.geography.in_(list(filter_geographies)))
+    if rep_id:
+        deal_stmt = deal_stmt.where(Deal.assigned_to_id == rep_id)
+    scoped_deal_rows = (await session.execute(deal_stmt)).all()
+    scoped_deal_ids = {row.id for row in scoped_deal_rows}
+
+    contact_stmt = select(Contact.id, Contact.assigned_to_id, Contact.company_id)
+    if filter_geographies:
+        contact_stmt = contact_stmt.outerjoin(Company, Contact.company_id == Company.id).where(Company.region.in_(list(filter_geographies)))
+    if rep_id:
+        contact_stmt = contact_stmt.where(Contact.assigned_to_id == rep_id)
+    scoped_contact_rows = (await session.execute(contact_stmt)).all()
+    scoped_contact_ids = {row.id for row in scoped_contact_rows}
+
+    def activity_metric_filter():
+        type_lower = func.lower(Activity.type)
+        medium_lower = func.lower(Activity.medium)
+        if metric == "emails":
+            return or_(type_lower == "email", medium_lower == "email")
+        if metric in {"calls", "connected_calls", "live_calls"}:
+            base = or_(type_lower == "call", medium_lower == "call")
+            if metric == "connected_calls":
+                return base & func.lower(Activity.call_outcome).in_(["connected", "callback", "answered"])
+            if metric == "live_calls":
+                return base & func.lower(Activity.call_outcome).in_(["connected", "answered"])
+            return base
+        if metric == "linkedin_reachouts":
+            return or_(type_lower == "linkedin", medium_lower == "linkedin")
+        return or_(
+            type_lower.in_(["email", "call", "linkedin"]),
+            medium_lower.in_(["email", "call", "linkedin"]),
+        )
+
+    rows: list[SalesActivityDrilldownRow] = []
+    if metric != "meetings":
+        activity_stmt = (
+            select(Activity)
+            .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
+            .where(activity_metric_filter())
+        )
+        if rep_id:
+            activity_stmt = activity_stmt.where(
+                or_(
+                    Activity.created_by_id == rep_id,
+                    Activity.deal_id.in_(scoped_deal_ids or {UUID(int=0)}),
+                    Activity.contact_id.in_(scoped_contact_ids or {UUID(int=0)}),
+                )
+            )
+        elif filter_geographies:
+            activity_stmt = activity_stmt.where(
+                or_(
+                    Activity.deal_id.in_(scoped_deal_ids or {UUID(int=0)}),
+                    Activity.contact_id.in_(scoped_contact_ids or {UUID(int=0)}),
+                )
+            )
+        activities = (
+            await session.execute(
+                activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
+            )
+        ).scalars().all()
+
+        activity_page = activities[:limit]
+        contact_ids = {activity.contact_id for activity in activity_page if activity.contact_id}
+        deal_ids = {activity.deal_id for activity in activity_page if activity.deal_id}
+
+        contact_owner: dict[UUID, UUID | None] = {row.id: row.assigned_to_id for row in scoped_contact_rows}
+        contact_names: dict[UUID, str | None] = {}
+        contact_emails: dict[UUID, str | None] = {}
+        contact_company_ids: dict[UUID, UUID | None] = {row.id: row.company_id for row in scoped_contact_rows}
+        if contact_ids:
+            detail_contacts = (
+                await session.execute(
+                    select(Contact.id, Contact.first_name, Contact.last_name, Contact.email, Contact.assigned_to_id, Contact.company_id)
+                    .where(Contact.id.in_(contact_ids))
+                )
+            ).all()
+            for row in detail_contacts:
+                contact_owner[row.id] = row.assigned_to_id
+                contact_names[row.id] = " ".join(part for part in [row.first_name, row.last_name] if part).strip() or row.email
+                contact_emails[row.id] = row.email
+                contact_company_ids[row.id] = row.company_id
+
+        deal_owner: dict[UUID, UUID | None] = {row.id: row.assigned_to_id for row in scoped_deal_rows}
+        deal_names: dict[UUID, str | None] = {row.id: row.name for row in scoped_deal_rows}
+        deal_company_ids: dict[UUID, UUID | None] = {row.id: row.company_id for row in scoped_deal_rows}
+        if deal_ids:
+            detail_deals = (
+                await session.execute(
+                    select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id).where(Deal.id.in_(deal_ids))
+                )
+            ).all()
+            for row in detail_deals:
+                deal_owner[row.id] = row.assigned_to_id
+                deal_names[row.id] = row.name
+                deal_company_ids[row.id] = row.company_id
+
+        company_ids = {cid for cid in deal_company_ids.values() if cid} | {cid for cid in contact_company_ids.values() if cid}
+        company_names: dict[UUID, str] = {}
+        if company_ids:
+            company_names = {
+                row.id: row.name
+                for row in (await session.execute(select(Company.id, Company.name).where(Company.id.in_(company_ids)))).all()
+            }
+
+        for activity in activity_page:
+            row_rep_id = _activity_rep_id(activity, deal_owner=deal_owner, contact_owner=contact_owner)
+            if rep_id and row_rep_id != rep_id:
+                continue
+            rep_email = user_emails.get(row_rep_id) if row_rep_id else None
+            direction = None
+            if str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email":
+                direction = "outbound" if rep_email and str(activity.email_from or "").strip().lower() == rep_email else "inbound"
+            company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
+            rows.append(
+                SalesActivityDrilldownRow(
+                    id=activity.id,
+                    kind="activity",
+                    activity_type=str(activity.medium or activity.type or "activity"),
+                    occurred_at=activity.created_at,
+                    rep_user_id=row_rep_id,
+                    rep_name=_label_for_rep(row_rep_id, users)[2],
+                    source=activity.source,
+                    subject=activity.email_subject or activity.content,
+                    direction=direction,
+                    from_email=activity.email_from,
+                    to_email=activity.email_to,
+                    call_outcome=activity.call_outcome,
+                    call_duration=activity.call_duration,
+                    contact_name=contact_names.get(activity.contact_id),
+                    contact_email=contact_emails.get(activity.contact_id),
+                    company_name=company_names.get(company_id),
+                    deal_name=deal_names.get(activity.deal_id),
+                )
+            )
+
+    if metric in {"meetings", "total"}:
+        meeting_stmt = select(Meeting).where(
+            Meeting.is_internal.is_(False),
+            or_(
+                (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
+            ),
+        )
+        if rep_id:
+            meeting_stmt = meeting_stmt.where(
+                or_(
+                    Meeting.owner_user_id == rep_id,
+                    Meeting.synced_by_user_id == rep_id,
+                    Meeting.deal_id.in_(scoped_deal_ids or {UUID(int=0)}),
+                )
+            )
+        elif filter_geographies:
+            meeting_stmt = meeting_stmt.where(Meeting.deal_id.in_(scoped_deal_ids or {UUID(int=0)}))
+        meeting_rows = (
+            await session.execute(
+                meeting_stmt.order_by(Meeting.scheduled_at.desc(), Meeting.created_at.desc()).offset(offset).limit(limit + 1)
+            )
+        ).scalars().all()
+
+        meeting_page = meeting_rows[:limit]
+        meeting_deal_ids = {meeting.deal_id for meeting in meeting_page if meeting.deal_id}
+        meeting_company_ids = {meeting.company_id for meeting in meeting_page if meeting.company_id}
+        deal_owner = {row.id: row.assigned_to_id for row in scoped_deal_rows}
+        deal_names = {row.id: row.name for row in scoped_deal_rows}
+        deal_company_ids = {row.id: row.company_id for row in scoped_deal_rows}
+        if meeting_deal_ids:
+            detail_deals = (
+                await session.execute(
+                    select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id).where(Deal.id.in_(meeting_deal_ids))
+                )
+            ).all()
+            for row in detail_deals:
+                deal_owner[row.id] = row.assigned_to_id
+                deal_names[row.id] = row.name
+                deal_company_ids[row.id] = row.company_id
+                if row.company_id:
+                    meeting_company_ids.add(row.company_id)
+        company_names = {}
+        if meeting_company_ids:
+            company_names = {
+                row.id: row.name
+                for row in (await session.execute(select(Company.id, Company.name).where(Company.id.in_(meeting_company_ids)))).all()
+            }
+
+        for meeting in meeting_page:
+            if meeting.status == "cancelled":
+                continue
+            source = str(meeting.external_source or "").strip().lower()
+            if source not in REAL_MEETING_SOURCES:
+                continue
+            meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
+            for row_rep_id in _meeting_rep_ids(meeting, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
+                if rep_id and row_rep_id != rep_id:
+                    continue
+                company_id = meeting.company_id or deal_company_ids.get(meeting.deal_id)
+                rows.append(
+                    SalesActivityDrilldownRow(
+                        id=meeting.id,
+                        kind="meeting",
+                        activity_type="meeting",
+                        occurred_at=meeting_time,
+                        rep_user_id=row_rep_id,
+                        rep_name=_label_for_rep(row_rep_id, users)[2],
+                        source=meeting.external_source,
+                        subject=meeting.title,
+                        company_name=company_names.get(company_id),
+                        deal_name=deal_names.get(meeting.deal_id),
+                    )
+                )
+
+    rows.sort(key=lambda row: row.occurred_at, reverse=True)
+    selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
+    has_more = False
+    if metric != "meetings":
+        has_more = has_more or len(locals().get("activities", [])) > limit
+    if metric in {"meetings", "total"}:
+        has_more = has_more or len(locals().get("meeting_rows", [])) > limit
+    return SalesActivityDrilldownRead(
+        generated_at=datetime.utcnow(),
+        metric=metric,
+        window_days=window_days,
+        from_date=from_date,
+        to_date=to_date,
+        rep_user_id=rep_id,
+        rep_name=selected_rep_name,
+        returned_count=len(rows),
+        has_more=has_more,
+        limit=limit,
+        offset=offset,
+        rows=rows,
+    )
+
+
 @router.get("/sales-dashboard", response_model=SalesDashboardRead)
 async def sales_dashboard(
     session: DBSession,
@@ -465,15 +772,7 @@ async def sales_dashboard(
     now = datetime.utcnow()
     today = date.today()
 
-    # Calendar date range overrides window_days when provided
-    if from_date:
-        window_start = datetime.fromisoformat(from_date)
-    else:
-        window_start = now - timedelta(days=window_days)
-    if to_date:
-        window_end = datetime.fromisoformat(to_date) + timedelta(days=1)  # inclusive
-    else:
-        window_end = now
+    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
     monthly_unique_funnel = await _load_monthly_unique_funnel(
         session,
         months=12,

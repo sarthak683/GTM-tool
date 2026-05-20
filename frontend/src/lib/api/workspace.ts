@@ -440,6 +440,41 @@ export type SalesDashboard = {
   quota: SalesQuotaState;
 };
 
+export type SalesActivityDrilldownRow = {
+  id: string;
+  kind: "activity" | "meeting";
+  activity_type: string;
+  occurred_at: string;
+  rep_user_id?: string | null;
+  rep_name: string;
+  source?: string | null;
+  subject?: string | null;
+  direction?: string | null;
+  from_email?: string | null;
+  to_email?: string | null;
+  call_outcome?: string | null;
+  call_duration?: number | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  company_name?: string | null;
+  deal_name?: string | null;
+};
+
+export type SalesActivityDrilldown = {
+  generated_at: string;
+  metric: string;
+  window_days: number;
+  from_date?: string | null;
+  to_date?: string | null;
+  rep_user_id?: string | null;
+  rep_name?: string | null;
+  returned_count: number;
+  has_more: boolean;
+  limit: number;
+  offset: number;
+  rows: SalesActivityDrilldownRow[];
+};
+
 export const analyticsApi = {
   salesDashboard: (
     windowDays = 90,
@@ -456,6 +491,25 @@ export const analyticsApi = {
     if (toDate) params.set("to_date", toDate);
     if (forecastGranularity) params.set("forecast_granularity", forecastGranularity);
     return request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?${params.toString()}`);
+  },
+  salesActivityDrilldown: (
+    metric: string,
+    windowDays = 90,
+    repId?: string | null,
+    geographies: string[] = [],
+    fromDate?: string,
+    toDate?: string,
+    limit = 50,
+    offset = 0,
+  ) => {
+    const params = new URLSearchParams({ metric, window_days: String(windowDays) });
+    if (repId) params.set("rep_id", repId);
+    for (const g of geographies) params.append("geography", g);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    return request<SalesActivityDrilldown>(`/api/v1/analytics/sales-activity-drilldown?${params.toString()}`);
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),

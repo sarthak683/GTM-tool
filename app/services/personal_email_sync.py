@@ -48,6 +48,26 @@ FREE_EMAIL_PROVIDERS = {
     "icloud.com",
     "protonmail.com",
 }
+AUTOMATED_EMAIL_LOCAL_PARTS = {
+    "bounce",
+    "mailer-daemon",
+    "no-reply",
+    "noreply",
+    "notification",
+    "notifications",
+    "postmaster",
+}
+AUTOMATED_SUBJECT_PREFIXES = (
+    "accepted:",
+    "canceled:",
+    "cancelled:",
+    "declined:",
+    "delivery status notification",
+    "failure notice",
+    "invitation:",
+    "updated invitation:",
+    "undeliverable:",
+)
 
 def _normalize_domain(value: str | None) -> str:
     domain = (value or "").strip().lower()
@@ -64,6 +84,18 @@ def _domain_from_email(addr: str) -> str:
 
 def _is_internal_address(addr: str, internal_domain: str) -> bool:
     return bool(addr and internal_domain and _domain_from_email(addr) == internal_domain)
+
+
+def _is_automated_email(msg: EmailMessage) -> bool:
+    subject = (msg.subject or "").strip().lower()
+    if any(subject.startswith(prefix) for prefix in AUTOMATED_SUBJECT_PREFIXES):
+        return True
+    addresses = [msg.from_addr, *msg.to_addrs, *msg.cc_addrs]
+    for addr in addresses:
+        local = (addr or "").split("@", 1)[0].strip().lower()
+        if local in AUTOMATED_EMAIL_LOCAL_PARTS:
+            return True
+    return False
 
 
 def _infer_name_from_email(addr: str) -> tuple[str, str]:
@@ -528,8 +560,68 @@ async def process_personal_emails(
     open_task_counts_before: dict[UUID, int] = {}
     thread_context_cache: dict[tuple[UUID, str], list[str]] = {}
 
+    async def create_email_activity(
+        *,
+        msg: EmailMessage,
+        deal_id: UUID | None,
+        contact_id: UUID | None,
+        ai_summary: str | None,
+        latest_message_text: str,
+        thread_context_excerpt: str = "",
+        thread_latest_intent: str | None = None,
+        google_doc_contexts: list[dict] | None = None,
+        google_doc_transcript: str = "",
+    ) -> bool:
+        dedup_filters = [
+            Activity.email_message_id == msg.message_id,
+            Activity.created_by_id == sync_user.id,
+        ]
+        if deal_id:
+            dedup_filters.append(Activity.deal_id == deal_id)
+        else:
+            dedup_filters.append(Activity.deal_id.is_(None))
+        existing = await session.execute(select(Activity.id).where(and_(*dedup_filters)))
+        if existing.first():
+            return False
+
+        activity = Activity(
+            type="email",
+            source="personal_email_sync",
+            medium="email",
+            deal_id=deal_id,
+            contact_id=contact_id,
+            content=msg.body_text[:2000] if msg.body_text else None,
+            ai_summary=ai_summary,
+            email_message_id=msg.message_id,
+            email_subject=msg.subject,
+            email_from=msg.from_addr,
+            email_to=", ".join(msg.to_addrs),
+            email_cc=", ".join(msg.cc_addrs),
+            created_by_id=sync_user.id,
+            created_at=_parse_message_datetime(msg.date),
+            event_metadata={
+                "synced_by_user_id": str(sync_user.id),
+                "synced_by_email": connection.email_address,
+                "gmail_thread_id": msg.thread_id or None,
+                "intent_detected": thread_latest_intent,
+                "thread_latest_intent": thread_latest_intent,
+                "thread_latest_message_text": latest_message_text[:2500],
+                "thread_context_excerpt": thread_context_excerpt,
+                "google_doc_links": [context["url"] for context in (google_doc_contexts or [])] or None,
+                "google_doc_transcript": google_doc_transcript[:4000] or None,
+                "crm_match_scope": "deal" if deal_id else "account_or_contact",
+            },
+        )
+        session.add(activity)
+        stats["activities_created"] += 1
+        if deal_id:
+            touched_deal_ids.add(deal_id)
+        return True
+
     for msg in messages:
         stats["emails_processed"] += 1
+        if _is_automated_email(msg):
+            continue
 
         user_domain = _domain_from_email(connection.email_address)
 
@@ -682,6 +774,30 @@ async def process_personal_emails(
                 company_domain_map, contact_email_map, stats,
                 matched_company_id=matched_company_id,
             )
+            if not matched_company_id and not matched_contact_ids:
+                continue
+
+            refreshed_contact_ids: list[UUID] = []
+            for addr in all_addrs:
+                cid = contact_email_map.get(addr)
+                if cid:
+                    refreshed_contact_ids.append(cid)
+            sender_contact_id = None
+            if not _is_internal_address(msg.from_addr, user_domain):
+                sender_contact_id = contact_email_map.get(msg.from_addr)
+            elif refreshed_contact_ids:
+                sender_contact_id = refreshed_contact_ids[0]
+
+            ai_summary = await _generate_email_summary(msg.subject, msg.body_text)
+            await create_email_activity(
+                msg=msg,
+                deal_id=None,
+                contact_id=sender_contact_id or (refreshed_contact_ids[0] if refreshed_contact_ids else None),
+                ai_summary=ai_summary,
+                latest_message_text=latest_message_text,
+                google_doc_contexts=google_doc_contexts,
+                google_doc_transcript=google_doc_transcript,
+            )
             continue
 
         # ── Gap-fill: create missing contacts ────────────────────────────────
@@ -730,18 +846,6 @@ async def process_personal_emails(
         ai_summary = await _generate_email_summary(msg.subject, msg.body_text)
 
         for deal_id in deal_ids:
-            # Dedup check
-            existing = await session.execute(
-                select(Activity.id).where(
-                    and_(
-                        Activity.email_message_id == msg.message_id,
-                        Activity.deal_id == deal_id,
-                    )
-                )
-            )
-            if existing.first():
-                continue
-
             deal = await session.get(Deal, deal_id)
             if not deal:
                 continue
@@ -760,34 +864,17 @@ async def process_personal_emails(
             thread_latest_intent = detect_latest_intent_from_segments(thread_segments)
             thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
 
-            activity = Activity(
-                type="email",
-                source="personal_email_sync",
+            await create_email_activity(
+                msg=msg,
                 deal_id=deal_id,
                 contact_id=sender_contact_id,
-                content=msg.body_text[:2000] if msg.body_text else None,
                 ai_summary=ai_summary,
-                email_message_id=msg.message_id,
-                email_subject=msg.subject,
-                email_from=msg.from_addr,
-                email_to=", ".join(msg.to_addrs),
-                email_cc=", ".join(msg.cc_addrs),
-                created_by_id=sync_user.id,
-                event_metadata={
-                    "synced_by_user_id": str(sync_user.id),
-                    "synced_by_email": connection.email_address,
-                    "gmail_thread_id": msg.thread_id or None,
-                    "intent_detected": thread_latest_intent,
-                    "thread_latest_intent": thread_latest_intent,
-                    "thread_latest_message_text": latest_message_text[:2500],
-                    "thread_context_excerpt": thread_context_excerpt,
-                    "google_doc_links": [context["url"] for context in google_doc_contexts] or None,
-                    "google_doc_transcript": google_doc_transcript[:4000] or None,
-                },
+                latest_message_text=latest_message_text,
+                thread_context_excerpt=thread_context_excerpt,
+                thread_latest_intent=thread_latest_intent,
+                google_doc_contexts=google_doc_contexts,
+                google_doc_transcript=google_doc_transcript,
             )
-            session.add(activity)
-            stats["activities_created"] += 1
-            touched_deal_ids.add(deal_id)
             thread_context_cache[thread_cache_key] = thread_segments
 
             # Intentionally NOT creating a Meeting row from email threads anymore.
