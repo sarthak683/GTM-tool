@@ -641,7 +641,18 @@ export default function AccountSourcingCompanyDetail() {
 
   return (
     <div style={pageStyle}>
-      <div style={wrapStyle}>
+      <style>{`
+        @media (max-width: 768px) {
+          .ascd-hero { padding: 14px !important; }
+          .ascd-hero h1 { font-size: 24px !important; }
+          .ascd-hero-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+          .ascd-main-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
+          .ascd-section { padding: 12px !important; border-radius: 14px !important; }
+          .ascd-page { padding: 8px 6px 80px !important; }
+          .ascd-wrap { padding: 8px 2px 0 !important; gap: 10px !important; }
+        }
+      `}</style>
+      <div className="ascd-wrap" style={wrapStyle}>
         <button
           onClick={() => nav("/account-sourcing")}
           style={{
@@ -661,13 +672,14 @@ export default function AccountSourcingCompanyDetail() {
         </button>
 
         <div
+          className="ascd-hero"
           style={{
             ...cardStyle,
             padding: "24px 26px",
             background: "linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(242,247,255,0.98) 60%, rgba(255,244,236,0.98) 100%)",
           }}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 20, alignItems: "start" }}>
+          <div className="ascd-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 20, alignItems: "start" }}>
             <div style={{ minWidth: 0, maxWidth: 980 }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#eef5ff", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
                 <Brain size={13} />

@@ -200,6 +200,7 @@ class SalesActivityDrilldownRow(BaseModel):
     rep_user_id: Optional[UUID] = None
     rep_name: str
     source: Optional[str] = None
+    source_label: Optional[str] = None
     subject: Optional[str] = None
     direction: Optional[str] = None
     from_email: Optional[str] = None
@@ -501,6 +502,25 @@ async def monthly_funnel_summary(
     return await _load_monthly_unique_funnel(session, months=months)
 
 
+SOURCE_LABELS: dict[str, str] = {
+    "personal_email_sync": "Email Sync",
+    "gmail_sync": "Gmail Sync",
+    "manual": "Manual Entry",
+    "system": "System",
+    "system_task": "System Task",
+    "instantly": "Instantly",
+    "aircall": "Aircall",
+    "tldv": "tl;dv",
+    "clickup_import": "ClickUp Import",
+}
+
+
+def _source_label(source: str | None) -> str | None:
+    if not source:
+        return None
+    return SOURCE_LABELS.get(source.lower(), source)
+
+
 @router.get("/sales-activity-drilldown", response_model=SalesActivityDrilldownRead)
 async def sales_activity_drilldown(
     session: DBSession,
@@ -632,6 +652,8 @@ async def sales_activity_drilldown(
             }
 
         for activity in activity_page:
+            if not activity.contact_id and not activity.deal_id:
+                continue
             row_rep_id = _activity_rep_id(activity, deal_owner=deal_owner, contact_owner=contact_owner)
             if rep_id and row_rep_id != rep_id:
                 continue
@@ -640,15 +662,19 @@ async def sales_activity_drilldown(
             if str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email":
                 direction = "outbound" if rep_email and str(activity.email_from or "").strip().lower() == rep_email else "inbound"
             company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
+            activity_type = str(activity.type or activity.medium or "activity").strip().lower() or "activity"
+            source = activity.source
+            source_label = _source_label(source)
             rows.append(
                 SalesActivityDrilldownRow(
                     id=activity.id,
                     kind="activity",
-                    activity_type=str(activity.medium or activity.type or "activity"),
+                    activity_type=activity_type,
                     occurred_at=activity.created_at,
                     rep_user_id=row_rep_id,
                     rep_name=_label_for_rep(row_rep_id, users)[2],
-                    source=activity.source,
+                    source=source,
+                    source_label=source_label,
                     subject=activity.email_subject or activity.content,
                     direction=direction,
                     from_email=activity.email_from,

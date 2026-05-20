@@ -456,7 +456,7 @@ function ActivityDrilldownModal({
                         <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 999, background: "#eef4ff", color: "#3555c4", fontSize: 11, fontWeight: 800 }}>
                           {row.direction || row.activity_type}
                         </span>
-                        <p style={{ margin: "6px 0 0", fontSize: 11, color: "#8a9cb2" }}>{row.source || row.kind}</p>
+                        <p style={{ margin: "6px 0 0", fontSize: 11, color: "#8a9cb2" }}>{row.source_label || row.source || row.kind}</p>
                       </td>
                       <td style={tdSty}>
                         <p style={{ margin: 0, fontWeight: 800, color: "#1d2b3a" }}>{row.contact_name || row.contact_email || row.company_name || "—"}</p>

@@ -240,6 +240,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 
   return (
     <div
+      className="as-company-card"
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
@@ -260,8 +261,13 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           {company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain}
           {company.industry ? ` · ${company.industry}` : ""}
         </div>
+        <div className="as-company-card-mobile-chips" style={{ display: "none", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+          <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10, fontWeight: 800, padding: "3px 8px" }}>{tier.toUpperCase()}</span>
+          {talVerdict && <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{talVerdict}</span>}
+          <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{priority.priorityBand}</span>
+        </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+      <div className="as-company-card-desktop-chips" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
         <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>
           {tier.toUpperCase()}
         </span>
@@ -279,8 +285,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           </span>
         ) : null}
       </div>
-      {/* AE / SDR assign — stop propagation so clicking doesn't navigate */}
-      <div style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+      <div className="as-company-card-assign" style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
         <AssignDropdown
           entityType="company"
           entityId={company.id}
@@ -616,8 +621,24 @@ export default function AccountSourcing() {
 
   return (
     <div style={pageStyle}>
+      <style>{`
+        @media (max-width: 768px) {
+          .as-hero-card { padding: 16px !important; }
+          .as-hero-card h1 { font-size: 28px !important; }
+          .as-hero-card p { font-size: 14px !important; }
+          .as-summary-grid { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+          .as-filter-bar { position: static !important; top: auto !important; padding: 10px !important; }
+          .as-filter-row { flex-direction: column !important; gap: 8px !important; }
+          .as-filter-row > * { width: 100% !important; }
+          .as-company-card { flex-wrap: wrap !important; padding: 12px !important; gap: 10px !important; }
+          .as-company-card-desktop-chips { display: none !important; }
+          .as-company-card-mobile-chips { display: flex !important; }
+          .as-company-card-assign { display: none !important; }
+        }
+      `}</style>
       <div style={containerStyle}>
         <div
+          className="as-hero-card"
           style={{
             ...cardStyle,
             padding: "26px 26px 22px",
@@ -964,7 +985,7 @@ export default function AccountSourcing() {
 
           return (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+              <div className="as-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <SummaryCard
                   icon={<Building2 size={18} />}
                   label="Sourced Accounts"
@@ -1004,7 +1025,7 @@ export default function AccountSourcing() {
                 />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+              <div className="as-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <SummaryCard
                   icon={<Users size={18} />}
                   label="Engaged Accounts"
@@ -1219,6 +1240,7 @@ export default function AccountSourcing() {
         {activeTab === "accounts" ? (
           <>
             <div
+              className="as-filter-bar"
               style={{
                 ...cardStyle,
                 padding: "14px 16px",
@@ -1229,7 +1251,7 @@ export default function AccountSourcing() {
                 zIndex: 5,
               }}
             >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div className="as-filter-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ position: "relative", minWidth: 260, flex: 1 }}>
               <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
               <input

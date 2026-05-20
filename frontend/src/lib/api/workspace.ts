@@ -448,6 +448,7 @@ export type SalesActivityDrilldownRow = {
   rep_user_id?: string | null;
   rep_name: string;
   source?: string | null;
+  source_label?: string | null;
   subject?: string | null;
   direction?: string | null;
   from_email?: string | null;

@@ -1536,6 +1536,7 @@ export default function Pipeline() {
   const [users, setUsers] = useState<User[]>([]);
   const [loadingDeals, setLoadingDeals] = useState(true);
   const [loadingProspects, setLoadingProspects] = useState(true);
+  const [loadingSummarySettings, setLoadingSummarySettings] = useState(true);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [stageFilters, setStageFilters] = useState<string[]>([]);
@@ -1653,6 +1654,7 @@ export default function Pipeline() {
   };
 
   const loadSupportingData = async () => {
+    setLoadingSummarySettings(true);
     try {
       const [companyList, userList, summarySettings] = await Promise.all([
         companiesApi.list(),
@@ -1664,6 +1666,8 @@ export default function Pipeline() {
       setPipelineSummaryConfig(normalizePipelineSummarySettings(summarySettings));
     } catch {
       // Keep the board responsive even if secondary sidebar data lags or fails.
+    } finally {
+      setLoadingSummarySettings(false);
     }
   };
 
@@ -1911,6 +1915,13 @@ export default function Pipeline() {
     value: summary[card.key],
   }));
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
+  const summaryLoading = currentBoardLoading || loadingSummarySettings;
+  const summaryCardsToRender = summaryLoading
+    ? SUMMARY_CARD_META.filter((card) => ["active", "tofu", "mofu", "bofu"].includes(card.key)).map((card) => ({
+        ...card,
+        value: "—",
+      }))
+    : summaryCards;
   const canImportCrm =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
@@ -2456,7 +2467,7 @@ export default function Pipeline() {
             {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={14} /></button>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            {summaryCards.map((card) => (
+            {summaryCardsToRender.map((card) => (
               <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} />
             ))}
           </div>
