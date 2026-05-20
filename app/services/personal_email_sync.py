@@ -663,12 +663,15 @@ async def process_personal_emails(
         # ── Pass 1: exact email address match → contact → deal ──────────────
         matched_contact_ids: list[UUID] = []
         matched_company_id: UUID | None = None
+        deterministic_account_match_id: UUID | None = None
         for addr in all_addrs:
             cid = contact_email_map.get(addr)
             if cid:
                 matched_contact_ids.append(cid)
                 if not matched_company_id:
                     matched_company_id = contact_company_map.get(cid)
+                if not deterministic_account_match_id:
+                    deterministic_account_match_id = contact_company_map.get(cid)
 
         deal_ids: list[UUID] = []
         meeting_candidate_deal_id: UUID | None = None
@@ -700,6 +703,7 @@ async def process_personal_emails(
                 if domain in company_domain_map:
                     company_id, _ = company_domain_map[domain]
                     matched_company_id = company_id
+                    deterministic_account_match_id = company_id
                     domain_matched_company_ids.add(company_id)
                     # Find deals linked to this company
                     deal_result = await session.execute(
@@ -772,9 +776,9 @@ async def process_personal_emails(
             await _gap_fill_contacts(
                 session, msg, all_addrs, connection, sync_user.id,
                 company_domain_map, contact_email_map, stats,
-                matched_company_id=matched_company_id,
+                matched_company_id=deterministic_account_match_id,
             )
-            if not matched_company_id and not matched_contact_ids:
+            if not deterministic_account_match_id and not matched_contact_ids:
                 continue
 
             refreshed_contact_ids: list[UUID] = []
