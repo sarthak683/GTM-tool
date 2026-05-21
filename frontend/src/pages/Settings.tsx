@@ -19,6 +19,7 @@ import {
   Users,
   Clock,
   Wand2,
+  Bot,
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder } from "../lib/api";
@@ -40,7 +41,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy-prompt";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -94,6 +95,11 @@ export default function SettingsPage() {
   const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
+  // Zippy global system prompt (admin only)
+  const [zippyPrompt, setZippyPrompt] = useState<string>("");
+  const [zippyPromptIsDefault, setZippyPromptIsDefault] = useState<boolean>(true);
+  const [zippyPromptLoading, setZippyPromptLoading] = useState(false);
+  const [savingZippyPrompt, setSavingZippyPrompt] = useState(false);
   const [triggeringTldv, setTriggeringTldv] = useState(false);
   const [stoppingTldv, setStoppingTldv] = useState(false);
   const [outreachStepDelays, setOutreachStepDelays] = useState<number[]>([]);
@@ -122,6 +128,13 @@ export default function SettingsPage() {
   const [syncingPersonal, setSyncingPersonal] = useState(false);
   const [monitorPersonalSync, setMonitorPersonalSync] = useState(false);
   const [personalSyncBaseline, setPersonalSyncBaseline] = useState<number | null>(null);
+  const [userDriveFolder, setUserDriveFolder] = useState<SelectedDriveFolder | null>(null);
+  const [adminDriveFolder, setAdminDriveFolder] = useState<SelectedDriveFolder | null>(null);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [drivePickerMode, setDrivePickerMode] = useState<"user" | "admin" | null>(null);
+  const [driveMessage, setDriveMessage] = useState<string | null>(null);
+
+  // Google Drive folder selection
   const [userDriveFolder, setUserDriveFolder] = useState<SelectedDriveFolder | null>(null);
   const [adminDriveFolder, setAdminDriveFolder] = useState<SelectedDriveFolder | null>(null);
   const [driveLoading, setDriveLoading] = useState(false);
@@ -201,10 +214,8 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    loadSettings();
-  }, []);
-
-  useEffect(() => {
+    // Only load Drive folder state once the user has a personal connection
+    // (because the scope lives on that connection).
     if (personalEmail?.connected) {
       void loadDriveFolders();
     } else {
@@ -212,6 +223,42 @@ export default function SettingsPage() {
       setAdminDriveFolder(null);
     }
   }, [personalEmail?.connected]);
+
+  const handlePickUserFolder = async (folder: DriveFolder) => {
+    try {
+      const saved = await driveApi.selectFolder(folder.id, folder.name);
+      setUserDriveFolder(saved);
+      setDriveMessage(`Your personal Drive folder is now "${saved.folder_name}".`);
+      toast.success(saved.folder_name || folder.name, "Drive folder saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Drive folder");
+    }
+  };
+
+  const handlePickAdminFolder = async (folder: DriveFolder) => {
+    try {
+      const saved = await driveApi.selectAdminFolder(folder.id, folder.name);
+      setAdminDriveFolder(saved);
+      setDriveMessage(`Workspace-wide Drive folder is now "${saved.folder_name}".`);
+      toast.success(saved.folder_name || folder.name, "Workspace folder saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save workspace Drive folder");
+    }
+  };
+
+  const handleClearUserFolder = async () => {
+    try {
+      await driveApi.clearFolder();
+      await loadDriveFolders();
+      setDriveMessage("Your personal Drive folder has been cleared.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear Drive folder");
+    }
+  };
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
 
   useEffect(() => {
     if (!message) return;
@@ -933,6 +980,64 @@ export default function SettingsPage() {
     }
   };
 
+  const loadZippyPrompt = async () => {
+    if (!isAdmin) return;
+    setZippyPromptLoading(true);
+    setError(null);
+    try {
+      const res = await settingsApi.getZippySystemPrompt();
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load Zippy prompt");
+    } finally {
+      setZippyPromptLoading(false);
+    }
+  };
+
+  const handleSaveZippyPrompt = async () => {
+    if (!isAdmin) return;
+    setSavingZippyPrompt(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await settingsApi.updateZippySystemPrompt(zippyPrompt);
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+      setMessage(res.is_default ? "Reset to default prompt" : "Zippy prompt saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Zippy prompt");
+    } finally {
+      setSavingZippyPrompt(false);
+    }
+  };
+
+  const handleResetZippyPrompt = async () => {
+    if (!isAdmin) return;
+    if (!confirm("Reset Zippy's prompt to the built-in default? Your edits will be lost.")) return;
+    setSavingZippyPrompt(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await settingsApi.updateZippySystemPrompt("");
+      setZippyPrompt(res.prompt);
+      setZippyPromptIsDefault(res.is_default);
+      setMessage("Reset to default prompt");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset Zippy prompt");
+    } finally {
+      setSavingZippyPrompt(false);
+    }
+  };
+
+  // Lazy-load the prompt only when the tab is opened (admin only).
+  useEffect(() => {
+    if (activeTab === "zippy-prompt" && isAdmin && !zippyPrompt && !zippyPromptLoading) {
+      loadZippyPrompt();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
   const handleTriggerTldvSync = async () => {
     setTriggeringTldv(true);
     setError(null);
@@ -1014,6 +1119,7 @@ export default function SettingsPage() {
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
               {tabButton("reports", "Reports", <CalendarDays size={15} />)}
               {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
+              {isAdmin && tabButton("zippy-prompt", "Zippy Prompt", <Bot size={15} />)}
             </div>
           </aside>
 
@@ -1392,6 +1498,7 @@ export default function SettingsPage() {
               </div>
             </section>
 
+            {/* ── Knowledge Source (merged: folder picker + Zippy index) ──── */}
             <KnowledgeSourcePanel
               isAdmin={isAdmin}
               connected={!!personalEmail?.connected}
@@ -1975,6 +2082,94 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        ) : activeTab === "zippy-prompt" ? (
+          isAdmin ? (
+            <div style={{ display: "grid", gap: 18 }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f3eaff", color: "#5b2ea3", borderColor: "#e0d0fb" }}>
+                  <Bot size={14} />
+                  Zippy Prompt
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Global system prompt</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  This is the exact system prompt Zippy runs under for every conversation. Edits take effect on the next user turn — no redeploy needed.
+                  Leave it blank and save to reset to the built-in default. <strong>Admin-only.</strong>
+                </p>
+              </div>
+
+              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13, color: "#5b6685" }}>
+                    Status:{" "}
+                    <strong style={{ color: zippyPromptIsDefault ? "#a26a00" : "#1f7a47" }}>
+                      {zippyPromptIsDefault ? "Using built-in default" : "Custom override active"}
+                    </strong>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7f8fa5" }}>
+                    {zippyPrompt.length.toLocaleString()} chars
+                  </div>
+                </div>
+
+                <textarea
+                  value={zippyPrompt}
+                  onChange={(e) => setZippyPrompt(e.target.value)}
+                  disabled={zippyPromptLoading || savingZippyPrompt}
+                  spellCheck={false}
+                  style={{
+                    width: "100%",
+                    minHeight: 460,
+                    padding: 14,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    border: "1px solid #e7eaf5",
+                    borderRadius: 12,
+                    background: "#fafbfe",
+                    color: "#182042",
+                    resize: "vertical",
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="crm-button primary"
+                    onClick={handleSaveZippyPrompt}
+                    disabled={savingZippyPrompt || zippyPromptLoading}
+                  >
+                    <CheckCircle2 size={15} />
+                    {savingZippyPrompt ? "Saving…" : "Save prompt"}
+                  </button>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={handleResetZippyPrompt}
+                    disabled={savingZippyPrompt || zippyPromptLoading || zippyPromptIsDefault}
+                    title={zippyPromptIsDefault ? "Already on the default" : "Reset to built-in default"}
+                  >
+                    <RefreshCw size={15} />
+                    Reset to default
+                  </button>
+                  <button
+                    type="button"
+                    className="crm-button soft"
+                    onClick={loadZippyPrompt}
+                    disabled={zippyPromptLoading || savingZippyPrompt}
+                  >
+                    Reload
+                  </button>
+                </div>
+
+                <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  Tip: Zippy loads this prompt once per user turn, so a change is live as soon as you click Save. The built-in default is the fallback when this field is empty — saving an empty prompt reverts to it.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="crm-muted" style={{ fontSize: 13 }}>
+              Admin access required to view or edit Zippy's system prompt.
+            </p>
+          )
         ) : activeTab === "pre-meeting" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
@@ -2329,6 +2524,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
+
       <DriveFolderPicker
         open={drivePickerMode !== null}
         onClose={() => setDrivePickerMode(null)}

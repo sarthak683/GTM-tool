@@ -43,7 +43,10 @@ class UserEmailConnection(SQLModel, table=True):
     last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_active: bool = Field(default=True)
 
-    # Google Drive folder selection for Zippy knowledge indexing.
+    # Google Drive folder selection
+    # The folder this user has chosen as the "source" for Drive sync.
+    # When is_admin_folder=True, this row represents the admin's shared-drive
+    # folder and content from here is visible to the whole workspace.
     selected_drive_folder_id: Optional[str] = Field(default=None, index=True)
     selected_drive_folder_name: Optional[str] = Field(default=None)
     is_admin_folder: bool = Field(default=False)

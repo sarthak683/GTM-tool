@@ -1,12 +1,51 @@
 """Shared helpers for Zippy's document generators."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
+
+
+# ── Upload deduplication cache ───────────────────────────────────────────────
+# Claude's tool-use loop sometimes calls the same generate_* tool twice in a
+# row (especially when a previous turn was cut off mid-output). Without a
+# guard, that produces duplicate Google Docs in Drive — same content, two URLs,
+# AE has to figure out which is canonical. We key on (user, client, kind, day)
+# so a re-run within a single working day reuses the already-uploaded link.
+_RECENT_UPLOADS: dict[str, str] = {}
+
+
+def _upload_cache_key(user_id: str, client_name: str, kind: str) -> str:
+    date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    raw = f"{user_id}:{client_name}:{kind}:{date_str}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def get_cached_upload(
+    user_id: str, client_name: str, kind: str
+) -> Optional[str]:
+    """Return cached drive_url if this doc was already uploaded today."""
+    key = _upload_cache_key(user_id, client_name, kind)
+    return _RECENT_UPLOADS.get(key)
+
+
+def cache_upload(
+    user_id: str, client_name: str, kind: str, drive_url: str
+) -> None:
+    """Remember a successful upload so a duplicate call returns the same link."""
+    key = _upload_cache_key(user_id, client_name, kind)
+    _RECENT_UPLOADS[key] = drive_url
+    # Bound the cache so a long-lived process doesn't grow unbounded. FIFO
+    # eviction is fine — anything older than ~50 entries is from an earlier
+    # working session and shouldn't be reused anyway.
+    if len(_RECENT_UPLOADS) > 50:
+        oldest_key = next(iter(_RECENT_UPLOADS))
+        del _RECENT_UPLOADS[oldest_key]
 
 # Everything Zippy generates lands under this directory. FastAPI serves it via
 # /zippy_outputs so the frontend can link directly to the finished file.
@@ -31,6 +70,10 @@ class GeneratedDocument:
     created_at: datetime
     drive_file_id: str = ""          # Google Drive file ID (set after upload)
     drive_url: str = ""              # Google Docs webViewLink (preferred link for user)
+    body_text: str = ""              # plain-text rewritten body — generators populate this
+    #                                  so downstream tools (e.g. generate_poc_ppt that
+    #                                  needs the kickoff body as input) can read it
+    #                                  off the result without re-fetching the doc.
 
 
 def _slug(value: str, max_len: int = 48) -> str:

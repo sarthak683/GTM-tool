@@ -5,6 +5,7 @@ import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
 import GlobalSearchModal from "./GlobalSearchModal";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
+import { ZippyProvider } from "../zippy/ZippyContext";
 import { useAuth } from "../../lib/AuthContext";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -63,6 +64,7 @@ function Layout() {
   };
 
   return (
+    <ZippyProvider>
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
       <ZippyLauncher />
@@ -275,6 +277,7 @@ function Layout() {
         <MobileNav />
       </main>
     </div>
+    </ZippyProvider>
   );
 }
 

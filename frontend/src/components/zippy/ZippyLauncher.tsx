@@ -1,24 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { ZippyPanel } from "./ZippyPanel";
+import { useZippy } from "./ZippyContext";
 
 // Floating launcher button in the bottom-right. Opens the Copilot-style side
-// panel. We keep the open/closed state in this component so pages don't have
-// to pass anything to enable Zippy — it's globally available.
+// panel. Open/closed state now lives in ZippyContext so other pages can
+// trigger Zippy with a pre-filled message ("Create with Zippy" dropdowns).
 export function ZippyLauncher() {
-  const [open, setOpen] = useState(false);
+  const { open, setOpen } = useZippy();
 
   // Keyboard shortcut: ⌘/Ctrl + J toggles Zippy, matching Copilot feel.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setOpen((v) => !v);
+        setOpen(!open);
       }
       if (e.key === "Escape") setOpen(false);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open, setOpen]);
 
   return (
     <>

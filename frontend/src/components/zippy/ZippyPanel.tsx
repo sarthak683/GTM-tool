@@ -7,7 +7,8 @@ import {
   type ZippyMessage,
 } from "../../lib/api";
 import { ZippyMessageBubble } from "./ZippyMessageBubble";
-import { ZippyComposer } from "./ZippyComposer";
+import { ZippyComposer, type ComposerImage } from "./ZippyComposer";
+import { useZippy } from "./ZippyContext";
 
 interface ZippyPanelProps {
   open: boolean;
@@ -20,8 +21,13 @@ interface ZippyPanelProps {
 // anywhere outside to collapse. That mirrors the Beacon chatbot widget
 // pattern (+ / history / minimise / close).
 export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
+  const {
+    activeConversationId: activeId,
+    setActiveConversationId: setActiveId,
+    pendingMessage,
+    setPendingMessage,
+  } = useZippy();
   const [conversations, setConversations] = useState<ZippyConversationSummary[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ZippyMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -47,6 +53,17 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     void loadKnowledgeStatus();
     return undefined;
   }, [open]);
+
+  // Auto-send any pending message dropped into context (e.g. via the
+  // "Create with Zippy" dropdowns on the deal drawer / meeting detail).
+  // Clear it first so re-renders don't re-fire the send.
+  useEffect(() => {
+    if (!open || !pendingMessage) return;
+    const text = pendingMessage;
+    setPendingMessage(null);
+    void sendMessage(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pendingMessage]);
 
   async function refreshConversations() {
     setRefreshing(true);
@@ -146,17 +163,24 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     return { totalFiles, lastSynced };
   }, [userStatus, adminStatus]);
 
-  async function sendMessage(text: string) {
-    if (!text.trim() || sending) return;
+  async function sendMessage(text: string, image?: ComposerImage | null) {
+    // Allow image-only sends — the agent can still react to a pure
+    // screenshot ("here's a LinkedIn profile, draft outreach"). If both
+    // text and image are empty we no-op.
+    if (!text.trim() && !image) return;
+    if (sending) return;
     setError(null);
     setSending(true);
 
-    // Optimistic user bubble.
+    // Optimistic user bubble. We keep the bubble text-only on purpose —
+    // ZippyMessageBubble doesn't render images, and the image isn't
+    // persisted server-side either. The screenshot only travels with
+    // this single request.
     const optimistic: ZippyMessage = {
       id: `local-${Date.now()}`,
       conversation_id: activeId ?? "",
       role: "user",
-      content: text,
+      content: text || (image ? `(attached ${image.filename})` : ""),
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
@@ -165,6 +189,8 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
       const res = await zippyApi.send({
         message: text,
         conversation_id: activeId ?? undefined,
+        image_base64: image?.base64,
+        image_media_type: image?.mediaType,
       });
       setActiveId(res.conversation_id);
       setMessages((prev) => {

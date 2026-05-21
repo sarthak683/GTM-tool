@@ -869,4 +869,11 @@ export const settingsApi = {
     request<{ status: string; tldv_sync_enabled: boolean }>("/api/v1/settings/sync-schedule/tldv-stop", {
       method: "POST",
     }),
+  getZippySystemPrompt: () =>
+    request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt"),
+  updateZippySystemPrompt: (prompt: string) =>
+    request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt", {
+      method: "PATCH",
+      body: JSON.stringify({ prompt }),
+    }),
 };

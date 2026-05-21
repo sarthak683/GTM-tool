@@ -397,8 +397,24 @@ async def _try_upload_to_drive(
 ) -> None:
     """Upload the filled .docx to the user's Drive folder as a Google Doc.
 
-    Unchanged from pre-refactor — best-effort, silently skipped on failure.
+    Best-effort, silently skipped on failure. Deduplicates same-day re-runs
+    so a duplicate generate_mom call returns the existing Drive link
+    instead of creating a second copy.
     """
+    # Already uploaded earlier in this generator pass — nothing to do.
+    if doc.drive_url:
+        return
+    # Same (user, client, kind) generated earlier today — reuse the link.
+    if user_id:
+        from app.services.zippy_docs.base import (
+            cache_upload,
+            get_cached_upload,
+        )
+        cached = get_cached_upload(str(user_id), client_name, doc.kind)
+        if cached:
+            doc.drive_url = cached
+            logger.info("Reusing cached MOM Drive upload: %s", cached)
+            return
     try:
         async with async_session() as session:
             from sqlalchemy import or_
@@ -440,6 +456,9 @@ async def _try_upload_to_drive(
         doc.drive_file_id = file_id
         doc.drive_url = web_view_link
         logger.info("MOM uploaded to Google Docs: %s", web_view_link)
+        if user_id and web_view_link:
+            from app.services.zippy_docs.base import cache_upload
+            cache_upload(str(user_id), client_name, doc.kind, web_view_link)
     except PermissionError as exc:
         logger.info("drive.file scope not yet granted — skipping upload: %s", exc)
     except Exception as exc:

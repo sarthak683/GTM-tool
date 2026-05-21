@@ -54,33 +54,85 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
             {message.artifacts.map((artifact) => (
               <a
                 key={artifact.url}
-                href={`${API_BASE}${artifact.url}`}
+                // Prefer the absolute Google Docs link when the doc has been
+                // uploaded — that's the editable canonical artifact. Fall back
+                // to the local /zippy_outputs/ path (which needs the API_BASE
+                // prefix) only if upload failed. Without this guard, gluing
+                // API_BASE in front of an absolute https:// URL produces a
+                // mangled href that Chrome rejects as about:blank#blocked.
+                href={artifact.drive_url || `${API_BASE}${artifact.url}`}
                 target="_blank"
                 rel="noreferrer"
-                className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50/60 px-3.5 py-2.5 transition hover:border-violet-400 hover:bg-violet-50"
+                className="group rounded-lg border border-violet-200 bg-violet-50/60 transition hover:border-violet-400 hover:bg-violet-50"
+                // Defensive inline layout — Tailwind classes alone weren't
+                // holding the chip inside its parent on long filenames; the
+                // file icon and "Open" link were spilling past the chip's
+                // right edge. Inline `box-sizing: border-box` + explicit
+                // `width: 100%` + `overflow: hidden` guarantee the chip
+                // can never exceed its container regardless of how narrow
+                // the assistant bubble gets.
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  width: "100%",
+                  maxWidth: "100%",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                  padding: "10px 14px",
+                  overflow: "hidden",
+                }}
               >
-                <span className="mt-0.5 flex-shrink-0 text-violet-600">
+                <span
+                  className="text-violet-600"
+                  style={{
+                    flex: "0 0 auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
                   <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
                     <path d="M4 4a2 2 0 012-2h5.586A2 2 0 0113 2.586L16.414 6A2 2 0 0117 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm7 0v3a1 1 0 001 1h3" />
                   </svg>
                 </span>
-                <div className="min-w-0 flex-1">
+                <div
+                  style={{
+                    flex: "1 1 auto",
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
                   <div
-                    className="truncate font-medium text-violet-900"
-                    style={{ fontSize: 14 }}
+                    className="font-medium text-violet-900"
+                    style={{
+                      fontSize: 14,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
                   >
                     {artifact.filename}
                   </div>
                   <div
-                    className="truncate text-violet-700/80"
-                    style={{ fontSize: 13, marginTop: 2 }}
+                    className="text-violet-700/80"
+                    style={{
+                      fontSize: 13,
+                      marginTop: 2,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
                   >
                     {artifact.summary}
                   </div>
                 </div>
                 <span
-                  className="flex-shrink-0 font-medium text-violet-600 group-hover:underline"
-                  style={{ fontSize: 13 }}
+                  className="font-medium text-violet-600 group-hover:underline"
+                  style={{
+                    fontSize: 13,
+                    flex: "0 0 auto",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   Open
                 </span>

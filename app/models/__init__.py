@@ -29,8 +29,9 @@ from app.models.task import (
     TaskComment, TaskCommentCreate, TaskCommentRead,
 )
 from app.models.zippy import (
-    ZippyConversation, ZippyMessage, IndexedDriveFile,
-    ZippyConversationRead, ZippyMessageRead, ZippyChatRequest, IndexedDriveFileRead,
+    ZippyConversation, ZippyConversationRead,
+    ZippyMessage, ZippyMessageRead, ZippyChatRequest,
+    IndexedDriveFile, IndexedDriveFileRead,
 )
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",
     "Task", "TaskCreate", "TaskRead", "TaskUpdate",
     "TaskComment", "TaskCommentCreate", "TaskCommentRead",
-    "ZippyConversation", "ZippyMessage", "IndexedDriveFile",
-    "ZippyConversationRead", "ZippyMessageRead", "ZippyChatRequest", "IndexedDriveFileRead",
+    "ZippyConversation", "ZippyConversationRead",
+    "ZippyMessage", "ZippyMessageRead", "ZippyChatRequest",
+    "IndexedDriveFile", "IndexedDriveFileRead",
 ]

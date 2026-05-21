@@ -229,8 +229,22 @@ class WorkspaceSettings(SQLModel, table=True):
     report_sender_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     report_sender_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # Zippy agent — admin-editable override for the global system prompt.
+    # NULL means "use the hardcoded default in zippy_agent.SYSTEM_PROMPT".
+    zippy_system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
+
+
+class ZippySystemPromptRead(SQLModel):
+    prompt: str
+    is_default: bool  # true when no DB override is set and we're returning the code constant
+    updated_at: Optional[datetime] = None
+
+
+class ZippySystemPromptUpdate(SQLModel):
+    prompt: str
 
 class OutreachSettingsRead(SQLModel):
     step_delays: list[int]

@@ -4,12 +4,29 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.services.background_jobs import shutdown_background_workers, start_background_workers
 from app.services.meeting_automation import run_due_pre_meeting_intel_once
+from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
+
+# Configure app-wide logging level. Without this, the root logger sits at
+# WARNING and every `logger.info(...)` in the codebase — including the
+# Zippy per-iteration diagnostic at zippy_agent.py:760 — is dropped on
+# the floor. We pin to INFO in dev so the trace is visible. Promote to
+# WARNING via env if a quieter prod log is needed later.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+    force=True,
+)
+# Quiet the noisiest dependency loggers so the signal-to-noise stays sane.
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +83,14 @@ register_exception_handlers(app)
 # All API endpoints live under /api/v1. A future v2 can be mounted alongside it
 # without changing the existing route modules.
 app.include_router(v1_router, prefix="/api/v1")
+
+# Serve Zippy-generated Word docs (MOM, NDAs, drafts) so the frontend can link
+# straight to them. The directory is ensured at import time by zippy_docs.base.
+app.mount(
+    "/zippy_outputs",
+    StaticFiles(directory=str(ZIPPY_OUTPUT_DIR), check_dir=False),
+    name="zippy_outputs",
+)
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

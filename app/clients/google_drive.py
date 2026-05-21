@@ -227,6 +227,88 @@ async def upload_as_google_sheet(
     return file_id, web_view_link
 
 
+async def upload_as_google_slides(
+    *,
+    filename: str,
+    docx_bytes: bytes,
+    token_data: dict,
+    client_id: str,
+    client_secret: str,
+    parent_folder_id: Optional[str] = None,
+) -> tuple[str, str]:
+    """Upload a .pptx to Drive and convert it to a native Google Slides deck.
+
+    Same multipart pattern as ``upload_as_google_doc`` and
+    ``upload_as_google_sheet`` — only the target mimeType
+    (``application/vnd.google-apps.presentation``) and the file part
+    Content-Type (.pptx mime) differ. Parameter is still called
+    ``docx_bytes`` for signature symmetry; it carries .pptx bytes here.
+    """
+    if not _has_drive_write_scope(token_data):
+        raise PermissionError(
+            "Token does not include drive.file scope. "
+            "The user must reconnect Google in Settings to grant Zippy "
+            "permission to create files in Drive."
+        )
+
+    access_token, _ = await _ensure_token(token_data, client_id, client_secret)
+
+    slides_mime = "application/vnd.google-apps.presentation"
+    pptx_mime = (
+        "application/vnd.openxmlformats-officedocument."
+        "presentationml.presentation"
+    )
+
+    metadata: dict[str, Any] = {
+        "name": filename,
+        "mimeType": slides_mime,  # tells Drive to convert the uploaded .pptx
+    }
+    if parent_folder_id:
+        metadata["parents"] = [parent_folder_id]
+
+    boundary = "zippy_mp_boundary_x9k2"
+    meta_bytes = json.dumps(metadata).encode()
+
+    body = (
+        f"--{boundary}\r\n"
+        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+    ).encode()
+    body += meta_bytes
+    body += f"\r\n--{boundary}\r\n".encode()
+    body += f"Content-Type: {pptx_mime}\r\n\r\n".encode()
+    body += docx_bytes
+    body += f"\r\n--{boundary}--".encode()
+
+    async with httpx.AsyncClient(timeout=60) as http:
+        resp = await http.post(
+            f"{DRIVE_UPLOAD_BASE}/files",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": f"multipart/related; boundary={boundary}",
+            },
+            params={
+                "uploadType": "multipart",
+                "fields": "id,webViewLink",
+                "supportsAllDrives": "true",
+            },
+            content=body,
+        )
+
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Drive upload failed (HTTP {resp.status_code}): {resp.text[:400]}"
+        )
+
+    data = resp.json()
+    file_id = data.get("id", "")
+    web_view_link = data.get("webViewLink", "")
+    logger.info(
+        "Zippy slides uploaded to Drive: file_id=%s url=%s",
+        file_id, web_view_link,
+    )
+    return file_id, web_view_link
+
+
 async def list_folders(
     *,
     token_data: dict,

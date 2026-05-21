@@ -158,5 +158,77 @@ class Settings(BaseSettings):
     CLICKUP_SPACE_ID: str = ""
     CLICKUP_DEALS_LIST_ID: str = ""
 
+    # Qdrant vector DB (Zippy knowledge base)
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "beacon_knowledge"
+
+    # OpenAI (for embeddings used by Zippy RAG)
+    OPENAI_API_KEY: str = ""
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    OPENAI_EMBED_DIMS: int = 1536
+
+    # Azure OpenAI (used for the LLM and/or embeddings — controlled separately)
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""  # e.g. https://myresource.openai.azure.com/
+    AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
+    AZURE_OPENAI_DEPLOYMENT: str = ""  # existing LLM deployment (gpt-4o-mini etc.)
+    # Leave empty when your Azure resource has no embedding deployment —
+    # auto-detect will then fall back to the direct OpenAI API.
+    AZURE_OPENAI_EMBED_DEPLOYMENT: str = ""
+    AZURE_OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
+    AZURE_OPENAI_EMBED_DIMS: int = 1536
+
+    # Explicit override: "openai" | "azure" | "" (auto-detect).
+    # Use this when you want Azure for the LLM but OpenAI for embeddings
+    # (or vice versa). Auto-detect only picks Azure for embeddings when its
+    # embedding deployment is actually configured.
+    EMBEDDINGS_PROVIDER: str = ""
+
+    @property
+    def embeddings_provider(self) -> str:
+        """Return 'azure' or 'openai' — respects EMBEDDINGS_PROVIDER override."""
+        explicit = self.EMBEDDINGS_PROVIDER.strip().lower()
+        if explicit in {"openai", "azure"}:
+            return explicit
+        # Auto-detect: only route to Azure if the *embedding* deployment is
+        # set. Having Azure configured for the LLM alone isn't enough —
+        # embedding deployments are a separate Azure resource.
+        if (
+            self.AZURE_OPENAI_API_KEY
+            and self.AZURE_OPENAI_ENDPOINT
+            and self.AZURE_OPENAI_EMBED_DEPLOYMENT
+        ):
+            return "azure"
+        return "openai"
+
+    @property
+    def embeddings_ready(self) -> bool:
+        """True if we have enough config to actually call an embeddings API."""
+        if self.embeddings_provider == "azure":
+            return bool(
+                self.AZURE_OPENAI_API_KEY
+                and self.AZURE_OPENAI_ENDPOINT
+                and self.AZURE_OPENAI_EMBED_DEPLOYMENT
+            )
+        return bool(self.OPENAI_API_KEY)
+
+    @property
+    def embeddings_dims(self) -> int:
+        if self.embeddings_provider == "azure":
+            return self.AZURE_OPENAI_EMBED_DIMS
+        return self.OPENAI_EMBED_DIMS
+
+    # Zippy document templates (Google Drive file IDs)
+    NDA_TEMPLATE_DRIVE_ID_INDIA: str = ""
+    NDA_TEMPLATE_DRIVE_ID_US: str = ""
+    NDA_TEMPLATE_DRIVE_ID_SINGAPORE: str = ""
+    # Zippy agent tuning
+    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MAX_TOKENS: int = 4000
+    ZIPPY_TOP_K: int = 8
+    ZIPPY_CHUNK_SIZE: int = 1200
+    ZIPPY_CHUNK_OVERLAP: int = 200
+
 
 settings = Settings()

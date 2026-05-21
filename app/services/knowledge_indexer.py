@@ -143,9 +143,22 @@ async def index_connection(
         row.drive_file_id: row for row in result.scalars().all()
     }
 
+    # Lazy-init: only connect to Qdrant / embeddings when there are actually
+    # files to process. An empty folder should return a clean empty report,
+    # not a 500 because Qdrant happened to be unreachable at that moment.
     embeddings_client = get_embeddings_client()
     qdrant = get_qdrant_client()
-    await qdrant.ensure_collection()
+
+    if files:
+        try:
+            await qdrant.ensure_collection()
+        except Exception as exc:
+            logger.exception("Qdrant collection bootstrap failed for folder %s", folder_id)
+            report.errors.append(
+                f"Qdrant is unreachable or misconfigured: {exc}. "
+                "Check QDRANT_URL and QDRANT_API_KEY in your environment."
+            )
+            return report
 
     live_file_ids: set[str] = set()
 

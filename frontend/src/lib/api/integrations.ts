@@ -154,6 +154,8 @@ export interface ZippyArtifact {
   type: string;
   filename: string;
   url: string;
+  drive_url?: string;
+  drive_file_id?: string;
   summary: string;
   created_at: string;
 }
@@ -196,6 +198,8 @@ export const zippyApi = {
     message: string;
     conversation_id?: string | null;
     source_ids?: string[] | null;
+    image_base64?: string;
+    image_media_type?: string;
   }) =>
     request<ZippySendResponse>(`/api/v1/zippy/send`, {
       method: "POST",

@@ -50,6 +50,8 @@ from app.models.settings import (
     SyncScheduleSettingsRead,
     SyncScheduleSettingsUpdate,
     WorkspaceSettings,
+    ZippySystemPromptRead,
+    ZippySystemPromptUpdate,
 )
 from app.models.user_email_connection import UserEmailConnection
 from app.services.deal_stages import (
@@ -791,6 +793,43 @@ async def update_pre_meeting_automation_settings(
 async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
     _ = session
     return await run_due_pre_meeting_intel_once()
+
+
+# ── Zippy system prompt (admin only) ────────────────────────────────────────
+#
+# Admin-gated on BOTH read and write — the prompt is sensitive product IP and
+# non-admin users should not see the exact instructions Zippy runs under.
+
+@router.get("/zippy-system-prompt", response_model=ZippySystemPromptRead)
+async def get_zippy_system_prompt(session: DBSession, _admin: AdminUser):
+    from app.services.zippy_agent import SYSTEM_PROMPT as DEFAULT_ZIPPY_PROMPT
+
+    row = await _get_or_create(session)
+    override = (row.zippy_system_prompt or "").strip()
+    if override:
+        return ZippySystemPromptRead(prompt=override, is_default=False)
+    return ZippySystemPromptRead(prompt=DEFAULT_ZIPPY_PROMPT, is_default=True)
+
+
+@router.patch("/zippy-system-prompt", response_model=ZippySystemPromptRead)
+async def update_zippy_system_prompt(
+    body: ZippySystemPromptUpdate,
+    session: DBSession,
+    _admin: AdminUser,
+):
+    from app.services.zippy_agent import SYSTEM_PROMPT as DEFAULT_ZIPPY_PROMPT
+
+    row = await _get_or_create(session)
+    cleaned = (body.prompt or "").strip()
+    # Empty string resets to the built-in default so admins can back out of a
+    # bad edit without needing a redeploy.
+    row.zippy_system_prompt = cleaned or None
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    if row.zippy_system_prompt:
+        return ZippySystemPromptRead(prompt=row.zippy_system_prompt, is_default=False)
+    return ZippySystemPromptRead(prompt=DEFAULT_ZIPPY_PROMPT, is_default=True)
 
 
 SYNC_DEFAULTS = {

@@ -55,6 +55,11 @@ class SendMessageRequest(BaseModel):
     conversation_id: Optional[UUID] = None
     message: str
     source_ids: Optional[list[str]] = None  # Restrict retrieval to these files.
+    # Optional image payload for vision-enabled turns (e.g. a LinkedIn
+    # profile screenshot the user wants Zippy to read). We don't persist
+    # the image — it only travels into the current Claude call.
+    image_base64: Optional[str] = None
+    image_media_type: Optional[str] = None
 
 
 class SendMessageResponse(BaseModel):
@@ -112,6 +117,8 @@ async def send_message(
             user_message=payload.message,
             conversation_id=payload.conversation_id,
             source_ids=payload.source_ids,
+            image_base64=payload.image_base64,
+            image_media_type=payload.image_media_type,
         )
     except RuntimeError as exc:
         # Config errors (missing API key etc.) — surface as 503 so the UI can

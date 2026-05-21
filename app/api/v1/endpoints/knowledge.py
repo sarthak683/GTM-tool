@@ -130,17 +130,29 @@ async def reindex_user_folder(
     force: bool = Query(default=False, description="Reindex even unchanged files."),
 ) -> ReindexResponse:
     """Index (or reindex) the current user's selected Drive folder."""
-    connection = await _get_connection_for_scope(
-        session, user_id=current_user.id, admin_scope=False
-    )
-    report: IndexReport = await index_connection(
-        session,
-        connection,
-        client_id=settings.gmail_client_id,
-        client_secret=settings.gmail_client_secret,
-        force=force,
-    )
-    return ReindexResponse(ok=not bool(report.errors) or report.files_indexed > 0, report=report.as_dict())
+    try:
+        connection = await _get_connection_for_scope(
+            session, user_id=current_user.id, admin_scope=False
+        )
+        report: IndexReport = await index_connection(
+            session,
+            connection,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+            force=force,
+        )
+        return ReindexResponse(
+            ok=not bool(report.errors) or report.files_indexed > 0,
+            report=report.as_dict(),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error during user folder reindex")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Reindex failed: {exc}. Check server logs for the full traceback.",
+        ) from exc
 
 
 @router.post("/reindex-admin", response_model=ReindexResponse)
@@ -150,17 +162,32 @@ async def reindex_admin_folder(
     force: bool = Query(default=False),
 ) -> ReindexResponse:
     """Admin-only: reindex the shared Beacon Drive folder used by everyone."""
-    connection = await _get_connection_for_scope(
-        session, user_id=admin_user.id, admin_scope=True
-    )
-    report: IndexReport = await index_connection(
-        session,
-        connection,
-        client_id=settings.gmail_client_id,
-        client_secret=settings.gmail_client_secret,
-        force=force,
-    )
-    return ReindexResponse(ok=not bool(report.errors) or report.files_indexed > 0, report=report.as_dict())
+    try:
+        connection = await _get_connection_for_scope(
+            session, user_id=admin_user.id, admin_scope=True
+        )
+        report: IndexReport = await index_connection(
+            session,
+            connection,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+            force=force,
+        )
+        return ReindexResponse(
+            ok=not bool(report.errors) or report.files_indexed > 0,
+            report=report.as_dict(),
+        )
+    except HTTPException:
+        raise  # 400/404 from _get_connection_for_scope — pass through as-is
+    except Exception as exc:
+        logger.exception("Unexpected error during admin folder reindex")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Reindex failed: {exc}. "
+                "Check server logs for the full traceback."
+            ),
+        ) from exc
 
 
 @router.get("/status", response_model=IndexStatusResponse)

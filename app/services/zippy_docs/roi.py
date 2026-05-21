@@ -262,8 +262,10 @@ Rules:
 - Q2: return the FULL-MODULE count only (e.g. "700 total, 400 full module" -> 400)
 - Q3: total team FTEs (e.g. "24" -> 24)
 - Q4: FTEs per single implementation (e.g. "3" -> 3.0)
-- Q6-Q11: use the MIDPOINT of any range given (e.g. "1-4 weeks" -> 2.0, "4 weeks" -> 4.0)
-         return 0 if the answer is "ongoing" or "not discrete"
+- Q6 = Inception/Discovery phase ONLY. Q7 = Solutioning/BRD. Q8 = Config. Q9 = Data Migration. Q10 = Testing. Q11 = Cutover.
+  CRITICAL: map each Q exactly to its corresponding output key — do NOT shift answers between adjacent Qs.
+  Use the MIDPOINT of any range given (e.g. "1-4 weeks" -> 2.0, "4 weeks" -> 4.0, "2 days" -> 0.3).
+  Return 0 if the answer is "ongoing" or "not discrete".
 - Q12: annual cost in USD only as a number (e.g. "$40,000" -> 40000, "£65,000" -> convert to USD at 1.25)
 - Q14: net new FTEs as integer (e.g. "Net 0" -> 0, "+3" -> 3, "No change" -> 0)
 
@@ -317,7 +319,17 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
     (numeric model values). Every formula cell is skipped — a defensive
     guard against the template being rearranged. All ROI math runs from
     formulas in the other three sheets, which we leave untouched.
+
+    Special case — Recommended Annual Fee cell on Executive Summary:
+    the template ships a stale ``=0.25*B5`` (25%) default that doesn't
+    match Beacon's standard scenarios (Conservative 20% / Moderate 33%
+    / Aggressive 50%). We rewrite any ``=0.XX*<ref>`` formula on
+    Executive Summary to ``=0.20*<ref>`` so the fee KPI auto-calculates
+    to the Conservative scenario by default — the team's standard
+    opening number. The AE can edit the cell to 0.33 or 0.50 if a
+    given deal warrants Moderate or Aggressive pricing.
     """
+    import re
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=False)
@@ -402,19 +414,89 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
         # the LLM hop entirely.
         p = parsed
 
-        safe_set(inp, 4,  3, p.get("impls_per_year")       or data.impls_per_year)
-        safe_set(inp, 5,  3, p.get("team_ftes")            or data.team_ftes)
-        safe_set(inp, 6,  3, p.get("ftes_per_impl")        or data.ftes_per_impl)
-        safe_set(inp, 7,  3, p.get("fte_cost_usd")         or data.fte_cost_usd)
-        safe_set(inp, 8,  3, p.get("new_headcount")        or data.new_headcount)
-        # C9 (working hrs/week) and C10 (weeks/year) intentionally untouched —
-        # template defaults (40h, 52w) are the right answer 99% of the time.
-        safe_set(inp, 15, 3, p.get("inception_weeks")      or data.inception_weeks)
-        safe_set(inp, 16, 3, p.get("solutioning_weeks")    or data.solutioning_weeks)
-        safe_set(inp, 17, 3, p.get("config_weeks")         or data.config_weeks)
-        safe_set(inp, 18, 3, p.get("data_migration_weeks") or data.data_migration_weeks)
-        safe_set(inp, 19, 3, p.get("testing_weeks")        or data.testing_weeks)
-        safe_set(inp, 20, 3, p.get("cutover_weeks")        or data.cutover_weeks)
+        # ── Smart row finder ─────────────────────────────────────────────────
+        # Instead of hardcoding row numbers (which break if the template is
+        # ever restructured), we scan column A for the canonical label text
+        # and write into column C of that same row. This is robust to any
+        # future row insertions or template rearrangements.
+        #
+        # Fallback: if no label match is found we use the known row numbers
+        # from the standard Beacon ROI template (build_roi_model.py layout):
+        #   C5  = impls/year   C6 = team FTEs   C7 = FTEs/impl   C8 = FTE cost
+        #   C14 = Inception    C15 = Solutioning   C16 = Config
+        #   C17 = Data Mig     C18 = Testing       C19 = Cutover
+
+        def _find_row_for_label(ws, *fragments: str) -> Optional[int]:
+            """Return row number of first col-A cell whose text contains any fragment."""
+            for row in ws.iter_rows():
+                cell_a = row[0]
+                if cell_a.value and isinstance(cell_a.value, str):
+                    cv = cell_a.value.lower()
+                    if any(f.lower() in cv for f in fragments):
+                        return cell_a.row
+            return None
+
+        def smart_set(ws, *label_fragments: str, fallback_row: int, value) -> None:
+            """Write value to col C of the row matching label_fragments, or fallback."""
+            if value is None:
+                return
+            row_num = _find_row_for_label(ws, *label_fragments) or fallback_row
+            safe_set(ws, row_num, 3, value)
+
+        # ── Client data rows ─────────────────────────────────────────────────
+        # Two common template label styles exist in the wild:
+        #  • build_roi_model.py style: "Full-module implementations / year"
+        #  • Manually created template: "Total projects per year"
+        # We search for either; fallback row numbers match build_roi_model.py layout.
+        smart_set(
+            inp,
+            "implementations", "full-module", "impls per year",
+            "total projects", "projects per year",   # manual-template label
+            fallback_row=5,
+            value=p.get("impls_per_year") or data.impls_per_year,
+        )
+        # NOTE: do NOT include "headcount" here — that word also appears in
+        # "New headcount planned" (row 8) and would match the wrong row.
+        smart_set(
+            inp,
+            "team size", "team fte", "implementation team",
+            fallback_row=6,
+            value=p.get("team_ftes") or data.team_ftes,
+        )
+        smart_set(
+            inp,
+            "ftes per", "ftes/impl", "fte per impl", "ftes assigned",
+            fallback_row=7,
+            value=p.get("ftes_per_impl") or data.ftes_per_impl,
+        )
+        smart_set(
+            inp,
+            "annual fte cost", "fully-loaded", "fte cost",
+            fallback_row=8,
+            value=p.get("fte_cost_usd") or data.fte_cost_usd,
+        )
+        smart_set(
+            inp,
+            "new headcount", "headcount planned", "planned headcount",
+            "new hires", "net headcount",
+            fallback_row=9,  # row varies by template; search first
+            value=p.get("new_headcount") or data.new_headcount,
+        )
+        # Working hrs/week and weeks/year intentionally untouched —
+        # template defaults (40h, 52w) are correct 99% of the time.
+
+        smart_set(inp, "inception", "discovery",
+                  fallback_row=14, value=p.get("inception_weeks") or data.inception_weeks)
+        smart_set(inp, "solutioning", "brd",
+                  fallback_row=15, value=p.get("solutioning_weeks") or data.solutioning_weeks)
+        smart_set(inp, "configuration", "workflow setup", "config",
+                  fallback_row=16, value=p.get("config_weeks") or data.config_weeks)
+        smart_set(inp, "data migration", "data prep",
+                  fallback_row=17, value=p.get("data_migration_weeks") or data.data_migration_weeks)
+        smart_set(inp, "testing", "uat",
+                  fallback_row=18, value=p.get("testing_weeks") or data.testing_weeks)
+        smart_set(inp, "cutover", "go-live", "golive",
+                  fallback_row=19, value=p.get("cutover_weeks") or data.cutover_weeks)
 
         for row in inp.iter_rows(max_row=3):
             for cell in row:
@@ -426,10 +508,17 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                         "[Client Name]", data.client_name
                     )
 
-    # Executive Summary banner — replace [Client Name]/[Month Year] placeholders
-    # in the title rows only. We never touch the formula-driven rows below.
+    # Executive Summary — two passes:
+    #  1. Replace [Client Name] / [Month Year] placeholders in the title rows.
+    #  2. Rewrite the Recommended Annual Fee formula to use Beacon's
+    #     standard Conservative scenario (20%). The template ships with a
+    #     stale =0.25*B5 (25%) default that doesn't match any of the
+    #     three official scenarios — we normalise it so the KPI cell
+    #     auto-calculates to the correct opening-bid number.
     if "Executive Summary" in wb.sheetnames:
         es = wb["Executive Summary"]
+
+        # Pass 1 — banner placeholders (title rows only)
         for row in es.iter_rows(max_row=3):
             for cell in row:
                 if (cell.value
@@ -444,6 +533,31 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                             "[Month Year]",
                             data.report_date or human_today(),
                         )
+
+        # Pass 2 — normalise the Recommended Annual Fee formula to 20%.
+        # We identify the cell by formula shape: any =0.XX*<cell-ref>
+        # formula on Executive Summary is a flat percentage × annual
+        # savings, which only describes the platform-fee KPI cell on this
+        # sheet. We preserve the original cell reference and only swap
+        # the percentage so the formula stays live (auto-updates if
+        # Annual Cost Savings changes when inputs are edited).
+        _fee_pattern = re.compile(r"^=0\.\d+\*([A-Z]+\d+)$", re.IGNORECASE)
+        for row in es.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, str):
+                    continue
+                m = _fee_pattern.match(cell.value)
+                if not m:
+                    continue
+                cell_ref = m.group(1)
+                new_formula = f"=0.20*{cell_ref}"
+                if cell.value != new_formula:
+                    logger.info(
+                        "ROI template: rewriting fee formula in %s from %r "
+                        "to %r (Conservative scenario default)",
+                        cell.coordinate, cell.value, new_formula,
+                    )
+                    cell.value = new_formula
 
     out = io.BytesIO()
     wb.save(out)
@@ -504,6 +618,18 @@ async def _try_upload_to_sheets(
     user_id: Optional[str],
 ) -> None:
     """Upload the filled .xlsx to Drive as an editable Google Sheet."""
+    if doc.drive_url:
+        return
+    if user_id:
+        from app.services.zippy_docs.base import (
+            cache_upload,
+            get_cached_upload,
+        )
+        cached = get_cached_upload(str(user_id), client_name, doc.kind)
+        if cached:
+            doc.drive_url = cached
+            logger.info("Reusing cached ROI Sheets upload: %s", cached)
+            return
     try:
         from sqlalchemy import or_, case as sa_case
 
@@ -546,6 +672,9 @@ async def _try_upload_to_sheets(
         doc.drive_file_id = file_id
         doc.drive_url = web_view_link
         logger.info("ROI uploaded to Google Sheets: %s", web_view_link)
+        if user_id and web_view_link:
+            from app.services.zippy_docs.base import cache_upload
+            cache_upload(str(user_id), client_name, doc.kind, web_view_link)
     except PermissionError as exc:
         logger.info("drive.file scope not yet granted — skipping ROI upload: %s", exc)
     except Exception as exc:

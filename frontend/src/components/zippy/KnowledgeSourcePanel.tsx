@@ -36,7 +36,6 @@ export interface KnowledgeSourcePanelProps {
   userFolder: SelectedDriveFolder | null;
   adminFolder: SelectedDriveFolder | null;
   driveMessage: string | null;
-  needsDriveReconnect?: boolean;
   onOpenPicker: (scope: "user" | "admin") => void;
   onClearUser: () => void;
 }
@@ -48,7 +47,6 @@ export function KnowledgeSourcePanel({
   userFolder,
   adminFolder,
   driveMessage,
-  needsDriveReconnect = false,
   onOpenPicker,
   onClearUser,
 }: KnowledgeSourcePanelProps) {
@@ -210,7 +208,7 @@ export function KnowledgeSourcePanel({
         </p>
       </div>
 
-      {(!connected || needsDriveReconnect) && (
+      {!connected && (
         <div
           style={{
             padding: "12px 14px",
@@ -221,9 +219,8 @@ export function KnowledgeSourcePanel({
             fontSize: 13,
           }}
         >
-          {needsDriveReconnect
-            ? "Reconnect your personal Gmail above once so Zippy gets Google Drive read/write access."
-            : "Connect your personal Gmail above first — Drive access is granted as part of that consent."}
+          Connect your personal Gmail above first — Drive access is granted as
+          part of that consent.
         </div>
       )}
 
@@ -283,7 +280,7 @@ export function KnowledgeSourcePanel({
           description="Shared across every user. Good for company playbooks, case studies, templates."
           folder={adminFolder}
           status={adminStatus}
-          connected={connected && !needsDriveReconnect}
+          connected={connected}
           driveLoading={driveLoading}
           loadingScope={loadingScope}
           scope="admin"
@@ -301,7 +298,7 @@ export function KnowledgeSourcePanel({
           userFolder && !userFolder.is_admin_folder ? userFolder : null
         }
         status={userStatus}
-        connected={connected && !needsDriveReconnect}
+        connected={connected}
         driveLoading={driveLoading}
         loadingScope={loadingScope}
         scope="user"
