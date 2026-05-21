@@ -7,7 +7,9 @@ import {
   Swords, MessageSquareWarning, ArrowRight, Briefcase, Zap,
   Globe, Target, Mail, UserPlus, FileText, Crosshair, Trash2,
   Link2, Link2Off, Plus, X, Save,
+  ClipboardList,
 } from "lucide-react";
+import { ZippyDocDropdown } from "../components/zippy/ZippyDocDropdown";
 import { companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
@@ -615,6 +617,26 @@ export default function MeetingDetail() {
               {running ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
               {running ? "Searching…" : intelWasRun ? "Re-run Web Intel" : "Run Web Intel"}
             </button>
+            <ZippyDocDropdown
+              items={[
+                {
+                  label: "MOM",
+                  icon: <FileText size={14} />,
+                  message: `Create a MOM for the ${company?.name ?? meeting.title} meeting${meeting.scheduled_at ? ` on ${formatDate(meeting.scheduled_at)}` : ""}. Meeting type: ${meeting.meeting_type ?? "not specified"}.`,
+                },
+                {
+                  label: "PoC Kickoff",
+                  icon: <ClipboardList size={14} />,
+                  message: `Create a PoC Kickoff document for ${company?.name ?? meeting.title}${meeting.scheduled_at ? `. Meeting date: ${formatDate(meeting.scheduled_at)}` : ""}.`,
+                },
+                {
+                  label: "Business Proposal",
+                  icon: <FileText size={14} />,
+                  message: `Create a business proposal for ${company?.name ?? meeting.title}.`,
+                  separatorBefore: true,
+                },
+              ]}
+            />
           </div>
         </div>
 

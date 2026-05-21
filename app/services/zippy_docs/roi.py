@@ -320,9 +320,14 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
     guard against the template being rearranged. All ROI math runs from
     formulas in the other three sheets, which we leave untouched.
 
-    Post-processing fixes applied after loading:
-    - Executive Summary: any ``=0.XX*BN`` fee formula is corrected to 0.33
-      (the moderate / recommended scenario, 3× ROI for the client).
+    Special case — Recommended Annual Fee cell on Executive Summary:
+    the template ships a stale ``=0.25*B5`` (25%) default that doesn't
+    match Beacon's standard scenarios (Conservative 20% / Moderate 33%
+    / Aggressive 50%). We rewrite any ``=0.XX*<ref>`` formula on
+    Executive Summary to ``=0.20*<ref>`` so the fee KPI auto-calculates
+    to the Conservative scenario by default — the team's standard
+    opening number. The AE can edit the cell to 0.33 or 0.50 if a
+    given deal warrants Moderate or Aggressive pricing.
     """
     import re
     from openpyxl import load_workbook
@@ -504,11 +509,12 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                     )
 
     # Executive Summary — two passes:
-    #  1. Replace [Client Name]/[Month Year] placeholders in the title rows.
-    #  2. Correct the Recommended Annual Fee formula to use 33% (moderate
-    #     scenario = 3× ROI for the client). Templates sometimes ship with
-    #     25% or other wrong percentages; we normalise here so the output
-    #     always shows the correct opening-bid number.
+    #  1. Replace [Client Name] / [Month Year] placeholders in the title rows.
+    #  2. Rewrite the Recommended Annual Fee formula to use Beacon's
+    #     standard Conservative scenario (20%). The template ships with a
+    #     stale =0.25*B5 (25%) default that doesn't match any of the
+    #     three official scenarios — we normalise it so the KPI cell
+    #     auto-calculates to the correct opening-bid number.
     if "Executive Summary" in wb.sheetnames:
         es = wb["Executive Summary"]
 
@@ -528,32 +534,30 @@ def _fill_template(xlsx_bytes: bytes, data: ROIInput, parsed: dict) -> bytes:
                             data.report_date or human_today(),
                         )
 
-        # Pass 2 — fix the Recommended Annual Fee formula.
-        # Pattern: any formula of the form  =0.XX*B{n}  (a flat % × annual
-        # savings). Conservative = 20%, Moderate = 33%, Aggressive = 50%.
-        # We enforce 33% (moderate) as the displayed "recommended" number.
-        # We intentionally skip 0.20 and 0.50 so we don't accidentally
-        # modify the conservative / aggressive scenario cells if they share
-        # the same formula shape (they live on a different sheet, but
-        # defensive code is better code).
-        _fee_pattern = re.compile(r"^=(0\.\d+)\*([A-Z]+\d+)$", re.IGNORECASE)
+        # Pass 2 — normalise the Recommended Annual Fee formula to 20%.
+        # We identify the cell by formula shape: any =0.XX*<cell-ref>
+        # formula on Executive Summary is a flat percentage × annual
+        # savings, which only describes the platform-fee KPI cell on this
+        # sheet. We preserve the original cell reference and only swap
+        # the percentage so the formula stays live (auto-updates if
+        # Annual Cost Savings changes when inputs are edited).
+        _fee_pattern = re.compile(r"^=0\.\d+\*([A-Z]+\d+)$", re.IGNORECASE)
         for row in es.iter_rows():
             for cell in row:
-                if isinstance(cell.value, str):
-                    m = _fee_pattern.match(cell.value)
-                    if m:
-                        pct_str, cell_ref = m.group(1), m.group(2)
-                        pct = float(pct_str)
-                        # Only correct clearly-wrong percentages: anything
-                        # that isn't 0.20 (conservative) or 0.50 (aggressive)
-                        # and isn't already 0.33.
-                        if pct not in (0.20, 0.33, 0.50):
-                            cell.value = f"=0.33*{cell_ref}"
-                            logger.info(
-                                "ROI template: corrected fee formula from "
-                                "=%s*%s to =0.33*%s (moderate scenario)",
-                                pct_str, cell_ref, cell_ref,
-                            )
+                if not isinstance(cell.value, str):
+                    continue
+                m = _fee_pattern.match(cell.value)
+                if not m:
+                    continue
+                cell_ref = m.group(1)
+                new_formula = f"=0.20*{cell_ref}"
+                if cell.value != new_formula:
+                    logger.info(
+                        "ROI template: rewriting fee formula in %s from %r "
+                        "to %r (Conservative scenario default)",
+                        cell.coordinate, cell.value, new_formula,
+                    )
+                    cell.value = new_formula
 
     out = io.BytesIO()
     wb.save(out)

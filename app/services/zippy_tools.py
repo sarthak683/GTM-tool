@@ -523,6 +523,100 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "draft_linkedin_message",
+        "description": (
+            "Draft LinkedIn outreach messages for a prospect. "
+            "Always generates 3 tone variants (Challenge-First, Consultative, "
+            "Direct/Numbers-Driven). Call this after identifying the prospect's "
+            "vertical and buyer role — either from the user's text input or "
+            "from a LinkedIn profile screenshot. Never ask which tone the user "
+            "prefers — always return all three."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prospect_name": {
+                    "type": "string",
+                    "description": "Full name of the prospect.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Current job title.",
+                },
+                "company": {
+                    "type": "string",
+                    "description": "Company name.",
+                },
+                "vertical": {
+                    "type": "string",
+                    "description": (
+                        "Classified vertical: hrms, finops, erp, insurtech, "
+                        "retail_tech, logistics, ecommerce, cs_platform, or other."
+                    ),
+                },
+                "buyer_role": {
+                    "type": "string",
+                    "enum": [
+                        "ps_implementation",
+                        "cs_support",
+                        "finance",
+                        "product_engineering",
+                        "founder_ceo",
+                        "other",
+                    ],
+                    "description": (
+                        "Which buyer seat this person occupies — determines "
+                        "which product line to lead with."
+                    ),
+                },
+                "outreach_type": {
+                    "type": "string",
+                    "enum": [
+                        "cold",
+                        "connection_request",
+                        "inmail",
+                        "follow_up",
+                        "multi_thread",
+                    ],
+                    "description": "Type of outreach.",
+                },
+                "personalization_hook": {
+                    "type": "string",
+                    "description": (
+                        "The specific personalization signal found — e.g. "
+                        "'3 roles at same company over 7 years', "
+                        "'spoke at SaaStr 2026 about AI in CS', "
+                        "'posted about manual config pain last week'. "
+                        "From screenshot: extract this from image content."
+                    ),
+                },
+                "career_arc": {
+                    "type": "string",
+                    "description": (
+                        "Prospect's role progression if visible (e.g. "
+                        "'Support Manager → Head of CS → VP CX at same "
+                        "company'). Extract from screenshot if available."
+                    ),
+                },
+                "recent_activity": {
+                    "type": "string",
+                    "description": (
+                        "Recent LinkedIn posts, talks, or public moments. "
+                        "Extract from screenshot if visible."
+                    ),
+                },
+                "ae_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of the AE sending the message (from the AE "
+                        "roster or user input)."
+                    ),
+                },
+            },
+            "required": ["prospect_name", "title", "company"],
+        },
+    },
+    {
         "name": "generate_document",
         "description": (
             "Create a free-form Word document from markdown content. Use for one-pagers, "
@@ -597,6 +691,8 @@ async def execute_tool(
             return await _execute_inspect_poc_ppt(user_id=user_id)
         if name == "generate_poc_ppt":
             return await _execute_poc_ppt(args, user_id=user_id)
+        if name == "draft_linkedin_message":
+            return await _execute_linkedin(args, user_id=user_id)
         if name == "generate_document":
             return await _execute_generic(args, user_id=user_id)
     except Exception as exc:
@@ -1125,6 +1221,47 @@ async def _execute_poc_ppt(
         ),
         artifacts=[_doc_to_artifact(doc)],
     )
+
+
+async def _execute_linkedin(
+    args: dict, *, user_id: Optional[UUID] = None
+) -> ToolOutcome:
+    """Structure the prospect brief and hand it back to Claude.
+
+    No side effects — Claude writes the three tone variants in its reply
+    using the LINKEDIN OUTREACH rules baked into the system prompt. The
+    tool call is purely a structured signal that the LinkedIn skill is
+    the active mode for this turn (and that all 3 tones must be output).
+    """
+    name = args.get("prospect_name", "")
+    title = args.get("title", "")
+    company = args.get("company", "")
+    vertical = args.get("vertical", "not classified")
+    buyer_role = args.get("buyer_role", "other")
+    outreach_type = args.get("outreach_type", "cold")
+    hook = args.get("personalization_hook", "")
+    arc = args.get("career_arc", "")
+    activity = args.get("recent_activity", "")
+    ae = args.get("ae_name", "")
+
+    brief = (
+        "PROSPECT BRIEF\n"
+        f"Name: {name}\n"
+        f"Title: {title}\n"
+        f"Company: {company}\n"
+        f"Vertical: {vertical}\n"
+        f"Buyer role: {buyer_role}\n"
+        f"Outreach type: {outreach_type}\n"
+        f"Personalization hook: {hook or 'none identified'}\n"
+        f"Career arc: {arc or 'not available'}\n"
+        f"Recent activity: {activity or 'not available'}\n"
+        f"AE: {ae or 'not specified'}\n\n"
+        "Now draft all 3 tone variants following the LinkedIn outreach "
+        "rules in your system prompt. Apply the correct proof points for "
+        f"the '{vertical}' vertical and '{buyer_role}' buyer seat. "
+        "Use before→after format. Keep each option under 100 words."
+    )
+    return ToolOutcome(result_text=brief, artifacts=[])
 
 
 async def _execute_generic(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:

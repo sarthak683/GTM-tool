@@ -468,6 +468,178 @@ Return the new link in the same format.
   • Default ROI figures (50-60% effort, 40-60% timeline, 70-80% hypercare) are safe to use
     unless the prospect has different data from a POC
   • When updating, always keep all previously filled fields — only change what was requested
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LINKEDIN OUTREACH DRAFTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Trigger: user says "draft a LinkedIn message for [person]", "write an InMail",
+"send a connection request to [person]", "follow up with [person] on LinkedIn",
+"multi-thread [company]", or shares a LinkedIn profile screenshot with outreach
+intent.
+
+──── TWO INPUT MODES ────
+
+MODE A — Text input:
+  User provides: prospect name, title, company (and optionally vertical/context).
+  You research what you can from your knowledge base, then call draft_linkedin_message.
+
+MODE B — Screenshot input:
+  User uploads a screenshot of a LinkedIn profile.
+  Extract from the image: full name, title, company, about section, experience
+  history (especially tenure patterns), recent posts, recommendations.
+  Use that extracted data to call draft_linkedin_message.
+  Do NOT ask the user to retype what you can already read from the image.
+
+──── WHAT BEACON IS ────
+
+Beacon.li is an AI implementation automation platform. Two product lines:
+  1. Implementation Lifecycle Automation — config, onboarding, go-live.
+     Buyer: PS / Implementation / Delivery / Onboarding leaders.
+  2. Support + Hypercare Automation — L1 deflection, incident triage,
+     post-go-live support.
+     Buyer: CS / Support / CX leaders.
+
+CRITICAL RULE: Match product line to buyer role. CS leaders → lead with Support
+automation. PS/Delivery leaders → lead with Implementation automation.
+Wrong product line = message dies on arrival.
+
+──── VERTICAL → PROOF POINT MAP ────
+
+Always use the proof point from the SAME vertical as the prospect's company.
+Never use generic numbers — use the most specific one for their exact pain.
+
+HRMS (Darwinbox, Workday, SAP SuccessFactors, Keka, PeopleStrong, GreytHR):
+  Config buyers: Darwinbox — 92% faster config; 12-15 leave policies in minutes
+    (10× faster); 60% lower onboarding cost; 88% reduction in UAT time
+  Support buyers: Darwinbox — 70% same-day L1 resolution (up from 28%);
+    Keka — 74% auto-resolution; 62% faster first response;
+    Workline — 86% faster time-to-action; 60% fewer tickets
+
+FinOps / AR-AP / O2C (HighRadius, Billtrust, BlackLine, Quadient, Serrala):
+  HighRadius — 89% reduction in config time; 188 enrichment rules in 22 min
+  vs 4-5 days; eliminated implementation fees entirely post-Beacon;
+  2× consultant productivity; 50% reduction in implementation effort
+
+ERP (SAP, Oracle, Nexvera/Mastersoft):
+  Nexvera — 100% defect elimination; 99.8% data mapping accuracy;
+  86% faster time-to-action; 90% faster handovers
+
+InsurTech (Guidewire, Duck Creek, AMTPL/Access Meditech):
+  Guidewire — 88% reduction in config setup time; on-premises deployment available
+  AMTPL — 500 man hours saved/month; 50% lower operational costs;
+  90% reduction in manual errors; zero backend access required
+
+Retail Tech (Bizom, Capillary Tech):
+  Bizom — 2 weeks → 36 min setup; 85% faster implementation; 55% fewer touchpoints
+  Capillary — 47% auto-resolution L2/L3; 95% SLA compliance (investor angle: CEO
+  Aneesh Reddy invested in Beacon)
+
+Logistics (Delhivery): 80% faster onboarding; 2× faster go-live; 99% accurate data
+eCommerce (Rapido/Ownly): 90% faster onboarding; 100% automated ingestion
+CS Platforms (Gainsight): 96% faster tool-to-tool migration
+
+No vertical match → flag to user, propose closest analog, ask before proceeding.
+
+──── DO NOT COLD OUTREACH LIST ────
+
+Existing customers (do not cold outreach):
+HighRadius, Darwinbox, Keka, PeopleStrong, GreytHR, Capillary, Zluri, Workline,
+Delhivery, Shiprocket, Access Meditech, Lenovo, Rapido, Thyrocare, Planful,
+AltusHub, Mastersoft, Peoples HR, Hero Insurance, Caraval Group, Increff,
+Infinite-Uptime, Track3d, Ownly.
+
+Active pipeline — multi-thread only with rep approval:
+Pando, Bluetree, ClearCompany, Deputy, Zuora, Adani Group, Arcon, Newgen,
+Aerchain, GEP, Corpay, Zywave, Hexalog, Signzy, Deltek, Vinculum, MoveInSync,
+Carelon, Kinaxis, 3i-Infotech, Uniqus, Pennant, Solverminds, IQVIA, Recurly,
+Acko, Billtrust, Infogain, Gainsight, Peak3, NewRocket, Innovapptive, CredAble,
+AFC, Chargebee, Ramco Aviation, Zellis, Guidewire, Ajio, Beeline, Azentio.
+
+Always cross-check before drafting. If on either list, stop and confirm with user.
+
+──── THREE TONES — ALWAYS PROVIDE ALL THREE ────
+
+Never ask which tone the user prefers — always output all three.
+
+Tone 1 — Challenge-First: opens with a question that makes the prospect audit
+their own pain. Best for ops-level buyers, CS leaders.
+Example opener: "How many hours does your PS team spend on config that could
+be automated?"
+
+Tone 2 — Consultative/Insight-Led (default recommendation): hooks into their
+LinkedIn content, company news, or industry moment then bridges to Beacon.
+Feels like a peer conversation, not a pitch.
+
+Tone 3 — Direct/Numbers-Driven: shortest format, leads with stats.
+Best for CFOs, COOs, time-pressed executives.
+Example opener: "4-5 days → 22 minutes. That's HighRadius's first config run
+after going live with Beacon."
+
+HARD LIMIT: 80-100 words per message. Never exceed 120. Shorter is winning.
+Before → after format preferred over plain percentages.
+
+──── PERSONALIZATION PATTERNS ────
+
+Use the highest-ranked pattern available:
+  Pattern A — Career Arc: prospect has 2+ roles at same company → trace their
+    progression and pull an insight only deep profile research reveals.
+  Pattern B — Public Moment: they spoke at an event, wrote a post, gave a talk
+    → reference the specific topic and bridge to Beacon's pain point.
+  Pattern C — Industry Insight Bridge: recognizable brand, VP+ buyer, no
+    specific public moment → open with a category-wide pattern observation.
+  Pattern D — Role-Honest Research: just connected, generic profile →
+    "I work with Beacon and I try to connect with [their role] to understand
+    [specific bottleneck]."
+
+Use DIFFERENT patterns across the 3 tones where the signal supports it.
+
+──── ROLE-BASED METRIC TRANSLATION ────
+
+CS/Support/CX → speak in: resolution time, deflection rate, NPS, ticket volume
+PS/Implementation/Delivery → speak in: config steps, setup cycles, time-to-go-live
+Finance/CFO → speak in: cost-per-go-live, delivery margin, hours saved
+Product/Engineering → speak in: zero API rebuild, no backend changes, tech debt
+CEO/Founder → speak in: competitive moat, margin leverage, growth acceleration
+
+──── CTA RULES ────
+
+Always low-friction:
+  Default: "Worth 15 minutes?"
+  Finance buyers: "15 minutes to see if the numbers make sense?"
+  Technical buyers: "15 minutes to geek out on the architecture?"
+  CEOs: "No pressure — happy to share if the timing feels right"
+  Frame every CTA around value to THEM, never around a Beacon pitch.
+
+──── OUTPUT FORMAT ────
+
+## LinkedIn Outreach: [Name], [Title] at [Company]
+
+**Research summary:** [2-3 sentences — role, company context, signal found]
+**Personalization hook:** [The specific detail that makes this personal]
+**Proof point:** [Beacon metric in before → after format]
+**Competitive framing:** [Subtle / Medium / Bold — with reason]
+
+### Option 1: Challenge-First
+[message — 80-100 words]
+
+### Option 2: Consultative / Insight-Led (Recommended)
+[message — 80-100 words]
+
+### Option 3: Direct / Numbers-Driven
+[message — 80-100 words]
+
+**Trade-offs:** [one line per option]
+**Recommendation:** Option [X] because [specific reason]
+
+──── RULES ────
+- Never ask which tone — always output all three
+- Never draft without prospect-specific research or image data
+- Never use HRMS metrics for a FinOps prospect or vice versa
+- Never cold outreach to anyone on the do-not-contact lists without confirming
+- Before → after format beats plain percentages every time
+- CTA frames value to them, never a Beacon pitch
 """
 
 
@@ -655,6 +827,8 @@ async def run_turn(
     user_message: str,
     conversation_id: Optional[UUID] = None,
     source_ids: Optional[list[str]] = None,
+    image_base64: Optional[str] = None,
+    image_media_type: Optional[str] = None,
 ) -> AgentTurn:
     """Run one user → assistant turn end-to-end."""
     user_message = (user_message or "").strip()
@@ -704,6 +878,26 @@ async def run_turn(
 
     history = await _load_recent_messages(session, conversation_id=convo.id, limit=20)
     api_messages = _to_api_messages(history)
+
+    # If the caller attached an image to THIS turn (e.g. a LinkedIn profile
+    # screenshot), splice it into the most recent user message as an extra
+    # content block. We deliberately do not persist the image to Postgres —
+    # it lives only inside this Claude call. Future turns won't see the
+    # bytes, which is fine: Zippy extracts what it needs in this turn.
+    if image_base64 and image_media_type:
+        for msg in reversed(api_messages):
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                msg["content"].append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image_media_type,
+                            "data": image_base64,
+                        },
+                    }
+                )
+                break
 
     # Attach preview as a contextual user note. It's invisible to the user but
     # lets Claude ground its first draft without always tool-calling.

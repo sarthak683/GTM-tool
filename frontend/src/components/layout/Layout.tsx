@@ -4,6 +4,7 @@ import { Search, ChevronDown, LogOut, Shield, User } from "lucide-react";
 import Sidebar from "./Sidebar";
 import GlobalSearchModal from "./GlobalSearchModal";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
+import { ZippyProvider } from "../zippy/ZippyContext";
 import { useAuth } from "../../lib/AuthContext";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -63,6 +64,7 @@ export default function Layout() {
   }, []);
 
   return (
+    <ZippyProvider>
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
       <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
@@ -191,5 +193,6 @@ export default function Layout() {
       </main>
       <ZippyLauncher />
     </div>
+    </ZippyProvider>
   );
 }

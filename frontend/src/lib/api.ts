@@ -1697,6 +1697,8 @@ export const zippyApi = {
     message: string;
     conversation_id?: string | null;
     source_ids?: string[] | null;
+    image_base64?: string;
+    image_media_type?: string;
   }) =>
     request<ZippySendResponse>(`/api/v1/zippy/send`, {
       method: "POST",

@@ -3,7 +3,9 @@ import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
+  Shield, BarChart2, ClipboardList, Presentation,
 } from "lucide-react";
+import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
 import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
@@ -643,6 +645,45 @@ export default function DealDetailDrawer({ deal, companies, users, stages, onClo
                 Convert to Deal
               </button>
             )}
+
+            {/* Create with Zippy — right-aligned, inline with the stage row */}
+            <div style={onConvert && deal.stage === "in_progress" ? undefined : { marginLeft: "auto" }}>
+              <ZippyDocDropdown
+                items={[
+                  {
+                    label: "Business Proposal",
+                    icon: <FileText size={14} />,
+                    message: `Create a business proposal for ${deal.company_name ?? "this account"}. Deal stage: ${stageLabel}. AE: ${deal.assigned_rep_name ?? "unassigned"}. Deal value: ${deal.value != null ? formatCurrency(deal.value) : "not set"}.`,
+                  },
+                  {
+                    label: "NDA",
+                    icon: <Shield size={14} />,
+                    message: `Draft an NDA for ${deal.company_name ?? "this account"}, India jurisdiction. AE: ${deal.assigned_rep_name ?? "unassigned"}.`,
+                  },
+                  {
+                    label: "ROI Analysis",
+                    icon: <BarChart2 size={14} />,
+                    message: `Generate an ROI analysis for ${deal.company_name ?? "this account"}. AE: ${deal.assigned_rep_name ?? "unassigned"}.`,
+                  },
+                  {
+                    label: "PoC Kickoff",
+                    icon: <ClipboardList size={14} />,
+                    message: `Create a PoC Kickoff document for ${deal.company_name ?? "this account"}. AE: ${deal.assigned_rep_name ?? "unassigned"}.`,
+                  },
+                  {
+                    label: "PoC Demo PPT",
+                    icon: <Presentation size={14} />,
+                    message: `Create a PoC Demo PPT for ${deal.company_name ?? "this account"}. AE: ${deal.assigned_rep_name ?? "unassigned"}.`,
+                  },
+                  {
+                    label: "MOM",
+                    icon: <FileText size={14} />,
+                    message: `Create a MOM for ${deal.company_name ?? "this account"}. AE: ${deal.assigned_rep_name ?? "unassigned"}.`,
+                    separatorBefore: true,
+                  },
+                ]}
+              />
+            </div>
           </div>
         </div>
 
