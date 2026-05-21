@@ -79,7 +79,7 @@ const palette = {
   blueBorder: "#c9e0f8",
 };
 
-const DEFAULT_SENDING_ACCOUNT = "mahesh@beacon.li";
+const DEFAULT_SENDING_ACCOUNT = "";
 
 function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
   const isOpen = !!contact;
@@ -114,6 +114,12 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
   const [replies, setReplies] = useState<Array<{ subject?: string; body?: string; from_email?: string; timestamp?: string; created_at?: string }>>([]);
   const [showReplies, setShowReplies] = useState(false);
   const [loadingReplies, setLoadingReplies] = useState(false);
+
+  // Campaign actions
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [campaignStats, setCampaignStats] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     if (!contact) {
@@ -272,6 +278,50 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
       setLaunchError(e instanceof Error ? e.message : "Launch failed");
     } finally {
       setLaunching(false);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!seq) return;
+    setPausing(true);
+    try {
+      await outreachApi.pause(seq.id);
+      const updated = await outreachApi.getSequence(contact!.id);
+      setSeq(updated);
+    } catch (e: unknown) {
+      setLaunchError(e instanceof Error ? e.message : "Pause failed");
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!seq) return;
+    setResuming(true);
+    try {
+      await outreachApi.resume(seq.id);
+      const updated = await outreachApi.getSequence(contact!.id);
+      setSeq(updated);
+    } catch (e: unknown) {
+      setLaunchError(e instanceof Error ? e.message : "Resume failed");
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!seq) return;
+    setSyncing(true);
+    setLaunchError("");
+    try {
+      const result = await outreachApi.syncCampaign(seq.id);
+      setCampaignStats(result.analytics ?? null);
+      const updated = await outreachApi.getSequence(contact!.id);
+      setSeq(updated);
+    } catch (e: unknown) {
+      setLaunchError(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -900,30 +950,73 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
               )}
 
               {/* ── Launch section ──────────────────────────────────────────── */}
-              {currentChannel === "email" && (
-                isLaunched ? (
-                  // Already launched — show campaign info
-                  <div style={{ ...panel, padding: "14px 16px", borderLeft: `3px solid ${palette.green}` }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <CheckCircle size={15} color={palette.green} />
-                        <span style={{ fontWeight: 700, color: palette.green, fontSize: 14 }}>Sequence live in Instantly</span>
-                      </div>
+              {isLaunched ? (
+                <div style={{ ...panel, padding: "14px 16px", borderLeft: `3px solid ${palette.green}` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <CheckCircle size={15} color={palette.green} />
+                      <span style={{ fontWeight: 700, color: palette.green, fontSize: 14 }}>
+                        Live in Instantly
+                        {seq.instantly_campaign_status && (
+                          <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 7px", borderRadius: 999, background: seq.instantly_campaign_status === "paused" ? "#fff3cd" : "#e8f8f0", color: seq.instantly_campaign_status === "paused" ? "#856404" : palette.green, fontWeight: 600 }}>
+                            {seq.instantly_campaign_status}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <button
+                        onClick={handleSync}
+                        disabled={syncing}
+                        style={{ ...ghostBtn, fontSize: 12, gap: 4 }}
+                        title="Pull latest stats from Instantly"
+                      >
+                        <RefreshCw size={11} className={syncing ? "animate-spin" : ""} /> Sync
+                      </button>
+                      {seq.instantly_campaign_status === "paused" ? (
+                        <button
+                          onClick={handleResume}
+                          disabled={resuming}
+                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: palette.green }}
+                        >
+                          {resuming ? <RefreshCw size={11} className="animate-spin" /> : <span>▶</span>} Resume
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePause}
+                          disabled={pausing}
+                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: "#b45309" }}
+                        >
+                          {pausing ? <RefreshCw size={11} className="animate-spin" /> : <span>⏸</span>} Pause
+                        </button>
+                      )}
                       <a
                         href="https://app.instantly.ai/app/campaigns"
                         target="_blank" rel="noopener noreferrer"
                         style={{ ...ghostBtn, textDecoration: "none", fontSize: 12 }}
                       >
-                        <ExternalLink size={12} /> View Campaign
+                        <ExternalLink size={12} /> View
                       </a>
                     </div>
-                    {seq.instantly_campaign_id && (
-                      <div style={{ marginTop: 8, fontSize: 11, color: palette.muted, fontFamily: "monospace" }}>
-                        Campaign ID: {seq.instantly_campaign_id}
-                      </div>
-                    )}
                   </div>
-                ) : (
+                  {seq.instantly_campaign_id && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: palette.muted, fontFamily: "monospace" }}>
+                      Campaign ID: {seq.instantly_campaign_id}
+                    </div>
+                  )}
+                  {campaignStats && (
+                    <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: palette.soft, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: palette.sub }}>
+                      {typeof campaignStats.emails_sent_count === "number" && <span><strong>{campaignStats.emails_sent_count}</strong> sent</span>}
+                      {typeof campaignStats.open_count === "number" && <span><strong>{campaignStats.open_count}</strong> opens</span>}
+                      {typeof campaignStats.reply_count === "number" && <span><strong>{campaignStats.reply_count}</strong> replies</span>}
+                      {typeof campaignStats.bounced_count === "number" && <span><strong>{campaignStats.bounced_count}</strong> bounced</span>}
+                    </div>
+                  )}
+                  {launchError && (
+                    <p style={{ margin: "8px 0 0", color: "#b42336", fontSize: 12 }}>{launchError}</p>
+                  )}
+                </div>
+              ) : (
                   // Not launched — always show sending account + launch button
                   <div style={{ ...panel, padding: "16px 16px" }}>
                     <div style={{ display: "grid", gap: 12 }}>
@@ -940,7 +1033,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                           type="email"
                           value={sendingAccount}
                           onChange={(e) => setSendingAccount(e.target.value)}
-                          placeholder="sender@yourdomain.com"
+                          placeholder="you@company.com"
                           style={{
                             width: "100%", boxSizing: "border-box",
                             border: `1px solid ${palette.line}`, borderRadius: 8,
@@ -949,7 +1042,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                           }}
                         />
                         <p style={{ margin: "5px 0 0", fontSize: 11, color: palette.muted }}>
-                          Must be a connected sending account in Instantly (e.g. mahesh@beacon.li)
+                          Your connected sending email in Instantly
                         </p>
                       </div>
 
@@ -980,7 +1073,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                           style={{ marginTop: 2, accentColor: palette.green }}
                         />
                         <span>
-                          I reviewed the full sequence preview, timing, and sending account. Launch only after this check, so accidental or unreviewed AI copy cannot go live.
+                          I reviewed the email copy, timing, and sending account. Ready to launch.
                         </span>
                       </label>
 
@@ -1008,7 +1101,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                     </div>
                   </div>
                 )
-              )}
+              }
 
               {/* ── Replies section ─────────────────────────────────────────── */}
               {isLaunched && (

@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Phone,
   RefreshCw,
+  Rocket,
   AlertTriangle,
   Newspaper,
   Radar,
@@ -1036,6 +1037,26 @@ export default function AccountSourcingCompanyDetail() {
                 style={{ width: "100%", border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
                 <Plus size={13} /> Add to Deal
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const account = prompt("Your connected sending email in Instantly:", "");
+                    if (!account) return;
+                    const name = prompt("Campaign name (optional):", `${company.name} Outreach`);
+                    const { outreachApi } = await import("../lib/api");
+                    const result = await outreachApi.launchCompanyCampaign(company.id, account.trim(), (name || "").trim() || undefined);
+                    alert(`Campaign launched!\n${result.pushed} prospects added.\nFailed: ${result.failed}\nCampaign ID: ${result.instantly_campaign_id}`);
+                    load();
+                  } catch (err: unknown) {
+                    alert(`Launch failed: ${err instanceof Error ? err.message : String(err)}`);
+                  }
+                }}
+                style={{ width: "100%", border: "1px solid #ffd4b8", background: "#fdf5f0", color: "#d15b20", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+              >
+                <Rocket size={13} /> Launch to Instantly
               </button>
 
               {isAdmin && (

@@ -76,6 +76,42 @@ export const outreachApi = {
     request<{ sequence_id: string; replies: Array<{ id?: string; subject?: string; body?: string; from_email?: string; created_at?: string; timestamp?: string }> }>(
       `/api/v1/outreach/replies/${sequenceId}`
     ),
+  launchCompanyCampaign: (companyId: string, sendingAccount: string, campaignName?: string) =>
+    request<{
+      status: string;
+      company_id: string;
+      company_name: string;
+      instantly_campaign_id: string;
+      campaign_name: string;
+      total_sequences: number;
+      pushed: number;
+      failed: number;
+      results: Array<{ contact_id: string; email: string; status: string; error?: string }>;
+    }>(`/api/v1/outreach/launch-company/${companyId}`, {
+      method: "POST",
+      body: JSON.stringify({ sending_account: sendingAccount, campaign_name: campaignName }),
+    }),
+  syncCampaign: (sequenceId: string) =>
+    request<{
+      sequence_id: string;
+      campaign_id: string;
+      campaign_status?: string;
+      leads_synced: number;
+      leads_skipped: number;
+      analytics?: Record<string, unknown>;
+    }>(`/api/v1/outreach/sync-campaign/${sequenceId}`, {
+      method: "POST",
+    }),
+  pause: (sequenceId: string) =>
+    request<{ status: string; sequence_id: string; campaign_id: string }>(
+      `/api/v1/outreach/pause/${sequenceId}`,
+      { method: "POST" }
+    ),
+  resume: (sequenceId: string) =>
+    request<{ status: string; sequence_id: string; campaign_id: string }>(
+      `/api/v1/outreach/resume/${sequenceId}`,
+      { method: "POST" }
+    ),
 };
 
 export const intelligenceApi = {

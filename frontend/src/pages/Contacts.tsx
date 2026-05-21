@@ -3072,6 +3072,11 @@ export default function Contacts() {
         detail={lifecycleDetail}
         loading={lifecycleLoading}
         onClose={() => setLifecycleContactId(null)}
+        onOpenOutreach={() => {
+          const contact = contacts.find((c) => c.id === lifecycleContactId);
+          setLifecycleContactId(null);
+          if (contact) setSelectedContact(contact);
+        }}
       />
 
       {/* ── Call Disposition Sidebar ─────────────────────────────────── */}

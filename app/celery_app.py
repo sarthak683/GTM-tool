@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.personal_email_sync",
         "app.tasks.cadence_scheduler",
         "app.tasks.sales_reports",
+        "app.tasks.instantly_sync",
     ],
 )
 
@@ -69,9 +70,11 @@ celery_app.conf.update(
         },
         "send-us-pod-call-report-daily": {
             "task": "app.tasks.sales_reports.send_us_pod_call_report",
-            # The task reads admin-configured report timing from workspace settings
-            # and self-dedupes, so beat can poll safely without hardcoded timezones.
             "schedule": crontab(minute="*/15"),
+        },
+        "sync-instantly-campaigns": {
+            "task": "app.tasks.instantly_sync.sync_active_instantly_campaigns",
+            "schedule": 900,  # every 15 minutes — fallback for webhook delivery gaps
         },
     },
 )

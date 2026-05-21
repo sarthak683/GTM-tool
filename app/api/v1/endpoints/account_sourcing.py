@@ -1847,22 +1847,46 @@ async def push_to_instantly(
         raise HTTPException(status_code=400, detail="No contacts with emails found for this company")
 
     from app.clients.instantly import InstantlyClient
+    from app.config import settings
     instantly = InstantlyClient()
 
+    # Ensure webhooks are registered so we receive event callbacks
+    if settings.INSTANTLY_WEBHOOK_URL:
+        try:
+            await instantly.ensure_webhook(
+                url=settings.INSTANTLY_WEBHOOK_URL,
+                event_types=[
+                    "email_sent", "email_opened", "email_link_clicked",
+                    "email_bounced", "reply_received", "lead_unsubscribed",
+                    "lead_interested", "lead_not_interested", "lead_meeting_booked",
+                    "campaign_completed",
+                ],
+            )
+        except Exception:
+            pass  # non-fatal
+
     results = []
+    lead_payloads = []
     for contact in contacts:
-        r = await instantly.add_lead(
-            campaign_id=campaign_id,
-            email=contact.email,
-            first_name=contact.first_name,
-            last_name=contact.last_name,
-            company_name=company.name,
-        )
+        lead_payloads.append({
+            "email": contact.email,
+            "first_name": contact.first_name or "",
+            "last_name": contact.last_name or "",
+            "company_name": company.name,
+            "job_title": contact.title or "",
+            "linkedin_url": contact.linkedin_url or "",
+        })
         contact.instantly_status = "pushed"
         contact.sequence_status = "queued_instantly"
         contact.instantly_campaign_id = campaign_id
         session.add(contact)
-        results.append(r)
+
+    # Bulk add leads to Instantly (up to 1000 per call)
+    try:
+        r = await instantly.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
+        results = [{"status": "pushed"} for _ in lead_payloads]
+    except Exception as e:
+        results = [{"status": "error", "error": str(e)} for _ in lead_payloads]
 
     company.instantly_campaign_id = campaign_id
     session.add(company)

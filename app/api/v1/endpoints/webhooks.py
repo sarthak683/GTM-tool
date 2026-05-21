@@ -641,12 +641,19 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
 
     now = datetime.utcnow()
 
+    email_subject = None
+    email_sender = None
+    email_recipient = None
+
     # ── Route by event type ────────────────────────────────────────────────────
 
     if event_type == "email_sent":
         step_note = f" (step {step_number})" if step_number else ""
         content = f"Email sent{step_note}: {subject} → {lead_email}"
         activity_type = "email"
+        email_subject = subject
+        email_sender = payload.get("email_account") or ""
+        email_recipient = lead_email
         # Move the contact from "queued_instantly" to "sent" so the pipeline
         # board, progress tracker, and follow-up tasks see live sequence state.
         # Only advance if we haven't already moved past "sent" (reply, bounce, etc.)
@@ -663,10 +670,19 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     elif event_type == "email_opened":
         content = f"Email opened: {subject} by {lead_email}"
         activity_type = "email"
+        if contact:
+            contact.email_open_count = (contact.email_open_count or 0) + 1
+            contact.email_last_opened_at = now
+            contact.updated_at = now
+            session.add(contact)
 
-    elif event_type == "email_link_clicked":
+    elif event_type in ("link_clicked", "email_link_clicked"):
         content = f"Link clicked in email: {subject} by {lead_email}"
         activity_type = "email"
+        if contact:
+            contact.email_click_count = (contact.email_click_count or 0) + 1
+            contact.updated_at = now
+            session.add(contact)
 
     elif event_type == "email_bounced":
         content = f"Email bounced: {lead_email} — {subject}"
@@ -769,6 +785,66 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
             sequence.updated_at = now
             session.add(sequence)
 
+    elif event_type == "lead_meeting_completed":
+        content = f"Meeting completed with {lead_email}"
+        activity_type = "meeting"
+        if contact:
+            contact.sequence_status = "meeting_completed"
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "lead_closed":
+        content = f"{lead_email} marked as Closed in Instantly"
+        activity_type = "email"
+        if contact:
+            contact.sequence_status = "closed"
+            contact.instantly_status = "closed"
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "lead_out_of_office":
+        content = f"{lead_email} marked as Out of Office in Instantly"
+        activity_type = "email"
+        if contact:
+            contact.instantly_status = "out_of_office"
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "lead_wrong_person":
+        content = f"{lead_email} marked as Wrong Person in Instantly"
+        activity_type = "email"
+        if contact:
+            contact.sequence_status = "wrong_person"
+            contact.instantly_status = "wrong_person"
+            contact.email_verified = False
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "lead_neutral":
+        content = f"{lead_email} marked as Neutral in Instantly"
+        activity_type = "email"
+        if contact:
+            contact.instantly_status = "neutral"
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "auto_reply_received":
+        reply_body = payload.get("reply_text") or payload.get("body") or ""
+        content = f"Auto-reply from {lead_email}: {subject}" + (f"\n\n{reply_body[:500]}" if reply_body else "")
+        activity_type = "email"
+        if contact:
+            contact.instantly_status = "auto_replied"
+            contact.updated_at = now
+            session.add(contact)
+
+    elif event_type == "account_error":
+        content = f"Account error for campaign: {payload.get('error_message') or 'Unknown error'}"
+        activity_type = "email"
+        if sequence:
+            sequence.instantly_campaign_status = "error"
+            sequence.updated_at = now
+            session.add(sequence)
+
     elif event_type == "campaign_completed":
         content = f"Campaign completed for {lead_email}"
         activity_type = "email"
@@ -803,6 +879,16 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         external_source="instantly",
         external_source_id=event_external_id,
     )
+
+    if email_subject:
+        activity.email_subject = email_subject
+    if email_sender:
+        activity.email_from = email_sender
+    if email_recipient:
+        activity.email_to = email_recipient
+    if email_subject or email_sender or email_recipient:
+        session.add(activity)
+        await session.commit()
 
     # If Claude classified a reply, surface the one-line summary as the
     # Activity's ai_summary so it renders inline in the timeline without the

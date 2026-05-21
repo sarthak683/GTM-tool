@@ -1,14 +1,15 @@
-import { X, AlertTriangle } from "lucide-react";
+import { X, AlertTriangle, ArrowRight } from "lucide-react";
 import type { SequenceLifecycle } from "../../lib/api";
 import { formatLifecycleDate, LifecycleStepRow } from "./LifecycleStepRow";
 
 export function LifecycleDrawer({
-  contactId, detail, loading, onClose,
+  contactId, detail, loading, onClose, onOpenOutreach,
 }: {
   contactId: string | null;
   detail: SequenceLifecycle | null;
   loading: boolean;
   onClose: () => void;
+  onOpenOutreach?: () => void;
 }) {
   if (!contactId) return null;
 
@@ -107,6 +108,21 @@ export function LifecycleDrawer({
                     <LifecycleStepRow key={step.index} step={step} />
                   ))}
                 </div>
+              )}
+
+              {onOpenOutreach && (
+                <button
+                  onClick={onOpenOutreach}
+                  style={{
+                    marginTop: 14, width: "100%", padding: "10px 0",
+                    border: "1px solid #d5e3ef", borderRadius: 10,
+                    background: "#f8fafd", color: "#1d4ed8", fontSize: 13,
+                    fontWeight: 700, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}
+                >
+                  Open Outreach Sequence <ArrowRight size={14} />
+                </button>
               )}
             </>
           )}

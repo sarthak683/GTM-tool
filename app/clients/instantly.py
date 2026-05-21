@@ -274,6 +274,32 @@ class InstantlyClient:
             logger.info("InstantlyClient: added lead %s to campaign %s", email, campaign_id)
         return result
 
+    async def add_leads_bulk(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        list_id: Optional[str] = None,
+        leads: list[dict],
+    ) -> dict | None:
+        """
+        Add up to 1000 leads in bulk to a campaign or list.
+        
+        Each lead dict should have keys: email, first_name, last_name, company_name,
+        job_title, linkedin_url, and any custom_variables.
+        
+        Requires campaign_id XOR list_id (not both).
+        """
+        payload: dict[str, Any] = {"leads": leads}
+        if campaign_id:
+            payload["campaign_id"] = campaign_id
+        if list_id:
+            payload["list_id"] = list_id
+
+        result = await self._request("POST", "/leads/bulk", json=payload)
+        if result:
+            logger.info("InstantlyClient: bulk added %d leads", len(leads))
+        return result
+
     async def get_lead(self, email: str, campaign_id: str) -> dict | None:
         """Get a lead's status within a campaign."""
         return await self._request(
@@ -378,3 +404,75 @@ class InstantlyClient:
                 return hook
 
         return await self.register_webhook(url, event_types)
+
+    # ── Leads (bulk listing) ───────────────────────────────────────────────────
+
+    async def list_leads(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        limit: int = 100,
+        starting_after: Optional[str] = None,
+        filter: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> dict | None:
+        """
+        List leads in a campaign or workspace (POST endpoint per Instantly v2).
+
+        Returns: {"items": [...leads...], "next_starting_after": "cursor"} or None
+        """
+        payload: dict[str, Any] = {"limit": limit}
+        if campaign_id:
+            payload["campaign"] = campaign_id
+        if starting_after:
+            payload["starting_after"] = starting_after
+        if filter:
+            payload["filter"] = filter
+        if search:
+            payload["search"] = search
+
+        result = await self._request("POST", "/leads/list", json=payload)
+        if result is None:
+            return None
+        return result
+
+    # ── Campaign analytics ─────────────────────────────────────────────────────
+
+    async def get_campaign_analytics(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> list[dict] | None:
+        """
+        Get analytics for one or all campaigns.
+        Specify campaign_id for a single campaign, or leave empty for all.
+        """
+        params: dict[str, Any] = {}
+        if campaign_id:
+            params["id"] = campaign_id
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+
+        result = await self._request("GET", "/campaigns/analytics", params=params)
+        if result is None:
+            return None
+        return result if isinstance(result, list) else [result]
+
+    async def search_campaigns_by_lead_email(
+        self, email: str
+    ) -> list[dict]:
+        """
+        Search for campaigns that contain a specific lead email.
+        Useful for finding already-running campaigns to link to CRM contacts.
+        """
+        result = await self._request(
+            "GET", "/campaigns/search",
+            params={"lead_email": email, "limit": 10},
+        )
+        if result is None:
+            return []
+        return result if isinstance(result, list) else result.get("items", [])
