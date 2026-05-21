@@ -1,6 +1,6 @@
 """Add manually_linked flag to meetings (prevents calendar sync from overwriting user re-links)
 
-Revision ID: 049
+Revision ID: 062
 Revises: 048
 Create Date: 2026-04-19
 """
@@ -8,8 +8,8 @@ Create Date: 2026-04-19
 from alembic import op
 import sqlalchemy as sa
 
-revision = "049"
-down_revision = "048"
+revision = "062"
+down_revision = "051"
 branch_labels = None
 depends_on = None
 

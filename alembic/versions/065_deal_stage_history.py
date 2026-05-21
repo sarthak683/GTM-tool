@@ -1,6 +1,6 @@
 """Create deal_stage_history table and backfill from activities + current stage.
 
-Revision ID: 052
+Revision ID: 065
 Revises: 051
 Create Date: 2026-04-24
 """
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "052"
-down_revision = "051"
+revision = "065"
+down_revision = "064"
 branch_labels = None
 depends_on = None
 

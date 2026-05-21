@@ -1,6 +1,6 @@
 """Add internal_domains JSONB to workspace_settings.
 
-Revision ID: 054
+Revision ID: 067
 Revises: 053
 Create Date: 2026-04-24
 """
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "054"
-down_revision = "053"
+revision = "067"
+down_revision = "066"
 branch_labels = None
 depends_on = None
 

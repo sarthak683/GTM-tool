@@ -1,6 +1,6 @@
 """Add meetings.is_internal column and backfill from attendee domains.
 
-Revision ID: 055
+Revision ID: 068
 Revises: 054
 Create Date: 2026-04-24
 
@@ -17,8 +17,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "055"
-down_revision = "054"
+revision = "068"
+down_revision = "067"
 branch_labels = None
 depends_on = None
 

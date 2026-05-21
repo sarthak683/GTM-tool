@@ -1,6 +1,6 @@
 """Add task_track column for sales_ai / hygiene / critical categorisation
 
-Revision ID: 050
+Revision ID: 063
 Revises: 049
 Create Date: 2026-04-20
 """
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "050"
-down_revision = "049"
+revision = "063"
+down_revision = "062"
 branch_labels = None
 depends_on = None
 

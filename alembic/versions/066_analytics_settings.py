@@ -1,6 +1,6 @@
 """Add analytics_settings JSONB to workspace_settings.
 
-Revision ID: 053
+Revision ID: 066
 Revises: 052
 Create Date: 2026-04-24
 """
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "053"
-down_revision = "052"
+revision = "066"
+down_revision = "065"
 branch_labels = None
 depends_on = None
 
