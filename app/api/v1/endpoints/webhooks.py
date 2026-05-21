@@ -639,6 +639,25 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     deal = await _find_best_deal_for_contact(session, contact_id) if contact_id else None
     deal_id = deal.id if deal else None
 
+    # ── Backfill campaign linkage ─────────────────────────────────────────────
+    if contact and campaign_id:
+        if not contact.instantly_campaign_id:
+            contact.instantly_campaign_id = campaign_id
+            session.add(contact)
+        if not sequence and contact.company_id:
+            now_for_seq = datetime.utcnow()
+            sequence = OutreachSequence(
+                contact_id=contact.id,
+                company_id=contact.company_id,
+                persona=contact.persona,
+                status="launched",
+                instantly_campaign_id=campaign_id,
+                instantly_campaign_status="active",
+                launched_at=now_for_seq,
+            )
+            session.add(sequence)
+            await session.flush()
+
     now = datetime.utcnow()
 
     email_subject = None
