@@ -877,3 +877,84 @@ export const settingsApi = {
       body: JSON.stringify({ prompt }),
     }),
 };
+
+// ── Workspace insights (Sales Workspace / Dashboard) ────────────────────────
+
+export type WorkspaceSummary = {
+  open_deals: number;
+  total_companies: number;
+  total_contacts: number;
+  scheduled_meetings: number;
+  alerts_count: number;
+};
+
+export type WorkspaceAlert = {
+  id: string;
+  type: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  entity_id?: string;
+  entity_name?: string;
+  entity_type?: string;
+  link?: string;
+  created_at: string;
+};
+
+export type WorkspaceInsightTone = "blue" | "green" | "amber" | "red";
+
+export type WorkspaceInsightMetric = {
+  key: string;
+  label: string;
+  value: string;
+  hint: string;
+  tone: WorkspaceInsightTone;
+  link?: string;
+};
+
+export type WorkspaceInsightBucket = {
+  key: string;
+  label: string;
+  count: number;
+  amount?: number | null;
+  tone: WorkspaceInsightTone;
+};
+
+export type WorkspaceInsightQueue = {
+  key: string;
+  label: string;
+  count: number;
+  hint: string;
+  tone: WorkspaceInsightTone;
+  link: string;
+};
+
+export type WorkspaceInsights = {
+  generated_at: string;
+  metrics: WorkspaceInsightMetric[];
+  deal_stage_mix: WorkspaceInsightBucket[];
+  deal_health_mix: WorkspaceInsightBucket[];
+  prospect_stage_mix: WorkspaceInsightBucket[];
+  meeting_readiness_mix: WorkspaceInsightBucket[];
+  focus_queues: WorkspaceInsightQueue[];
+  alerts: WorkspaceAlert[];
+};
+
+export type StageStatus = {
+  stage: string;
+  status: "ready" | "needs_action" | "blocked";
+  count: number;
+  blockers: string[];
+  actions: string[];
+};
+
+export const workspaceApi = {
+  summary: () =>
+    request<WorkspaceSummary>("/api/v1/workspace/summary"),
+  alerts: () =>
+    request<WorkspaceAlert[]>("/api/v1/workspace/alerts"),
+  insights: () =>
+    request<WorkspaceInsights>("/api/v1/workspace/insights"),
+  stageStatus: (stage: string) =>
+    request<StageStatus>(`/api/v1/workspace/stages/${stage}`),
+};

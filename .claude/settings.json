@@ -17,7 +17,12 @@
       "Bash(kubectl --kubeconfig * logs *)",
       "Bash(kubectl --kubeconfig * rollout status *)",
       "Bash(docker compose ps *)",
-      "Bash(docker compose logs *)"
+      "Bash(docker compose logs *)",
+      "PowerShell(kubectl --kubeconfig $KCFG -n gtm-prod set image deploy/gtm-frontend-deployment copilot=beacon.azurecr.io/gtm-fe:v0.12-5d6b501 2>&1)",
+      "PowerShell(kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-frontend-deployment --timeout=240s 2>&1)",
+      "PowerShell($KCFG=\"C:\\\\gtm-prototype\\\\tmp\\\\beacon-test-kubeconfig.yaml\")",
+      "Bash(curl -sS \"https://gtm.beacon.li/assets/index-DWFF5oI_.js\")",
+      "Bash(curl -sS \"https://gtm.beacon.li/assets/index-BNTxCQHY.css\")"
     ]
   },
   "hooks": {
