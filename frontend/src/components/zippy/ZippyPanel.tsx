@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   knowledgeApi,
+  personalEmailSyncApi,
   zippyApi,
   type IndexStatus,
   type ZippyConversationSummary,
@@ -43,14 +45,16 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   // Knowledge footer — "Grounded in N files · Last synced Xm ago"
   const [userStatus, setUserStatus] = useState<IndexStatus | null>(null);
   const [adminStatus, setAdminStatus] = useState<IndexStatus | null>(null);
+  const [emailConnected, setEmailConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Load the session list + footer stats the first time the panel opens.
+  // Load the session list + footer stats + email status the first time the panel opens.
   useEffect(() => {
     if (!open) return;
     void refreshConversations();
     void loadKnowledgeStatus();
+    void loadEmailStatus();
     return undefined;
   }, [open]);
 
@@ -90,6 +94,15 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     }
   }
 
+  async function loadEmailStatus() {
+    try {
+      const status = await personalEmailSyncApi.getStatus();
+      setEmailConnected(!!status.connected);
+    } catch {
+      setEmailConnected(false);
+    }
+  }
+
   // Load the selected thread's messages.
   useEffect(() => {
     if (!activeId) {
@@ -121,14 +134,42 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages.length, loadingThread]);
 
+  const footerStats = useMemo(() => {
+    const userFiles = userStatus?.total_files ?? 0;
+    const adminFiles = adminStatus?.total_files ?? 0;
+    const totalFiles = userFiles + adminFiles;
+    const lastSynced = computeLastSynced([
+      ...(userStatus?.files ?? []),
+      ...(adminStatus?.files ?? []),
+    ]);
+    return { totalFiles, lastSynced };
+  }, [userStatus, adminStatus]);
+
   const suggestions = useMemo(
-    () => [
-      "Summarise the last client call with Optera.",
-      "Draft a mutual NDA for Beacon and Acme Corp (India).",
-      "Generate a MOM from the notes below.",
-      "What's in the ROI deck for e2open?",
-    ],
-    [],
+    () => {
+      const hasFiles = footerStats.totalFiles > 0;
+      if (!emailConnected) {
+        return [
+          "Connect your Gmail in Settings to unlock Drive search.",
+          "What can Zippy help me with?",
+          "How do I get started with Beacon CRM?",
+        ];
+      }
+      if (!hasFiles) {
+        return [
+          "Pick a Drive folder in Settings so I can search your files.",
+          "Summarise the last client call with Beacon.",
+          "Draft a mutual NDA for Beacon and Acme Corp (India).",
+        ];
+      }
+      return [
+        "Summarise the last client call with Optera.",
+        "Draft a mutual NDA for Beacon and Acme Corp (India).",
+        "Generate a MOM from the notes below.",
+        "What's in the ROI deck for e2open?",
+      ];
+    },
+    [emailConnected, footerStats.totalFiles],
   );
 
   const filteredConversations = useMemo(() => {
@@ -151,17 +192,6 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   useEffect(() => {
     setHistoryPage(0);
   }, [search]);
-
-  const footerStats = useMemo(() => {
-    const userFiles = userStatus?.total_files ?? 0;
-    const adminFiles = adminStatus?.total_files ?? 0;
-    const totalFiles = userFiles + adminFiles;
-    const lastSynced = computeLastSynced([
-      ...(userStatus?.files ?? []),
-      ...(adminStatus?.files ?? []),
-    ]);
-    return { totalFiles, lastSynced };
-  }, [userStatus, adminStatus]);
 
   async function sendMessage(text: string, image?: ComposerImage | null) {
     // Allow image-only sends — the agent can still react to a pure
@@ -438,6 +468,8 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
           {messages.length === 0 && !loadingThread && (
             <ZippyWelcome
               suggestions={suggestions}
+              emailConnected={emailConnected}
+              hasKnowledge={footerStats.totalFiles > 0}
               onPick={(text) => void sendMessage(text)}
             />
           )}
@@ -487,7 +519,12 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
                 : ""}
             </span>
           ) : (
-            <span>Connect a Drive folder in Settings to ground Zippy.</span>
+            <Link
+              to="/settings"
+              className="text-violet-600 hover:text-violet-800 hover:underline"
+            >
+              Connect your Gmail in Settings → Zippy to ground answers in your Drive.
+            </Link>
           )}
         </div>
       </aside>
@@ -527,11 +564,21 @@ function HeaderIconButton({
 
 function ZippyWelcome({
   suggestions,
+  emailConnected,
+  hasKnowledge,
   onPick,
 }: {
   suggestions: string[];
+  emailConnected: boolean;
+  hasKnowledge: boolean;
   onPick: (text: string) => void;
 }) {
+  const subtitle = !emailConnected
+    ? "Connect your Gmail in Settings → Zippy to let me search your Drive, generate documents, and more."
+    : !hasKnowledge
+    ? "Pick a Drive folder in Settings so I can answer from your files. I can still generate documents without it."
+    : "Ask about files in your Drive, generate a MOM from call notes, or draft an NDA for any jurisdiction.";
+
   return (
     <div
       className="flex flex-col items-center text-center"
@@ -555,8 +602,7 @@ function ZippyWelcome({
         className="text-stone-500"
         style={{ marginTop: 8, maxWidth: 360, fontSize: 13.5, lineHeight: 1.55 }}
       >
-        Ask about files in your Drive, generate a MOM from call notes, or draft
-        an NDA for any jurisdiction.
+        {subtitle}
       </p>
       <div
         className="grid w-full grid-cols-1"

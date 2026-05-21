@@ -795,13 +795,13 @@ async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
     return await run_due_pre_meeting_intel_once()
 
 
-# ── Zippy system prompt (admin only) ────────────────────────────────────────
+# ── Zippy system prompt ──────────────────────────────────────────────────────
 #
-# Admin-gated on BOTH read and write — the prompt is sensitive product IP and
-# non-admin users should not see the exact instructions Zippy runs under.
+# Readable by all authenticated users (so everyone can see what Zippy knows).
+# Writable only by admins.
 
 @router.get("/zippy-system-prompt", response_model=ZippySystemPromptRead)
-async def get_zippy_system_prompt(session: DBSession, _admin: AdminUser):
+async def get_zippy_system_prompt(session: DBSession, _user: CurrentUser):
     from app.services.zippy_agent import SYSTEM_PROMPT as DEFAULT_ZIPPY_PROMPT
 
     row = await _get_or_create(session)

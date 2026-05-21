@@ -41,7 +41,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy-prompt";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -1078,7 +1078,8 @@ export default function SettingsPage() {
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
               {tabButton("reports", "Reports", <CalendarDays size={15} />)}
               {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
-              {isAdmin && tabButton("zippy-prompt", "Zippy Prompt", <Bot size={15} />)}
+              {tabButton("zippy", "Zippy", <Bot size={15} />)}
+              {isAdmin && tabButton("zippy-prompt", "System Prompt", <Shield size={15} />)}
             </div>
           </aside>
 
@@ -2040,6 +2041,117 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        ) : activeTab === "zippy" ? (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f3f0ff", color: "#6b3fc7", borderColor: "#e0d4f8" }}>
+                  <Bot size={14} />
+                  Zippy AI Assistant
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Your knowledge-powered copilot</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Zippy answers questions from your Drive files, generates MOMs, NDAs, ROI analyses, PoC documents, proposals, and LinkedIn drafts.
+                  Connect your personal Gmail below to give Zippy access to your Drive files for RAG (retrieval-augmented generation).
+                </p>
+              </div>
+              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f3f0ff", color: "#6b3fc7", fontWeight: 700, minWidth: 150, textAlign: "center" }}>
+                {personalEmail?.connected ? "Connected" : "Setup needed"}
+              </div>
+            </div>
+
+            {/* ── Personal email connection ──── */}
+            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div className="crm-chip" style={{ marginBottom: 10, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" }}>
+                    <Mail size={13} />
+                    Drive Access
+                  </div>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                    Connect your Gmail to enable Drive
+                  </h3>
+                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.7, fontSize: 14 }}>
+                    Zippy reads your selected Drive folder to answer questions. Connecting Gmail grants <code>drive.readonly</code> + <code>drive.file</code> scopes so Zippy can search your files and upload generated documents.
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  {personalEmail?.connected ? (
+                    <>
+                      <button className="crm-button soft" onClick={handleDisconnectPersonalEmail} disabled={disconnectingPersonal}>
+                        {disconnectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
+                        Disconnect
+                      </button>
+                      <button className="crm-button soft" onClick={handleSyncPersonalNow} disabled={syncingPersonal}>
+                        {syncingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                        Sync now
+                      </button>
+                    </>
+                  ) : (
+                    <button className="crm-button primary" onClick={handleConnectPersonalEmail} disabled={connectingPersonal}>
+                      {connectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
+                      Connect my Gmail
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {personalEmail?.connected && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                      Connected email
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                      {personalEmail?.email_address || "—"}
+                    </div>
+                  </div>
+                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                      Last synced
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                      {formatTimestamp(personalEmail?.last_sync_epoch)}
+                    </div>
+                  </div>
+                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                      Calendar scope
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_calendar_scope ? "#217a49" : "#a26a00" }}>
+                      {personalEmail?.has_calendar_scope ? "Granted" : "Missing"}
+                    </div>
+                  </div>
+                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                      Drive scope
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_drive_scope ? "#217a49" : "#a26a00" }}>
+                      {personalEmail?.has_drive_scope ? "Granted" : "Missing"}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!personalEmail?.connected && (
+                <div style={{ padding: "12px 14px", borderRadius: 10, background: "#f0f6ff", border: "1px solid #c8daf8", color: "#1a4fa8", fontSize: 13 }}>
+                  <strong>No Gmail connected yet.</strong> Click "Connect my Gmail" above to grant Zippy access to your Drive. You can also connect from <button onClick={() => setActiveTab("email-sync")} style={{ background: "none", border: "none", color: "#1a4fa8", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13 }}>Email Sync settings</button>.
+                </div>
+              )}
+            </section>
+
+            {/* ── Knowledge Source (Drive folder picker + Zippy index) ──── */}
+            <KnowledgeSourcePanel
+              isAdmin={isAdmin}
+              connected={!!personalEmail?.connected}
+              driveLoading={driveLoading}
+              userFolder={userDriveFolder}
+              adminFolder={adminDriveFolder}
+              driveMessage={driveMessage}
+              onOpenPicker={(scope) => setDrivePickerMode(scope)}
+              onClearUser={handleClearUserFolder}
+            />
+          </>
         ) : activeTab === "zippy-prompt" ? (
           isAdmin ? (
             <div style={{ display: "grid", gap: 18 }}>
