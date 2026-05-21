@@ -358,26 +358,26 @@ class InstantlyClient:
         secret_header: Optional[str] = None,
     ) -> dict | None:
         """
-        Register a webhook URL for specific event types.
-        Webhooks are workspace-level — fire for all matching events.
-
-        Common event_types:
-            "email_sent", "email_opened", "email_link_clicked",
-            "email_bounced", "reply_received", "lead_unsubscribed",
-            "lead_interested", "lead_not_interested", "lead_meeting_booked"
+        Register webhook URLs for specific event types.
+        Instantly v2 requires one event_type per webhook registration.
+        This method registers a webhook for each event type and returns
+        the result of the last registration.
         """
-        payload: dict[str, Any] = {
-            "webhook_url": url,
-            "event_type": event_types,
-        }
-        if secret_header:
-            payload["add_header"] = True
-            payload["header_value"] = secret_header
+        last_result = None
+        for event_type in event_types:
+            payload: dict[str, Any] = {
+                "target_hook_url": url,
+                "event_type": event_type,
+            }
+            if secret_header:
+                payload["add_header"] = True
+                payload["header_value"] = secret_header
 
-        result = await self._request("POST", "/webhooks", json=payload)
-        if result:
-            logger.info("InstantlyClient: registered webhook %s for events %s", url, event_types)
-        return result
+            result = await self._request("POST", "/webhooks", json=payload)
+            if result:
+                logger.info("InstantlyClient: registered webhook %s for event %s", url, event_type)
+                last_result = result
+        return last_result
 
     async def list_webhooks(self) -> list[dict]:
         """List all registered workspace webhooks."""
@@ -399,7 +399,8 @@ class InstantlyClient:
         """
         existing = await self.list_webhooks()
         for hook in existing:
-            if hook.get("webhook_url") == url:
+            stored_url = hook.get("target_hook_url") or hook.get("webhook_url") or hook.get("url") or ""
+            if stored_url == url:
                 logger.info("InstantlyClient: webhook already registered for %s", url)
                 return hook
 
