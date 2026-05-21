@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body
 from sqlmodel import select
 
 from app.clients.instantly import InstantlyClient, InstantlyError
+from app.clients.instantly_events import INSTANTLY_WEBHOOK_EVENTS
 from app.config import settings
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
@@ -394,11 +395,7 @@ async def launch_sequence(
         try:
             await client.ensure_webhook(
                 url=settings.INSTANTLY_WEBHOOK_URL,
-                event_types=[
-                    "email_sent", "email_opened", "email_link_clicked",
-                    "email_bounced", "reply_received", "lead_unsubscribed",
-                    "lead_interested", "lead_not_interested", "lead_meeting_booked",
-                ],
+                event_types=INSTANTLY_WEBHOOK_EVENTS,
             )
         except Exception:
             pass  # Webhook registration failure is non-fatal
@@ -559,12 +556,7 @@ async def launch_company_campaign(
         try:
             await client.ensure_webhook(
                 url=settings.INSTANTLY_WEBHOOK_URL,
-                event_types=[
-                    "email_sent", "email_opened", "email_link_clicked",
-                    "email_bounced", "reply_received", "lead_unsubscribed",
-                    "lead_interested", "lead_not_interested", "lead_meeting_booked",
-                    "campaign_completed",
-                ],
+                event_types=INSTANTLY_WEBHOOK_EVENTS,
             )
         except Exception:
             pass

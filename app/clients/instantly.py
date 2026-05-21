@@ -393,18 +393,27 @@ class InstantlyClient:
 
     async def ensure_webhook(self, url: str, event_types: list[str]) -> dict | None:
         """
-        Idempotent webhook registration — checks if the URL is already
-        registered, skips if so, registers if not.
-        Call this on app startup.
+        Idempotent webhook registration — checks each event type individually
+        to avoid re-registering while ensuring all requested event types are covered.
         """
         existing = await self.list_webhooks()
+        existing_events: set[str] = set()
         for hook in existing:
             stored_url = hook.get("target_hook_url") or hook.get("webhook_url") or hook.get("url") or ""
             if stored_url == url:
-                logger.info("InstantlyClient: webhook already registered for %s", url)
-                return hook
+                stored_event = hook.get("event_type") or hook.get("event_types") or ""
+                if isinstance(stored_event, list):
+                    existing_events.update(stored_event)
+                elif isinstance(stored_event, str):
+                    existing_events.add(stored_event)
 
-        return await self.register_webhook(url, event_types)
+        missing = [e for e in event_types if e not in existing_events]
+        if not missing:
+            logger.info("InstantlyClient: all %d event types already registered for %s", len(event_types), url)
+            return existing[0] if existing else None
+
+        logger.info("InstantlyClient: registering %d missing event types for %s", len(missing), url)
+        return await self.register_webhook(url, missing)
 
     # ── Leads (bulk listing) ───────────────────────────────────────────────────
 

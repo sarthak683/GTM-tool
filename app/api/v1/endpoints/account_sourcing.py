@@ -1847,6 +1847,7 @@ async def push_to_instantly(
         raise HTTPException(status_code=400, detail="No contacts with emails found for this company")
 
     from app.clients.instantly import InstantlyClient
+    from app.clients.instantly_events import INSTANTLY_WEBHOOK_EVENTS
     from app.config import settings
     instantly = InstantlyClient()
 
@@ -1855,12 +1856,7 @@ async def push_to_instantly(
         try:
             await instantly.ensure_webhook(
                 url=settings.INSTANTLY_WEBHOOK_URL,
-                event_types=[
-                    "email_sent", "email_opened", "email_link_clicked",
-                    "email_bounced", "reply_received", "lead_unsubscribed",
-                    "lead_interested", "lead_not_interested", "lead_meeting_booked",
-                    "campaign_completed",
-                ],
+                event_types=INSTANTLY_WEBHOOK_EVENTS,
             )
         except Exception:
             pass  # non-fatal

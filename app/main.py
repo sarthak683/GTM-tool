@@ -46,16 +46,12 @@ async def _ensure_instantly_webhook() -> None:
         return
     try:
         from app.clients.instantly import InstantlyClient
+        from app.clients.instantly_events import INSTANTLY_WEBHOOK_EVENTS
 
         client = InstantlyClient()
         await client.ensure_webhook(
             url=settings.INSTANTLY_WEBHOOK_URL,
-            event_types=[
-                "email_sent", "email_opened", "email_link_clicked",
-                "email_bounced", "reply_received", "lead_unsubscribed",
-                "lead_interested", "lead_not_interested", "lead_meeting_booked",
-                "campaign_completed",
-            ],
+            event_types=INSTANTLY_WEBHOOK_EVENTS,
         )
         logger.info("Instantly webhook registered on startup")
     except Exception:
