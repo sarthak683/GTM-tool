@@ -134,13 +134,6 @@ export default function SettingsPage() {
   const [drivePickerMode, setDrivePickerMode] = useState<"user" | "admin" | null>(null);
   const [driveMessage, setDriveMessage] = useState<string | null>(null);
 
-  // Google Drive folder selection
-  const [userDriveFolder, setUserDriveFolder] = useState<SelectedDriveFolder | null>(null);
-  const [adminDriveFolder, setAdminDriveFolder] = useState<SelectedDriveFolder | null>(null);
-  const [driveLoading, setDriveLoading] = useState(false);
-  const [drivePickerMode, setDrivePickerMode] = useState<"user" | "admin" | null>(null);
-  const [driveMessage, setDriveMessage] = useState<string | null>(null);
-
   const statusTone = useMemo(() => {
     if (!gmail) return { bg: "#eef2ff", color: "#4b56c7", label: "Loading" };
     if (gmail.configured) return { bg: "#e8f8ee", color: "#217a49", label: "Connected" };
@@ -1052,40 +1045,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handlePickUserFolder = async (folder: DriveFolder) => {
-    try {
-      const saved = await driveApi.selectFolder(folder.id, folder.name);
-      setUserDriveFolder(saved);
-      setDriveMessage(`Your personal Drive folder is now "${saved.folder_name || folder.name}".`);
-      toast.success(saved.folder_name || folder.name, "Drive folder saved");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Drive folder");
-      throw err;
-    }
-  };
-
-  const handlePickAdminFolder = async (folder: DriveFolder) => {
-    try {
-      const saved = await driveApi.selectAdminFolder(folder.id, folder.name);
-      setAdminDriveFolder(saved);
-      setDriveMessage(`Workspace-wide Drive folder is now "${saved.folder_name || folder.name}".`);
-      toast.success(saved.folder_name || folder.name, "Workspace folder saved");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save workspace Drive folder");
-      throw err;
-    }
-  };
-
-  const handleClearUserFolder = async () => {
-    try {
-      await driveApi.clearFolder();
-      await loadDriveFolders();
-      setDriveMessage("Your personal Drive folder has been cleared.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to clear Drive folder");
-    }
-  };
-
   const tabButton = (id: SettingsTab, label: string, icon: ReactNode) => (
     <button
       key={id}
@@ -1506,7 +1465,6 @@ export default function SettingsPage() {
               userFolder={userDriveFolder}
               adminFolder={adminDriveFolder}
               driveMessage={driveMessage}
-              needsDriveReconnect={!!personalEmail?.connected && personalEmail.has_drive_scope === false}
               onOpenPicker={(scope) => setDrivePickerMode(scope)}
               onClearUser={handleClearUserFolder}
             />
