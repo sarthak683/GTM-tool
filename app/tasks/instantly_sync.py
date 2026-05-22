@@ -22,6 +22,31 @@ from app.models.outreach import OutreachSequence
 logger = logging.getLogger(__name__)
 
 
+def _run_async_task(coro):
+    """Run a coroutine inside a fresh event loop with orderly shutdown.
+
+    Without the explicit shutdown_asyncgens + pending-task cancel, aiohttp's
+    connector keeps background tasks alive that try to call back into the
+    closed loop on the next Celery run, raising
+    "Future attached to a different loop" and silently killing every
+    beat-scheduled invocation. Mirrors the helper in tldv_sync.py.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(coro)
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if pending:
+            for task in pending:
+                task.cancel()
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        return result
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 @celery_app.task(
     name="app.tasks.instantly_sync.sync_active_instantly_campaigns",
     bind=True,
@@ -30,12 +55,7 @@ logger = logging.getLogger(__name__)
 )
 def sync_active_instantly_campaigns(self) -> dict:
     """Sync contact statuses for all sequences linked to active Instantly campaigns."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    loop = asyncio.get_event_loop()
-    try:
-        return loop.run_until_complete(_async_sync_active_campaigns())
-    finally:
-        loop.close()
+    return _run_async_task(_async_sync_active_campaigns())
 
 
 async def _async_sync_active_campaigns() -> dict:
