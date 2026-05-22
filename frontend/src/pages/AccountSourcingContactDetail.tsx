@@ -388,7 +388,7 @@ export default function AccountSourcingContactDetail() {
             padding: 14px !important;
           }
           .prospect-detail-outreach-section {
-            display: none !important;
+            display: block !important;
           }
           .prospect-detail-notes-row {
             display: grid !important;
