@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.gmail_sender import send_gmail_email
 from app.clients.resend_client import send_email
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -249,21 +250,48 @@ async def run_due_pre_meeting_intel_once() -> dict[str, int]:
                     continue
 
                 subject, body = _build_meeting_intel_email(meeting)
+                gmail_token_data = (
+                    settings_row.report_sender_token_data
+                    if settings_row.report_sender_email
+                    and settings_row.report_sender_connected_email
+                    and settings_row.report_sender_token_data
+                    and settings_row.report_sender_email.lower() == settings_row.report_sender_connected_email.lower()
+                    else None
+                )
                 sent_any = False
                 for recipient in recipients:
-                    result = await send_email(
-                        recipient.email,
-                        subject,
-                        body,
-                        from_name="Beacon Meeting Intel",
-                    )
+                    if gmail_token_data:
+                        result, gmail_token_data = await send_gmail_email(
+                            token_data=gmail_token_data,
+                            from_email=settings_row.report_sender_email,
+                            to=recipient.email,
+                            subject=subject,
+                            body=body,
+                            from_name="Beacon Meeting Intel",
+                        )
+                    else:
+                        result = await send_email(
+                            recipient.email,
+                            subject,
+                            body,
+                            from_name="Beacon Meeting Intel",
+                        )
                     if result.get("status") == "sent":
                         sent_any = True
+                    elif gmail_token_data:
+                        settings_row.report_sender_last_error = str(
+                            result.get("error") or "Gmail send failed"
+                        )[:500]
+
+                if gmail_token_data and gmail_token_data != settings_row.report_sender_token_data:
+                    settings_row.report_sender_token_data = gmail_token_data
 
                 if not sent_any:
                     skipped += 1
                     continue
 
+                if gmail_token_data:
+                    settings_row.report_sender_last_error = None
                 meeting.intel_email_sent_at = datetime.utcnow()
                 meeting.updated_at = datetime.utcnow()
                 session.add(meeting)
