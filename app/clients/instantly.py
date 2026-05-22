@@ -354,6 +354,7 @@ class InstantlyClient:
         *,
         campaign_id: Optional[str] = None,
         lead_email: Optional[str] = None,
+        email_type: Optional[str] = None,
         limit: int = 20,
     ) -> list[dict]:
         """
@@ -364,7 +365,9 @@ class InstantlyClient:
         if campaign_id:
             params["campaign_id"] = campaign_id
         if lead_email:
-            params["email"] = lead_email
+            params["lead"] = lead_email
+        if email_type:
+            params["email_type"] = email_type
 
         result = await self._request("GET", "/emails", params=params)
         if result is None:
@@ -376,8 +379,38 @@ class InstantlyClient:
         return await self._request("GET", f"/emails/{email_id}")
 
     async def get_reply_thread(self, lead_email: str, campaign_id: str) -> list[dict]:
-        """Fetch all emails (thread) for a specific lead in a campaign."""
-        return await self.list_emails(campaign_id=campaign_id, lead_email=lead_email)
+        """Fetch inbound reply emails for a specific lead in a campaign."""
+        rows = await self.list_emails(
+            campaign_id=campaign_id,
+            lead_email=lead_email,
+            email_type="received",
+            limit=50,
+        )
+        lead = (lead_email or "").strip().lower()
+        replies: list[dict] = []
+        for row in rows:
+            row_lead = str(row.get("lead") or "").strip().lower()
+            if lead and row_lead and row_lead != lead:
+                continue
+            # Instantly ue_type: 1 campaign sent, 2 received, 3 sent, 4 scheduled.
+            if row.get("ue_type") not in (None, 2):
+                continue
+            body = row.get("body") if isinstance(row.get("body"), dict) else {}
+            replies.append({
+                "id": row.get("id"),
+                "subject": row.get("subject"),
+                "body": body.get("text") or body.get("html") or row.get("content_preview") or "",
+                "html_body": body.get("html"),
+                "from_email": row.get("from_address_email"),
+                "to_email": row.get("to_address_email_list"),
+                "lead_email": row.get("lead"),
+                "created_at": row.get("timestamp_email") or row.get("timestamp_created"),
+                "timestamp": row.get("timestamp_email") or row.get("timestamp_created"),
+                "thread_id": row.get("thread_id"),
+                "is_auto_reply": bool(row.get("is_auto_reply")),
+                "ue_type": row.get("ue_type"),
+            })
+        return replies
 
     # ── Webhooks ──────────────────────────────────────────────────────────────
 
