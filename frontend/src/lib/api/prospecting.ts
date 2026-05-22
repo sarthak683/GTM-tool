@@ -76,6 +76,32 @@ export const outreachApi = {
     request<{ sequence_id: string; replies: Array<{ id?: string; subject?: unknown; body?: unknown; from_email?: string; created_at?: string; timestamp?: string }> }>(
       `/api/v1/outreach/replies/${sequenceId}`
     ),
+  launchContactsCampaign: (
+    contactIds: string[],
+    sendingAccount: string,
+    options?: { templateSequenceId?: string; campaignName?: string }
+  ) =>
+    request<{
+      status: string;
+      instantly_campaign_id: string;
+      campaign_name: string;
+      selected_contacts: number;
+      launched_pairs: number;
+      skipped_no_email: number;
+      skipped_already_launched: number;
+      sequences_generated: number;
+      pushed: number;
+      failed: number;
+      results: Array<{ contact_id: string; email: string; status: string; error?: string }>;
+    }>(`/api/v1/outreach/launch-contacts`, {
+      method: "POST",
+      body: JSON.stringify({
+        contact_ids: contactIds,
+        sending_account: sendingAccount,
+        template_sequence_id: options?.templateSequenceId,
+        campaign_name: options?.campaignName,
+      }),
+    }),
   launchCompanyCampaign: (companyId: string, sendingAccount: string, campaignName?: string) =>
     request<{
       status: string;

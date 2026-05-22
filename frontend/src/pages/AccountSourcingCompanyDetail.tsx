@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, companiesApi, contactsApi, dealsApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -273,6 +273,21 @@ export default function AccountSourcingCompanyDetail() {
     message: string;
   }>({ tone: "idle", message: "" });
   const [showAddStakeholder, setShowAddStakeholder] = useState(false);
+  // F8 — bulk add-to-sequence selection state
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+  const [bulkLaunchOpen, setBulkLaunchOpen] = useState(false);
+  const [bulkLaunchAccount, setBulkLaunchAccount] = useState("");
+  const [bulkLaunchName, setBulkLaunchName] = useState("");
+  const [bulkLaunching, setBulkLaunching] = useState(false);
+  const [bulkLaunchError, setBulkLaunchError] = useState("");
+
+  const toggleContactSelected = useCallback((cid: string) => {
+    setSelectedContactIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid); else next.add(cid);
+      return next;
+    });
+  }, []);
   const [showDealModal, setShowDealModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [showTasksModal, setShowTasksModal] = useState(false);
@@ -1491,9 +1506,62 @@ export default function AccountSourcingCompanyDetail() {
               {relevantContacts.length === 0 && icpPersonas.length === 0 ? (
                 <div style={{ color: colors.faint }}>No prospects have been added to this account yet.</div>
               ) : relevantContacts.length > 0 ? (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {relevantContacts.map((c) => <ContactItem key={c.id} contact={c} onChanged={load} />)}
-                </div>
+                <>
+                  {/* F8 selection toolbar */}
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 10, padding: "8px 12px", marginBottom: 8,
+                    border: `1px solid ${colors.border}`, borderRadius: 10, background: "#f7fafd",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: colors.sub, cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={relevantContacts.length > 0 && relevantContacts.every((c) => selectedContactIds.has(c.id))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedContactIds(new Set(relevantContacts.map((c) => c.id)));
+                            } else {
+                              setSelectedContactIds(new Set());
+                            }
+                          }}
+                        />
+                        Select all
+                      </label>
+                      <span style={{ fontSize: 12, color: colors.sub }}>
+                        {selectedContactIds.size} selected
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => { setBulkLaunchOpen(true); setBulkLaunchError(""); }}
+                      disabled={selectedContactIds.size === 0}
+                      style={{
+                        padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                        background: selectedContactIds.size === 0 ? "#e8eef5" : colors.primary,
+                        color: selectedContactIds.size === 0 ? "#9aafbe" : "#fff",
+                        border: "none", cursor: selectedContactIds.size === 0 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Add {selectedContactIds.size || ""} to sequence
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {relevantContacts.map((c) => (
+                      <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedContactIds.has(c.id)}
+                          onChange={() => toggleContactSelected(c.id)}
+                          style={{ marginTop: 16 }}
+                          aria-label={`Select ${c.first_name} ${c.last_name}`}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <ContactItem contact={c} onChanged={load} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : null}
             </Section>
             </div>
@@ -1757,6 +1825,99 @@ export default function AccountSourcingCompanyDetail() {
           onClose={() => setShowAddStakeholder(false)}
           onCreated={() => { setShowAddStakeholder(false); load(); }}
         />
+      )}
+      {bulkLaunchOpen && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9000,
+            background: "rgba(15, 39, 68, 0.4)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => !bulkLaunching && setBulkLaunchOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 480, background: "#fff", borderRadius: 16, padding: "22px 24px", maxWidth: "92vw" }}
+          >
+            <h3 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: colors.text }}>
+              Add {selectedContactIds.size} prospects to sequence
+            </h3>
+            <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: colors.sub }}>
+              We'll create or reuse each contact's sequence, then launch a single Instantly campaign with them all.
+              Contacts missing an email will be skipped.
+            </p>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: colors.sub, marginBottom: 6 }}>
+              Sending account email *
+            </label>
+            <input
+              type="email"
+              placeholder="rep@beacon.li"
+              value={bulkLaunchAccount}
+              onChange={(e) => setBulkLaunchAccount(e.target.value)}
+              style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, marginBottom: 12 }}
+            />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: colors.sub, marginBottom: 6 }}>
+              Campaign name (optional)
+            </label>
+            <input
+              type="text"
+              placeholder={`Bulk · ${selectedContactIds.size} prospects`}
+              value={bulkLaunchName}
+              onChange={(e) => setBulkLaunchName(e.target.value)}
+              style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, marginBottom: 14 }}
+            />
+            {bulkLaunchError && (
+              <div style={{ color: colors.red, fontSize: 12, marginBottom: 10 }}>{bulkLaunchError}</div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                onClick={() => setBulkLaunchOpen(false)}
+                disabled={bulkLaunching}
+                style={{
+                  padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                  background: "#f1f5f9", color: colors.sub, border: "none",
+                  cursor: bulkLaunching ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={bulkLaunching || !bulkLaunchAccount.trim()}
+                onClick={async () => {
+                  setBulkLaunching(true);
+                  setBulkLaunchError("");
+                  try {
+                    const result = await outreachApi.launchContactsCampaign(
+                      Array.from(selectedContactIds),
+                      bulkLaunchAccount.trim(),
+                      { campaignName: bulkLaunchName.trim() || undefined }
+                    );
+                    setBulkLaunchOpen(false);
+                    setSelectedContactIds(new Set());
+                    setBulkLaunchAccount("");
+                    setBulkLaunchName("");
+                    toast.success(
+                      `${result.pushed} pushed · ${result.failed} failed · ${result.skipped_no_email} no-email · ${result.skipped_already_launched} already launched`
+                    );
+                    await load();
+                  } catch (e) {
+                    setBulkLaunchError(e instanceof Error ? e.message : "Launch failed");
+                  } finally {
+                    setBulkLaunching(false);
+                  }
+                }}
+                style={{
+                  padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  background: bulkLaunching || !bulkLaunchAccount.trim() ? "#e8eef5" : colors.primary,
+                  color: bulkLaunching || !bulkLaunchAccount.trim() ? "#9aafbe" : "#fff",
+                  border: "none", cursor: bulkLaunching || !bulkLaunchAccount.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                {bulkLaunching ? "Launching…" : "Launch campaign"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

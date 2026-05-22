@@ -576,6 +576,184 @@ async def launch_company_campaign(
     }
 
 
+@router.post("/launch-contacts")
+async def launch_contacts_campaign(
+    session: DBSession,
+    _user: CurrentUser,
+    contact_ids: list[UUID] = Body(..., embed=True),
+    sending_account: str = Body(..., embed=True),
+    template_sequence_id: Optional[UUID] = Body(None, embed=True),
+    campaign_name: Optional[str] = Body(None, embed=True),
+):
+    """
+    Bulk-launch an Instantly campaign for a hand-picked set of contacts.
+
+    Unlike /launch-company/{company_id}, this endpoint is contact-driven so a
+    rep can select prospects across multiple companies from AccountSourcing
+    or the Contacts page and push them into one sequence.
+
+    For any selected contact without an existing OutreachSequence we
+    generate one inline (using app.services.outreach_generator). The
+    template_sequence_id (if provided) sets the email cadence used by the
+    Instantly campaign; otherwise the first generated/found sequence with
+    email steps acts as the template.
+    """
+    if not contact_ids:
+        raise ValidationError("contact_ids is required")
+
+    contacts_result = await session.execute(
+        select(Contact).where(Contact.id.in_(contact_ids))
+    )
+    contacts = list(contacts_result.scalars().all())
+    if not contacts:
+        raise ValidationError("No contacts found for the provided ids")
+
+    contacts_with_email = [c for c in contacts if c.email]
+    if not contacts_with_email:
+        raise ValidationError("None of the selected contacts have an email address")
+
+    # ── Ensure each contact has a sequence (generate if missing) ──────────────
+    seq_by_contact: dict[UUID, OutreachSequence] = {}
+    existing_result = await session.execute(
+        select(OutreachSequence).where(
+            OutreachSequence.contact_id.in_([c.id for c in contacts_with_email])
+        )
+    )
+    for seq in existing_result.scalars().all():
+        # Skip sequences that have already been launched — re-launching the
+        # same contact into a new campaign would create duplicate Instantly
+        # leads and double-count engagement.
+        if _sequence_started(seq):
+            continue
+        seq_by_contact[seq.contact_id] = seq
+
+    generated_count = 0
+    for contact in contacts_with_email:
+        if contact.id in seq_by_contact:
+            continue
+        generated = await generate_sequence(contact.id, session)
+        if generated and not _sequence_started(generated):
+            seq_by_contact[contact.id] = generated
+            generated_count += 1
+
+    pairs = [(seq_by_contact[c.id], c) for c in contacts_with_email if c.id in seq_by_contact]
+    if not pairs:
+        raise ValidationError("All selected contacts already have launched sequences")
+
+    # ── Pick the campaign template ─────────────────────────────────────────────
+    template_seq: Optional[OutreachSequence] = None
+    if template_sequence_id:
+        template_seq = await session.get(OutreachSequence, template_sequence_id)
+        if not template_seq:
+            raise ValidationError("template_sequence_id not found")
+    else:
+        template_seq = pairs[0][0]
+
+    steps_result = await session.execute(
+        select(OutreachStep)
+        .where(OutreachStep.sequence_id == template_seq.id)
+        .order_by(OutreachStep.step_number)
+    )
+    steps = list(steps_result.scalars().all()) or _steps_from_legacy(template_seq)
+    email_steps = [s for s in steps if getattr(s, "channel", "email") == "email"]
+    if not email_steps:
+        raise ValidationError("Template sequence has no email steps. Add steps before launching.")
+
+    instantly_steps = [
+        {
+            "subject": step.subject or (f"Re: {email_steps[0].subject}" if i > 0 else "Hello"),
+            "body": step.body,
+            "delay_value": step.delay_value,
+            "variants": _normalize_variants_payload(step.variants).get("variants") or [],
+        }
+        for i, step in enumerate(email_steps)
+    ]
+
+    name = campaign_name or f"Bulk · {len(pairs)} prospects"
+
+    # ── Create + activate Instantly campaign ──────────────────────────────────
+    client = InstantlyClient()
+    try:
+        campaign = await client.create_campaign(
+            name=name,
+            sending_accounts=[sending_account],
+            steps=instantly_steps,
+        )
+    except InstantlyError as e:
+        raise ValidationError(f"Instantly campaign creation failed: {e.detail}")
+    if not campaign:
+        raise ValidationError("Instantly API returned no campaign (check INSTANTLY_API_KEY)")
+
+    campaign_id = campaign.get("id") or campaign.get("campaign_id")
+    try:
+        await client.activate_campaign(campaign_id)
+    except InstantlyError as e:
+        import logging
+        logging.getLogger(__name__).warning("Campaign activation failed (non-fatal): %s", e)
+
+    # ── Push leads + update CRM ───────────────────────────────────────────────
+    now = datetime.utcnow()
+    lead_payloads = []
+    for seq, contact in pairs:
+        lead_payloads.append({
+            "email": contact.email,
+            "first_name": contact.first_name or "",
+            "last_name": contact.last_name or "",
+            "company_name": getattr(contact, "company_name", "") or "",
+            "job_title": contact.title or "",
+            "linkedin_url": contact.linkedin_url or "",
+        })
+        seq.instantly_campaign_id = campaign_id
+        seq.instantly_campaign_status = "active"
+        seq.status = "launched"
+        seq.launched_at = now
+        seq.updated_at = now
+        session.add(seq)
+        contact.instantly_campaign_id = campaign_id
+        contact.instantly_status = "pushed"
+        contact.sequence_status = "queued_instantly"
+        contact.updated_at = now
+        session.add(contact)
+
+    results: list[dict] = []
+    try:
+        await client.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
+        results = [
+            {"contact_id": str(c.id), "email": c.email, "status": "pushed"}
+            for _seq, c in pairs
+        ]
+    except InstantlyError as e:
+        results = [
+            {"contact_id": str(c.id), "email": c.email, "status": "failed", "error": str(e.detail)[:200]}
+            for _seq, c in pairs
+        ]
+
+    if settings.INSTANTLY_WEBHOOK_URL:
+        try:
+            await client.ensure_webhook(
+                url=settings.INSTANTLY_WEBHOOK_URL,
+                event_types=INSTANTLY_WEBHOOK_EVENTS,
+            )
+        except Exception:
+            pass
+
+    await session.commit()
+
+    return {
+        "status": "launched",
+        "instantly_campaign_id": campaign_id,
+        "campaign_name": name,
+        "selected_contacts": len(contact_ids),
+        "launched_pairs": len(pairs),
+        "skipped_no_email": len(contacts) - len(contacts_with_email),
+        "skipped_already_launched": len(contacts_with_email) - len(pairs),
+        "sequences_generated": generated_count,
+        "pushed": sum(1 for r in results if r["status"] == "pushed"),
+        "failed": sum(1 for r in results if r["status"] == "failed"),
+        "results": results,
+    }
+
+
 @router.get("/launch-status/{sequence_id}")
 async def get_launch_status(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Fetch live campaign stats from Instantly for a launched sequence."""
