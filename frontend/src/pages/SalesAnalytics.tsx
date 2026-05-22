@@ -51,6 +51,7 @@ import {
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary } from "../lib/api";
+import OutreachAnalyticsTab from "../components/analytics/OutreachAnalyticsTab";
 import {
   PerformanceTabContent,
   PERFORMANCE_TABS,
@@ -1485,6 +1486,7 @@ function MultiSelectDropdown({
 
 const ALL_TABS: Array<{ key: string; label: string }> = [
   { key: "overview", label: "Overview" },
+  { key: "outreach", label: "Outreach" },
   ...PERFORMANCE_TABS.map((t) => ({ key: t.key, label: t.label })),
 ];
 
@@ -1537,12 +1539,14 @@ export default function SalesAnalytics() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
   const activeTab = (ALL_TABS.find((t) => t.key === tabParam)?.key ?? "overview") as
     | "overview"
+    | "outreach"
     | PerformanceTabKey;
   const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
   const tabContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (activeTab !== "overview") {
+    // Outreach tab has its own data fetch — don't preload performance reps.
+    if (activeTab !== "overview" && activeTab !== "outreach") {
       performanceApi
         .listReps()
         .then(setPerfReps)
@@ -2123,7 +2127,9 @@ export default function SalesAnalytics() {
       <TabStrip active={activeTab} />
 
       <div ref={tabContentRef}>
-        {activeTab !== "overview" ? (
+        {activeTab === "outreach" ? (
+          <OutreachAnalyticsTab />
+        ) : activeTab !== "overview" ? (
           <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
         ) : (
         <>

@@ -514,7 +514,74 @@ export const analyticsApi = {
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
+  outreach: (windowDays = 90, repEmail?: string) => {
+    const params = new URLSearchParams({ window_days: String(windowDays) });
+    if (repEmail) params.set("rep_email", repEmail);
+    return request<OutreachAnalyticsResponse>(`/api/v1/analytics/outreach?${params.toString()}`);
+  },
 };
+
+// ── Outreach analytics types ─────────────────────────────────────────────────
+
+export interface OutreachAnalyticsFunnel {
+  launched_sequences: number;
+  contacts_in_play: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  interested: number;
+  meeting_booked: number;
+  not_interested: number;
+  bounced: number;
+  unsubscribed: number;
+  open_rate: number;
+  reply_rate: number;
+  booking_rate: number;
+}
+
+export interface OutreachAnalyticsRepRow {
+  rep_email: string;
+  contacts: number;
+  opened: number;
+  clicked: number;
+  interested: number;
+  booked: number;
+  bounced: number;
+  open_rate: number;
+  reply_rate: number;
+}
+
+export interface OutreachAnalyticsSequenceRow {
+  campaign_id: string | null;
+  sequence_id: string;
+  subject: string | null;
+  persona: string | null;
+  status: string | null;
+  launched_at: string | null;
+  contacts: number;
+  opened: number;
+  clicked: number;
+  interested: number;
+  booked: number;
+  bounced: number;
+  open_rate: number;
+  reply_rate: number;
+}
+
+export interface OutreachAnalyticsSubjectRow {
+  subject: string;
+  sends: number;
+  distinct_contacts: number;
+}
+
+export interface OutreachAnalyticsResponse {
+  window_days: number;
+  rep_email: string | null;
+  funnel: OutreachAnalyticsFunnel;
+  per_rep: OutreachAnalyticsRepRow[];
+  sequences: OutreachAnalyticsSequenceRow[];
+  subjects: OutreachAnalyticsSubjectRow[];
+}
 
 export const globalSearchApi = {
   search: (query: string) =>

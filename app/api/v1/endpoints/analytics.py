@@ -20,6 +20,7 @@ from app.models.meeting import Meeting
 from app.models.user import User
 from app.services.company_stage_milestones import MILESTONE_LABELS, backfill_company_stage_milestones
 from app.services.deal_stages import get_configured_deal_stages
+from app.services.outreach_analytics import build_outreach_overview
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -1649,4 +1650,22 @@ async def sales_dashboard(
             title="Quota setup required",
             message="Add rep or team targets to unlock quota attainment and gap-to-goal charts.",
         ),
+    )
+
+
+@router.get("/outreach")
+async def get_outreach_analytics(
+    session: DBSession,
+    _user: CurrentUser,
+    window_days: int = Query(default=90, ge=7, le=365),
+    rep_email: Optional[str] = Query(default=None),
+):
+    """Outreach funnel, per-rep, per-sequence, and subject-line performance.
+
+    Returns real-data aggregations from outreach_sequences + contacts +
+    activities. Engagement counters (opens, clicks) are kept fresh by the
+    periodic Instantly sync — this endpoint just reads them.
+    """
+    return await build_outreach_overview(
+        session, window_days=window_days, rep_email=rep_email
     )
