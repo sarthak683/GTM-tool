@@ -716,7 +716,24 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
               {/* ── Step timeline ───────────────────────────────────────────── */}
               <StepTimeline seq={seq} steps={steps} />
 
+              {/* ── Externally-launched campaign notice ──────────────────────── */}
+              {isLaunched && visibleTimingSteps.length === 0 && (
+                <div style={{ ...panel, padding: "16px 18px", borderLeft: `3px solid ${palette.blue}`, background: palette.blueSoft }}>
+                  <div style={{ fontWeight: 700, color: palette.blue, fontSize: 13, marginBottom: 6 }}>
+                    Campaign managed in Instantly
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.sub, lineHeight: 1.5 }}>
+                    This campaign was started directly in Instantly. Email content and sequence steps are managed there. 
+                    Replies, opens, and clicks will still sync to the CRM automatically.
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 11, color: palette.muted, fontFamily: "monospace" }}>
+                    Campaign ID: {seq.instantly_campaign_id}
+                  </div>
+                </div>
+              )}
+
               {/* ── Email tabs ──────────────────────────────────────────────── */}
+              {visibleTimingSteps.length > 0 && (
               <div style={{ ...panel, padding: 8, display: "grid", gridTemplateColumns: `repeat(${Math.max(visibleTimingSteps.length, 2)}, minmax(0, 1fr))`, gap: 8 }}>
                 {visibleTimingSteps.map((step, index) => {
                   const stepKey = stepTabKey(step.step_number);
@@ -739,6 +756,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                   </button>
                 )})}
               </div>
+              )}
 
               <div style={{ ...panel, padding: "12px 14px" }}>
                 <button
@@ -1149,9 +1167,9 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                             {reply.subject && (
                               <div style={{ fontSize: 12, color: palette.sub, marginBottom: 4 }}>Re: {reply.subject}</div>
                             )}
-                            {reply.body && (
+                            {reply.body != null && (
                               <div style={{ fontSize: 13, color: palette.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                                {reply.body.slice(0, 500)}{reply.body.length > 500 ? "..." : ""}
+                                {(() => { const b = typeof reply.body === "string" ? reply.body : String(reply.body ?? ""); return b.slice(0, 500) + (b.length > 500 ? "..." : ""); })()}
                               </div>
                             )}
                           </div>
