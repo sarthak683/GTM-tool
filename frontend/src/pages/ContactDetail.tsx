@@ -12,6 +12,7 @@ import type { Activity, Company, Contact, OutreachSequence } from "../types";
 import { avatarColor, formatDate, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
+import LogLinkedInDialog from "../components/LogLinkedInDialog";
 
 export default function ContactDetail() {
   const { id } = useParams<{ id: string }>();
@@ -27,6 +28,7 @@ export default function ContactDetail() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingTimezone, setEditingTimezone] = useState(false);
   const [timezoneDraft, setTimezoneDraft] = useState("");
+  const [linkedInDialogOpen, setLinkedInDialogOpen] = useState(false);
 
   const loadContact = async () => {
     if (!id) return;
@@ -182,6 +184,14 @@ export default function ContactDetail() {
                     <Linkedin size={13} />LinkedIn
                   </a>
                 )}
+                <button
+                  onClick={() => setLinkedInDialogOpen(true)}
+                  className="inline-flex items-center gap-1 hover:text-[#0a66c2] transition-colors cursor-pointer"
+                  style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "#4d6178" }}
+                  title="Log a LinkedIn touch on this contact"
+                >
+                  <Linkedin size={13} />Log touch
+                </button>
                 <span className="inline-flex items-center gap-2">
                   <span className="font-semibold">Time zone:</span>
                   {editingTimezone ? (
@@ -254,7 +264,16 @@ export default function ContactDetail() {
         </section>
 
         <section className="crm-panel p-6" style={{ padding: 26 }}>
-          <h3 className="text-[16px] font-bold mb-4">Activity Timeline</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[16px] font-bold">Activity Timeline</h3>
+            <button
+              className="crm-button soft"
+              onClick={() => setLinkedInDialogOpen(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <Linkedin size={13} />Log LinkedIn touch
+            </button>
+          </div>
           {activities.length === 0 ? (
             <p className="text-[13px] text-[#6f8399]">No activities logged for this contact.</p>
           ) : (
@@ -262,7 +281,12 @@ export default function ContactDetail() {
               {activities.map((a) => (
                 <div key={a.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-[13px] font-bold capitalize text-[#31485f]">{a.type}</p>
+                    <p className="text-[13px] font-bold capitalize text-[#31485f] inline-flex items-center gap-1.5">
+                      {a.type === "linkedin" && <Linkedin size={13} color="#0a66c2" />}
+                      {a.type === "linkedin" && a.event_metadata && (a.event_metadata as { linkedin_action?: string }).linkedin_action
+                        ? `LinkedIn · ${((a.event_metadata as { linkedin_action: string }).linkedin_action).replace(/_/g, " ")}`
+                        : a.type}
+                    </p>
                     <p className="text-[12px] text-[#7a8ea4]">{formatDate(a.created_at)}</p>
                   </div>
                   {a.content && <p className="text-[13px] text-[#4d6178] mt-1.5">{a.content}</p>}
@@ -275,6 +299,14 @@ export default function ContactDetail() {
       </div>
 
       <OutreachDrawer contact={drawerOpen ? contact : null} onClose={() => setDrawerOpen(false)} />
+      {id && (
+        <LogLinkedInDialog
+          contactId={id}
+          open={linkedInDialogOpen}
+          onClose={() => setLinkedInDialogOpen(false)}
+          onLogged={() => void loadContact()}
+        />
+      )}
     </>
   );
 }
