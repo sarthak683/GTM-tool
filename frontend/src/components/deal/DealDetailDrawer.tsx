@@ -16,6 +16,7 @@ import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
 import ProvenanceBar from "../ProvenanceBar";
 import UnifiedTimeline from "../UnifiedTimeline";
+import ReplyComposer, { type ReplyContext } from "../ReplyComposer";
 
 interface Props {
   deal: Deal;
@@ -321,6 +322,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const [emailThreads, setEmailThreads] = useState<PersonalEmailThread[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
+  const [replyCtx, setReplyCtx] = useState<ReplyContext | null>(null);
   const [autoFillingMeddpicc, setAutoFillingMeddpicc] = useState(false);
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
@@ -1703,6 +1705,36 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                                 {msg.body_preview || "(empty)"}
                                 {msg.body_preview && msg.body_preview.length >= 299 && <span style={{ color: "#7c86a6" }}>…</span>}
                               </p>
+                              <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                                <button
+                                  onClick={() => {
+                                    const replySubject = msg.subject?.toLowerCase().startsWith("re:")
+                                      ? msg.subject
+                                      : `Re: ${msg.subject || "(no subject)"}`;
+                                    const quoted = msg.body_preview
+                                      ? `\n\nOn ${msg.created_at ? new Date(msg.created_at).toLocaleString() : ""}, ${msg.from_addr} wrote:\n${msg.body_preview.split("\n").map((l) => `> ${l}`).join("\n")}`
+                                      : "";
+                                    setReplyCtx({
+                                      to: msg.from_addr,
+                                      cc: msg.cc_addrs || undefined,
+                                      subject: replySubject,
+                                      quotedBody: quoted,
+                                      threadId: thread.thread_id,
+                                      inReplyTo: msg.message_id,
+                                      references: msg.message_id,
+                                      dealId: deal.id,
+                                    });
+                                  }}
+                                  style={{
+                                    fontSize: 12, fontWeight: 700, color: "#175089",
+                                    background: "#f0f6ff", border: "1px solid #bfd6f3",
+                                    borderRadius: 8, padding: "5px 12px", cursor: "pointer",
+                                    display: "inline-flex", alignItems: "center", gap: 5,
+                                  }}
+                                >
+                                  <Send size={11} /> Reply
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1737,6 +1769,18 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
           to { transform: translateX(0); }
         }
       `}</style>
+
+      <ReplyComposer
+        open={replyCtx !== null}
+        ctx={replyCtx}
+        onClose={() => setReplyCtx(null)}
+        onSent={() => {
+          // Reload threads so the just-sent reply appears at the top of the list
+          if (deal.id) {
+            void personalEmailSyncApi.getThreadsForDeal(deal.id).then((r) => setEmailThreads(r.threads ?? [])).catch(() => {});
+          }
+        }}
+      />
     </>
   );
 }

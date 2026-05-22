@@ -2130,6 +2130,20 @@ export default function SettingsPage() {
                       {personalEmail?.has_drive_scope ? "Granted" : "Missing"}
                     </div>
                   </div>
+                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                      Send scope
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_send_scope ? "#217a49" : "#a26a00" }}>
+                      {personalEmail?.has_send_scope ? "Granted" : "Missing"}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {personalEmail?.connected && personalEmail.has_send_scope === false && (
+                <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f5d199", color: "#7a4b00", fontSize: 13 }}>
+                  <strong>Reply from CRM is disabled.</strong> Your Gmail connection is missing the send permission. Reconnect Gmail above to unlock the "Reply" button on deal email threads.
                 </div>
               )}
 

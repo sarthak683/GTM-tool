@@ -48,6 +48,19 @@ export interface PersonalEmailStatus {
   last_error?: string;
   has_calendar_scope?: boolean;
   has_drive_scope?: boolean;
+  has_send_scope?: boolean;
+}
+
+export interface SendEmailPayload {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  deal_id?: string;
+  contact_id?: string;
+  thread_id?: string;
+  in_reply_to?: string;
+  references?: string;
 }
 
 export interface PersonalEmailThread {
@@ -90,6 +103,16 @@ export const personalEmailSyncApi = {
     request<{ deal_id: string; threads: PersonalEmailThread[]; total: number }>(
       `/api/v1/personal-email-sync/threads/${dealId}`
     ),
+  send: (payload: SendEmailPayload) =>
+    request<{
+      status: string;
+      message_id: string;
+      thread_id: string;
+      activity_id: string;
+    }>("/api/v1/personal-email-sync/send", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 export interface DriveFolder {

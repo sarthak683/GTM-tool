@@ -31,6 +31,7 @@ from app.services.gmail_oauth import (
     CALENDAR_SCOPE,
     DRIVE_FILE_SCOPE,
     DRIVE_SCOPE,
+    GMAIL_SEND_SCOPE,
     build_gmail_connect_url,
     create_gmail_oauth_state,
     decode_gmail_oauth_state,
@@ -55,12 +56,15 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
     if isinstance(scopes, str):
         has_calendar_scope = CALENDAR_SCOPE in scopes
         has_drive_scope = DRIVE_SCOPE in scopes and DRIVE_FILE_SCOPE in scopes
+        has_send_scope = GMAIL_SEND_SCOPE in scopes
     else:
-        has_calendar_scope = any(CALENDAR_SCOPE in str(scope) for scope in (scopes or []))
+        scope_strs = [str(scope) for scope in (scopes or [])]
+        has_calendar_scope = any(CALENDAR_SCOPE in scope for scope in scope_strs)
         has_drive_scope = all(
-            any(required in str(scope) for scope in (scopes or []))
+            any(required in scope for scope in scope_strs)
             for required in (DRIVE_SCOPE, DRIVE_FILE_SCOPE)
         )
+        has_send_scope = any(GMAIL_SEND_SCOPE in scope for scope in scope_strs)
 
     return UserEmailConnectionStatus(
         connected=True,
@@ -70,6 +74,7 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
         last_error=connection.last_error,
         has_calendar_scope=has_calendar_scope,
         has_drive_scope=has_drive_scope,
+        has_send_scope=has_send_scope,
         selected_drive_folder_id=connection.selected_drive_folder_id,
         selected_drive_folder_name=connection.selected_drive_folder_name,
         is_admin_folder=connection.is_admin_folder,
@@ -173,6 +178,116 @@ async def trigger_personal_email_sync(session: DBSession, current_user: CurrentU
     from app.tasks.personal_email_sync import sync_personal_inbox
     task = sync_personal_inbox.delay(str(connection.id))
     return {"status": "queued", "task_id": task.id, "email_address": connection.email_address}
+
+
+@router.post("/send")
+async def send_personal_email(
+    session: DBSession,
+    current_user: CurrentUser,
+    payload: dict,
+):
+    """
+    Send an email from the current user's connected personal Gmail.
+
+    Body:
+      to: str (required)
+      subject: str (required)
+      body: str (required, plain-text; HTML-escaped on render)
+      cc: str (optional, comma-separated)
+      deal_id, contact_id: UUID strings (optional — used to link the activity)
+      thread_id: str (optional Gmail threadId for replies)
+      in_reply_to: str (optional RFC Message-ID of the email being replied to)
+      references: str (optional References header chain)
+
+    Persists an Activity row immediately on success so the new send shows up
+    in the unified timeline without waiting for the inbox poll.
+    """
+    to = (payload.get("to") or "").strip()
+    subject = (payload.get("subject") or "").strip()
+    body = payload.get("body") or ""
+    if not to or not subject or not body.strip():
+        raise ValidationError("to, subject, and body are all required")
+
+    result = await session.execute(
+        sm_select(UserEmailConnection).where(
+            UserEmailConnection.user_id == current_user.id,
+            UserEmailConnection.is_active == True,  # noqa: E712
+        )
+    )
+    connection = result.scalar_one_or_none()
+    if not connection:
+        raise ValidationError("No active personal Gmail connection. Connect your inbox first.")
+
+    scopes = connection.token_data.get("scopes") if isinstance(connection.token_data, dict) else []
+    scope_strs = [str(s) for s in (scopes or [])]
+    if not any(GMAIL_SEND_SCOPE in s for s in scope_strs):
+        raise ValidationError(
+            "Your connected Gmail is missing the send scope. Reconnect from Settings to enable Reply from CRM."
+        )
+
+    from app.clients.gmail_sender import send_gmail_email
+
+    cc = (payload.get("cc") or "").strip() or None
+    thread_id = (payload.get("thread_id") or "").strip() or None
+    in_reply_to = (payload.get("in_reply_to") or "").strip() or None
+    references = (payload.get("references") or "").strip() or None
+
+    send_result, updated_token = await send_gmail_email(
+        token_data=connection.token_data,
+        from_email=connection.email_address,
+        from_name=current_user.name or connection.email_address,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        in_reply_to=in_reply_to,
+        references=references,
+        thread_id=thread_id,
+        include_footer=False,
+    )
+
+    # Persist refreshed token so subsequent sends + the sync task pick it up
+    if updated_token != connection.token_data:
+        connection.token_data = updated_token
+        connection.updated_at = datetime.utcnow()
+        session.add(connection)
+
+    if send_result.get("status") != "sent":
+        await session.commit()
+        raise ValidationError(send_result.get("error") or "Gmail send failed")
+
+    deal_id = payload.get("deal_id")
+    contact_id = payload.get("contact_id")
+    activity = Activity(
+        deal_id=UUID(deal_id) if deal_id else None,
+        contact_id=UUID(contact_id) if contact_id else None,
+        type="email",
+        source="personal_email_sync",
+        medium="email",
+        content=body,
+        email_subject=subject,
+        email_from=connection.email_address,
+        email_to=to,
+        email_cc=cc,
+        email_message_id=send_result.get("id"),
+        external_source="gmail",
+        external_source_id=send_result.get("id"),
+        created_by_id=current_user.id,
+        event_metadata={
+            "gmail_thread_id": send_result.get("thread_id"),
+            "sent_from_crm": True,
+            "in_reply_to": in_reply_to,
+        },
+    )
+    session.add(activity)
+    await session.commit()
+
+    return {
+        "status": "sent",
+        "message_id": send_result.get("id"),
+        "thread_id": send_result.get("thread_id"),
+        "activity_id": str(activity.id),
+    }
 
 
 @router.post("/disconnect")

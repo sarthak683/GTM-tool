@@ -74,22 +74,35 @@ def _build_raw_message(
     body: str,
     from_name: str,
     html_body: str | None = None,
+    cc: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
+    include_footer: bool = True,
 ) -> str:
     message = EmailMessage()
     message["To"] = to
-    message["From"] = f"{from_name} <{from_email}>"
+    message["From"] = f"{from_name} <{from_email}>" if from_name else from_email
     message["Subject"] = subject
+    if cc:
+        message["Cc"] = cc
+    # Threading headers — when present Gmail keeps the new message in the same
+    # conversation, which is the whole point of "reply from CRM."
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+        message["References"] = references or in_reply_to
     message.set_content(body)
-    # Prefer caller-supplied HTML when given (e.g. structured tables that don't
-    # round-trip through monospace text). Fall back to escaping the plain text
-    # so text-only callers still render legibly.
     inner_html = html_body if html_body else _plain_text_to_html(body)
+    footer = (
+        '<hr style="border:none;border-top:1px solid #e5ebf3;margin:28px 0;">'
+        '<p style="font-size:11px;color:#8a98ad;">Sent by Beacon Sales Ops</p>'
+        if include_footer
+        else ""
+    )
     message.add_alternative(
         f"""
         <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#24324a;">
           <div style="font-size:15px;line-height:1.65;">{inner_html}</div>
-          <hr style="border:none;border-top:1px solid #e5ebf3;margin:28px 0;">
-          <p style="font-size:11px;color:#8a98ad;">Sent by Beacon Sales Ops</p>
+          {footer}
         </div>
         """,
         subtype="html",
@@ -106,6 +119,11 @@ async def send_gmail_email(
     body: str,
     from_name: str = "Beacon Sales Ops",
     html_body: str | None = None,
+    cc: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
+    thread_id: str | None = None,
+    include_footer: bool = True,
 ) -> tuple[dict[str, Any], dict]:
     if not _has_send_scope(token_data):
         return (
@@ -124,7 +142,17 @@ async def send_gmail_email(
         body=body,
         from_name=from_name,
         html_body=html_body,
+        cc=cc,
+        in_reply_to=in_reply_to,
+        references=references,
+        include_footer=include_footer,
     )
+
+    payload: dict[str, Any] = {"raw": raw}
+    if thread_id:
+        # Gmail keeps a message in an existing thread when threadId is set on
+        # the send payload (independent of the In-Reply-To header).
+        payload["threadId"] = thread_id
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -133,7 +161,7 @@ async def send_gmail_email(
                 "Authorization": f"Bearer {updated_token['token']}",
                 "Content-Type": "application/json",
             },
-            json={"raw": raw},
+            json=payload,
         )
 
     if response.status_code >= 400:
