@@ -25,6 +25,7 @@ from app.services.disposition_effects import (
     apply_call_disposition_effects,
     apply_linkedin_status_effects,
 )
+from app.services.timeline import build_contact_timeline
 from app.services.permissions import require_workspace_permission
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
@@ -385,6 +386,18 @@ async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUse
     repo = ContactRepository(session)
     await repo.get_or_raise(contact_id)
     await repo.delete_with_cascade(contact_id)
+
+
+@router.get("/{contact_id}/timeline")
+async def get_contact_timeline(
+    contact_id: UUID,
+    session: DBSession,
+    _user: CurrentUser,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Unified chronological timeline: activities + meetings, newest first."""
+    await ContactRepository(session).get_or_raise(contact_id)
+    return {"items": await build_contact_timeline(session, contact_id, limit=limit)}
 
 
 @router.get("/{contact_id}/sequence-lifecycle")

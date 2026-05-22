@@ -1,25 +1,25 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2 } from "lucide-react";
-import { activitiesApi, companiesApi, contactsApi, outreachApi } from "../lib/api";
+import { companiesApi, contactsApi, outreachApi } from "../lib/api";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import type { Activity, Company, Contact, OutreachSequence } from "../types";
-import { avatarColor, formatDate, getInitials } from "../lib/utils";
+import type { Company, Contact, OutreachSequence } from "../types";
+import { avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import UnifiedTimeline from "../components/UnifiedTimeline";
 
 export default function ContactDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [contact, setContact] = useState<Contact | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
-  const [activities, setActivities] = useState<Activity[]>([]);
   const [sequence, setSequence] = useState<OutreachSequence | null>(null);
   const [brief, setBrief] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +38,7 @@ export default function ContactDetail() {
       setContact(c);
       setTimezoneDraft(c.timezone ?? "");
 
-      const tasks: Promise<unknown>[] = [activitiesApi.list(undefined, id).then((a) => setActivities(a))];
+      const tasks: Promise<unknown>[] = [];
       if (c.company_id) {
         tasks.push(companiesApi.get(c.company_id).then((co) => setCompany(co)));
       } else {
@@ -265,7 +265,7 @@ export default function ContactDetail() {
 
         <section className="crm-panel p-6" style={{ padding: 26 }}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[16px] font-bold">Activity Timeline</h3>
+            <h3 className="text-[16px] font-bold">Timeline</h3>
             <button
               className="crm-button soft"
               onClick={() => setLinkedInDialogOpen(true)}
@@ -274,27 +274,7 @@ export default function ContactDetail() {
               <Linkedin size={13} />Log LinkedIn touch
             </button>
           </div>
-          {activities.length === 0 ? (
-            <p className="text-[13px] text-[#6f8399]">No activities logged for this contact.</p>
-          ) : (
-            <div className="space-y-3">
-              {activities.map((a) => (
-                <div key={a.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[13px] font-bold capitalize text-[#31485f] inline-flex items-center gap-1.5">
-                      {a.type === "linkedin" && <Linkedin size={13} color="#0a66c2" />}
-                      {a.type === "linkedin" && a.event_metadata && (a.event_metadata as { linkedin_action?: string }).linkedin_action
-                        ? `LinkedIn · ${((a.event_metadata as { linkedin_action: string }).linkedin_action).replace(/_/g, " ")}`
-                        : a.type}
-                    </p>
-                    <p className="text-[12px] text-[#7a8ea4]">{formatDate(a.created_at)}</p>
-                  </div>
-                  {a.content && <p className="text-[13px] text-[#4d6178] mt-1.5">{a.content}</p>}
-                  {a.ai_summary && <p className="text-[12px] text-[#ff6b35] mt-2">AI summary: {a.ai_summary}</p>}
-                </div>
-              ))}
-            </div>
-          )}
+          {id && <UnifiedTimeline scope={{ type: "contact", id }} />}
         </section>
       </div>
 

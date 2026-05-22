@@ -299,6 +299,33 @@ export const activitiesApi = {
     }),
 };
 
+export interface TimelineEvent {
+  id: string;
+  kind: string;
+  occurred_at: string | null;
+  title: string;
+  subtitle: string | null;
+  actor_user_id: string | null;
+  deal_id: string | null;
+  contact_id: string | null;
+  payload: Record<string, unknown>;
+}
+
+export const timelineApi = {
+  forContact: async (contactId: string, limit = 100) => {
+    const res = await request<{ items: TimelineEvent[] }>(
+      `/api/v1/contacts/${contactId}/timeline?limit=${limit}`
+    );
+    return res.items ?? [];
+  },
+  forDeal: async (dealId: string, limit = 150) => {
+    const res = await request<{ items: TimelineEvent[] }>(
+      `/api/v1/deals/${dealId}/timeline?limit=${limit}`
+    );
+    return res.items ?? [];
+  },
+};
+
 export const meetingsApi = {
   list: (skip = 0, limit = 50, companyId?: string, dealId?: string, status?: string | string[]) => {
     const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });

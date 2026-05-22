@@ -15,6 +15,7 @@ import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
 import ProvenanceBar from "../ProvenanceBar";
+import UnifiedTimeline from "../UnifiedTimeline";
 
 interface Props {
   deal: Deal;
@@ -44,7 +45,7 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
   visit: Globe,
 };
 
-type DrawerTab = "overview" | "meddpicc" | "activity" | "tasks" | "emails";
+type DrawerTab = "overview" | "meddpicc" | "activity" | "timeline" | "tasks" | "emails";
 
 const MEDDPICC_DIMENSIONS = [
   { key: "metrics", label: "Metrics", desc: "Quantified business impact of solving the problem" },
@@ -808,6 +809,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               { id: "overview", label: "Overview" },
               { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
               { id: "activity", label: `Activity (${activities.length})` },
+              { id: "timeline", label: "Timeline" },
               { id: "emails", label: `Emails${emailThreads.length > 0 ? ` (${emailThreads.length})` : ""}` },
               { id: "tasks", label: "Tasks" },
             ].map((item) => {
@@ -1500,6 +1502,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 void dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
               }}
             />
+          ) : activeTab === "timeline" ? (
+            <UnifiedTimeline scope={{ type: "deal", id: deal.id }} />
           ) : activeTab === "emails" ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

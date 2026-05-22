@@ -21,6 +21,7 @@ from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
+from app.services.timeline import build_deal_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +397,18 @@ async def remove_deal_contact(deal_id: UUID, contact_id: UUID, session: DBSessio
 
 
 # ── Deal Activities ──────────────────────────────────────────────────────────
+
+@router.get("/{deal_id}/timeline")
+async def list_deal_timeline(
+    deal_id: UUID,
+    session: DBSession,
+    _user: CurrentUser,
+    limit: int = Query(default=150, ge=1, le=500),
+):
+    """Unified chronological timeline: activities + meetings, newest first."""
+    await DealRepository(session).get_or_raise(deal_id)
+    return {"items": await build_deal_timeline(session, deal_id, limit=limit)}
+
 
 @router.get("/{deal_id}/activities", response_model=list[ActivityRead])
 async def list_deal_activities(deal_id: UUID, session: DBSession):
