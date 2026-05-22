@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.tasks.cadence_scheduler",
         "app.tasks.sales_reports",
         "app.tasks.instantly_sync",
+        "app.tasks.pre_meeting_brief",
     ],
 )
 
@@ -75,6 +76,13 @@ celery_app.conf.update(
         "sync-instantly-campaigns": {
             "task": "app.tasks.instantly_sync.sync_active_instantly_campaigns",
             "schedule": 900,  # every 15 minutes — fallback for webhook delivery gaps
+        },
+        # Auto-send pre-meeting briefs to the assigned rep. Service self-throttles
+        # via meeting.intel_email_sent_at + the workspace settings send_hours_before
+        # window, so running every 30 min only causes work for due meetings.
+        "send-due-pre-meeting-briefs": {
+            "task": "app.tasks.pre_meeting_brief.send_due_pre_meeting_briefs",
+            "schedule": 1800,
         },
     },
 )

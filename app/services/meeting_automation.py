@@ -19,7 +19,35 @@ from app.models.deal import Deal
 from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
 from app.models.user import User
+from app.models.user_email_connection import UserEmailConnection
+from app.services.gmail_oauth import GMAIL_SEND_SCOPE
 from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy, run_pre_meeting_intelligence
+
+
+async def _personal_send_token_for_user(
+    session: AsyncSession, user_id: UUID
+) -> tuple[str, dict] | None:
+    """Return (email_address, token_data) for a rep whose connected Gmail can send.
+
+    Used by the pre-meeting brief sender so the brief lands in the rep's own
+    inbox from their own address — feels native and shows up in their
+    threading, instead of a workspace-wide service account.
+    """
+    conn = (
+        await session.execute(
+            select(UserEmailConnection).where(
+                UserEmailConnection.user_id == user_id,
+                UserEmailConnection.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalars().first()
+    if not conn or not isinstance(conn.token_data, dict):
+        return None
+    scopes = conn.token_data.get("scopes") or []
+    scope_strs = [str(s) for s in (scopes if isinstance(scopes, list) else [scopes])]
+    if not any(GMAIL_SEND_SCOPE in s for s in scope_strs):
+        return None
+    return conn.email_address, conn.token_data
 
 
 logger = logging.getLogger(__name__)
@@ -260,7 +288,36 @@ async def run_due_pre_meeting_intel_once() -> dict[str, int]:
                 )
                 sent_any = False
                 for recipient in recipients:
-                    if gmail_token_data:
+                    # Prefer the rep's own connected Gmail when it has send scope.
+                    # That way the brief lands as "From: themselves" in their
+                    # inbox, which threads naturally and doesn't look like a
+                    # service-account blast. Falls back to the workspace report
+                    # sender, then to plain SMTP via Resend.
+                    personal = await _personal_send_token_for_user(session, recipient.id)
+                    if personal is not None:
+                        personal_email, personal_token = personal
+                        result, personal_token = await send_gmail_email(
+                            token_data=personal_token,
+                            from_email=personal_email,
+                            to=recipient.email,
+                            subject=subject,
+                            body=body,
+                            from_name=recipient.name or "Beacon Meeting Intel",
+                        )
+                        # Persist any refreshed token back to the rep's connection
+                        if result.get("status") == "sent":
+                            conn = (
+                                await session.execute(
+                                    select(UserEmailConnection).where(
+                                        UserEmailConnection.user_id == recipient.id
+                                    )
+                                )
+                            ).scalars().first()
+                            if conn and personal_token != conn.token_data:
+                                conn.token_data = personal_token
+                                conn.updated_at = datetime.utcnow()
+                                session.add(conn)
+                    elif gmail_token_data:
                         result, gmail_token_data = await send_gmail_email(
                             token_data=gmail_token_data,
                             from_email=settings_row.report_sender_email,
