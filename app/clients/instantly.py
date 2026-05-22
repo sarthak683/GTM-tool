@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Optional
+from uuid import uuid4
 
 import httpx
 
@@ -179,9 +180,10 @@ class InstantlyClient:
             "open_tracking": track_opens,
             "link_tracking": track_links,
             "daily_limit": daily_limit,
-            "min_time_gap_minutes": min_gap_minutes,
-            "random_additional_time_minutes": random_extra_minutes,
-            "stop_campaign_for_company_on_reply": stop_for_company_on_reply,
+            "daily_max_leads": daily_limit,
+            "email_gap": min_gap_minutes,
+            "random_wait_max": random_extra_minutes,
+            "stop_for_company": stop_for_company_on_reply,
             "campaign_schedule": {
                 "schedules": [
                     {
@@ -205,6 +207,11 @@ class InstantlyClient:
             },
         }
 
+        if self.is_mock:
+            campaign_id = f"mock-campaign-{uuid4()}"
+            logger.warning("InstantlyClient mock — created campaign '%s' id=%s", name, campaign_id)
+            return {"id": campaign_id, "name": name, "status": 0, **payload}
+
         result = await self._request("POST", "/campaigns", json=payload)
         if result:
             logger.info("InstantlyClient: created campaign '%s' id=%s", name, result.get("id"))
@@ -212,6 +219,8 @@ class InstantlyClient:
 
     async def get_campaign(self, campaign_id: str) -> dict | None:
         """Get campaign details and analytics."""
+        if self.is_mock:
+            return {"id": campaign_id, "status": 1}
         return await self._request("GET", f"/campaigns/{campaign_id}")
 
     async def list_campaigns(self, limit: int = 100) -> list[dict]:
@@ -223,6 +232,9 @@ class InstantlyClient:
 
     async def activate_campaign(self, campaign_id: str) -> dict | None:
         """Activate (launch) a campaign."""
+        if self.is_mock:
+            logger.warning("InstantlyClient mock — activated campaign %s", campaign_id)
+            return {"id": campaign_id, "status": 1}
         result = await self._request("POST", f"/campaigns/{campaign_id}/activate", json={})
         if result:
             logger.info("InstantlyClient: activated campaign %s", campaign_id)
@@ -230,6 +242,9 @@ class InstantlyClient:
 
     async def pause_campaign(self, campaign_id: str) -> dict | None:
         """Pause a running campaign."""
+        if self.is_mock:
+            logger.warning("InstantlyClient mock — paused campaign %s", campaign_id)
+            return {"id": campaign_id, "status": 2}
         return await self._request("POST", f"/campaigns/{campaign_id}/pause", json={})
 
     # ── Leads ─────────────────────────────────────────────────────────────────
@@ -253,7 +268,7 @@ class InstantlyClient:
         template tags in your email steps.
         """
         payload: dict[str, Any] = {
-            "campaign_id": campaign_id,
+            "campaign": campaign_id,
             "email": email,
             "first_name": first_name,
             "last_name": last_name,
@@ -267,7 +282,11 @@ class InstantlyClient:
         if linkedin_url:
             payload["linkedin_url"] = linkedin_url
         if custom_variables:
-            payload.update(custom_variables)
+            payload["custom_variables"] = custom_variables
+
+        if self.is_mock:
+            logger.warning("InstantlyClient mock — added lead %s to campaign %s", email, campaign_id)
+            return {"id": f"mock-lead-{uuid4()}", **payload}
 
         result = await self._request("POST", "/leads", json=payload)
         if result:
@@ -295,7 +314,19 @@ class InstantlyClient:
         if list_id:
             payload["list_id"] = list_id
 
-        result = await self._request("POST", "/leads/bulk", json=payload)
+        if self.is_mock:
+            logger.warning("InstantlyClient mock — bulk added %d leads", len(leads))
+            return {
+                "status": "success",
+                "total_sent": len(leads),
+                "leads_uploaded": len(leads),
+                "created_leads": [
+                    {"id": f"mock-lead-{uuid4()}", "email": lead.get("email"), "index": i}
+                    for i, lead in enumerate(leads)
+                ],
+            }
+
+        result = await self._request("POST", "/leads/add", json=payload)
         if result:
             logger.info("InstantlyClient: bulk added %d leads", len(leads))
         return result
@@ -480,8 +511,8 @@ class InstantlyClient:
         Useful for finding already-running campaigns to link to CRM contacts.
         """
         result = await self._request(
-            "GET", "/campaigns/search",
-            params={"lead_email": email, "limit": 10},
+            "GET", "/campaigns/search-by-contact",
+            params={"search": email},
         )
         if result is None:
             return []

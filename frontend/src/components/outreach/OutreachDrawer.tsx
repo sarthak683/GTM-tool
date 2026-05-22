@@ -4,7 +4,7 @@ import type { Contact, OutreachSequence, OutreachStep } from "../../types";
 import {
   X, Sparkles, Copy, CheckCheck, Linkedin, Mail, RefreshCw,
   Send, Rocket, CheckCircle, Clock, MessageSquare, ExternalLink, ChevronDown, ChevronUp,
-  Pencil, Check, Plus, Trash2, Phone, Settings2,
+  Pencil, Check, Plus, Trash2, Phone, Settings2, Play, Pause,
 } from "lucide-react";
 import { avatarColor, getInitials } from "../../lib/utils";
 
@@ -21,6 +21,14 @@ interface Props {
 const MAX_SEQUENCE_STEPS = 20;
 type StepChannel = "email" | "call" | "linkedin";
 type TabKey = `step_${number}`;
+type OutreachReply = {
+  id?: string;
+  subject?: unknown;
+  body?: unknown;
+  from_email?: string;
+  timestamp?: string;
+  created_at?: string;
+};
 
 function stepTabKey(stepNumber: number): `step_${number}` {
   return `step_${stepNumber}`;
@@ -45,6 +53,49 @@ function getStepLabel(step: Pick<OutreachStep, "step_number" | "channel">, index
   if (index === 1) return "Follow-up";
   if (index === 2) return "Final";
   return `Email ${step.step_number}`;
+}
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function replyText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return stripHtml(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => replyText(item)).filter(Boolean).join("\n");
+  }
+  if (typeof value !== "object") return "";
+
+  const candidates = [
+    "text",
+    "plain_text",
+    "body_text",
+    "body",
+    "content",
+    "message",
+    "reply_text",
+    "html",
+    "body_html",
+    "snippet",
+    "preview",
+  ];
+
+  for (const key of candidates) {
+    const extracted = replyText((value as Record<string, unknown>)[key]);
+    if (extracted) return extracted;
+  }
+
+  return "";
 }
 
 const PERSONA_LABEL: Record<string, string> = {
@@ -111,7 +162,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   // Replies state
-  const [replies, setReplies] = useState<Array<{ subject?: string; body?: string; from_email?: string; timestamp?: string; created_at?: string }>>([]);
+  const [replies, setReplies] = useState<OutreachReply[]>([]);
   const [showReplies, setShowReplies] = useState(false);
   const [loadingReplies, setLoadingReplies] = useState(false);
 
@@ -488,6 +539,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
 
   const isLaunched = !!(seq?.instantly_campaign_id || seq?.launched_at);
   const canEditTiming = !!seq && !isLaunched;
+  const launchDisabled = launching || !sendingAccount.trim() || !contact?.email?.trim() || !sequenceApproved;
 
   const getStepTabStyle = (kind: StepChannel | "other", active: boolean): CSSProperties => {
     const tone = kind === "email"
@@ -684,7 +736,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
               <p style={{ margin: 0, color: palette.sub, lineHeight: 1.6, fontSize: 15 }}>
                 No outreach sequence yet. Generate one with AI.
               </p>
-              <button onClick={handleGenerate} disabled={generating} style={primaryBtn}>
+              <button onClick={handleGenerate} disabled={generating} style={generating ? { ...primaryBtn, ...disabledBtn } : primaryBtn}>
                 {generating ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 {generating ? "Generating..." : "Generate Sequence"}
               </button>
@@ -708,7 +760,12 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                     </span>
                   )}
                 </div>
-                <button onClick={handleGenerate} disabled={generating || isLaunched} style={ghostBtn} title={isLaunched ? "Cannot regenerate after launch" : undefined}>
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating || isLaunched}
+                  style={(generating || isLaunched) ? { ...ghostBtn, ...disabledBtn } : ghostBtn}
+                  title={isLaunched ? "Cannot regenerate after launch" : undefined}
+                >
                   <RefreshCw size={13} className={generating ? "animate-spin" : ""} /> Regenerate
                 </button>
               </div>
@@ -995,17 +1052,17 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                         <button
                           onClick={handleResume}
                           disabled={resuming}
-                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: palette.green }}
+                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: palette.green, ...(resuming ? disabledBtn : {}) }}
                         >
-                          {resuming ? <RefreshCw size={11} className="animate-spin" /> : <span>▶</span>} Resume
+                          {resuming ? <RefreshCw size={11} className="animate-spin" /> : <Play size={11} />} Resume
                         </button>
                       ) : (
                         <button
                           onClick={handlePause}
                           disabled={pausing}
-                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: "#b45309" }}
+                          style={{ ...ghostBtn, fontSize: 12, gap: 4, color: "#b45309", ...(pausing ? disabledBtn : {}) }}
                         >
-                          {pausing ? <RefreshCw size={11} className="animate-spin" /> : <span>⏸</span>} Pause
+                          {pausing ? <RefreshCw size={11} className="animate-spin" /> : <Pause size={11} />} Pause
                         </button>
                       )}
                       <a
@@ -1108,8 +1165,8 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button
                           onClick={handleLaunch}
-                          disabled={launching || !sendingAccount.trim() || !contact?.email?.trim() || !sequenceApproved}
-                          style={launchBtn}
+                          disabled={launchDisabled}
+                          style={launchDisabled ? { ...launchBtn, ...disabledBtn } : launchBtn}
                           title={!contact?.email?.trim() ? "Add an email to this contact before launching" : !sequenceApproved ? "Review and approve the sequence preview first" : undefined}
                         >
                           {launching ? <RefreshCw size={13} className="animate-spin" /> : <Rocket size={13} />}
@@ -1154,26 +1211,30 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
                           No replies yet. Instantly will notify us when a reply comes in.
                         </div>
                       ) : (
-                        replies.map((reply, i) => (
-                          <div key={i} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${palette.greenBorder}`, background: palette.greenSoft }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-                              <span style={{ fontWeight: 700, fontSize: 13, color: palette.text }}>
-                                {reply.from_email ?? "Prospect"}
-                              </span>
-                              <span style={{ fontSize: 11, color: palette.muted }}>
-                                {reply.created_at ? new Date(reply.created_at).toLocaleDateString() : reply.timestamp ?? ""}
-                              </span>
-                            </div>
-                            {reply.subject && (
-                              <div style={{ fontSize: 12, color: palette.sub, marginBottom: 4 }}>Re: {reply.subject}</div>
-                            )}
-                            {reply.body != null && (
-                              <div style={{ fontSize: 13, color: palette.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                                {(() => { const b = typeof reply.body === "string" ? reply.body : String(reply.body ?? ""); return b.slice(0, 500) + (b.length > 500 ? "..." : ""); })()}
+                        replies.map((reply, i) => {
+                          const subject = replyText(reply.subject);
+                          const body = replyText(reply.body);
+                          return (
+                            <div key={reply.id ?? i} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${palette.greenBorder}`, background: palette.greenSoft }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                                <span style={{ fontWeight: 700, fontSize: 13, color: palette.text }}>
+                                  {reply.from_email ?? "Prospect"}
+                                </span>
+                                <span style={{ fontSize: 11, color: palette.muted }}>
+                                  {reply.created_at ? new Date(reply.created_at).toLocaleDateString() : reply.timestamp ?? ""}
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        ))
+                              {subject && (
+                                <div style={{ fontSize: 12, color: palette.sub, marginBottom: 4 }}>Re: {subject}</div>
+                              )}
+                              {body && (
+                                <div style={{ fontSize: 13, color: palette.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                                  {body.slice(0, 500) + (body.length > 500 ? "..." : "")}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                     </div>
                   )}
@@ -1342,6 +1403,11 @@ const copyBtn: CSSProperties = {
   background: "#fff", color: palette.sub,
   fontSize: 12, fontWeight: 700, cursor: "pointer",
   padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6,
+};
+
+const disabledBtn: CSSProperties = {
+  cursor: "not-allowed",
+  opacity: 0.55,
 };
 
 const launchBtn: CSSProperties = {

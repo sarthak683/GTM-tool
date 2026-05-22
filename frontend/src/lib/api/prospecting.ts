@@ -73,7 +73,7 @@ export const outreachApi = {
       body: JSON.stringify({ sending_account: sendingAccount, campaign_name: campaignName }),
     }),
   getReplies: (sequenceId: string) =>
-    request<{ sequence_id: string; replies: Array<{ id?: string; subject?: string; body?: string; from_email?: string; created_at?: string; timestamp?: string }> }>(
+    request<{ sequence_id: string; replies: Array<{ id?: string; subject?: unknown; body?: unknown; from_email?: string; created_at?: string; timestamp?: string }> }>(
       `/api/v1/outreach/replies/${sequenceId}`
     ),
   launchCompanyCampaign: (companyId: string, sendingAccount: string, campaignName?: string) =>
