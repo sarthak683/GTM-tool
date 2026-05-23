@@ -147,8 +147,8 @@ class Settings(BaseSettings):
     #      print('PRIV:', v.private_key.to_string().hex())"
     # Or any VAPID generator. The PUBLIC key is exposed to the browser; the
     # PRIVATE key never leaves the server.
-    VAPID_PUBLIC_KEY: str = ""   # base64url-encoded uncompressed P-256 public key
-    VAPID_PRIVATE_KEY: str = ""  # base64url-encoded P-256 private key
+    VAPID_PUBLIC_KEY: str = "BMVWMkEi8KTbqH5iomhRCQUmj3NI1lv5Yy8F25tTYrTfpiArrl12Ej9iXMOWi5oaj4z_3rfkDuv8raJyCNrMEQI"   # base64url-encoded uncompressed P-256 public key
+    VAPID_PRIVATE_KEY: str = "60WTbuXtl_tv9Vi_k_f5vqhVmo03qu0bAXMTw3x_A8k"  # base64url-encoded P-256 private key
     VAPID_SUBJECT: str = "mailto:admin@beacon.li"  # mailto: or https: contact for push services
 
     # Aircall
