@@ -33,6 +33,7 @@ from app.api.v1.endpoints import (
     outreach,
     performance,
     prospecting,
+    push,
     reminders,
     sales_resources,
     sales_reports,
@@ -80,6 +81,7 @@ router.include_router(aircall.router)
 router.include_router(email_sync.router)
 router.include_router(personal_email_sync.router)
 router.include_router(drive.router)
+router.include_router(push.router)
 router.include_router(reminders.router)
 router.include_router(workspace.router)
 router.include_router(knowledge.router)

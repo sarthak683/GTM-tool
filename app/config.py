@@ -139,6 +139,18 @@ class Settings(BaseSettings):
     EMAIL_SYNC_INTERVAL_SECONDS: int = 180  # 3 minutes
     EMAIL_SUMMARY_MIN_CHARS: int = 100  # Skip AI summary for short emails
 
+    # Web Push (VAPID) — used to ring the rep's mobile PWA when they click
+    # "Call" on the desktop prospect list. Generate keys with:
+    #   docker compose exec -T backend python -c \
+    #     "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); \
+    #      print('PUB:', v.public_key.to_string('uncompressed').hex()); \
+    #      print('PRIV:', v.private_key.to_string().hex())"
+    # Or any VAPID generator. The PUBLIC key is exposed to the browser; the
+    # PRIVATE key never leaves the server.
+    VAPID_PUBLIC_KEY: str = ""   # base64url-encoded uncompressed P-256 public key
+    VAPID_PRIVATE_KEY: str = ""  # base64url-encoded P-256 private key
+    VAPID_SUBJECT: str = "mailto:admin@beacon.li"  # mailto: or https: contact for push services
+
     # Aircall
     AIRCALL_API_ID: str = ""
     AIRCALL_API_TOKEN: str = ""

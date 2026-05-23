@@ -321,6 +321,21 @@ export default function AccountSourcing() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  // Advanced filter — single rule "prospects {op} {value}" against the
+  // contact count per account. URL-persisted as `pmin` / `pmax` so navigating
+  // back into the page restores the filter. The op+value pair is derived
+  // from the bounds when the modal opens.
+  type ProspectOp = "gt" | "lt" | "eq" | "between";
+  const initialPMin = searchParams.get("pmin");
+  const initialPMax = searchParams.get("pmax");
+  const [prospectsMin, setProspectsMin] = useState<number | undefined>(initialPMin !== null ? Number(initialPMin) : undefined);
+  const [prospectsMax, setProspectsMax] = useState<number | undefined>(initialPMax !== null ? Number(initialPMax) : undefined);
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
+  const [advOp, setAdvOp] = useState<ProspectOp>("gt");
+  const [advValue, setAdvValue] = useState("");
+  const [advValue2, setAdvValue2] = useState("");
+  const [downloadingFiltered, setDownloadingFiltered] = useState(false);
+  const hasAdvancedFilter = prospectsMin !== undefined || prospectsMax !== undefined;
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
   // selected user. Different from ownerScope (binary mine vs all).
@@ -399,6 +414,8 @@ export default function AccountSourcing() {
           icpTier: tierFilter.length ? tierFilter : undefined,
           disposition: dispositionFilter.length ? dispositionFilter : undefined,
           recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
+          prospectsMin,
+          prospectsMax,
         }),
         accountSourcingApi.summary({
           ownerId: effectiveOwnerId,
@@ -413,7 +430,7 @@ export default function AccountSourcing() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
 
   // Load team users once for the Owner multi-select.
   useEffect(() => {
@@ -448,9 +465,11 @@ export default function AccountSourcing() {
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       sortBy !== "recent" ? next.set("sort", sortBy) : next.delete("sort");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      prospectsMin !== undefined ? next.set("pmin", String(prospectsMin)) : next.delete("pmin");
+      prospectsMax !== undefined ? next.set("pmax", String(prospectsMax)) : next.delete("pmax");
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter]);
+  }, [laneFilter, dispositionFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -461,7 +480,7 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, tierFilter]);
+  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, tierFilter, prospectsMin, prospectsMax]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -1239,6 +1258,140 @@ export default function AccountSourcing() {
 
         {activeTab === "accounts" ? (
           <>
+            {showAdvancedFilter && (
+              <div
+                onClick={() => setShowAdvancedFilter(false)}
+                style={{ position: "fixed", inset: 0, background: "rgba(15,39,68,0.45)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: "#fff", borderRadius: 16, width: "min(520px, 92vw)",
+                    border: `1px solid ${colors.border}`, boxShadow: "0 24px 60px rgba(15,23,42,0.22)",
+                    padding: 22, display: "flex", flexDirection: "column", gap: 16,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: colors.text }}>Advanced filter</div>
+                      <div style={{ fontSize: 12, color: colors.sub, marginTop: 4 }}>
+                        Filter accounts by the number of prospects they have. Pick an operator and a value.
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setShowAdvancedFilter(false)} style={{ border: "none", background: "transparent", color: colors.sub, cursor: "pointer" }}>
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: colors.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Field</span>
+                      <select
+                        value="prospects"
+                        disabled
+                        style={{ height: 36, borderRadius: 9, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, color: colors.text, background: "#f7fafd" }}
+                      >
+                        <option value="prospects">Prospects</option>
+                      </select>
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: colors.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>Operator</span>
+                      <select
+                        value={advOp}
+                        onChange={(e) => setAdvOp(e.target.value as ProspectOp)}
+                        style={{ height: 36, borderRadius: 9, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, color: colors.text, background: "#fff" }}
+                      >
+                        <option value="gt">&gt;</option>
+                        <option value="lt">&lt;</option>
+                        <option value="eq">=</option>
+                        <option value="between">between</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: advOp === "between" ? "1fr 1fr" : "1fr", gap: 10 }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: colors.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        {advOp === "between" ? "From" : "Value"}
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={advValue}
+                        onChange={(e) => setAdvValue(e.target.value)}
+                        style={{ height: 36, borderRadius: 9, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, color: colors.text, background: "#fff" }}
+                      />
+                    </label>
+                    {advOp === "between" && (
+                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: colors.sub, textTransform: "uppercase", letterSpacing: 0.4 }}>To</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={advValue2}
+                          onChange={(e) => setAdvValue2(e.target.value)}
+                          style={{ height: 36, borderRadius: 9, border: `1px solid ${colors.border}`, padding: "0 10px", fontSize: 13, color: colors.text, background: "#fff" }}
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProspectsMin(undefined);
+                        setProspectsMax(undefined);
+                        setAdvValue("");
+                        setAdvValue2("");
+                        setShowAdvancedFilter(false);
+                      }}
+                      style={{ height: 38, padding: "0 14px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                    >
+                      Clear
+                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvancedFilter(false)}
+                        style={{ height: 38, padding: "0 14px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!advValue || (advOp === "between" && !advValue2)}
+                        onClick={() => {
+                          const v = Number(advValue);
+                          const v2 = Number(advValue2);
+                          if (!Number.isFinite(v)) return;
+                          let nextMin: number | undefined;
+                          let nextMax: number | undefined;
+                          if (advOp === "gt") nextMin = v + 1;
+                          else if (advOp === "lt") nextMax = v - 1;
+                          else if (advOp === "eq") { nextMin = v; nextMax = v; }
+                          else if (advOp === "between" && Number.isFinite(v2)) {
+                            nextMin = Math.min(v, v2);
+                            nextMax = Math.max(v, v2);
+                          }
+                          setProspectsMin(nextMin);
+                          setProspectsMax(nextMax);
+                          setShowAdvancedFilter(false);
+                        }}
+                        style={{
+                          height: 38, padding: "0 16px", borderRadius: 10,
+                          border: "1px solid #175089", background: "#175089",
+                          color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                          opacity: !advValue || (advOp === "between" && !advValue2) ? 0.6 : 1,
+                        }}
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div
               className="as-filter-bar"
               style={{
@@ -1268,11 +1421,72 @@ export default function AccountSourcing() {
                 }}
               />
             </div>
-            <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
               <span>{totalCompanies} companies sourced</span>
               <span>{highPriorityCount} high-priority</span>
               <span>{researchedCount} researched</span>
               <span>{targetVerdictCount} target verdicts</span>
+              <button
+                type="button"
+                onClick={() => {
+                  // Hydrate the modal draft from the active bounds so the
+                  // user sees their current rule when they open it.
+                  if (prospectsMin !== undefined && prospectsMax !== undefined && prospectsMin === prospectsMax) {
+                    setAdvOp("eq"); setAdvValue(String(prospectsMin)); setAdvValue2("");
+                  } else if (prospectsMin !== undefined && prospectsMax !== undefined) {
+                    setAdvOp("between"); setAdvValue(String(prospectsMin)); setAdvValue2(String(prospectsMax));
+                  } else if (prospectsMin !== undefined) {
+                    setAdvOp("gt"); setAdvValue(String(prospectsMin - 1)); setAdvValue2("");
+                  } else if (prospectsMax !== undefined) {
+                    setAdvOp("lt"); setAdvValue(String(prospectsMax + 1)); setAdvValue2("");
+                  }
+                  setShowAdvancedFilter(true);
+                }}
+                title="Filter accounts by the number of prospects they have"
+                style={{
+                  height: 36, padding: "0 12px", borderRadius: 10,
+                  border: hasAdvancedFilter ? "1.5px solid #ffb995" : `1px solid ${colors.border}`,
+                  background: hasAdvancedFilter ? "#fff3ec" : colors.card,
+                  color: hasAdvancedFilter ? "#b85024" : colors.text,
+                  fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                Advanced Filter{hasAdvancedFilter ? " •" : ""}
+              </button>
+              {hasAdvancedFilter && (
+                <button
+                  type="button"
+                  disabled={downloadingFiltered}
+                  onClick={async () => {
+                    setDownloadingFiltered(true);
+                    try {
+                      const blob = await accountSourcingApi.exportCsv({
+                        prospectsMin,
+                        prospectsMax,
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const anchor = document.createElement("a");
+                      anchor.href = url;
+                      anchor.download = `sourced-companies-filtered-${new Date().toISOString().slice(0, 10)}.csv`;
+                      anchor.click();
+                      URL.revokeObjectURL(url);
+                    } finally {
+                      setDownloadingFiltered(false);
+                    }
+                  }}
+                  style={{
+                    height: 36, padding: "0 12px", borderRadius: 10,
+                    border: "1px solid #175089", background: "#175089",
+                    color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    opacity: downloadingFiltered ? 0.7 : 1,
+                  }}
+                >
+                  {downloadingFiltered ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                  Download filtered
+                </button>
+              )}
             </div>
           </div>
 

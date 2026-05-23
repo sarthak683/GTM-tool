@@ -58,6 +58,8 @@ export const contactsApi = {
     limit?: number;
     companyId?: string;
     q?: string;
+    qField?: string;
+    qMatch?: "exact" | "contains";
     persona?: string[];
     sequenceStatus?: string[];
     callDisposition?: string[];
@@ -75,6 +77,8 @@ export const contactsApi = {
     });
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.q) search.set("q", params.q);
+    if (params.qField && params.qField !== "all") search.set("q_field", params.qField);
+    if (params.qMatch && params.qField && params.qField !== "all") search.set("q_match", params.qMatch);
     if (params.persona?.length) search.set("persona", params.persona.join(","));
     if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
     if (params.callDisposition?.length) search.set("call_disposition", params.callDisposition.join(","));

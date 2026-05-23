@@ -154,6 +154,8 @@ async def list_contacts(
     current_user: CurrentUser,
     company_id: Optional[UUID] = Query(default=None),
     q: Optional[str] = Query(default=None, description="Search by name, email, title, or company"),
+    q_field: Optional[str] = Query(default=None, description="Scope `q` to a single column: name | email | company | title | phone | linkedin. Defaults to multi-field."),
+    q_match: Optional[str] = Query(default=None, description="When scoped: 'exact' for whole-cell case-insensitive equality, 'contains' (default) for substring LIKE. Only honored alongside q_field."),
     persona: Optional[str] = Query(default=None),
     sequence_status: Optional[str] = Query(default=None),
     call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions"),
@@ -179,6 +181,8 @@ async def list_contacts(
     items, total = await repo.list_with_company_name(
         company_id=company_id,
         q=q,
+        q_field=q_field,
+        q_match=q_match,
         persona=persona,
         sequence_status=sequence_status,
         call_disposition=call_disposition,

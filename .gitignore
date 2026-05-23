@@ -36,6 +36,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
+# Deployment handoff files
+MAC_DEPLOY_HANDOFF.md
+
 # Editor and OS files
 .vscode/
 .idea/

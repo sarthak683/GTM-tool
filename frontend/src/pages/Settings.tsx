@@ -20,8 +20,11 @@ import {
   Clock,
   Wand2,
   Bot,
+  PhoneCall,
+  Loader2,
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
+import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder } from "../lib/api";
 import { DriveFolderPicker } from "../components/DriveFolderPicker";
 import { KnowledgeSourcePanel } from "../components/zippy/KnowledgeSourcePanel";
@@ -41,7 +44,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications";
 
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
@@ -79,6 +82,11 @@ export default function SettingsPage() {
   const { isAdmin } = useAuth();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
+  // Web Push state for the Notifications tab. Drives the opt-in toggle so the
+  // rep can register their *current* browser (typically their mobile PWA) to
+  // receive "tap to call" notifications when their desktop clicks Call.
+  const [pushState, setPushState] = useState<PushSubscriptionState | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
   const [gmail, setGmail] = useState<GmailSyncSettings | null>(null);
   const [reportSender, setReportSender] = useState<ReportSenderSettings | null>(null);
   const [inbox, setInbox] = useState("zippy@beacon.li");
@@ -1031,6 +1039,35 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
+  // Refresh push subscription state whenever the Notifications tab is
+  // opened — covers the case where the user revoked permission in
+  // browser settings between visits.
+  useEffect(() => {
+    if (activeTab !== "notifications") return;
+    let cancelled = false;
+    getSubscriptionState()
+      .then((state) => { if (!cancelled) setPushState(state); })
+      .catch(() => { if (!cancelled) setPushState(null); });
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
+  const togglePushNotifications = async () => {
+    setPushBusy(true);
+    try {
+      const wasOn = !!pushState?.subscribed;
+      const result = wasOn ? await disablePush() : await enablePush();
+      if (!result.ok) {
+        toast.error(result.reason || "Could not change notification setting.", "Notification error");
+      } else {
+        toast.success(wasOn ? "Mobile call notifications disabled." : "This device is registered for call notifications.", "Saved");
+      }
+      const next = await getSubscriptionState();
+      setPushState(next);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
   const handleTriggerTldvSync = async () => {
     setTriggeringTldv(true);
     setError(null);
@@ -1078,6 +1115,7 @@ export default function SettingsPage() {
               {tabButton("pre-meeting", "Pre-Meeting", <Shield size={15} />)}
               {tabButton("reports", "Reports", <CalendarDays size={15} />)}
               {tabButton("sync-schedule", "Sync Schedule", <Clock size={15} />)}
+              {tabButton("notifications", "Notifications", <PhoneCall size={15} />)}
               {tabButton("zippy", "Zippy", <Bot size={15} />)}
               {isAdmin && tabButton("zippy-prompt", "System Prompt", <Shield size={15} />)}
             </div>
@@ -2166,6 +2204,79 @@ export default function SettingsPage() {
               onClearUser={handleClearUserFolder}
             />
           </>
+        ) : activeTab === "notifications" ? (
+          <section style={{ display: "grid", gap: 18 }}>
+            <div>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: "#0f2744", marginBottom: 6 }}>Mobile call notifications</h3>
+              <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6 }}>
+                When you click <strong>Call</strong> on a prospect from your desktop, Beacon can push a notification to this device. Tapping the notification opens your phone's dialer with the prospect's number pre-filled — no copy-paste, no hunting for it.
+              </p>
+            </div>
+
+            {/* Status panel — what does this browser actually support / have? */}
+            <div className="crm-panel" style={{ padding: "18px 18px", display: "grid", gap: 12 }}>
+              {/* Per-device toggle row. The toggle itself is the source of
+                  truth; the chips below explain what's blocking when it
+                  can't enable (no SW support, server has no VAPID keys,
+                  notification permission denied, etc.). */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0f2744" }}>
+                    {pushState?.subscribed ? "Notifications enabled on this device" : "Enable notifications on this device"}
+                  </div>
+                  <div className="crm-muted" style={{ fontSize: 12, marginTop: 4 }}>
+                    {pushState
+                      ? (pushState.supported
+                          ? (pushState.configured
+                              ? (pushState.permission === "denied"
+                                  ? "Permission was denied. Re-enable notifications for this site in your browser settings, then try again."
+                                  : (pushState.subscribed
+                                      ? "Your desktop calls will ring this device."
+                                      : "Tap to enable — your browser will ask for permission."))
+                              : "Server hasn't been configured with VAPID keys yet. Ask an admin to set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY.")
+                          : "This browser does not support Web Push. Try Chrome on Android or install the PWA on iOS 16.4+.")
+                      : "Checking…"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={pushBusy || !pushState?.supported || !pushState?.configured}
+                  onClick={togglePushNotifications}
+                  className="crm-button"
+                  style={{
+                    minWidth: 140,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    height: 40, borderRadius: 10,
+                    border: pushState?.subscribed ? "1px solid #d5e3ef" : "1px solid #175089",
+                    background: pushState?.subscribed ? "#fff" : "#175089",
+                    color: pushState?.subscribed ? "#0f2744" : "#fff",
+                    fontWeight: 700,
+                    cursor: (pushBusy || !pushState?.supported || !pushState?.configured) ? "not-allowed" : "pointer",
+                    opacity: (!pushState?.supported || !pushState?.configured) ? 0.55 : 1,
+                  }}
+                >
+                  {pushBusy ? <Loader2 size={15} className="animate-spin" /> : <PhoneCall size={15} />}
+                  {pushState?.subscribed ? "Disable" : "Enable"}
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <span className="crm-chip" style={{ background: pushState?.supported ? "#eaf8ef" : "#fbeaea", color: pushState?.supported ? "#1f7a47" : "#9b2226", borderColor: pushState?.supported ? "#cbe8d5" : "#f3c0c0" }}>
+                  Browser support: {pushState?.supported ? "Yes" : "No"}
+                </span>
+                <span className="crm-chip" style={{ background: pushState?.configured ? "#eaf8ef" : "#fff4e0", color: pushState?.configured ? "#1f7a47" : "#925b00", borderColor: pushState?.configured ? "#cbe8d5" : "#f0d9a8" }}>
+                  Server configured: {pushState?.configured ? "Yes" : "No"}
+                </span>
+                <span className="crm-chip" style={{ background: pushState?.permission === "granted" ? "#eaf8ef" : "#fbeaea", color: pushState?.permission === "granted" ? "#1f7a47" : "#9b2226", borderColor: pushState?.permission === "granted" ? "#cbe8d5" : "#f3c0c0" }}>
+                  Permission: {pushState?.permission ?? "—"}
+                </span>
+              </div>
+
+              <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                <strong>iOS users:</strong> Web Push only works once you've added Beacon to your Home Screen (Share → Add to Home Screen) and opened it from there. Regular Safari tabs can't receive push.
+              </p>
+            </div>
+          </section>
         ) : activeTab === "zippy-prompt" ? (
           isAdmin ? (
             <div style={{ display: "grid", gap: 18 }}>

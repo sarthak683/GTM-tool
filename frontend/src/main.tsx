@@ -8,3 +8,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
+
+// Register the Web Push service worker. Browsers without SW support
+// silently skip; the rest of the app works without push.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .catch((err) => console.warn("Service worker registration failed:", err));
+  });
+}

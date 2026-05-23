@@ -1,5 +1,25 @@
 import { BASE, getAuthHeaders, request } from "./core";
 
+export const pushApi = {
+  getVapidPublicKey: () =>
+    request<{ publicKey: string; configured: boolean }>("/api/v1/push/vapid-public-key"),
+  subscribe: (payload: { endpoint: string; keys: { p256dh: string; auth: string }; user_agent?: string; label?: string }) =>
+    request<{ id: string; endpoint: string }>("/api/v1/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  unsubscribe: (endpoint: string) =>
+    request<{ removed: number }>("/api/v1/push/subscribe", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
+    }),
+  ringMobile: (contactId: string) =>
+    request<{ sent: number; removed: number; total: number; configured: number }>(
+      `/api/v1/push/contacts/${contactId}/ring-mobile`,
+      { method: "POST" }
+    ),
+};
+
 export const aircallApi = {
   getConfig: () =>
     request<{

@@ -154,7 +154,22 @@
       "Bash(KUBECONFIG=\"C:/gtm-prototype/tmp/beacon-test-kubeconfig.yaml\" kubectl -n gtm-prod exec -i pod/gtm-postgresql-0 -- bash -c 'PGPASSWORD=$\\(cat /opt/bitnami/postgresql/secrets/password\\) psql -U beacon -d beacon')",
       "Bash(KUBECONFIG=\"C:/gtm-prototype/tmp/beacon-test-kubeconfig.yaml\" kubectl -n gtm rollout status deploy/gtm-backend-deployment --timeout=120s)",
       "Bash(KUBECONFIG=\"C:/gtm-prototype/tmp/beacon-test-kubeconfig.yaml\" kubectl -n gtm rollout status deploy/gtm-frontend-deployment --timeout=120s)",
-      "Bash(KUBECONFIG=\"C:/gtm-prototype/tmp/beacon-test-kubeconfig.yaml\" kubectl -n gtm rollout status deploy/gtm-worker-deployment --timeout=120s)"
+      "Bash(KUBECONFIG=\"C:/gtm-prototype/tmp/beacon-test-kubeconfig.yaml\" kubectl -n gtm rollout status deploy/gtm-worker-deployment --timeout=120s)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(python -m py_compile app/repositories/contact.py app/api/v1/endpoints/contacts.py)",
+      "Bash(sed -i '' '2036,2168d' /Users/sarthak/GTM-tool/frontend/src/pages/Contacts.tsx)",
+      "Bash(sed -n '2030,2042p' /Users/sarthak/GTM-tool/frontend/src/pages/Contacts.tsx)",
+      "Bash(python3 -m py_compile app/api/v1/endpoints/account_sourcing.py app/api/v1/endpoints/contacts.py app/repositories/contact.py)",
+      "Bash(python3 -m py_compile scripts/seed_dev_data.py)",
+      "Bash(docker compose *)",
+      "Bash(docker cp *)",
+      "Bash(echo \"ts_exit=$?\")",
+      "Bash(python3 -m py_compile app/repositories/contact.py app/api/v1/endpoints/contacts.py)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('total:', d.get\\('total','?'\\)\\); print\\('domains seen:', sorted\\({i['email'].split\\('@'\\)[-1] for i in d.get\\('items',[]\\) if i.get\\('email'\\)}\\)\\)\")",
+      "Bash(python3 -m py_compile app/api/v1/endpoints/push.py app/services/push.py app/models/push_subscription.py alembic/versions/069_push_subscriptions.py app/api/v1/router.py app/config.py)",
+      "Bash(env)",
+      "Bash(docker system *)"
     ]
   },
   "outputStyle": "Explanatory"

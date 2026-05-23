@@ -1,0 +1,19 @@
+{
+  "name": "Beacon CRM",
+  "short_name": "Beacon",
+  "description": "Beacon GTM CRM — installable PWA with mobile call notifications.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8f7f5",
+  "theme_color": "#175089",
+  "icons": [
+    {
+      "src": "/beacon-logo.jpg",
+      "sizes": "192x192 512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}

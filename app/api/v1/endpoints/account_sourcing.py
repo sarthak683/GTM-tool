@@ -1133,6 +1133,8 @@ async def list_sourced_companies(
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
+    prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
     stmt = select(Company).where(_account_sourcing_visibility_filter())
@@ -1167,6 +1169,23 @@ async def list_sourced_companies(
                 continue
         if owner_uuids:
             stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+
+    # Advanced filter: prospects (contacts) per account. We materialise a
+    # per-company count via a correlated subquery and apply >= / <= bounds.
+    # The UI flattens its operator+value into min/max, so the backend just
+    # ANDs whichever bounds are present.
+    if prospects_min is not None or prospects_max is not None:
+        prospect_count_sub = (
+            select(Contact.company_id, func.count(Contact.id).label("cnt"))
+            .group_by(Contact.company_id)
+            .subquery()
+        )
+        prospect_count = func.coalesce(prospect_count_sub.c.cnt, 0)
+        stmt = stmt.outerjoin(prospect_count_sub, Company.id == prospect_count_sub.c.company_id)
+        if prospects_min is not None:
+            stmt = stmt.where(prospect_count >= prospects_min)
+        if prospects_max is not None:
+            stmt = stmt.where(prospect_count <= prospects_max)
 
     total = (
         await session.execute(
@@ -1460,8 +1479,15 @@ async def export_sourced_companies(
     assigned_rep_email: str | None = Query(default=None),
     disposition: str | None = Query(default=None),
     batch_id: UUID | None = Query(default=None),
+    prospects_min: int | None = Query(default=None, ge=0),
+    prospects_max: int | None = Query(default=None, ge=0),
 ):
-    """Export sourced companies and preserved source columns as CSV."""
+    """Export sourced companies and preserved source columns as CSV.
+
+    Accepts the same `prospects_min`/`prospects_max` bounds as the list
+    endpoint so the user can "download the filtered list" without the
+    frontend having to enumerate every visible company id.
+    """
     stmt = select(Company).where(Company.sourcing_batch_id.isnot(None)).order_by(Company.created_at.desc())
     if assigned_rep:
         stmt = stmt.where(Company.assigned_rep == assigned_rep)
@@ -1471,6 +1497,19 @@ async def export_sourced_companies(
         stmt = stmt.where(Company.disposition == disposition)
     if batch_id:
         stmt = stmt.where(Company.sourcing_batch_id == batch_id)
+
+    if prospects_min is not None or prospects_max is not None:
+        prospect_count_sub = (
+            select(Contact.company_id, func.count(Contact.id).label("cnt"))
+            .group_by(Contact.company_id)
+            .subquery()
+        )
+        prospect_count = func.coalesce(prospect_count_sub.c.cnt, 0)
+        stmt = stmt.outerjoin(prospect_count_sub, Company.id == prospect_count_sub.c.company_id)
+        if prospects_min is not None:
+            stmt = stmt.where(prospect_count >= prospects_min)
+        if prospects_max is not None:
+            stmt = stmt.where(prospect_count <= prospects_max)
 
     companies = (await session.execute(stmt)).scalars().all()
     rows = [_company_export_row(company) for company in companies]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -55,6 +55,16 @@ const SEQUENCE_FILTER_OPTIONS = [
 const CALL_DISPOSITION_FILTER_OPTIONS = [
   { value: "unreviewed", label: "Unreviewed" },
   ...CALL_DISPOSITION_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+];
+
+const SEARCH_SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "all", label: "All columns" },
+  { value: "name", label: "Name" },
+  { value: "email", label: "Email" },
+  { value: "company", label: "Company" },
+  { value: "title", label: "Title" },
+  { value: "phone", label: "Phone" },
+  { value: "linkedin", label: "LinkedIn" },
 ];
 
 const EMAIL_FILTER_OPTIONS = [
@@ -173,6 +183,21 @@ export default function Contacts() {
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [searchScope, setSearchScope] = useState<string>(() => searchParams.get("qf") ?? "all");
+  // Match mode for scoped/bulk search: "contains" treats each pasted entry as
+  // a substring; "exact" requires whole-cell equality (case-insensitive).
+  // URL-persisted as `qm`; only sent when scope !== "all".
+  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (searchParams.get("qm") === "exact" ? "exact" : "contains"));
+  const [showFilters, setShowFilters] = useState<boolean>(() => {
+    // Auto-open the filter card on mount when the URL already carries active
+    // filters — otherwise users would have to hunt for the toggle to discover
+    // why the list is narrowed.
+    return Boolean(
+      searchParams.get("seq") || searchParams.get("call") || searchParams.get("ae") ||
+      searchParams.get("sdr") || searchParams.get("own") || searchParams.get("tz") ||
+      searchParams.get("co") || searchParams.get("owner") === "mine"
+    );
+  });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
   const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
@@ -389,6 +414,8 @@ export default function Contacts() {
       skip: (page - 1) * pageSize,
       limit: pageSize,
       q: debouncedSearch || undefined,
+      qField: searchScope && searchScope !== "all" ? searchScope : undefined,
+      qMatch: searchScope && searchScope !== "all" ? searchMatch : undefined,
       companyId: companyFilter || undefined,
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
@@ -569,6 +596,8 @@ export default function Contacts() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
+      searchScope && searchScope !== "all" ? next.set("qf", searchScope) : next.delete("qf");
+      searchScope && searchScope !== "all" && searchMatch === "exact" ? next.set("qm", "exact") : next.delete("qm");
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
@@ -580,7 +609,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, sequenceFilter, timezoneFilter, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -591,7 +620,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -604,7 +633,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch]);
 
   useEffect(() => {
     if (contacts.length === 0 || selectedContactIds.size === 0) return;
@@ -867,6 +896,21 @@ export default function Contacts() {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
       }
+    }
+    // Best-effort: ring the user's mobile PWA so they can tap-to-dial on
+    // their phone. Never blocks the sidebar — failures, missing VAPID, no
+    // subscription, etc. all silently no-op.
+    if (contact.phone) {
+      pushApi
+        .ringMobile(contact.id)
+        .then((res) => {
+          if (res.sent > 0) {
+            toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
+          }
+        })
+        .catch(() => {
+          /* swallow — push is opt-in and non-essential */
+        });
     }
   };
 
@@ -1226,21 +1270,113 @@ export default function Contacts() {
           }}>
             {tab === "contacts" && (
               <>
-                {/* Search — left aligned, grows */}
-                <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
-                  <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a8bc", pointerEvents: "none" }} />
-                  <input
-                    style={{
-                      width: "100%", height: 38, borderRadius: 10,
-                      border: "1px solid #e0eaf4", background: "#f7fbff",
-                      paddingLeft: 34, paddingRight: 12,
-                      fontSize: 13, color: "#1e3a52", outline: "none",
-                    }}
-                    placeholder="Search people, title, email…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
+                {/* Search — scope select + auto-growing textarea.
+                    When scope != "all", the textarea accepts newline- or
+                    comma-separated lists (e.g. paste 30 company names) and
+                    backend ORs each entry against the chosen column. The
+                    visible row count grows up to 5 lines, after which the
+                    textarea scrolls. */}
+                {(() => {
+                  const lineCount = Math.min(5, Math.max(1, (search.match(/\n/g)?.length ?? 0) + 1));
+                  const minH = 38; // single-row pill height (matches the other action buttons)
+                  const rowH = 20;
+                  const dynamicHeight = lineCount === 1 ? minH : minH + (lineCount - 1) * rowH;
+                  const isScoped = searchScope !== "all";
+                  const termCount = isScoped
+                    ? search.split(/[,\n]+/).map((t) => t.trim()).filter(Boolean).length
+                    : 0;
+                  return (
+                    <div style={{ display: "flex", flex: 1, minWidth: 260, alignItems: "stretch", borderRadius: 10, border: "1px solid #e0eaf4", background: "#f7fbff", overflow: "hidden" }}>
+                      <select
+                        value={searchScope}
+                        onChange={(e) => setSearchScope(e.target.value)}
+                        title="Scope search to a single column. When scoped, the input accepts a comma- or newline-separated list."
+                        style={{
+                          height: minH, alignSelf: "flex-start", border: "none", borderRight: "1px solid #e0eaf4",
+                          background: "#eef5ff", padding: "0 26px 0 10px",
+                          fontSize: 12, fontWeight: 700, color: "#175089", outline: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {SEARCH_SCOPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                      <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
+                        <Search size={14} style={{ position: "absolute", left: 11, top: 12, color: "#94a8bc", pointerEvents: "none" }} />
+                        <textarea
+                          rows={1}
+                          spellCheck={false}
+                          style={{
+                            width: "100%", minHeight: minH, height: dynamicHeight,
+                            border: "none", background: "transparent",
+                            padding: "10px 12px 8px 32px", resize: "none",
+                            fontSize: 13, lineHeight: "20px", color: "#1e3a52", outline: "none",
+                            fontFamily: "inherit",
+                          }}
+                          placeholder={
+                            isScoped
+                              ? `Search ${SEARCH_SCOPE_OPTIONS.find((o) => o.value === searchScope)?.label ?? ""} — paste a list (comma or newline separated)`
+                              : "Search people, title, email…"
+                          }
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                        />
+                        {isScoped && termCount > 1 && (
+                          <span style={{
+                            position: "absolute", right: 8, top: 8,
+                            fontSize: 10, fontWeight: 800, color: "#175089",
+                            background: "#eaf2ff", border: "1px solid #c7d9f0",
+                            borderRadius: 999, padding: "2px 8px",
+                          }}>
+                            {termCount} terms
+                          </span>
+                        )}
+                      </div>
+                      {isScoped && (
+                        <div style={{ display: "flex", alignItems: "flex-start", padding: 4, gap: 2, borderLeft: "1px solid #e0eaf4", background: "#fbfdff" }}>
+                          {(["contains", "exact"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => setSearchMatch(mode)}
+                              title={mode === "exact" ? "Match must equal the cell exactly (case-insensitive)" : "Match anywhere inside the cell"}
+                              style={{
+                                height: 30, padding: "0 10px", borderRadius: 7,
+                                border: "1px solid transparent",
+                                background: searchMatch === mode ? "#175089" : "transparent",
+                                color: searchMatch === mode ? "#fff" : "#4a6580",
+                                fontSize: 11, fontWeight: 700, cursor: "pointer",
+                                textTransform: "capitalize",
+                              }}
+                            >
+                              {mode}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Filters toggle — collapses the inline filter card below */}
+                <button
+                  type="button"
+                  onClick={() => setShowFilters((v) => !v)}
+                  title={showFilters ? "Hide filters" : "Show filters"}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: showFilters ? "1px solid #b8d0f0" : "1px solid #d0dcea",
+                    background: showFilters ? "#eef5ff" : "#f7fbff",
+                    color: "#175089", fontSize: 13, fontWeight: 700,
+                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <Settings2 size={14} />
+                  Filters
+                  {showFilters ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </button>
 
                 {/* Sequence Timing */}
                 <button
@@ -1729,8 +1865,10 @@ export default function Contacts() {
               </div>
             </div>
 
-            {/* Filters */}
-            {(() => {
+            {/* Filters — hidden by default; toggled by the "Filters" button in
+                the top action row. Auto-shown when the user already has active
+                filters so they can see what's narrowing the list. */}
+            {showFilters && (() => {
               const hasFilters = !!(
                 ownerScope === "mine" ||
                 sequenceFilter.length ||
@@ -1967,6 +2105,7 @@ export default function Contacts() {
                 </div>
               );
             })()}
+
 
             {user?.role === "sdr" && contacts.length > 0 && (
               <div

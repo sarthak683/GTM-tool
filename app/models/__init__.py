@@ -58,4 +58,7 @@ __all__ = [
     "ZippyConversation", "ZippyConversationRead",
     "ZippyMessage", "ZippyMessageRead", "ZippyChatRequest",
     "IndexedDriveFile", "IndexedDriveFileRead",
+    "PushSubscription", "PushSubscriptionRead",
 ]
+
+from app.models.push_subscription import PushSubscription, PushSubscriptionRead  # noqa: E402,F401

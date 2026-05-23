@@ -1600,27 +1600,57 @@ textarea:focus {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1080px) {
+  /* Full-screen takeover on mobile. Desktop (>1080px) keeps the
+     right-anchored sidebar (defined inline on the panel JSX). The breakpoint
+     mirrors the project's other mobile switch (.prospect-mobile-only in
+     Contacts.tsx) so tablet widths get the full-screen treatment too. */
   .prospect-call-drawer-shell {
-    align-items: flex-end !important;
-    justify-content: center !important;
+    /* Override the shell's inline justify-content: flex-end. We pin the
+       panel via position:fixed below, so the shell's flex alignment is
+       moot — but we still null it out for clarity. The explicit top/bottom
+       on the shell defends against ancestors that compute height from
+       content (e.g. body { overflow: auto } at this same breakpoint). */
+    top: 0 !important;
+    bottom: 0 !important;
+    height: 100% !important;
+    min-height: 100dvh !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
   }
 
   .prospect-call-drawer-backdrop {
-    position: absolute !important;
-    inset: 0 !important;
-    flex: none !important;
+    /* No visible content behind a full-screen panel — drop the dim layer
+       entirely so it can't intercept taps or eat layout space. */
+    display: none !important;
   }
 
   .prospect-call-drawer-panel {
-    position: relative !important;
+    /* Pin the panel to the viewport directly so it ignores the flex
+       shell's inline width:400 + justify-content:flex-end (which docked
+       the previous bottom-sheet to the right).
+
+       We deliberately *expand* the shorthand `inset: 0` into four explicit
+       sides — some Chromium-based mobile browsers and older WebKit
+       versions skipped the shorthand when combined with explicit
+       `height`/`width` on the same rule, leaving `bottom` unset and the
+       panel only as tall as its content. Listing top/right/bottom/left
+       individually avoids that path. The `100dvh` is a belt-and-braces
+       fallback in case the explicit `bottom: 0` is itself overridden by
+       a future ancestor transform. */
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
     width: 100% !important;
-    max-width: 100vw !important;
-    max-height: 92dvh !important;
-    border-left: none !important;
-    border-top: 1px solid #d5e3ef !important;
-    border-radius: 22px 22px 0 0 !important;
-    box-shadow: 0 -18px 46px rgba(14, 38, 66, 0.22) !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
     overflow-y: auto !important;
     overscroll-behavior: contain !important;
   }
@@ -1629,7 +1659,7 @@ textarea:focus {
     position: sticky !important;
     top: 0 !important;
     z-index: 2 !important;
-    padding: 16px 16px 12px !important;
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px 12px !important;
     background: #ffffff !important;
   }
 

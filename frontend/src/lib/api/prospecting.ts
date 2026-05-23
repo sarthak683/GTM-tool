@@ -375,6 +375,8 @@ export const accountSourcingApi = {
     recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
     ownerId?: string | string[];
+    prospectsMin?: number;
+    prospectsMax?: number;
   }) => {
     const search = new URLSearchParams({
       skip: String(params?.skip ?? 0),
@@ -389,6 +391,8 @@ export const accountSourcingApi = {
       const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
       if (ownerValue) search.set("owner_id", ownerValue);
     }
+    if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
+    if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
 
@@ -479,12 +483,14 @@ export const accountSourcingApi = {
       { method: "POST", body: JSON.stringify({ body }) }
     ),
 
-  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string }) => {
+  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string; prospectsMin?: number; prospectsMax?: number }) => {
     const search = new URLSearchParams();
     if (params?.assignedRep) search.set("assigned_rep", params.assignedRep);
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     if (params?.disposition) search.set("disposition", params.disposition);
     if (params?.batchId) search.set("batch_id", params.batchId);
+    if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
+    if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
     const qs = search.toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),

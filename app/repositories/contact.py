@@ -93,6 +93,8 @@ class ContactRepository(BaseRepository[Contact]):
         self,
         company_id: Optional[UUID] = None,
         q: Optional[str] = None,
+        q_field: Optional[str] = None,
+        q_match: Optional[str] = None,
         persona: Optional[str] = None,
         sequence_status: Optional[str] = None,
         call_disposition: Optional[str] = None,
@@ -180,7 +182,66 @@ class ContactRepository(BaseRepository[Contact]):
             count_stmt = count_stmt.where(combined_filter)
 
         normalized_q = (q or "").strip()
+        scope_field = (q_field or "").strip().lower() or None
+        match_mode = (q_match or "").strip().lower() or "contains"
+        if match_mode not in {"exact", "contains"}:
+            match_mode = "contains"
         search_rank = None
+        if normalized_q and scope_field and scope_field != "all":
+            # Scoped search: match the term inside a single column instead of
+            # the multi-field blob below. Used by the in-UI column dropdown
+            # on the prospects page.
+            #
+            # Bulk mode: if the term contains commas or newlines we treat each
+            # piece as a separate value and OR them together. That way reps
+            # can paste a list of company names / domains / emails and filter
+            # the whole set in one go. Single-value queries fall through to
+            # the same path with a list of one — same code, no special case.
+            raw_terms = [t.strip() for t in re.split(r"[,\n]+", normalized_q) if t.strip()]
+            full_name = func.lower(func.trim(func.concat(func.coalesce(Contact.first_name, ""), " ", func.coalesce(Contact.last_name, ""))))
+
+            def _term_filter(term: str):
+                lowered = term.lower()
+                escaped = _like_escape(lowered)
+                digits = re.sub(r"\D+", "", term)
+                if scope_field == "phone":
+                    # Phone match always strips non-digits; "exact" means the
+                    # cell's digits equal the term's digits.
+                    phone_col = func.regexp_replace(func.coalesce(Contact.phone, ""), r"[^0-9]", "", "g")
+                    if not digits:
+                        return None
+                    if match_mode == "exact":
+                        return phone_col == digits
+                    return phone_col.like(f"%{digits}%")
+                # Exact-match for "name" widens to first / last / full — a
+                # rep pasting "Marcus, Mei" expects to hit those first names,
+                # not just rows where the whole "Marcus Lindberg" string
+                # equals "Marcus".
+                if scope_field == "name":
+                    first_c = func.lower(func.coalesce(Contact.first_name, ""))
+                    last_c = func.lower(func.coalesce(Contact.last_name, ""))
+                    if match_mode == "exact":
+                        return or_(first_c == lowered, last_c == lowered, full_name == lowered)
+                    return full_name.like(f"%{escaped}%", escape="\\")
+                col_map = {
+                    "email": func.lower(func.coalesce(Contact.email, "")),
+                    "company": func.lower(func.coalesce(Company.name, "")),
+                    "title": func.lower(func.coalesce(Contact.title, "")),
+                    "linkedin": func.lower(func.coalesce(Contact.linkedin_url, "")),
+                }
+                col = col_map.get(scope_field)
+                if col is None:
+                    return None
+                if match_mode == "exact":
+                    return col == lowered
+                return col.like(f"%{escaped}%", escape="\\")
+
+            per_term = [f for f in (_term_filter(t) for t in raw_terms) if f is not None]
+            if per_term:
+                scoped_filter = or_(*per_term) if len(per_term) > 1 else per_term[0]
+                base_stmt = base_stmt.where(scoped_filter)
+                count_stmt = count_stmt.where(scoped_filter)
+                normalized_q = ""  # consume so the broad search below is skipped
         if normalized_q:
             lowered_q = " ".join(normalized_q.lower().split())
             escaped_q = _like_escape(lowered_q)

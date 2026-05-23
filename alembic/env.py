@@ -27,6 +27,7 @@ from app.models.angel import AngelInvestor, AngelMapping  # noqa: F401
 from app.models.task import Task, TaskComment  # noqa: F401
 from app.models.reminder import Reminder  # noqa: F401
 from app.models.settings import WorkspaceSettings  # noqa: F401
+from app.models.push_subscription import PushSubscription  # noqa: F401
 
 config = context.config
 
