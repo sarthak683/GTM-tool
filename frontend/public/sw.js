@@ -59,22 +59,44 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const tel = data.tel || "";
+  const contactName = data.contact_name || "";
 
-  // Two paths: the user tapped the "Call now" action OR tapped the body.
-  // Either way we want the dialer to open if we have a number; otherwise
-  // we just focus / open the CRM so they can see the prospect details.
-  const targetUrl = tel ? `tel:${tel}` : "/contacts";
+  // Why we don't openWindow("tel:...") directly:
+  // - iOS Safari (even in installed PWA mode) refuses non-https schemes
+  //   from a service worker's openWindow — call silently no-ops.
+  // - Android Chrome on a notable subset of OEM builds opens an empty
+  //   tab next to the dialer or eats the call.
+  // The reliable pattern is to open a same-origin HTTPS bridge page,
+  // /dial, which then sets `window.location.href = "tel:..."` from a
+  // document context — the OS honors that because the notification tap
+  // is the user gesture authorizing it.
+  let targetUrl = "/contacts";
+  if (tel) {
+    const params = new URLSearchParams({ tel });
+    if (contactName) params.set("name", contactName);
+    targetUrl = `/dial?${params.toString()}`;
+  }
 
   event.waitUntil(
     (async () => {
-      // openWindow on iOS Safari needs to run inside the notificationclick
-      // handler's microtask chain — that's why we don't await any network
-      // call before calling it.
+      // Prefer focusing an already-open CRM window and navigating it to
+      // /dial — that's faster than spawning a fresh tab and reusing an
+      // authenticated window keeps subsequent navigation in-session.
       const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      // If there's already a CRM window open and we don't need the dialer,
-      // focus it instead of spawning a duplicate tab.
-      if (!tel && allClients.length) {
-        return allClients[0].focus();
+      const sameOriginClient = allClients.find((c) => {
+        try { return new URL(c.url).origin === self.location.origin; } catch { return false; }
+      });
+      if (sameOriginClient && tel && "navigate" in sameOriginClient) {
+        try {
+          await sameOriginClient.navigate(targetUrl);
+          return sameOriginClient.focus();
+        } catch {
+          // Some browsers throw on cross-document navigate(); fall through
+          // to openWindow which always works for same-origin HTTPS.
+        }
+      }
+      if (sameOriginClient && !tel) {
+        return sameOriginClient.focus();
       }
       return self.clients.openWindow(targetUrl);
     })()

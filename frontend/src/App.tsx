@@ -25,6 +25,7 @@ const AccountSourcingContactDetail = lazy(() => import("./pages/AccountSourcingC
 const TeamManagement = lazy(() => import("./pages/TeamManagement"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const TasksPage = lazy(() => import("./pages/Tasks"));
+const Dial = lazy(() => import("./pages/Dial"));
 
 function PageSkeleton() {
   return (
@@ -86,6 +87,10 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              {/* /dial is reached only via push notification taps — kept
+                  outside ProtectedRoute so a rep can still dial even if
+                  their session expired since the push was issued. */}
+              <Route path="/dial" element={<Dial />} />
 
               <Route
                 path="/"
