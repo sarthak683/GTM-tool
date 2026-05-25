@@ -791,28 +791,48 @@ async def send_us_pod_call_report_email(
 
     send_results = []
     token_data = settings_row.report_sender_token_data
+    # Attempt every recipient. Earlier this loop did `break` on the first
+    # non-"sent" result, which meant a single transient Gmail hiccup
+    # silently skipped every later recipient (Pulkit was at position 6 of
+    # 7 — incident on 2026-05-22). Now we attempt each independently and
+    # accumulate any errors so the operator gets one combined report,
+    # while still letting the caller decide whether to commit the
+    # scheduled send_key based on whether every recipient succeeded.
+    failures: list[str] = []
     for recipient in report["recipients"]:
-        result, token_data = await send_gmail_email(
-            token_data=token_data,
-            from_email=settings_row.report_sender_email,
-            to=recipient,
-            subject=report["subject"],
-            body=report["body"],
-            html_body=report.get("html_body"),
-            from_name="Beacon Sales Ops",
-        )
+        try:
+            result, token_data = await send_gmail_email(
+                token_data=token_data,
+                from_email=settings_row.report_sender_email,
+                to=recipient,
+                subject=report["subject"],
+                body=report["body"],
+                html_body=report.get("html_body"),
+                from_name="Beacon Sales Ops",
+            )
+        except Exception as exc:  # network/timeout/quota/auth — never crash the whole report
+            logger.exception("Gmail send raised for %s: %s", recipient, exc)
+            result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
         send_results.append({"to": recipient, **result})
         if result.get("status") != "sent":
-            settings_row.report_sender_last_error = str(result.get("error") or "Gmail send failed")[:500]
-            break
+            failures.append(f"{recipient}: {result.get('error') or 'Gmail send failed'}")
 
     if token_data != settings_row.report_sender_token_data:
         settings_row.report_sender_token_data = token_data
-    if all(result.get("status") == "sent" for result in send_results):
+    if failures:
+        # Cap the combined error so it fits the 500-char column. Multi-line
+        # so the UI/log can show each failure on its own line.
+        joined = " | ".join(failures)
+        settings_row.report_sender_last_error = joined[:500]
+    else:
         settings_row.report_sender_last_error = None
     session.add(settings_row)
     await session.commit()
 
     report["send_results"] = send_results
-    logger.info("US pod call report sent for %s to %d recipients", report["report_date"], len(send_results))
+    sent_ok = sum(1 for r in send_results if r.get("status") == "sent")
+    logger.info(
+        "US pod call report attempted for %s: %d/%d recipients delivered",
+        report["report_date"], sent_ok, len(send_results),
+    )
     return report

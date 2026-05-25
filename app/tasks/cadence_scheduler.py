@@ -45,7 +45,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.celery_app import celery_app
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
@@ -210,7 +210,7 @@ async def _process_contact(session: AsyncSession, contact: Contact, now: datetim
 async def _run() -> dict[str, int]:
     now = datetime.utcnow()
     stats = {"scanned": 0, "tasks_upserted": 0, "skipped": 0}
-    async with AsyncSessionLocal() as session:
+    async with task_session() as session:
         # Limit the scan to contacts with a launched sequence in the last 30
         # days — the cadence is typically done by then and we don't want to
         # create tasks for cold, abandoned sequences.

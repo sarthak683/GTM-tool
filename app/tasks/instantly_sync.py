@@ -15,7 +15,7 @@ from sqlmodel import select
 from app.celery_app import celery_app
 from app.clients.instantly import InstantlyClient, InstantlyError
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence
 
@@ -62,7 +62,7 @@ async def _async_sync_active_campaigns() -> dict:
     if not settings.INSTANTLY_API_KEY:
         return {"status": "skipped", "reason": "INSTANTLY_API_KEY not configured"}
 
-    async with AsyncSessionLocal() as session:
+    async with task_session() as session:
         # Find all sequences with active Instantly campaigns
         result = await session.execute(
             select(OutreachSequence).where(

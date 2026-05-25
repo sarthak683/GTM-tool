@@ -41,13 +41,13 @@ def recalculate_all_deal_health() -> dict:
 
 
 async def _async_recalculate() -> int:
-    from app.database import AsyncSessionLocal
+    from app.database import task_session
     from app.models.activity import Activity
     from app.models.deal import Deal
     from app.services.deal_health import compute_health
 
     updated = 0
-    async with AsyncSessionLocal() as session:
+    async with task_session() as session:
         result = await session.execute(
             select(Deal).where(Deal.stage.notin_(_CLOSED_STAGES))
         )
@@ -90,7 +90,7 @@ def reconcile_recent_deal_tasks() -> dict:
 
 
 async def _async_reconcile_recent_deal_tasks() -> int:
-    from app.database import AsyncSessionLocal
+    from app.database import task_session
     from app.models.deal import Deal
     from app.models.task import Task
     from app.services.tasks import backfill_open_task_assignments, refresh_system_tasks_for_entity
@@ -99,7 +99,7 @@ async def _async_reconcile_recent_deal_tasks() -> int:
     now = datetime.utcnow()
     lookback_start = now - timedelta(days=DEAL_TASK_RECONCILE_LOOKBACK_DAYS)
 
-    async with AsyncSessionLocal() as session:
+    async with task_session() as session:
         candidate_ids = (
             await session.execute(
                 select(Deal.id)

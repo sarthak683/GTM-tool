@@ -173,7 +173,21 @@
       "Bash(python3 -m py_compile app/services/sequence_lifecycle.py)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/v1/push/vapid-public-key)",
       "Bash(grep -v \"^contacts$\")",
-      "Bash(awk 'NR>=1605 && NR<=1740 && /@media/' /Users/sarthak/GTM-tool/frontend/src/index.css)"
+      "Bash(awk 'NR>=1605 && NR<=1740 && /@media/' /Users/sarthak/GTM-tool/frontend/src/index.css)",
+      "Bash(kubectl config *)",
+      "Bash(export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml)",
+      "Bash(kubectl cluster-info *)",
+      "Bash(kubectl -n gtm-prod get pods)",
+      "Bash(kubectl -n gtm-prod exec gtm-backend-deployment-69b9f7c869-5fqcq -- python -c ' *)",
+      "Bash(kubectl -n gtm-prod logs deploy/gtm-worker-deployment --since=26h)",
+      "Bash(kubectl -n gtm-prod logs deploy/gtm-beat-deployment --since=26h)",
+      "Bash(kubectl -n gtm-prod logs deploy/gtm-worker-deployment --since=85h)",
+      "Bash(kubectl -n gtm-prod exec gtm-postgresql-0 -- env)",
+      "Bash(kubectl -n gtm-prod exec gtm-backend-deployment-69b9f7c869-5fqcq -- sh -c 'echo \"$DATABASE_URL\" | sed \"s|//\\\\\\([^:]*\\\\\\):[^@]*@|//\\\\1:REDACTED@|\"')",
+      "Bash(sed -n '58,72p' /Users/sarthak/GTM-tool/app/tasks/instantly_sync.py)",
+      "Bash(sed -n '208,220p' /Users/sarthak/GTM-tool/app/tasks/cadence_scheduler.py)",
+      "Bash(sed -n '40,55p;90,105p' /Users/sarthak/GTM-tool/app/tasks/health.py)",
+      "Bash(python3 -m py_compile app/database.py app/tasks/sales_reports.py app/tasks/instantly_sync.py app/tasks/cadence_scheduler.py app/tasks/health.py app/services/us_pod_call_report.py)"
     ]
   },
   "outputStyle": "Explanatory"
