@@ -1626,18 +1626,17 @@ textarea:focus {
   }
 
   .prospect-call-drawer-panel {
-    /* Pin the panel to the viewport directly so it ignores the flex
-       shell's inline width:400 + justify-content:flex-end (which docked
-       the previous bottom-sheet to the right).
-
-       We deliberately *expand* the shorthand `inset: 0` into four explicit
-       sides — some Chromium-based mobile browsers and older WebKit
-       versions skipped the shorthand when combined with explicit
-       `height`/`width` on the same rule, leaving `bottom` unset and the
-       panel only as tall as its content. Listing top/right/bottom/left
-       individually avoids that path. The `100dvh` is a belt-and-braces
-       fallback in case the explicit `bottom: 0` is itself overridden by
-       a future ancestor transform. */
+    /* Pin to the viewport with a *fixed* height so that:
+         (a) the panel always fills the screen (top/right/bottom/left = 0
+             gives the full bounds even when ancestors are flex),
+         (b) overflow-y: auto turns the panel into its own scroll container,
+         (c) `position: sticky; bottom: 0` on the inner Save button has a
+             real scroll ancestor and pins to the visible viewport edge.
+       Previously we used `height: auto; min-height: 100dvh`, which let the
+       panel grow taller than the viewport on long forms — at which point
+       the *document* became the scroll container, the panel had no inner
+       scroll, and the sticky Save button silently degraded to natural flow
+       (i.e. dropped below the fold). */
     position: fixed !important;
     top: 0 !important;
     right: 0 !important;
@@ -1645,9 +1644,8 @@ textarea:focus {
     left: 0 !important;
     width: 100% !important;
     max-width: 100% !important;
-    height: auto !important;
-    min-height: 100dvh !important;
-    max-height: none !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
     border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -1723,14 +1721,28 @@ textarea:focus {
   }
 
   .prospect-call-drawer-form {
-    padding: 14px 16px calc(16px + env(safe-area-inset-bottom)) !important;
+    /* Bottom padding leaves room for the sticky Save button + the iOS
+       home-indicator safe area. Without this, the last content row
+       collides with the sticky footer when scrolled to the end. */
+    padding: 14px 16px calc(78px + env(safe-area-inset-bottom)) !important;
+    position: relative;
   }
 
   .prospect-call-drawer-save {
+    /* Pinned footer button. The `bottom` negative-offset trick (-1px)
+       hides a 1-pixel rounding seam between the button and the panel
+       edge on some Android browsers. The pseudo-element below provides
+       a fully opaque backdrop so scrolling content doesn't bleed
+       through the gradient halo. */
     position: sticky !important;
-    bottom: 0 !important;
-    min-height: 46px !important;
-    box-shadow: 0 -10px 22px rgba(255, 255, 255, 0.92) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+    margin-top: 12px !important;
+    min-height: 50px !important;
+    z-index: 3 !important;
+    box-shadow:
+      0 -16px 24px -8px rgba(255, 255, 255, 0.98),
+      0 -32px 32px -16px rgba(255, 255, 255, 0.85),
+      0 8px 20px rgba(15, 39, 68, 0.18) !important;
   }
 }
 
@@ -1739,15 +1751,92 @@ textarea:focus {
     overflow: auto;
   }
 
-  .crm-shell {
-    grid-template-columns: 1fr;
+  .crm-shell,
+  .crm-shell.sidebar-collapsed {
+    /* Force single column on mobile. The compound `.crm-shell.sidebar-collapsed`
+       selector is needed because the desktop variant carries the same class
+       weight as our mobile override — without the second listing, a collapsed
+       sidebar keeps a phantom 96px track in the grid and content gets squished
+       into ~50% of the viewport with an empty band on the right. This was the
+       cause of the broken-mobile layout reported on 2026-05-25. */
+    grid-template-columns: 1fr !important;
     height: auto;
     min-height: 100%;
     overflow: visible;
   }
 
   .crm-sidebar {
-    display: none;
+    display: none !important;
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
+     Global mobile-modal pattern.
+
+     Any element marked `data-mobile-modal` (we set this on the modal's
+     outer fixed overlay) becomes a bottom-sheet-friendly shell:
+       - centered horizontally
+       - vertically anchored from the top with viewport-bounded height
+       - inner `[data-mobile-modal-body]` becomes the scroll container
+       - inner `[data-mobile-modal-footer]` sticks to the bottom edge
+
+     Opt-in is intentional — we don't want every random `position: fixed`
+     div to inherit this layout. Components add the data attributes when
+     they want the mobile-friendly behavior.
+  ────────────────────────────────────────────────────────────────── */
+  [data-mobile-modal] {
+    align-items: center !important;
+    padding: 12px !important;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  [data-mobile-modal-panel] {
+    width: 100% !important;
+    max-width: 520px !important;
+    max-height: calc(100dvh - 24px) !important;
+    border-radius: 18px !important;
+  }
+
+  /* When the panel contains an explicit body, lock it into the
+     sticky-footer column layout. */
+  [data-mobile-modal-panel]:has([data-mobile-modal-body]) {
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  /* When the panel has no explicit body marker, the panel itself is
+     the scroll container. Saves the consumer from having to refactor
+     just to get mobile scrolling. */
+  [data-mobile-modal-panel]:not(:has([data-mobile-modal-body])) {
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+  }
+
+  [data-mobile-modal-body] {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    /* leave room for the sticky footer so the last form row is reachable */
+    padding-bottom: 88px !important;
+  }
+
+  [data-mobile-modal-footer] {
+    position: sticky !important;
+    bottom: 0 !important;
+    background: #ffffff !important;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+    border-top: 1px solid #eef2f7 !important;
+    box-shadow: 0 -12px 24px -12px rgba(15, 39, 68, 0.18) !important;
+    z-index: 2 !important;
+  }
+
+  /* Touch-target minimum (44×44px) for buttons inside any mobile modal.
+     Mirrors Apple HIG / WCAG 2.5.5 — the threshold below which mis-taps
+     start to dominate. Existing inline `min-height` declarations beat
+     this because we set min-height on the explicit footer buttons,
+     but this catches any odd ad-hoc button we didn't tag individually. */
+  [data-mobile-modal] button:not([data-allow-small]) {
+    min-height: 40px !important;
   }
 
   .crm-main {

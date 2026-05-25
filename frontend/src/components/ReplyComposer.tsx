@@ -75,6 +75,7 @@ export default function ReplyComposer({ open, ctx, onClose, onSent }: Props) {
 
   return (
     <div
+      data-mobile-modal
       style={{
         position: "fixed", inset: 0, zIndex: 9500,
         background: "rgba(15, 39, 68, 0.4)",
@@ -83,13 +84,14 @@ export default function ReplyComposer({ open, ctx, onClose, onSent }: Props) {
       onClick={() => !sending && onClose()}
     >
       <div
+        data-mobile-modal-panel
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 620, maxWidth: "94vw", background: "#fff", borderRadius: 16,
           boxShadow: "0 24px 60px rgba(15, 39, 68, 0.25)",
-          padding: "20px 22px",
         }}
       >
+        <div data-mobile-modal-body style={{ padding: "20px 22px 0" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#0f2744" }}>
             {ctx.threadId ? "Reply" : "New email"}
@@ -138,9 +140,10 @@ export default function ReplyComposer({ open, ctx, onClose, onSent }: Props) {
         {error && (
           <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 10 }}>{error}</div>
         )}
+        </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, color: "#7c86a6" }}>
+        <div data-mobile-modal-footer style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "14px 22px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "#7c86a6", flex: "1 1 200px", minWidth: 0 }}>
             Sends from your connected Gmail and lands in this contact's timeline immediately.
           </span>
           <div style={{ display: "flex", gap: 10 }}>
@@ -148,7 +151,7 @@ export default function ReplyComposer({ open, ctx, onClose, onSent }: Props) {
               onClick={onClose}
               disabled={sending}
               style={{
-                padding: "9px 16px", borderRadius: 10, border: "1px solid #c8d9e8",
+                padding: "11px 16px", minHeight: 44, borderRadius: 10, border: "1px solid #c8d9e8",
                 background: "#fff", color: "#0f2744", fontSize: 13, fontWeight: 600,
                 cursor: sending ? "not-allowed" : "pointer",
               }}
@@ -159,7 +162,7 @@ export default function ReplyComposer({ open, ctx, onClose, onSent }: Props) {
               onClick={() => void handleSend()}
               disabled={sending}
               style={{
-                padding: "9px 18px", borderRadius: 10, border: "none",
+                padding: "11px 18px", minHeight: 44, borderRadius: 10, border: "none",
                 background: "linear-gradient(135deg, #0f2744, #175089)",
                 color: "#fff", fontSize: 13, fontWeight: 700,
                 display: "inline-flex", alignItems: "center", gap: 8,

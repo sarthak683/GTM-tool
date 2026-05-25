@@ -169,7 +169,11 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('total:', d.get\\('total','?'\\)\\); print\\('domains seen:', sorted\\({i['email'].split\\('@'\\)[-1] for i in d.get\\('items',[]\\) if i.get\\('email'\\)}\\)\\)\")",
       "Bash(python3 -m py_compile app/api/v1/endpoints/push.py app/services/push.py app/models/push_subscription.py alembic/versions/069_push_subscriptions.py app/api/v1/router.py app/config.py)",
       "Bash(env)",
-      "Bash(docker system *)"
+      "Bash(docker system *)",
+      "Bash(python3 -m py_compile app/services/sequence_lifecycle.py)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/v1/push/vapid-public-key)",
+      "Bash(grep -v \"^contacts$\")",
+      "Bash(awk 'NR>=1605 && NR<=1740 && /@media/' /Users/sarthak/GTM-tool/frontend/src/index.css)"
     ]
   },
   "outputStyle": "Explanatory"

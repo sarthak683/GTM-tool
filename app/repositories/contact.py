@@ -99,6 +99,8 @@ class ContactRepository(BaseRepository[Contact]):
         sequence_status: Optional[str] = None,
         call_disposition: Optional[str] = None,
         email_state: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_dir: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
         owner_id: Optional[str] = None,
@@ -397,14 +399,38 @@ class ContactRepository(BaseRepository[Contact]):
 
         total = (await self.session.execute(count_stmt)).scalar_one()
 
+        # Explicit sort overrides the default search-rank + created_at ordering.
+        # When a sort is given we *bypass* the search ranking so paging is
+        # deterministic across pages — otherwise a rank-tied alphabetical
+        # request would drift between fetches.
+        normalized_sort = (sort_by or "").strip().lower() or None
+        normalized_dir = (sort_dir or "").strip().lower()
+        descending = normalized_dir == "desc"
+        sort_expr_map = {
+            "name": func.lower(func.coalesce(Contact.first_name, "") + " " + func.coalesce(Contact.last_name, "")),
+            "first_name": func.lower(func.coalesce(Contact.first_name, "")),
+            "last_name": func.lower(func.coalesce(Contact.last_name, "")),
+            "company": func.lower(func.coalesce(Company.name, "")),
+            "email": func.lower(func.coalesce(Contact.email, "")),
+            "title": func.lower(func.coalesce(Contact.title, "")),
+            "created_at": Contact.created_at,
+        }
+        sort_expr = sort_expr_map.get(normalized_sort) if normalized_sort else None
+
+        if sort_expr is not None:
+            primary = sort_expr.desc() if descending else sort_expr.asc()
+            order_clauses = (primary, Contact.id.desc())
+        else:
+            order_clauses = (
+                *((search_rank.asc(),) if search_rank is not None else ()),
+                Contact.created_at.desc(),
+                Contact.id.desc(),
+            )
+
         rows = (
             await self.session.execute(
                 base_stmt
-                .order_by(
-                    *((search_rank.asc(),) if search_rank is not None else ()),
-                    Contact.created_at.desc(),
-                    Contact.id.desc(),
-                )
+                .order_by(*order_clauses)
                 .offset(skip)
                 .limit(limit)
             )

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -77,6 +77,35 @@ const EMAIL_FILTER_OPTIONS = [
 function parseSearchParamList(value: string | null): string[] {
   if (!value) return [];
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+// Dispositions that imply a future touchpoint — for these we show a
+// datetime picker so the rep can schedule the follow-up while the call is
+// still fresh.
+const FOLLOWUP_DISPOSITIONS = new Set<string>([
+  "interested_follow_up_required",
+  "call_back_later_rescheduled",
+]);
+
+// Default follow-up datetime, expressed in the *user's local timezone*
+// formatted for <input type="datetime-local">. Anchored to "tomorrow at
+// 10:00 AM PST" — a fixed instant in time — so a PST rep sees "10:00 AM"
+// and an IST rep sees the equivalent local time (e.g. "11:30 PM"). Using
+// a fixed -8 offset (PST, not PDT) is deliberate: it's predictable, and
+// the input is user-editable so a stale DST offset only costs one click
+// to correct in March/November.
+function defaultFollowupLocalString(): string {
+  const now = new Date();
+  const targetUtc = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+    18, // 10:00 AM PST == 18:00 UTC
+    0,
+    0,
+  ));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${targetUtc.getFullYear()}-${pad(targetUtc.getMonth() + 1)}-${pad(targetUtc.getDate())}T${pad(targetUtc.getHours())}:${pad(targetUtc.getMinutes())}`;
 }
 
 const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: boolean }> = [
@@ -188,6 +217,28 @@ export default function Contacts() {
   // a substring; "exact" requires whole-cell equality (case-insensitive).
   // URL-persisted as `qm`; only sent when scope !== "all".
   const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (searchParams.get("qm") === "exact" ? "exact" : "contains"));
+  // Explicit sort. Server-side so it covers the full dataset, not just the
+  // visible page. URL-persisted as `sb`/`sd` so deep-linked alphabetised
+  // views survive navigation.
+  type ProspectSortKey = "recent" | "name_asc" | "name_desc" | "company_asc" | "company_desc";
+  const PROSPECT_SORT_OPTIONS: Array<{ value: ProspectSortKey; label: string }> = [
+    { value: "recent", label: "Newest first" },
+    { value: "name_asc", label: "Name A → Z" },
+    { value: "name_desc", label: "Name Z → A" },
+    { value: "company_asc", label: "Company A → Z" },
+    { value: "company_desc", label: "Company Z → A" },
+  ];
+  const [prospectSort, setProspectSort] = useState<ProspectSortKey>(() => {
+    const raw = searchParams.get("sb") ?? "recent";
+    return (PROSPECT_SORT_OPTIONS.some((o) => o.value === raw) ? raw : "recent") as ProspectSortKey;
+  });
+  const sortToApi = (s: ProspectSortKey): { sortBy?: "name" | "company"; sortDir?: "asc" | "desc" } => {
+    if (s === "name_asc") return { sortBy: "name", sortDir: "asc" };
+    if (s === "name_desc") return { sortBy: "name", sortDir: "desc" };
+    if (s === "company_asc") return { sortBy: "company", sortDir: "asc" };
+    if (s === "company_desc") return { sortBy: "company", sortDir: "desc" };
+    return {};
+  };
   const [showFilters, setShowFilters] = useState<boolean>(() => {
     // Auto-open the filter card on mount when the URL already carries active
     // filters — otherwise users would have to hunt for the toggle to discover
@@ -238,6 +289,10 @@ export default function Contacts() {
   const [callNotes, setCallNotes] = useState("");
   const [callStatus, setCallStatus] = useState("attempted");
   const [savingDisposition, setSavingDisposition] = useState(false);
+  // Follow-up scheduling — only visible when the disposition is a callback
+  // / follow-up. Default = "tomorrow 10:00 AM PST" expressed in the rep's
+  // local time, so the <input type="datetime-local"> shows a friendly value.
+  const [followupAt, setFollowupAt] = useState<string>("");
   const [precallBrief, setPrecallBrief] = useState<PreCallBrief | null>(null);
   const [precallLoading, setPrecallLoading] = useState(false);
   // Cadence lifecycle: compact summary per-row, full detail in the drawer.
@@ -416,6 +471,7 @@ export default function Contacts() {
       q: debouncedSearch || undefined,
       qField: searchScope && searchScope !== "all" ? searchScope : undefined,
       qMatch: searchScope && searchScope !== "all" ? searchMatch : undefined,
+      ...sortToApi(prospectSort),
       companyId: companyFilter || undefined,
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
@@ -598,6 +654,7 @@ export default function Contacts() {
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
       searchScope && searchScope !== "all" ? next.set("qf", searchScope) : next.delete("qf");
       searchScope && searchScope !== "all" && searchMatch === "exact" ? next.set("qm", "exact") : next.delete("qm");
+      prospectSort !== "recent" ? next.set("sb", prospectSort) : next.delete("sb");
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
@@ -609,7 +666,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -620,7 +677,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -633,7 +690,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch]);
+  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   useEffect(() => {
     if (contacts.length === 0 || selectedContactIds.size === 0) return;
@@ -892,6 +949,7 @@ export default function Contacts() {
     setCallStatus("attempted");
     setCallDisposition("");
     setCallNotes("");
+    setFollowupAt("");
     if (aircallEnabled && contact.phone) {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
@@ -919,6 +977,11 @@ export default function Contacts() {
     const matched = CALL_DISPOSITION_OPTIONS.find((option) => option.value === value);
     if (matched?.suggestedCallStatus) {
       setCallStatus(matched.suggestedCallStatus);
+    }
+    // Auto-seed a follow-up time when the disposition implies one — keeps
+    // the rep from having to type a full datetime in the common case.
+    if (FOLLOWUP_DISPOSITIONS.has(value) && !followupAt) {
+      setFollowupAt(defaultFollowupLocalString());
     }
   };
 
@@ -960,6 +1023,29 @@ export default function Contacts() {
         // know to check the timeline manually.
         toast.error("Call logged but timeline write failed — check activity feed.", "Partial save");
       }
+
+      // If the disposition implies a follow-up and a datetime is set,
+      // persist it as a Reminder. The datetime-local input value is naive
+      // (no TZ); we treat it as the rep's local time and convert to ISO via
+      // the Date constructor, which interprets unsuffixed strings as local.
+      if (FOLLOWUP_DISPOSITIONS.has(callDisposition) && followupAt) {
+        try {
+          const due = new Date(followupAt);
+          if (!Number.isNaN(due.getTime())) {
+            await remindersApi.create({
+              contact_id: callContact.id,
+              company_id: callContact.company_id || undefined,
+              note: `Follow-up call — ${formatCallDisposition(callDisposition)}${callNotes ? ` · ${callNotes}` : ""}`,
+              due_at: due.toISOString(),
+              assigned_to_id: user?.id,
+            });
+            toast.success(`Follow-up scheduled for ${due.toLocaleString()}.`, "Reminder set");
+          }
+        } catch {
+          toast.error("Disposition saved, but the follow-up reminder couldn't be created.", "Reminder failed");
+        }
+      }
+
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
       loadContacts();
@@ -1990,6 +2076,28 @@ export default function Contacts() {
 
                   {/* Divider */}
                   <div style={{ flex: 1 }} />
+
+                  {/* Sort — server-side so it covers the full dataset, not
+                      just the visible 50. Ties are broken by contact.id so
+                      pagination is stable. */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Sort</span>
+                    <select
+                      value={prospectSort}
+                      onChange={(e) => setProspectSort(e.target.value as ProspectSortKey)}
+                      style={{
+                        height: 34, padding: "0 28px 0 10px", borderRadius: 9,
+                        border: prospectSort === "recent" ? "1px solid #c8d9e8" : "1.5px solid #b8d0f0",
+                        background: prospectSort === "recent" ? "#fff" : "#eef5ff",
+                        fontSize: 13, color: "#0f2744", outline: "none",
+                        minWidth: 170, cursor: "pointer",
+                      }}
+                    >
+                      {PROSPECT_SORT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div style={{ position: "relative" }}>
                     <button
@@ -3333,6 +3441,31 @@ export default function Contacts() {
                   <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Required before closing</div>
                 )}
               </div>
+
+              {/* Follow-up scheduler — only when the chosen disposition
+                  implies a future touchpoint. Default = tomorrow 10am PST
+                  in the rep's local TZ; user can edit. Persists as a
+                  Reminder on Save. */}
+              {FOLLOWUP_DISPOSITIONS.has(callDisposition) && (
+                <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 12, background: "#fff8e8", border: "1px solid #f5ddaa" }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#8a5b00", display: "block", marginBottom: 6 }}>
+                    Follow-up date & time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={followupAt}
+                    onChange={(e) => setFollowupAt(e.target.value)}
+                    style={{
+                      width: "100%", border: "1px solid #e8c682", borderRadius: 10,
+                      padding: "9px 12px", fontSize: 13, color: "#0f2744",
+                      background: "#fff", outline: "none", fontFamily: "inherit",
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: "#6c5a2f", marginTop: 6, lineHeight: 1.5 }}>
+                    Default is tomorrow 10:00 AM PST (shown in your local time). A reminder will be created on this contact when you save.
+                  </div>
+                </div>
+              )}
 
               <div style={{ marginBottom: 16 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes</label>

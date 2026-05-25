@@ -62,6 +62,7 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
 
   return (
     <div
+      data-mobile-modal
       style={{
         position: "fixed", inset: 0, zIndex: 9000,
         background: "rgba(15, 39, 68, 0.4)",
@@ -70,26 +71,28 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
       onClick={onClose}
     >
       <div
+        data-mobile-modal-panel
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 440, background: "#fff", borderRadius: 16,
           boxShadow: "0 24px 60px rgba(15, 39, 68, 0.25)",
-          padding: "22px 24px", maxWidth: "92vw",
+          maxWidth: "92vw",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Linkedin size={18} color="#0a66c2" />
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>Log LinkedIn touch</h3>
+        <div data-mobile-modal-body style={{ padding: "22px 24px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Linkedin size={18} color="#0a66c2" />
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>Log LinkedIn touch</h3>
+            </div>
+            <button
+              onClick={onClose}
+              style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b" }}
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b" }}
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
-        </div>
 
         <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#2c4a63", marginBottom: 6 }}>
           What did you do?
@@ -126,12 +129,13 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
         {error && (
           <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 10 }}>{error}</div>
         )}
+        </div>
 
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <div data-mobile-modal-footer style={{ display: "flex", gap: 10, justifyContent: "flex-end", padding: "16px 24px" }}>
           <button
             onClick={onClose}
             style={{
-              padding: "9px 16px", borderRadius: 10, border: "1px solid #c8d9e8",
+              padding: "11px 16px", minHeight: 44, borderRadius: 10, border: "1px solid #c8d9e8",
               background: "#fff", color: "#0f2744", fontSize: 13, fontWeight: 600, cursor: "pointer",
             }}
           >
@@ -141,7 +145,7 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
             onClick={() => void handleSave()}
             disabled={saving}
             style={{
-              padding: "9px 16px", borderRadius: 10, border: "none",
+              padding: "11px 16px", minHeight: 44, borderRadius: 10, border: "none",
               background: "linear-gradient(135deg, #0a66c2, #0f2744)",
               color: "#fff", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer",
               display: "inline-flex", alignItems: "center", gap: 8, opacity: saving ? 0.7 : 1,

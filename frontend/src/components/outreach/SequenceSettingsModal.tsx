@@ -77,6 +77,7 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
 
   return (
     <div
+      data-mobile-modal
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
         background: "rgba(15, 39, 68, 0.45)",
@@ -84,15 +85,15 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
       }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div style={{
+      <div data-mobile-modal-panel style={{
         background: "#fff",
         borderRadius: 20,
         border: "1px solid #d5e3ef",
         boxShadow: "0 24px 48px rgba(14, 38, 66, 0.18)",
         width: 420,
         maxWidth: "calc(100vw - 32px)",
-        padding: "28px 28px 24px",
       }}>
+       <div data-mobile-modal-body style={{ padding: "28px 28px 0" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -224,33 +225,34 @@ export default function SequenceSettingsModal({ open, onClose, onSaved }: Props)
             {error && (
               <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 12 }}>{error}</div>
             )}
-
-            {/* Actions */}
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={onClose} style={{
-                padding: "9px 18px", borderRadius: 10, border: "1px solid #d5e3ef",
-                background: "#fff", color: "#546679", fontSize: 13, fontWeight: 500, cursor: "pointer",
-              }}>
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  padding: "9px 20px", borderRadius: 10, border: "none",
-                  background: saved ? "#16a34a" : "linear-gradient(135deg, #0f2744, #175089)",
-                  color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  opacity: saving ? 0.75 : 1,
-                  transition: "background 0.3s",
-                }}
-              >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? <Check size={14} /> : null}
-                {saved ? "Saved!" : saving ? "Saving…" : "Save Changes"}
-              </button>
-            </div>
           </>
         )}
+        </div>
+
+        {/* Sticky footer (only renders when not loading) */}
+        <div data-mobile-modal-footer style={{ display: "flex", gap: 10, justifyContent: "flex-end", padding: "16px 28px" }}>
+          <button onClick={onClose} style={{
+            padding: "11px 18px", minHeight: 44, borderRadius: 10, border: "1px solid #d5e3ef",
+            background: "#fff", color: "#546679", fontSize: 13, fontWeight: 500, cursor: "pointer",
+          }}>
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{
+              padding: "11px 20px", minHeight: 44, borderRadius: 10, border: "none",
+              background: saved ? "#16a34a" : "linear-gradient(135deg, #0f2744, #175089)",
+              color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6,
+              opacity: saving ? 0.75 : 1,
+              transition: "background 0.3s",
+            }}
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? <Check size={14} /> : null}
+            {saved ? "Saved!" : saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
       </div>
     </div>
   );

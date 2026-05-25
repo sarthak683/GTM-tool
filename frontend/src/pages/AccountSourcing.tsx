@@ -45,7 +45,7 @@ import {
   ts,
 } from "./accountSourcingShared";
 
-type AccountSortKey = "recent" | "icp_desc" | "priority_desc" | "enriched_first" | "unenriched_first" | "name_asc";
+type AccountSortKey = "recent" | "icp_desc" | "priority_desc" | "enriched_first" | "unenriched_first" | "name_asc" | "name_desc";
 
 const ACCOUNT_SORT_OPTIONS: { value: AccountSortKey; label: string }[] = [
   { value: "recent", label: "Newest first" },
@@ -53,7 +53,8 @@ const ACCOUNT_SORT_OPTIONS: { value: AccountSortKey; label: string }[] = [
   { value: "priority_desc", label: "Priority high to low" },
   { value: "enriched_first", label: "Enriched first" },
   { value: "unenriched_first", label: "Needs enrichment first" },
-  { value: "name_asc", label: "Company A-Z" },
+  { value: "name_asc", label: "Company A → Z" },
+  { value: "name_desc", label: "Company Z → A" },
 ];
 
 function parseAccountSort(value: string | null): AccountSortKey {
@@ -509,6 +510,7 @@ export default function AccountSourcing() {
     };
     withIndex.sort((a, b) => {
       if (sortBy === "name_asc") return a.company.name.localeCompare(b.company.name) || a.index - b.index;
+      if (sortBy === "name_desc") return b.company.name.localeCompare(a.company.name) || a.index - b.index;
       if (sortBy === "icp_desc") return (b.company.icp_score ?? 0) - (a.company.icp_score ?? 0) || a.index - b.index;
       if (sortBy === "priority_desc") {
         return getAccountPrioritySnapshot(b.company).priorityScore - getAccountPrioritySnapshot(a.company).priorityScore || a.index - b.index;
@@ -1260,10 +1262,12 @@ export default function AccountSourcing() {
           <>
             {showAdvancedFilter && (
               <div
+                data-mobile-modal
                 onClick={() => setShowAdvancedFilter(false)}
                 style={{ position: "fixed", inset: 0, background: "rgba(15,39,68,0.45)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center" }}
               >
                 <div
+                  data-mobile-modal-panel
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     background: "#fff", borderRadius: 16, width: "min(520px, 92vw)",

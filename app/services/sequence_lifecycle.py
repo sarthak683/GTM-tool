@@ -32,6 +32,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence, OutreachStep
+from app.models.user import User
+
+
+# Cache of user-id -> display label inside a single lifecycle build. Avoids
+# repeating the same SELECT for every step recorded by the same rep.
+async def _resolve_user_label(session: AsyncSession, user_id: Optional[UUID], cache: dict[UUID, str]) -> Optional[str]:
+    if not user_id:
+        return None
+    if user_id in cache:
+        return cache[user_id]
+    user = await session.get(User, user_id)
+    label = (user.name or user.email) if user else None
+    if label:
+        cache[user_id] = label
+    return label
+
+
+def _activity_payload(activity: Activity) -> dict[str, Any]:
+    """Build the rich per-activity payload the drawer needs. Pulls every
+    user-visible field on the row — body, email envelope, call meta,
+    recording, AI summary, source — so the UI can render without going
+    back to the server."""
+    meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
+    return {
+        "activity_id": str(activity.id) if activity.id else None,
+        "source": activity.source or None,
+        "medium": activity.medium or None,
+        "content": activity.content or None,           # full body / log text
+        "ai_summary": activity.ai_summary or None,
+        "email_subject": activity.email_subject or meta.get("subject") or None,
+        "email_from": activity.email_from or meta.get("from") or None,
+        "email_to": activity.email_to or meta.get("to") or None,
+        "email_cc": activity.email_cc or None,
+        "call_duration_seconds": activity.call_duration,
+        "recording_url": activity.recording_url or None,
+        "aircall_user_name": activity.aircall_user_name or None,
+        "created_by_id": str(activity.created_by_id) if activity.created_by_id else None,
+        "event_type": str(meta.get("event_type") or "").lower() or None,
+    }
 
 
 # Sequence-level status — answers "is anything happening here?"
@@ -211,6 +250,29 @@ def _reconcile_email_step(
         else:
             state = "upcoming"
 
+    # Collect rich payloads for the send event + every follow-up signal the
+    # drawer wants to render (open / click / reply / bounce). The state of
+    # the step already captures *which one* is the latest event; the
+    # drawer can fan out the full list for forensics.
+    send_activity = None
+    open_activity = None
+    click_activity = None
+    reply_activity = None
+    bounce_activity = None
+    for activity in email_activities:
+        meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
+        et = str(meta.get("event_type") or "").lower()
+        if fired_at and activity.created_at == fired_at and et == "email_sent" and send_activity is None:
+            send_activity = activity
+        elif opened_at and activity.created_at == opened_at and et == "email_opened" and open_activity is None:
+            open_activity = activity
+        elif clicked_at and activity.created_at == clicked_at and et == "email_link_clicked" and click_activity is None:
+            click_activity = activity
+        elif replied_at and activity.created_at == replied_at and et == "reply_received" and reply_activity is None:
+            reply_activity = activity
+        elif bounced_at and activity.created_at == bounced_at and et == "email_bounced" and bounce_activity is None:
+            bounce_activity = activity
+
     return {
         **step,
         "state": state,
@@ -221,6 +283,12 @@ def _reconcile_email_step(
         "replied_at": replied_at.isoformat() if replied_at else None,
         "bounced_at": bounced_at.isoformat() if bounced_at else None,
         "subject": subject,
+        # Rich event payloads (None if the event hasn't fired yet)
+        "send_event": _activity_payload(send_activity) if send_activity else None,
+        "open_event": _activity_payload(open_activity) if open_activity else None,
+        "click_event": _activity_payload(click_activity) if click_activity else None,
+        "reply_event": _activity_payload(reply_activity) if reply_activity else None,
+        "bounce_event": _activity_payload(bounce_activity) if bounce_activity else None,
     }
 
 
@@ -235,6 +303,7 @@ def _reconcile_call_step(
     outcome: Optional[str] = None
     note: Optional[str] = None
     state = "upcoming"
+    matched_activity: Optional[Activity] = None
 
     for activity in call_activities:
         if activity._claimed:  # type: ignore[attr-defined]
@@ -244,7 +313,10 @@ def _reconcile_call_step(
             continue
         fired_at = activity.created_at
         outcome = activity.call_outcome
+        # Keep a short `note` for backwards-compat with the rail UI, but
+        # the drawer reads `call_event.content` for the full body.
         note = (activity.ai_summary or activity.content or "")[:200] or None
+        matched_activity = activity
         activity._claimed = True  # type: ignore[attr-defined]
         state = "done"
         break
@@ -259,6 +331,7 @@ def _reconcile_call_step(
         "fired_at": fired_at.isoformat() if fired_at else None,
         "call_outcome": outcome,
         "note": note,
+        "call_event": _activity_payload(matched_activity) if matched_activity else None,
     }
 
 
@@ -272,6 +345,7 @@ def _reconcile_linkedin_step(
     fired_at: Optional[datetime] = None
     note: Optional[str] = None
     state = "upcoming"
+    matched_activity: Optional[Activity] = None
 
     for activity in linkedin_activities:
         if activity._claimed:  # type: ignore[attr-defined]
@@ -281,6 +355,7 @@ def _reconcile_linkedin_step(
             continue
         fired_at = activity.created_at
         note = (activity.content or "")[:200] or None
+        matched_activity = activity
         activity._claimed = True  # type: ignore[attr-defined]
         state = "done"
         break
@@ -294,6 +369,7 @@ def _reconcile_linkedin_step(
         "due_at": due.isoformat(),
         "fired_at": fired_at.isoformat() if fired_at else None,
         "note": note,
+        "linkedin_event": _activity_payload(matched_activity) if matched_activity else None,
     }
 
 
@@ -407,6 +483,25 @@ async def build_sequence_lifecycle(
         if row.get("fired_at"):
             any_fired = True
         reconciled.append(row)
+
+    # Post-pass: resolve created_by_id → display name on every embedded
+    # event payload so the drawer can render "by Sarthak" without an extra
+    # round trip. Single cache so a rep who logged 5 steps only triggers
+    # one User lookup.
+    user_cache: dict[UUID, str] = {}
+    event_keys = ("send_event", "open_event", "click_event", "reply_event", "bounce_event", "call_event", "linkedin_event")
+    for row in reconciled:
+        for k in event_keys:
+            ev = row.get(k)
+            if not ev:
+                continue
+            uid_raw = ev.get("created_by_id")
+            if uid_raw:
+                try:
+                    label = await _resolve_user_label(session, UUID(uid_raw), user_cache)
+                    ev["created_by_name"] = label
+                except (ValueError, TypeError):
+                    pass
 
     # If the prospect replied or booked, mark remaining email steps skipped.
     contact_status = (contact.sequence_status or "").lower()

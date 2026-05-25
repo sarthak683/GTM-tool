@@ -1,5 +1,5 @@
 export { companiesApi, contactsApi, dealsApi, activitiesApi, meetingsApi, battlecardsApi, crmImportsApi, timelineApi } from "./api/crm";
-export type { LifecycleStepState, LifecycleStatus, LifecycleStep, LifecycleIssue, SequenceLifecycle, LifecycleSummary, PreCallBrief, TimelineEvent } from "./api/crm";
+export type { LifecycleStepState, LifecycleStatus, LifecycleStep, LifecycleIssue, LifecycleEvent, SequenceLifecycle, LifecycleSummary, PreCallBrief, TimelineEvent } from "./api/crm";
 export { outreachApi, enrichmentApi, prospectingApi, signalsApi, intelligenceApi, sendApi, customDemoApi, accountSourcingApi } from "./api/prospecting";
 export type { ProspectingBatch, DemoStatus, CustomDemo, SceneIn, DemoBriefIn } from "./api/prospecting";
 export { tasksApi, analyticsApi, performanceApi, settingsApi, authApi, assignmentsApi, executionTrackerApi, globalSearchApi, resourcesApi, angelMappingApi, workspaceApi } from "./api/workspace";

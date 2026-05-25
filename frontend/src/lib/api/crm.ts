@@ -70,6 +70,8 @@ export const contactsApi = {
     scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
     timezone?: string[];
+    sortBy?: "name" | "first_name" | "last_name" | "company" | "email" | "title" | "created_at";
+    sortDir?: "asc" | "desc";
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -92,6 +94,8 @@ export const contactsApi = {
     if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
+    if (params.sortBy) search.set("sort_by", params.sortBy);
+    if (params.sortDir) search.set("sort_dir", params.sortDir);
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
@@ -475,6 +479,24 @@ export type LifecycleStatus =
   | "stalled"
   | "completed";
 
+export interface LifecycleEvent {
+  activity_id?: string | null;
+  source?: string | null;
+  medium?: string | null;
+  content?: string | null;
+  ai_summary?: string | null;
+  email_subject?: string | null;
+  email_from?: string | null;
+  email_to?: string | null;
+  email_cc?: string | null;
+  call_duration_seconds?: number | null;
+  recording_url?: string | null;
+  aircall_user_name?: string | null;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
+  event_type?: string | null;
+}
+
 export interface LifecycleStep {
   index: number;
   channel: "email" | "call" | "linkedin";
@@ -491,6 +513,14 @@ export interface LifecycleStep {
   call_outcome?: string | null;
   note?: string | null;
   skip_reason?: string | null;
+  // Rich per-event payloads (populated when the event has fired).
+  send_event?: LifecycleEvent | null;
+  open_event?: LifecycleEvent | null;
+  click_event?: LifecycleEvent | null;
+  reply_event?: LifecycleEvent | null;
+  bounce_event?: LifecycleEvent | null;
+  call_event?: LifecycleEvent | null;
+  linkedin_event?: LifecycleEvent | null;
 }
 
 export interface LifecycleIssue {
