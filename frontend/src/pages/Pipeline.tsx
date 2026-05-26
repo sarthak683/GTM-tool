@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
@@ -244,6 +245,8 @@ function EngagementBadge({
   reason?: string;
 }) {
   const [showDetail, setShowDetail] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const badgeRef = useRef<HTMLDivElement | null>(null);
   const tone = engagementTone(timestamp);
   const summary = engagementSummary(signal, side);
   const Icon = summary.Icon;
@@ -252,13 +255,25 @@ function EngagementBadge({
   const secondary = signal?.label && signal.label !== compactReason ? signal.label : summary.detail;
   const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
   const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
-  const tooltipText = [compactReason, secondary, timestamp ? `Last touch ${relativeTime(timestamp)}` : "", ENGAGEMENT_SIGNAL_LEGEND].filter(Boolean).join("\n");
+
+  const POPOVER_WIDTH = 220;
+  const handleEnter = () => {
+    const rect = badgeRef.current?.getBoundingClientRect();
+    if (rect) {
+      const left = Math.min(
+        Math.max(8, rect.left),
+        window.innerWidth - POPOVER_WIDTH - 8,
+      );
+      setCoords({ top: rect.top - 8, left });
+    }
+    setShowDetail(true);
+  };
 
   return (
     <div
-      onMouseEnter={() => setShowDetail(true)}
+      ref={badgeRef}
+      onMouseEnter={handleEnter}
       onMouseLeave={() => setShowDetail(false)}
-      title={tooltipText}
       style={{
         minWidth: 0,
         flex: 1,
@@ -299,15 +314,17 @@ function EngagementBadge({
       <span style={{ fontSize: 9, color: "#7f8ea3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
         {line}
       </span>
-      {showDetail && (
+      {showDetail && coords && createPortal(
         <div
           onClick={(event) => event.stopPropagation()}
           style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left: 0,
-            zIndex: 30,
-            width: 220,
+            position: "fixed",
+            top: coords.top,
+            left: coords.left,
+            transform: "translateY(-100%)",
+            zIndex: 9999,
+            width: POPOVER_WIDTH,
+            pointerEvents: "auto",
             borderRadius: 12,
             border: "1px solid #dbe6f2",
             background: "#ffffff",
@@ -348,7 +365,8 @@ function EngagementBadge({
               Last touch {relativeTime(timestamp)}
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
