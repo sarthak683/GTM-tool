@@ -115,6 +115,16 @@ def normalize_sales_report_settings(value: dict | None) -> dict[str, Any]:
         "nonprod_recipients": _emails(merged.get("nonprod_recipients"), ["sarthak@beacon.li"]),
         "last_scheduled_send_key": merged.get("last_scheduled_send_key"),
         "last_scheduled_send_at": merged.get("last_scheduled_send_at"),
+        # Per-type send-key tracking so daily and weekly can dedupe
+        # independently when both fire on the weekly day. Falls back to
+        # the legacy single key when only one of the two has ever run.
+        "last_scheduled_daily_send_key": merged.get("last_scheduled_daily_send_key"),
+        "last_scheduled_weekly_send_key": merged.get("last_scheduled_weekly_send_key"),
+        # When true (default), the weekly day ALSO sends the daily report for
+        # the prior weekday — so reps get both the Thursday recap and the
+        # Mon-Fri summary on Friday morning. Set false to keep the old
+        # one-email-per-day behavior.
+        "weekly_day_also_sends_daily": bool(merged.get("weekly_day_also_sends_daily", True)),
     }
 
 
@@ -568,19 +578,29 @@ async def _build_us_pod_call_report_for_period(
     for rep in reps:
         metrics = target_metrics.get(rep.user_id) if rep.user_id else None
         day_counts = daily_counts.get(rep.user_id, {}) if rep.user_id else {}
-        total_7d = sum(
+        # Average over *working* days only. Any contiguous 7-day window always
+        # contains exactly 5 weekdays (Mon-Fri) and 2 weekend days; the team
+        # doesn't call on Sat/Sun, so including those two zeros drags every
+        # rep's avg down ~30% and breaks the "below half average" flag. We
+        # sum only the weekday slots and divide by their count — that count
+        # is 5 for the standard 7-day lookback and stays correct if anyone
+        # changes LOOKBACK_DAYS later.
+        working_day_calls = [
             day_counts.get(start_date + timedelta(days=offset), 0)
             for offset in range(LOOKBACK_DAYS)
-        )
-        avg_7d = round(total_7d / LOOKBACK_DAYS, 1)
+            if (start_date + timedelta(days=offset)).weekday() < 5
+        ]
+        working_day_count = len(working_day_calls) or 1
+        total_5d = sum(working_day_calls)
+        avg_5d = round(total_5d / working_day_count, 1)
         calls = int(metrics["calls"]) if metrics else 0
         flags: list[str] = []
         if not rep.matched:
             flags.append("user not found")
         if calls == 0:
             flags.append("0 calls logged")
-        elif avg_7d > 0 and calls < avg_7d * 0.5:
-            flags.append("below 50% of 7-day average")
+        elif avg_5d > 0 and calls < avg_5d * 0.5:
+            flags.append("below 50% of working-day average")
         if metrics and metrics["unknown_outcome"] > max(2, calls // 2):
             flags.append("many calls missing outcome")
 
@@ -600,7 +620,9 @@ async def _build_us_pod_call_report_for_period(
                 "duration_minutes": round((metrics["duration_seconds"] if metrics else 0) / 60, 1),
                 "unique_contacts": len(metrics["unique_contacts"]) if metrics else 0,
                 "unique_deals": len(metrics["unique_deals"]) if metrics else 0,
-                "avg_calls_last_7_days": avg_7d,
+                # Field name preserved for downstream/email-template compat,
+                # but the value is now the working-day (Mon-Fri) average.
+                "avg_calls_last_7_days": avg_5d,
                 "flags": flags,
             }
         )
@@ -641,7 +663,7 @@ def _render_report_text(report: dict[str, Any]) -> str:
         _report_title(report),
         f"Reporting timezone: {report['timezone']}",
         "",
-        "Rep                 Calls  Connected  VM  No answer  Callback  Failed  Unknown  7d avg  Talk min  Contacts  Deals  Flags",
+        "Rep                 Calls  Connected  VM  No answer  Callback  Failed  Unknown  5d avg  Talk min  Contacts  Deals  Flags",
         "------------------  -----  ---------  --  ---------  --------  ------  -------  ------  --------  --------  -----  -----",
     ]
     for row in report["rows"]:
@@ -685,7 +707,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
     """
     headers = [
         "Rep", "Calls", "Connected", "VM", "No answer", "Callback",
-        "Failed", "Unknown", "7d avg", "Talk min", "Contacts", "Deals", "Flags",
+        "Failed", "Unknown", "5d avg", "Talk min", "Contacts", "Deals", "Flags",
     ]
     th_style = (
         "padding:6px 10px;border-bottom:1px solid #d4dbe4;background:#f4f7fb;"

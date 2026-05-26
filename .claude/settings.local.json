@@ -187,7 +187,8 @@
       "Bash(sed -n '58,72p' /Users/sarthak/GTM-tool/app/tasks/instantly_sync.py)",
       "Bash(sed -n '208,220p' /Users/sarthak/GTM-tool/app/tasks/cadence_scheduler.py)",
       "Bash(sed -n '40,55p;90,105p' /Users/sarthak/GTM-tool/app/tasks/health.py)",
-      "Bash(python3 -m py_compile app/database.py app/tasks/sales_reports.py app/tasks/instantly_sync.py app/tasks/cadence_scheduler.py app/tasks/health.py app/services/us_pod_call_report.py)"
+      "Bash(python3 -m py_compile app/database.py app/tasks/sales_reports.py app/tasks/instantly_sync.py app/tasks/cadence_scheduler.py app/tasks/health.py app/services/us_pod_call_report.py)",
+      "Bash(python3 -m py_compile app/tasks/sales_reports.py app/services/us_pod_call_report.py)"
     ]
   },
   "outputStyle": "Explanatory"

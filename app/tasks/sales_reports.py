@@ -104,8 +104,35 @@ async def _async_send_us_pod_call_report(
                     "due_at": due_at.isoformat(),
                 }
 
-            send_key = f"{local_now.date().isoformat()}:{resolved_report_type}:{report_settings['send_timezone']}:{report_settings['send_hour']:02d}:{report_settings['send_minute']:02d}"
-            if report_settings.get("last_scheduled_send_key") == send_key:
+            # On the weekly day we may need to fire BOTH the daily (for the
+            # prior weekday) AND the weekly (Mon-Fri summary). Each has its
+            # own send_key so they dedupe independently — re-running the
+            # task within the same morning won't re-deliver a type that
+            # already sent.
+            types_to_send: list[str] = [resolved_report_type]
+            if (
+                resolved_report_type == "weekly"
+                and report_settings.get("weekly_day_also_sends_daily", True)
+            ):
+                # Daily first so reps read Thursday's recap before the week
+                # summary; matches inbox-order expectations.
+                types_to_send = ["daily", "weekly"]
+
+            def _key_for(rtype: str) -> str:
+                return f"{local_now.date().isoformat()}:{rtype}:{report_settings['send_timezone']}:{report_settings['send_hour']:02d}:{report_settings['send_minute']:02d}"
+
+            def _stored_key_field(rtype: str) -> str:
+                # Per-type key field; falls back to the legacy single-key
+                # field for installs that haven't migrated yet.
+                return f"last_scheduled_{rtype}_send_key"
+
+            # Single-type same-key dedup (legacy path preserved). Multi-type
+            # case is handled inside the loop below.
+            send_key = _key_for(resolved_report_type)
+            if (
+                len(types_to_send) == 1
+                and report_settings.get(_stored_key_field(resolved_report_type)) == send_key
+            ):
                 return {"status": "skipped", "reason": "already_sent", "send_key": send_key}
 
             if report_settings["skip_weekends"] and is_weekend_report_day(report_settings=report_settings):
@@ -136,52 +163,81 @@ async def _async_send_us_pod_call_report(
                     "report_type": resolved_report_type,
                 }
 
-        report = await send_us_pod_call_report_email(
-            session,
-            parsed_date,
-            report_type=resolved_report_type,
-            recipients=recipients,
-        )
+        # ── Send pass(es) ────────────────────────────────────────────────
+        # `types_to_send` is either ["daily"], ["weekly"], or — on the
+        # weekly day with weekly_day_also_sends_daily=True — ["daily", "weekly"].
+        # Each pass tracks its own send_key so partial-failures only block
+        # the failing type, and a same-day re-run only delivers what hasn't
+        # already gone out.
+        per_type_results: list[dict] = []
+        for rtype in types_to_send if scheduled_call else [resolved_report_type]:
+            tkey = _key_for(rtype) if scheduled_call else None
+            if scheduled_call and report_settings.get(_stored_key_field(rtype)) == tkey:
+                per_type_results.append({
+                    "report_type": rtype,
+                    "status": "skipped",
+                    "reason": "already_sent",
+                    "send_key": tkey,
+                })
+                continue
 
-        # Did every recipient actually send? `send_us_pod_call_report_email`
-        # now attempts all recipients (no break-on-first-failure) and returns
-        # one result per recipient. We treat any non-"sent" as a partial
-        # failure and *deliberately do not commit* `last_scheduled_send_key`
-        # — that way Beat's next 15-minute tick will retry the day instead of
-        # silently skipping it as "already_sent". Yes, recipients who got the
-        # email once may get it again, but a duplicate is far less harmful
-        # than a missing report (which is what reps complained about).
-        send_results = report.get("send_results", []) or []
-        all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
-        failed_recipients = [
-            r.get("to") for r in send_results if r.get("status") != "sent" and r.get("to")
-        ]
-
-        if scheduled_call and all_sent:
-            current = normalize_sales_report_settings(report_settings)
-            current["last_scheduled_send_key"] = send_key
-            current["last_scheduled_send_at"] = datetime.now(timezone.utc).isoformat()
-            row = await session.get(WorkspaceSettings, 1)
-            if row is not None:
-                sync_settings = dict(row.sync_schedule_settings or {})
-                sync_settings["sales_report"] = current
-                row.sync_schedule_settings = sync_settings
-                session.add(row)
-                await session.commit()
-        elif scheduled_call and not all_sent:
-            logger.warning(
-                "US pod call report partial-failure: %d/%d recipients failed (%s). "
-                "Not committing send_key — Beat will retry next tick.",
-                len(failed_recipients), len(send_results), failed_recipients,
+            report = await send_us_pod_call_report_email(
+                session,
+                parsed_date,
+                report_type=rtype,
+                recipients=recipients,
             )
+            send_results = report.get("send_results", []) or []
+            all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
+            failed_recipients = [
+                r.get("to") for r in send_results if r.get("status") != "sent" and r.get("to")
+            ]
 
+            if scheduled_call and all_sent:
+                current = normalize_sales_report_settings(report_settings)
+                current[_stored_key_field(rtype)] = tkey
+                # Maintain the legacy single-key field too — keeps any
+                # external consumer that reads `last_scheduled_send_key`
+                # working without a migration.
+                current["last_scheduled_send_key"] = tkey
+                current["last_scheduled_send_at"] = datetime.now(timezone.utc).isoformat()
+                row = await session.get(WorkspaceSettings, 1)
+                if row is not None:
+                    sync_settings = dict(row.sync_schedule_settings or {})
+                    sync_settings["sales_report"] = current
+                    row.sync_schedule_settings = sync_settings
+                    session.add(row)
+                    await session.commit()
+                # Re-load into the local copy so the NEXT pass in this loop
+                # sees the just-committed key (avoids re-sending if the
+                # weekly's already-sent on a retry).
+                report_settings = current
+            elif scheduled_call and not all_sent:
+                logger.warning(
+                    "US pod call report (%s) partial-failure: %d/%d recipients failed (%s). "
+                    "Not committing send_key — Beat will retry next tick.",
+                    rtype, len(failed_recipients), len(send_results), failed_recipients,
+                )
+
+            per_type_results.append({
+                "report_type": rtype,
+                "status": "completed" if all_sent else ("partial_failure" if send_results else "no_recipients"),
+                "report_date": report.get("report_date"),
+                "period_start": report.get("period_start"),
+                "period_end": report.get("period_end"),
+                "recipients": report.get("recipients"),
+                "send_results": send_results,
+                "failed_recipients": failed_recipients,
+            })
+
+        # Roll up to a single top-level status the caller / Celery result
+        # backend can inspect. If anything fully completed, we say "completed";
+        # if every pass failed we surface that explicitly.
+        any_completed = any(r.get("status") == "completed" for r in per_type_results)
         return {
-            "status": "completed" if all_sent else ("partial_failure" if send_results else "no_recipients"),
-            "report_date": report["report_date"],
-            "report_type": report["report_type"],
-            "period_start": report["period_start"],
-            "period_end": report["period_end"],
-            "recipients": report["recipients"],
-            "send_results": send_results,
-            "failed_recipients": failed_recipients,
+            "status": "completed" if any_completed else (
+                "partial_failure" if any(r.get("status") == "partial_failure" for r in per_type_results)
+                else "skipped"
+            ),
+            "results": per_type_results,
         }
