@@ -1,3 +1,4 @@
+import "./sales-analytics-refresh.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useParams } from "react-router-dom";
 import {
@@ -1957,7 +1958,7 @@ export default function SalesAnalytics() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "6px 2px 18px" }}>
+    <div className="sales-analytics-page" style={{ display: "flex", flexDirection: "column", gap: 14, padding: "6px 2px 18px" }}>
       <style>{`
         @media (max-width: 768px) {
           .sales-analytics-hero {

@@ -25,6 +25,7 @@ class ZippyConversation(SQLModel, table=True):
     # in the sidebar next to the title.
     summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_archived: bool = Field(default=False)
+    is_pinned: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 

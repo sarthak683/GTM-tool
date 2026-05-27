@@ -218,6 +218,7 @@ export interface ZippyConversationSummary {
   title: string;
   summary: string | null;
   message_count: number;
+  is_pinned?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -227,6 +228,7 @@ export interface ZippyConversationDetail {
   title: string;
   summary: string | null;
   messages: ZippyMessage[];
+  is_pinned?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -262,6 +264,16 @@ export const zippyApi = {
         body: JSON.stringify({ is_archived: archived }),
       },
     ),
+  update: (id: string, payload: { title?: string; is_pinned?: boolean }) =>
+    request<ZippyConversationSummary>(
+      `/api/v1/zippy/conversations/${id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    ),
+  delete: (id: string) =>
+    request<void>(`/api/v1/zippy/conversations/${id}`, { method: "DELETE" }),
 };
 
 export interface IndexedFile {

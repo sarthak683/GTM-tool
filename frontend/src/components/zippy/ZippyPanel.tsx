@@ -31,6 +31,7 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   } = useZippy();
   const [conversations, setConversations] = useState<ZippyConversationSummary[]>([]);
   const [messages, setMessages] = useState<ZippyMessage[]>([]);
+  const [activeTitle, setActiveTitle] = useState<string>("");
   const [sending, setSending] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +41,16 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   const [search, setSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [historyPage, setHistoryPage] = useState(0);
-  const HISTORY_PAGE_SIZE = 12;
+  const HISTORY_PAGE_SIZE = 20;
+
+  // Inline-rename state — applies to either the active title (in header) or
+  // a row in the sessions drawer. `renamingId` tells us which row is being
+  // edited; null means nothing is being renamed.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  // Confirm-before-delete: holds the id of the session pending deletion.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Knowledge footer — "Grounded in N files · Last synced Xm ago"
   const [userStatus, setUserStatus] = useState<IndexStatus | null>(null);
@@ -103,10 +113,11 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     }
   }
 
-  // Load the selected thread's messages.
+  // Load the selected thread's messages + title.
   useEffect(() => {
     if (!activeId) {
       setMessages([]);
+      setActiveTitle("");
       return;
     }
     let cancelled = false;
@@ -114,7 +125,10 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     zippyApi
       .getConversation(activeId)
       .then((data) => {
-        if (!cancelled) setMessages(data.messages);
+        if (!cancelled) {
+          setMessages(data.messages);
+          setActiveTitle(data.title || "");
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(formatError(e));
@@ -252,6 +266,74 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     setSessionsOpen(false);
   }
 
+  // Begin inline rename for a session (or the active title in the header).
+  function beginRename(id: string, currentTitle: string) {
+    setRenamingId(id);
+    setRenameDraft(currentTitle);
+  }
+
+  async function commitRename() {
+    const id = renamingId;
+    if (!id) return;
+    const next = renameDraft.trim();
+    setRenamingId(null);
+    if (!next) return;
+    // Optimistic: update local list + active title immediately.
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, title: next } : c)),
+    );
+    if (id === activeId) setActiveTitle(next);
+    try {
+      await zippyApi.update(id, { title: next });
+    } catch (e) {
+      setError(formatError(e));
+      // Re-fetch to recover.
+      void refreshConversations();
+    }
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameDraft("");
+  }
+
+  async function togglePin(id: string, current: boolean) {
+    // Optimistic toggle.
+    setConversations((prev) =>
+      prev
+        .map((c) => (c.id === id ? { ...c, is_pinned: !current } : c))
+        .sort((a, b) => {
+          const ap = a.is_pinned ? 1 : 0;
+          const bp = b.is_pinned ? 1 : 0;
+          if (ap !== bp) return bp - ap;
+          return (b.updated_at || "").localeCompare(a.updated_at || "");
+        }),
+    );
+    try {
+      await zippyApi.update(id, { is_pinned: !current });
+    } catch (e) {
+      setError(formatError(e));
+      void refreshConversations();
+    }
+  }
+
+  async function commitDelete(id: string) {
+    setConfirmDeleteId(null);
+    // Optimistic removal.
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (id === activeId) {
+      setActiveId(null);
+      setMessages([]);
+      setActiveTitle("");
+    }
+    try {
+      await zippyApi.delete(id);
+    } catch (e) {
+      setError(formatError(e));
+      void refreshConversations();
+    }
+  }
+
   return (
     <>
       {/* Scrim */}
@@ -290,6 +372,33 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
             >
               Zippy
             </div>
+            {activeId && activeTitle && (
+              renamingId === activeId && !sessionsOpen ? (
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") cancelRename();
+                  }}
+                  className="mt-0.5 w-full rounded border border-violet-300 bg-white text-stone-700 outline-none focus:border-violet-500"
+                  style={{ fontSize: 11.5, padding: "2px 5px", lineHeight: 1.3 }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!sessionsOpen) beginRename(activeId, activeTitle);
+                  }}
+                  title={sessionsOpen ? activeTitle : "Click to rename"}
+                  className="mt-0.5 block max-w-full truncate rounded text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  style={{ fontSize: 11.5, padding: "1px 4px", margin: "2px -4px 0", lineHeight: 1.3, textAlign: "left" }}
+                >
+                  {activeTitle}
+                </button>
+              )
+            )}
           </div>
           <div className="flex items-center gap-1">
             <HeaderIconButton label="New chat" onClick={startNewChat}>
@@ -382,50 +491,197 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
               {pagedConversations.length === 0 ? (
                 <div className="py-6 text-center text-stone-400" style={{ fontSize: 13 }}>
                   {conversations.length === 0
-                    ? "No conversations yet."
+                    ? "No conversations yet. Click the + icon to start a new chat."
                     : "No sessions match your search."}
                 </div>
               ) : (
-                pagedConversations.map((c) => {
-                  const isActive = activeId === c.id;
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => pickConversation(c.id)}
-                      className={`flex w-full items-center rounded-md text-left transition ${
-                        isActive
-                          ? "bg-violet-100 text-violet-900"
-                          : "text-stone-700 hover:bg-stone-50"
-                      }`}
-                      style={{ padding: "9px 10px", gap: 10 }}
+                groupConversationsByDate(pagedConversations).map((group) => (
+                  <div key={group.label} style={{ marginBottom: 8 }}>
+                    <div
+                      className="text-stone-400"
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        letterSpacing: 0.6,
+                        textTransform: "uppercase",
+                        padding: "8px 10px 4px",
+                      }}
                     >
-                      <span
-                        className={`flex-shrink-0 rounded-full ${
-                          isActive ? "bg-violet-600" : "bg-stone-300"
-                        }`}
-                        style={{ width: 6, height: 6 }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium" style={{ fontSize: 13 }}>
-                          {c.title}
-                        </div>
+                      {group.label}
+                    </div>
+                    {group.items.map((c) => {
+                      const isActive = activeId === c.id;
+                      const isRenamingThis = renamingId === c.id;
+                      const isDeleting = confirmDeleteId === c.id;
+                      return (
                         <div
-                          className="truncate text-stone-400"
-                          style={{ fontSize: 11, marginTop: 2 }}
+                          key={c.id}
+                          className={`group relative flex w-full items-center rounded-md text-left transition ${
+                            isActive ? "bg-violet-100" : "hover:bg-stone-50"
+                          }`}
+                          style={{ padding: "8px 8px 8px 10px", gap: 8 }}
                         >
-                          {formatSessionMeta(c)}
+                          {/* Pin / active indicator */}
+                          {c.is_pinned ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              className="flex-shrink-0 text-amber-500"
+                              style={{ width: 11, height: 11 }}
+                              aria-label="Pinned"
+                            >
+                              <path d="M16 4l4 4-5 5v6l-3-3-5 5-1.4-1.4 5-5-3-3 6-5z" />
+                            </svg>
+                          ) : (
+                            <span
+                              className={`flex-shrink-0 rounded-full ${
+                                isActive ? "bg-violet-600" : "bg-stone-300"
+                              }`}
+                              style={{ width: 6, height: 6, marginLeft: 2 }}
+                            />
+                          )}
+
+                          {/* Title — either inline-rename input or button */}
+                          {isRenamingThis ? (
+                            <div className="flex min-w-0 flex-1 items-center gap-1">
+                              <input
+                                autoFocus
+                                value={renameDraft}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") commitRename();
+                                  if (e.key === "Escape") cancelRename();
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="min-w-0 flex-1 rounded border border-violet-300 bg-white outline-none focus:border-violet-500"
+                                style={{ fontSize: 13, padding: "4px 6px" }}
+                              />
+                              <button
+                                type="button"
+                                aria-label="Save title"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void commitRename();
+                                }}
+                                className="rounded bg-violet-600 text-white hover:bg-violet-700"
+                                style={{ padding: "4px 7px", fontSize: 11, fontWeight: 700 }}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Cancel rename"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelRename();
+                                }}
+                                className="rounded border border-stone-300 text-stone-600 hover:bg-stone-100"
+                                style={{ padding: "4px 7px", fontSize: 11, fontWeight: 700 }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => pickConversation(c.id)}
+                              className="min-w-0 flex-1 text-left"
+                            >
+                              <div
+                                className={`truncate font-medium ${
+                                  isActive ? "text-violet-900" : "text-stone-700"
+                                }`}
+                                style={{ fontSize: 13 }}
+                              >
+                                {c.title}
+                              </div>
+                              <div
+                                className="truncate text-stone-400"
+                                style={{ fontSize: 11, marginTop: 2 }}
+                              >
+                                {formatSessionMeta(c)}
+                              </div>
+                            </button>
+                          )}
+
+                          {/* Right side — relative time fades out on hover so
+                              action buttons can appear in its place. */}
+                          {!isRenamingThis && !isDeleting && (
+                            <>
+                              <span
+                                className={`flex-shrink-0 text-stone-400 ${
+                                  isActive ? "opacity-0" : "group-hover:opacity-0"
+                                }`}
+                                style={{ fontSize: 11, transition: "opacity 0.12s ease" }}
+                              >
+                                {formatRelative(c.updated_at)}
+                              </span>
+                              <div
+                                className={`absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition ${
+                                  isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                }`}
+                              >
+                                <SessionActionButton
+                                  label={c.is_pinned ? "Unpin" : "Pin"}
+                                  onClick={() => void togglePin(c.id, Boolean(c.is_pinned))}
+                                >
+                                  <svg viewBox="0 0 24 24" fill={c.is_pinned ? "#f59e0b" : "none"} stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}>
+                                    <path d="M16 4l4 4-5 5v6l-3-3-5 5-1.4-1.4 5-5-3-3 6-5z" />
+                                  </svg>
+                                </SessionActionButton>
+                                <SessionActionButton
+                                  label="Rename"
+                                  onClick={() => beginRename(c.id, c.title)}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}>
+                                    <path d="M12 20h9" />
+                                    <path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                  </svg>
+                                </SessionActionButton>
+                                <SessionActionButton
+                                  label="Delete"
+                                  danger
+                                  onClick={() => setConfirmDeleteId(c.id)}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}>
+                                    <path d="M3 6h18" />
+                                    <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                                  </svg>
+                                </SessionActionButton>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Inline delete confirm — replaces the row's right side */}
+                          {isDeleting && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-red-600" style={{ fontSize: 11, fontWeight: 600 }}>
+                                Delete?
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void commitDelete(c.id)}
+                                className="rounded bg-red-600 text-white hover:bg-red-700"
+                                style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700 }}
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="rounded border border-stone-300 text-stone-600 hover:bg-stone-100"
+                                style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700 }}
+                              >
+                                No
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                      <span
-                        className="flex-shrink-0 text-stone-400"
-                        style={{ fontSize: 11 }}
-                      >
-                        {formatRelative(c.updated_at)}
-                      </span>
-                    </button>
-                  );
-                })
+                      );
+                    })}
+                  </div>
+                ))
               )}
             </div>
             {totalPages > 1 && (
@@ -530,6 +786,93 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
       </aside>
     </>
   );
+}
+
+
+function SessionActionButton({
+  children,
+  label,
+  onClick,
+  danger,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title={label}
+      aria-label={label}
+      className={`flex items-center justify-center rounded-md transition ${
+        danger
+          ? "text-stone-400 hover:bg-red-50 hover:text-red-600"
+          : "text-stone-400 hover:bg-stone-100 hover:text-violet-700"
+      }`}
+      style={{ width: 22, height: 22 }}
+    >
+      {children}
+    </button>
+  );
+}
+
+
+// Bucket conversations into date groups for the sidebar. Keeps the order
+// stable (within each bucket, we trust the API's order). Pinned items
+// always go to a "Pinned" group at the top.
+function groupConversationsByDate(
+  list: ZippyConversationSummary[],
+): Array<{ label: string; items: ZippyConversationSummary[] }> {
+  const now = Date.now();
+  const oneDay = 86_400_000;
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfYesterday = startOfToday - oneDay;
+  const weekAgo = startOfToday - 6 * oneDay;
+  const monthAgo = startOfToday - 30 * oneDay;
+
+  const pinned: ZippyConversationSummary[] = [];
+  const todayItems: ZippyConversationSummary[] = [];
+  const yesterdayItems: ZippyConversationSummary[] = [];
+  const thisWeek: ZippyConversationSummary[] = [];
+  const thisMonth: ZippyConversationSummary[] = [];
+  const older: ZippyConversationSummary[] = [];
+
+  for (const c of list) {
+    if (c.is_pinned) {
+      pinned.push(c);
+      continue;
+    }
+    const ts = new Date(c.updated_at).getTime();
+    if (Number.isNaN(ts) || ts > now + 60_000) {
+      // Fallback: keep at top if timestamp is garbage.
+      todayItems.push(c);
+    } else if (ts >= startOfToday) {
+      todayItems.push(c);
+    } else if (ts >= startOfYesterday) {
+      yesterdayItems.push(c);
+    } else if (ts >= weekAgo) {
+      thisWeek.push(c);
+    } else if (ts >= monthAgo) {
+      thisMonth.push(c);
+    } else {
+      older.push(c);
+    }
+  }
+
+  return [
+    { label: "Pinned", items: pinned },
+    { label: "Today", items: todayItems },
+    { label: "Yesterday", items: yesterdayItems },
+    { label: "Earlier this week", items: thisWeek },
+    { label: "This month", items: thisMonth },
+    { label: "Older", items: older },
+  ].filter((g) => g.items.length > 0);
 }
 
 

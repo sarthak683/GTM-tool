@@ -5,7 +5,7 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import select as sm_select
 
@@ -40,6 +40,7 @@ class ZippyConversationSummary(BaseModel):
     updated_at: str
     created_at: str
     message_count: int
+    is_pinned: bool = False
 
 
 class ZippyConversationDetail(BaseModel):
@@ -49,6 +50,7 @@ class ZippyConversationDetail(BaseModel):
     messages: list[ZippyMessageResponse]
     created_at: str
     updated_at: str
+    is_pinned: bool = False
 
 
 class SendMessageRequest(BaseModel):
@@ -143,7 +145,10 @@ async def list_conversations(
             ZippyConversation.user_id == current_user.id,
             ZippyConversation.is_archived.is_(False),
         )
-        .order_by(ZippyConversation.updated_at.desc())
+        .order_by(
+            ZippyConversation.is_pinned.desc(),
+            ZippyConversation.updated_at.desc(),
+        )
         .limit(limit)
     )
     result = await session.execute(stmt)
@@ -162,6 +167,7 @@ async def list_conversations(
                 title=convo.title,
                 summary=convo.summary,
                 message_count=count,
+                is_pinned=bool(convo.is_pinned),
                 created_at=convo.created_at.isoformat() if convo.created_at else "",
                 updated_at=convo.updated_at.isoformat() if convo.updated_at else "",
             )
@@ -196,6 +202,7 @@ async def get_conversation(
         id=convo.id,
         title=convo.title,
         summary=convo.summary,
+        is_pinned=bool(convo.is_pinned),
         messages=[_message_to_response(m) for m in messages],
         created_at=convo.created_at.isoformat() if convo.created_at else "",
         updated_at=convo.updated_at.isoformat() if convo.updated_at else "",
@@ -225,3 +232,85 @@ async def archive_conversation(
     session.add(convo)
     await session.commit()
     return {"id": str(convo.id), "is_archived": convo.is_archived}
+
+
+class UpdateConversationRequest(BaseModel):
+    title: Optional[str] = None
+    is_pinned: Optional[bool] = None
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ZippyConversationSummary)
+async def update_conversation(
+    conversation_id: UUID,
+    payload: UpdateConversationRequest,
+    session: DBSession,
+    current_user: CurrentUser,
+) -> ZippyConversationSummary:
+    """Rename and/or pin a conversation. Any omitted field is left as-is."""
+    stmt = sm_select(ZippyConversation).where(
+        ZippyConversation.id == conversation_id,
+        ZippyConversation.user_id == current_user.id,
+    )
+    result = await session.execute(stmt)
+    convo = result.scalar_one_or_none()
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if payload.title is not None:
+        cleaned = payload.title.strip()
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="title cannot be empty")
+        if len(cleaned) > 200:
+            raise HTTPException(status_code=400, detail="title too long (max 200 chars)")
+        convo.title = cleaned
+    if payload.is_pinned is not None:
+        convo.is_pinned = bool(payload.is_pinned)
+
+    session.add(convo)
+    await session.commit()
+    await session.refresh(convo)
+
+    count_stmt = sm_select(ZippyMessage).where(ZippyMessage.conversation_id == convo.id)
+    count_result = await session.execute(count_stmt)
+    count = len(list(count_result.scalars().all()))
+
+    return ZippyConversationSummary(
+        id=convo.id,
+        title=convo.title,
+        summary=convo.summary,
+        message_count=count,
+        is_pinned=bool(convo.is_pinned),
+        created_at=convo.created_at.isoformat() if convo.created_at else "",
+        updated_at=convo.updated_at.isoformat() if convo.updated_at else "",
+    )
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: UUID,
+    session: DBSession,
+    current_user: CurrentUser,
+) -> Response:
+    """Hard-delete a conversation and all of its messages.
+
+    We chose a true delete (not just `is_archived=True`) because users
+    pressing the trash icon expect the row to disappear and not linger as
+    hidden state. Messages are removed in the same transaction so we
+    never leave orphans.
+    """
+    stmt = sm_select(ZippyConversation).where(
+        ZippyConversation.id == conversation_id,
+        ZippyConversation.user_id == current_user.id,
+    )
+    result = await session.execute(stmt)
+    convo = result.scalar_one_or_none()
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    msgs_stmt = sm_select(ZippyMessage).where(ZippyMessage.conversation_id == convo.id)
+    msgs_result = await session.execute(msgs_stmt)
+    for msg in msgs_result.scalars().all():
+        await session.delete(msg)
+    await session.delete(convo)
+    await session.commit()
+    return Response(status_code=204)

@@ -189,8 +189,18 @@
       "Bash(sed -n '40,55p;90,105p' /Users/sarthak/GTM-tool/app/tasks/health.py)",
       "Bash(python3 -m py_compile app/database.py app/tasks/sales_reports.py app/tasks/instantly_sync.py app/tasks/cadence_scheduler.py app/tasks/health.py app/services/us_pod_call_report.py)",
       "Bash(python3 -m py_compile app/tasks/sales_reports.py app/services/us_pod_call_report.py)",
-      "Bash(grep -c \"{$\" /Users/sarthak/GTM-tool/frontend/src/lib/prospectWorkflow.ts)"
+      "Bash(grep -c \"{$\" /Users/sarthak/GTM-tool/frontend/src/lib/prospectWorkflow.ts)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); paths=[p for p in d.get\\('paths',{}\\) if 'zippy' in p]; print\\('\\\\n'.join\\(sorted\\(paths\\)\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); ops=d['paths']['/api/v1/zippy/conversations/{conversation_id}']; print\\('METHODS:', list\\(ops.keys\\(\\)\\)\\)\")",
+      "Bash(curl -s -X POST -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YjdkOTlkYy1kYzcxLTQxNTktYTI0NC0zNDNiOTgyMWJlNWUiLCJyb2xlIjoiYWRtaW4iLCJleHAiOjE3Nzk5Mzc0ODUsImlhdCI6MTc3OTg1MTA4NX0.uwQFpS9ZGirF_XFN-5f6ipSoqtWzSsG1hHrVclsQ4W0' -H 'Content-Type: application/json' -d '{\"message\":\"first convo\"}' http://localhost:8000/api/v1/zippy/send)"
     ]
   },
-  "outputStyle": "Explanatory"
+  "outputStyle": "Explanatory",
+  "enabledMcpjsonServers": [
+    "playwright",
+    "sequential-thinking",
+    "memory",
+    "postgres-local",
+    "filesystem-repo"
+  ]
 }

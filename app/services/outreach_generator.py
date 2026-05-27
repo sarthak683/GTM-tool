@@ -391,9 +391,10 @@ def _build_initial_prompt(ctx: dict, step_template: dict | None = None) -> str:
 def _build_followup_prompt(ctx: dict, touch: int, prior_email: str, prior_subject: Optional[str], step_template: dict | None = None) -> str:
     nudge = _FOLLOWUP_NUDGES.get(touch, "")
     template_note = _build_template_note(step_template)
+    subject = prior_subject or f"Re: {ctx['company_name']}"
     return (
         f"Contact: {ctx['contact_name']}, {ctx['title']} at {ctx['company_name']}.\n"
-        f"Primary thread subject: {prior_subject or f'Re: {ctx['company_name']}'}\n"
+        f"Primary thread subject: {subject}\n"
         f"Prior email sent:\n{prior_email[:300]}...\n\n"
         f"{nudge}\n"
         "Include a subject line on the first line (format 'Subject: ...'), then the follow-up body. "
