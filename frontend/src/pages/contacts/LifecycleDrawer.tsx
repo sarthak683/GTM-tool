@@ -1,6 +1,31 @@
-import { X, AlertTriangle, ArrowRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, AlertTriangle, ArrowRight, Mail, PhoneCall, Link2, Sparkles } from "lucide-react";
 import type { SequenceLifecycle } from "../../lib/api";
+import { activitiesApi } from "../../lib/api";
+import type { Activity } from "../../types";
 import { formatLifecycleDate, LifecycleStepRow } from "./LifecycleStepRow";
+
+// Pick an icon + short human label for an Activity row. Reads from
+// metadata.event_type first (Instantly webhooks fill this), then falls back
+// to the activity's `type` (manual call/email/note) so anything in the
+// timeline is renderable, not just sequence-aware events.
+function describeActivity(a: Activity): { Icon: typeof Mail; label: string; tone: { bg: string; border: string; fg: string } } {
+  const meta = (a.event_metadata && typeof a.event_metadata === "object" ? a.event_metadata : {}) as Record<string, unknown>;
+  const eventType = String(meta.event_type ?? "").toLowerCase();
+  const type = (a.type ?? "").toLowerCase();
+  switch (eventType) {
+    case "email_sent":          return { Icon: Mail, label: "Email sent",     tone: { bg: "#eff6ff", border: "#bfdbfe", fg: "#1d4ed8" } };
+    case "email_opened":        return { Icon: Mail, label: "Email opened",   tone: { bg: "#f0fdfa", border: "#99f6e4", fg: "#0f766e" } };
+    case "email_link_clicked":  return { Icon: Mail, label: "Link clicked",   tone: { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" } };
+    case "reply_received":      return { Icon: Mail, label: "Reply received", tone: { bg: "#faf5ff", border: "#e9d5ff", fg: "#7c3aed" } };
+    case "email_bounced":       return { Icon: Mail, label: "Email bounced",  tone: { bg: "#fff7ed", border: "#fed7aa", fg: "#c2410c" } };
+    default: break;
+  }
+  if (type === "call")   return { Icon: PhoneCall, label: a.call_outcome ? `Call · ${a.call_outcome.replace(/_/g, " ")}` : "Call logged", tone: { bg: "#f0fdf4", border: "#bbf7d0", fg: "#15803d" } };
+  if (type === "linkedin") return { Icon: Link2,     label: "LinkedIn touch",   tone: { bg: "#f5f3ff", border: "#ddd6fe", fg: "#6d28d9" } };
+  if (type === "email")  return { Icon: Mail,      label: "Email",            tone: { bg: "#eff6ff", border: "#bfdbfe", fg: "#1d4ed8" } };
+  return { Icon: Sparkles, label: type || "Activity", tone: { bg: "#f1f5f9", border: "#cbd5e1", fg: "#475569" } };
+}
 
 export function LifecycleDrawer({
   contactId, detail, loading, onClose, onOpenOutreach,
@@ -11,6 +36,37 @@ export function LifecycleDrawer({
   onClose: () => void;
   onOpenOutreach?: () => void;
 }) {
+  // Raw activity timeline. Always fetched so the drawer can show what
+  // happened to the contact even when no OutreachSequence row exists (e.g.
+  // an Instantly-tracked prospect imported before the campaign was wired up).
+  // Without this, the drawer would render "No outreach sequence" next to a
+  // prospect row that clearly shows engagement dots — the gap that
+  // motivated this section.
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!contactId) {
+      setActivities([]);
+      return;
+    }
+    let cancelled = false;
+    setActivitiesLoading(true);
+    activitiesApi
+      .list(undefined, contactId)
+      .then((rows) => {
+        if (cancelled) return;
+        // Newest first; the assembler's lifecycle steps already render
+        // their own sub-events, so the activity list is the catch-all
+        // chronological view.
+        const sorted = [...rows].sort((a, b) => (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime()));
+        setActivities(sorted);
+      })
+      .catch(() => { if (!cancelled) setActivities([]); })
+      .finally(() => { if (!cancelled) setActivitiesLoading(false); });
+    return () => { cancelled = true; };
+  }, [contactId]);
+
   if (!contactId) return null;
 
   const statusChipTone = (status: string) => {
@@ -99,7 +155,7 @@ export function LifecycleDrawer({
 
               {/* Step timeline */}
               {detail.steps.length === 0 ? (
-                <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>
+                <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic", marginBottom: 14 }}>
                   No steps defined on this contact's sequence plan yet.
                 </div>
               ) : (
@@ -109,6 +165,81 @@ export function LifecycleDrawer({
                   ))}
                 </div>
               )}
+
+              {/* Activity timeline — always shown so engagement is visible
+                  even when a contact has no formal OutreachSequence (e.g.
+                  Instantly tracked their opens before a campaign was wired
+                  up). For sequenced contacts this acts as the catch-all
+                  reference list under the per-step cards above. */}
+              <div style={{ marginTop: 18 }}>
+                <div style={{
+                  fontSize: 11.5, fontWeight: 800, color: "#475569",
+                  textTransform: "uppercase", letterSpacing: "0.08em",
+                  marginBottom: 8,
+                }}>
+                  Activity timeline
+                </div>
+                {activitiesLoading ? (
+                  <div style={{ fontSize: 12.5, color: "#7a96b0", fontStyle: "italic" }}>Loading activity…</div>
+                ) : activities.length === 0 ? (
+                  <div style={{
+                    fontSize: 12.5, color: "#7a96b0", fontStyle: "italic",
+                    padding: "10px 12px", borderRadius: 10, background: "#f8fafd",
+                    border: "1px dashed #d5e3ef",
+                  }}>
+                    No tracked activity for this prospect yet.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {activities.map((a) => {
+                      const { Icon, label, tone } = describeActivity(a);
+                      const subject = a.email_subject || null;
+                      const preview = a.ai_summary || a.content || "";
+                      // Truncate preview to one line; the full thing is in
+                      // the contact detail page if the rep needs it.
+                      const previewLine = preview ? preview.replace(/\s+/g, " ").slice(0, 140) : "";
+                      return (
+                        <div key={a.id} style={{
+                          display: "flex", alignItems: "flex-start", gap: 10,
+                          padding: "8px 10px", borderRadius: 10,
+                          background: tone.bg,
+                          border: `1px solid ${tone.border}`,
+                        }}>
+                          <div style={{
+                            width: 24, height: 24, borderRadius: 7,
+                            background: "#ffffff",
+                            border: `1px solid ${tone.border}`,
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            color: tone.fg, flexShrink: 0,
+                          }}>
+                            <Icon size={12} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 11.5, fontWeight: 800, color: tone.fg, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                {label}
+                              </span>
+                              <span style={{ fontSize: 11.5, color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+                                {formatLifecycleDate(a.created_at)}
+                              </span>
+                            </div>
+                            {subject ? (
+                              <div style={{ fontSize: 12.5, color: "#0f172a", fontWeight: 700, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {subject}
+                              </div>
+                            ) : null}
+                            {previewLine ? (
+                              <div style={{ fontSize: 12, color: "#475569", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {previewLine}{preview && preview.length > 140 ? "…" : ""}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {onOpenOutreach && (
                 <button

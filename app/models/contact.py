@@ -52,6 +52,10 @@ class Contact(ContactBase, table=True):
     linkedin_status: Optional[str] = None  # none | sent | accepted | replied
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
+    # Rep-selected follow-up timestamp for "interested_follow_up_required" /
+    # "call_back_later_rescheduled" dispositions. Auto-cleared by
+    # apply_call_disposition_effects when disposition leaves that bucket.
+    next_followup_at: Optional[datetime] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -98,6 +102,10 @@ class ContactRead(ContactBase):
     linkedin_status: Optional[str] = None
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
+    next_followup_at: Optional[datetime] = None
+    # Computed aggregate: count of activities of type='call' for this contact.
+    # Populated by ContactRepository.list_with_company_name; never written by clients.
+    call_attempt_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -139,3 +147,4 @@ class ContactUpdate(SQLModel):
     linkedin_status: Optional[str] = None
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
+    next_followup_at: Optional[datetime] = None

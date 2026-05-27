@@ -4,151 +4,190 @@ import type { Contact } from "../../types";
 import type { LifecycleSummary } from "../../lib/api";
 
 /**
- * Channel-status progress cell — redesigned.
+ * Outcome-colored progress cell.
  *
- * Design influences:
- *   - Apollo / Outreach: micro-event dot rail per channel
- *   - Linear: soft hero header, hover lift, status pill grammar
- *   - Pipedrive: left-edge accent strip driven by the hottest signal
- *   - HubSpot: subtle gradient tint on positive-momentum cells
+ * The dot rail reads left-to-right as a *timeline of outcomes*, not event
+ * types — one yellow dot per recorded activity, then a colored qualifier
+ * dot for the decisive outcome. This matches how SDRs talk about prospects:
+ * "called 3 times, one positive reply" rather than "1 sent, 2 opened, 1
+ * clicked."
  *
- * Visual structure:
- *   ┌─[accent strip]─────────────────────────────────┐
- *   │  [72]  REPLIED · 3d ago               · last  │   ← Hero strip
- *   ├────────────────────────────────────────────────┤
- *   │  [✉]  Email    ● ● ● ●     Reply 3d ago        │   ← Channel row
- *   │  [☎]  Call     ○            Not called         │
- *   └────────────────────────────────────────────────┘
+ * Color contract (consistent across email + call):
+ *   YELLOW — activity happened (call attempt, email sent)
+ *   BLUE   — engaged / follow-up in flight (email opened, callback scheduled)
+ *   GREEN  — positive outcome (reply, meeting booked, demo scheduled)
+ *   RED    — hard negative (not interested, wrong number, DNC, bounce)
+ *   WHITE  — pending follow-up slot (only after blue, paired with a date)
  *
- * Five-state color contract (consistent across both channels):
- *   WHITE  — no action / pending follow-up
- *   BLUE   — action taken (sent / called)
- *   GREEN  — positive outcome (reply / interested / meeting booked)
- *   ORANGE — soft negative (not interested but reachable)
- *   RED    — hard stop (DNC, invalid number)
+ * Call lane example: ●●● ◐ ◯  Apr 12      (3 attempts, callback scheduled)
+ *                    yyy  b   w
+ * Email lane:        ● ● ●                 (sent → opened → positive reply)
+ *                    y b g
  */
 
-type ChannelColor = "white" | "blue" | "green" | "orange" | "red";
+type OutcomeColor = "yellow" | "blue" | "green" | "red" | "white";
+
+type OutcomeDot = { color: OutcomeColor; title: string };
 
 type ChannelState = {
-  color: ChannelColor;
+  // Pre-terminal dots: attempts (yellow) and engagement (blue/white). These
+  // render left-to-right before any overflow indicator.
+  dots: OutcomeDot[];
+  // Terminal outcome dot (green/red). Rendered AFTER the overflow pill so
+  // the rail reads "● ● ● ● ● ● +6 ●" — visible activity, hidden activity,
+  // then the decisive outcome. Optional because not every lane reaches a
+  // terminal state (e.g. follow-up scheduled).
+  terminalDot?: OutcomeDot;
+  // Count of activity beyond the visible cap (for the "+N" pill).
+  overflowCount?: number;
+  // null = inactive lane; otherwise the strongest outcome on this lane,
+  // used to color the cell hero strip.
+  heroColor: OutcomeColor | null;
   label: string;
   sub: string;
-  // Source-of-truth datetime for this lane. `null` = no event yet.
   timestamp: Date | null;
-  // Ordered list of micro-events that have happened on this channel so the
-  // dot rail can render them left-to-right (e.g. ["sent", "opened", "clicked", "replied"]).
-  events: Array<"sent" | "opened" | "clicked" | "replied" | "bounced" | "called" | "no-answer">;
+  // For the follow-up case: month-day label rendered to the right of the
+  // white pending dot so the rep knows when to call back.
+  followupDateLabel?: string;
 };
 
-// Soft pastel-on-saturated palette. The `bar` is the left accent strip;
-// `tint` is the gentle background gradient stop; `chip` is the status pill
-// fill; `dot` is the filled-dot color.
-const PALETTE: Record<ChannelColor, { dot: string; border: string; chipBg: string; chipFg: string; tint: string; bar: string; ring: string }> = {
-  white:  { dot: "#ffffff", border: "#cdd9e6", chipBg: "#f4f8fc", chipFg: "#5e6f85", tint: "#fafbfd", bar: "#cdd9e6", ring: "rgba(148,164,189,0.20)" },
-  blue:   { dot: "#3b82f6", border: "#2563eb", chipBg: "#eff6ff", chipFg: "#1d4ed8", tint: "#f5f9ff", bar: "#3b82f6", ring: "rgba(59,130,246,0.22)" },
-  green:  { dot: "#22c55e", border: "#16a34a", chipBg: "#ecfdf5", chipFg: "#15803d", tint: "#f3fbf6", bar: "#22c55e", ring: "rgba(34,197,94,0.24)" },
-  orange: { dot: "#f59e0b", border: "#d97706", chipBg: "#fff7ed", chipFg: "#b45309", tint: "#fffaf3", bar: "#f59e0b", ring: "rgba(245,158,11,0.26)" },
-  red:    { dot: "#ef4444", border: "#dc2626", chipBg: "#fef2f2", chipFg: "#b91c1c", tint: "#fff5f5", bar: "#ef4444", ring: "rgba(239,68,68,0.26)" },
+// Outcome-color palette. Each color carries the full surface kit (dot fill,
+// chip bg/fg, tint for the row background, the left accent strip, and a
+// translucent ring for hover glow).
+const PALETTE: Record<OutcomeColor, { dot: string; border: string; chipBg: string; chipFg: string; tint: string; bar: string; ring: string }> = {
+  yellow: { dot: "#facc15", border: "#ca8a04", chipBg: "#fffbeb", chipFg: "#854d0e", tint: "#fffbf0", bar: "#facc15", ring: "rgba(250,204,21,0.30)" },
+  blue:   { dot: "#3b82f6", border: "#2563eb", chipBg: "#eff6ff", chipFg: "#1d4ed8", tint: "#f5f9ff", bar: "#3b82f6", ring: "rgba(59,130,246,0.28)" },
+  green:  { dot: "#22c55e", border: "#16a34a", chipBg: "#ecfdf5", chipFg: "#15803d", tint: "#f3fbf6", bar: "#22c55e", ring: "rgba(34,197,94,0.30)" },
+  red:    { dot: "#ef4444", border: "#dc2626", chipBg: "#fef2f2", chipFg: "#b91c1c", tint: "#fff5f5", bar: "#ef4444", ring: "rgba(239,68,68,0.30)" },
+  white:  { dot: "#ffffff", border: "#cbd5e1", chipBg: "#f8fafc", chipFg: "#475569", tint: "#fafbfd", bar: "#cbd5e1", ring: "rgba(148,164,189,0.22)" },
 };
 
-// Micro-event dot colors. Each event type has its own hue so the rail
-// reads like a timeline: blue → teal → sky → violet → orange.
-const EVENT_DOT: Record<ChannelState["events"][number], string> = {
-  sent: "#3b82f6",
-  opened: "#14b8a6",
-  clicked: "#0ea5e9",
-  replied: "#8b5cf6",
-  bounced: "#f59e0b",
-  called: "#22c55e",
-  "no-answer": "#94a3b8",
-};
-
-// Hot-channel resolution order — when both lanes have signal, the cell's
-// hero strip and accent bar reflect whichever lane is in the strongest
-// state. RED > GREEN > ORANGE > BLUE > WHITE.
-const COLOR_RANK: Record<ChannelColor, number> = { red: 5, green: 4, orange: 3, blue: 2, white: 1 };
-function hottest(a: ChannelColor, b: ChannelColor): ChannelColor {
+// Hero-color resolution — red and green are the decisive outcomes; blue is
+// in-flight; yellow is activity-only; white is pending. When multiple lanes
+// have signal, the hottest color drives the cell border + accent strip.
+const COLOR_RANK: Record<OutcomeColor, number> = { red: 5, green: 4, blue: 3, yellow: 2, white: 1 };
+function hottest(a: OutcomeColor | null, b: OutcomeColor | null): OutcomeColor | null {
+  if (!a) return b;
+  if (!b) return a;
   return COLOR_RANK[a] >= COLOR_RANK[b] ? a : b;
 }
 
-function getEmailState(contact: Contact): ChannelState {
+// Disposition buckets — kept in sync with the backend filter mappings in
+// `app/repositories/contact.py` (call_outcome_color). When the backend
+// changes those buckets, change them here too.
+const CALL_HARD_NEG = new Set(["invalid_number_wrong_number", "do_not_contact_dnc"]);
+const CALL_SOFT_NEG = new Set(["connected_not_interested", "contact_poor_fit", "gatekeeper_connected_to_admin"]);
+const CALL_FOLLOWUP = new Set(["interested_follow_up_required", "call_back_later_rescheduled"]);
+const CALL_BOOKED = new Set(["demo_scheduled_booked", "meeting_confirmed"]);
+
+function getEmailChannel(contact: Contact): ChannelState {
   const seq = contact.sequence_status || "";
   const opens = contact.email_open_count ?? 0;
-  const clicks = contact.email_click_count ?? 0;
-  const sent = ["queued_instantly", "sent", "replied", "meeting_booked", "not_interested"].includes(seq) || opens > 0;
   const replied = seq === "replied";
   const booked = seq === "meeting_booked";
-  const lastOpenedAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
+  const negative = seq === "not_interested";
+  // Sequence-status values that imply at least one email was sent. Plus a
+  // fallback: any recorded open means a send happened (Instantly-only
+  // signal in case sequence_status hasn't been updated yet).
+  const sent = ["queued_instantly", "sent", "replied", "meeting_booked", "not_interested"].includes(seq) || opens > 0;
+  const lastAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
 
-  const events: ChannelState["events"] = [];
-  if (sent) events.push("sent");
-  if (opens > 0) events.push("opened");
-  if (clicks > 0) events.push("clicked");
-  if (replied || booked) events.push("replied");
+  const dots: OutcomeDot[] = [];
+  if (sent) dots.push({ color: "yellow", title: "Email sent" });
+  // One blue dot per open, capped at 6 so the rail stays compact. Excess
+  // opens become a "+N" pill rendered between the blues and any terminal
+  // outcome dot — so a hot reader with 12 opens replying positively reads
+  // `● ● ● ● ● ● ● +6 ●` instead of silently dropping the last 6.
+  const MAX_BLUE_OPENS = 6;
+  const blueOpens = Math.min(opens, MAX_BLUE_OPENS);
+  for (let i = 0; i < blueOpens; i++) {
+    dots.push({ color: "blue", title: opens === 1 ? "Email opened" : `Open ${i + 1} of ${opens}` });
+  }
+  const overflowCount = Math.max(0, opens - MAX_BLUE_OPENS);
+  let terminalDot: OutcomeDot | undefined;
+  if (booked) terminalDot = { color: "green", title: "Meeting booked" };
+  else if (replied) terminalDot = { color: "green", title: "Positive reply" };
+  else if (negative) terminalDot = { color: "red", title: "Negative reply" };
 
-  if (sent && seq === "not_interested") {
-    return { color: "orange", label: "Not interested", sub: opens > 0 ? `${opens} open${opens === 1 ? "" : "s"} · email` : "From email outreach", timestamp: lastOpenedAt, events };
-  }
-  if (booked) {
-    return { color: "green", label: "Meeting booked", sub: opens > 0 ? `${opens} open${opens === 1 ? "" : "s"} · ${clicks} click${clicks === 1 ? "" : "s"}` : "From email outreach", timestamp: lastOpenedAt, events };
-  }
-  if (replied) {
-    return { color: "green", label: "Replied", sub: opens > 0 ? `${opens} open${opens === 1 ? "" : "s"} · ${clicks} click${clicks === 1 ? "" : "s"}` : "Reply received", timestamp: lastOpenedAt, events };
-  }
-  if (sent) {
-    return { color: "blue", label: "Sent", sub: opens > 0 ? `${opens} open${opens === 1 ? "" : "s"} · no reply yet` : "Awaiting reply", timestamp: lastOpenedAt, events };
-  }
-  return { color: "white", label: "Not sent", sub: "Email pending", timestamp: null, events };
+  let heroColor: OutcomeColor | null;
+  let label: string;
+  let sub: string;
+  if (booked) { heroColor = "green"; label = "Meeting booked"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "From email"; }
+  else if (replied) { heroColor = "green"; label = "Positive reply"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "Reply received"; }
+  else if (negative) { heroColor = "red"; label = "Negative reply"; sub = "Not interested · email"; }
+  else if (opens > 0) { heroColor = "blue"; label = "Opened"; sub = `${opens} open${opens === 1 ? "" : "s"} · no reply yet`; }
+  else if (sent) { heroColor = "yellow"; label = "Sent"; sub = "Awaiting open"; }
+  else { heroColor = null; label = "Not sent"; sub = "Email pending"; }
+
+  return { dots, terminalDot, overflowCount, heroColor, label, sub, timestamp: lastAt };
 }
 
-function getCallState(contact: Contact): ChannelState {
-  const status = contact.call_status || "";
+function getCallChannel(contact: Contact): ChannelState {
+  const attempts = contact.call_attempt_count ?? 0;
   const disp = contact.call_disposition || "";
   const ts = contact.call_last_at ? new Date(contact.call_last_at) : null;
+  // Fallback for legacy rows that haven't had the aggregate populated yet:
+  // if call_status indicates activity, assume at least one attempt happened.
+  const effectiveAttempts = attempts > 0
+    ? attempts
+    : (contact.call_status && contact.call_status !== "none" ? 1 : 0);
 
-  const HARD_NEG = new Set(["invalid_number_wrong_number", "do_not_contact_dnc"]);
-  const SOFT_NEG = new Set(["connected_not_interested", "contact_poor_fit", "gatekeeper_connected_to_admin"]);
-  const POSITIVE = new Set(["demo_scheduled_booked", "interested_follow_up_required", "meeting_confirmed"]);
-  const FOLLOW_UP = new Set(["call_back_later_rescheduled"]);
+  const dots: OutcomeDot[] = [];
+  // N yellow dots — one per attempt. Capped at 8 so a hot prospect with
+  // double-digit attempts doesn't blow out the row height; excess shows as
+  // a "+N" pill before the terminal outcome dot.
+  const MAX_YELLOW = 8;
+  const yellowCount = Math.min(effectiveAttempts, MAX_YELLOW);
+  for (let i = 0; i < yellowCount; i++) {
+    dots.push({ color: "yellow", title: `Call attempt #${i + 1}` });
+  }
+  const overflowCount = Math.max(0, effectiveAttempts - MAX_YELLOW);
 
-  const events: ChannelState["events"] = [];
-  if (status && status !== "none") events.push(status === "connected" || status === "callback" || POSITIVE.has(disp) ? "called" : "no-answer");
-  if (POSITIVE.has(disp)) events.push("replied"); // treat positive disposition as the "reply-equivalent" pulse
+  let heroColor: OutcomeColor | null = effectiveAttempts > 0 ? "yellow" : null;
+  let label: string;
+  let sub: string;
+  let followupDateLabel: string | undefined;
+  let terminalDot: OutcomeDot | undefined;
 
-  if (HARD_NEG.has(disp)) {
-    return { color: "red", label: disp === "invalid_number_wrong_number" ? "Wrong number" : "Do not contact", sub: "Hard stop · do not retry", timestamp: ts, events };
+  if (effectiveAttempts === 0) {
+    label = "Not called";
+    sub = "Awaiting first call";
+  } else if (CALL_HARD_NEG.has(disp)) {
+    terminalDot = { color: "red", title: disp === "invalid_number_wrong_number" ? "Wrong number" : "Do not contact" };
+    heroColor = "red";
+    label = disp === "invalid_number_wrong_number" ? "Wrong number" : "Do not contact";
+    sub = "Hard stop";
+  } else if (CALL_SOFT_NEG.has(disp)) {
+    terminalDot = { color: "red", title: disp === "connected_not_interested" ? "Not interested" : disp === "gatekeeper_connected_to_admin" ? "Gatekeeper" : "Poor fit" };
+    heroColor = "red";
+    label = disp === "gatekeeper_connected_to_admin" ? "Gatekeeper" : disp === "contact_poor_fit" ? "Poor fit" : "Not interested";
+    sub = "Connected · soft pass";
+  } else if (CALL_BOOKED.has(disp)) {
+    terminalDot = { color: "green", title: disp === "demo_scheduled_booked" ? "Demo booked" : "Meeting confirmed" };
+    heroColor = "green";
+    label = disp === "demo_scheduled_booked" ? "Demo booked" : "Meeting confirmed";
+    sub = "Booked from call";
+  } else if (CALL_FOLLOWUP.has(disp)) {
+    // Blue (callback requested) + white (pending slot) + month-day label.
+    // These aren't "terminal" in the green/red sense — they stay in the
+    // pre-terminal dots[] so the date pill renders right after them.
+    dots.push({ color: "blue", title: "Follow-up requested" });
+    dots.push({ color: "white", title: "Follow-up pending" });
+    heroColor = "blue";
+    label = disp === "interested_follow_up_required" ? "Interested · follow-up" : "Callback scheduled";
+    sub = "Awaiting follow-up";
+    if (contact.next_followup_at) {
+      const d = new Date(contact.next_followup_at);
+      if (!Number.isNaN(d.getTime())) {
+        followupDateLabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      }
+    }
+  } else {
+    label = `${effectiveAttempts} attempt${effectiveAttempts === 1 ? "" : "s"}`;
+    sub = disp ? disp.replace(/_/g, " ") : "Awaiting disposition";
   }
-  if (POSITIVE.has(disp)) {
-    return {
-      color: "green",
-      label: disp === "demo_scheduled_booked" ? "Demo booked" : disp === "meeting_confirmed" ? "Meeting confirmed" : "Interested",
-      sub: status === "connected" ? "Connected on call" : (status || "Connected"),
-      timestamp: ts, events,
-    };
-  }
-  if (SOFT_NEG.has(disp)) {
-    return {
-      color: "orange",
-      label: disp === "connected_not_interested" ? "Not interested" : disp === "gatekeeper_connected_to_admin" ? "Gatekeeper" : "Poor fit",
-      sub: "Connected · soft pass", timestamp: ts, events,
-    };
-  }
-  if (FOLLOW_UP.has(disp)) {
-    return { color: "white", label: "Follow-up scheduled", sub: "Call back later", timestamp: ts, events };
-  }
-  if (status && status !== "none") {
-    return {
-      color: "blue",
-      label:
-        status === "connected" ? "Connected"
-        : status === "voicemail" ? "Voicemail"
-        : status === "callback" ? "Callback requested"
-        : "Attempted",
-      sub: disp ? disp.replace(/_/g, " ") : "Awaiting disposition", timestamp: ts, events,
-    };
-  }
-  return { color: "white", label: "Not called", sub: "Awaiting first call", timestamp: null, events };
+
+  return { dots, terminalDot, overflowCount, heroColor, label, sub, timestamp: ts, followupDateLabel };
 }
 
 // Sales-ops glance-value relative time. Tight on recent activity, falls
@@ -167,65 +206,106 @@ function formatRecent(d: Date | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-// Tiny dot-rail. Up to 4 dots — Apollo-style timeline of channel pulses.
-function DotRail({ events, max = 4 }: { events: ChannelState["events"]; max?: number }) {
-  const filled = events.slice(0, max);
-  const empty = Math.max(0, max - filled.length);
+function Dot({ color, title }: OutcomeDot) {
+  const p = PALETTE[color];
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      {filled.map((ev, i) => (
+    <span
+      title={title}
+      aria-label={title}
+      style={{
+        width: 9, height: 9, borderRadius: 999,
+        background: p.dot,
+        border: color === "white" ? `1.5px solid ${p.border}` : "none",
+        boxShadow: color === "white" ? "none" : `0 0 0 2px ${p.dot}22`,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+// Dot rail layout: pre-terminal dots → "+N" overflow pill → terminal
+// outcome dot → optional date label. The ordering matters: putting "+N"
+// before the terminal dot reads "activity, more activity hidden, decisive
+// outcome" — natural for both lanes.
+function DotRail({ dots, overflowCount, terminalDot, followupDateLabel }: {
+  dots: OutcomeDot[];
+  overflowCount?: number;
+  terminalDot?: OutcomeDot;
+  followupDateLabel?: string;
+}) {
+  const isEmpty = dots.length === 0 && !overflowCount && !terminalDot && !followupDateLabel;
+  if (isEmpty) {
+    return <span style={{ fontSize: 10.5, color: "#9aa9bb", fontStyle: "italic", fontWeight: 600 }}>—</span>;
+  }
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      {dots.map((d, i) => <Dot key={i} color={d.color} title={d.title} />)}
+      {overflowCount && overflowCount > 0 ? (
         <span
-          key={`f-${i}`}
-          title={ev}
+          title={`${overflowCount} more`}
           style={{
-            width: 8, height: 8, borderRadius: 999,
-            background: EVENT_DOT[ev],
-            boxShadow: `0 0 0 2px ${EVENT_DOT[ev]}22`,
+            fontSize: 10, fontWeight: 800, color: "#67768a",
+            letterSpacing: "0.02em",
+            padding: "1px 5px", borderRadius: 999,
+            background: "#f1f5f9", border: "1px solid #dbe3ee",
+            fontVariantNumeric: "tabular-nums",
           }}
-        />
-      ))}
-      {Array.from({ length: empty }).map((_, i) => (
-        <span
-          key={`e-${i}`}
-          style={{
-            width: 8, height: 8, borderRadius: 999,
-            background: "#ffffff", border: "1.5px solid #d8e0ea",
-          }}
-        />
-      ))}
+        >
+          +{overflowCount}
+        </span>
+      ) : null}
+      {terminalDot ? <Dot color={terminalDot.color} title={terminalDot.title} /> : null}
+      {followupDateLabel ? (
+        <span style={{
+          marginLeft: 2,
+          fontSize: 10.5, fontWeight: 800,
+          color: PALETTE.blue.chipFg,
+          background: PALETTE.blue.chipBg,
+          padding: "2px 7px", borderRadius: 999,
+          border: `1px solid ${PALETTE.blue.ring}`,
+          fontVariantNumeric: "tabular-nums",
+        }}>
+          {followupDateLabel}
+        </span>
+      ) : null}
     </div>
   );
 }
 
-function ChannelRow({ Icon, channel, state }: { Icon: typeof Mail; channel: string; state: ChannelState }) {
-  const palette = PALETTE[state.color];
+function ChannelRow({ Icon, channel, state }: {
+  Icon: typeof Mail;
+  channel: string;
+  state: ChannelState;
+}) {
+  const palette = state.heroColor ? PALETTE[state.heroColor] : PALETTE.white;
   const titleParts = [
     `${channel}: ${state.label}`,
     state.sub,
     state.timestamp ? state.timestamp.toLocaleString() : null,
+    state.followupDateLabel ? `Follow-up: ${state.followupDateLabel}` : null,
   ].filter(Boolean) as string[];
+  const isInactive = !state.heroColor;
+
   return (
     <div
       title={titleParts.join(" · ")}
       style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "8px 10px", borderRadius: 10,
-        background: `linear-gradient(180deg, #ffffff 0%, ${palette.tint} 100%)`,
-        border: `1px solid ${state.color === "white" ? "#e8eef5" : palette.ring.replace("0.20", "0.30").replace("0.22", "0.35").replace("0.24", "0.36").replace("0.26", "0.38")}`,
+        background: isInactive ? "#fafbfd" : `linear-gradient(180deg, #ffffff 0%, ${palette.tint} 100%)`,
+        border: `1px solid ${isInactive ? "#e8eef5" : palette.ring}`,
       }}
     >
-      {/* Channel icon chip */}
       <div style={{
         width: 26, height: 26, borderRadius: 8,
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         background: palette.chipBg,
-        border: `1px solid ${palette.ring.replace("0.20", "0.30").replace("0.22", "0.35").replace("0.24", "0.36").replace("0.26", "0.38")}`,
+        border: `1px solid ${palette.ring}`,
         color: palette.chipFg, flexShrink: 0,
       }}>
         <Icon size={13} />
       </div>
 
-      {/* Label + sub stack */}
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{
@@ -249,15 +329,18 @@ function ChannelRow({ Icon, channel, state }: { Icon: typeof Mail; channel: stri
         </span>
       </div>
 
-      {/* Mini event-dot rail */}
-      <DotRail events={state.events} />
+      <DotRail
+        dots={state.dots}
+        overflowCount={state.overflowCount}
+        terminalDot={state.terminalDot}
+        followupDateLabel={state.followupDateLabel}
+      />
 
-      {/* Right-aligned relative timestamp chip */}
       {state.timestamp ? (
         <span style={{
           fontSize: 10, fontWeight: 800, color: palette.chipFg,
           background: "#ffffff", padding: "2px 7px", borderRadius: 999,
-          border: `1px solid ${palette.ring.replace("0.20", "0.32").replace("0.22", "0.36").replace("0.24", "0.38").replace("0.26", "0.40")}`,
+          border: `1px solid ${palette.ring}`,
           flexShrink: 0, fontVariantNumeric: "tabular-nums",
         }}>
           {formatRecent(state.timestamp)}
@@ -274,22 +357,37 @@ export function ProgressCell({
   contact: Contact;
   lifecycle: LifecycleSummary | undefined;
 }) {
-  const email = getEmailState(contact);
-  const call = getCallState(contact);
-  const heroColor = hottest(email.color, call.color);
-  const heroPalette = PALETTE[heroColor];
+  const email = getEmailChannel(contact);
+  const call = getCallChannel(contact);
+  const heroColor = hottest(email.heroColor, call.heroColor);
+  const heroPalette = heroColor ? PALETTE[heroColor] : PALETTE.white;
   const [hover, setHover] = useState(false);
 
-  // Strongest signal across both channels — drives the hero status text.
-  const heroState = COLOR_RANK[email.color] >= COLOR_RANK[call.color] ? email : call;
+  // Pick the strongest signal across both channels for the hero pill.
+  const heroState = (() => {
+    if (email.heroColor && call.heroColor) {
+      return COLOR_RANK[email.heroColor] >= COLOR_RANK[call.heroColor] ? email : call;
+    }
+    return email.heroColor ? email : call;
+  })();
+  // Pick the most recent per-event timestamp across both channels. When
+  // there's clear activity (heroColor set) but no per-event timestamp —
+  // Instantly sometimes records the open count without populating
+  // `email_last_opened_at` — fall back to `contact.updated_at` so the hero
+  // strip doesn't lie with "No touches yet" next to a green pill.
   const lastTouch = (() => {
     const a = email.timestamp?.getTime() ?? 0;
     const b = call.timestamp?.getTime() ?? 0;
-    const ts = a > b ? email.timestamp : (b > 0 ? call.timestamp : null);
-    return ts;
+    if (a === 0 && b === 0) {
+      if ((email.heroColor || call.heroColor) && contact.updated_at) {
+        const u = new Date(contact.updated_at);
+        return Number.isNaN(u.getTime()) ? null : u;
+      }
+      return null;
+    }
+    return a > b ? email.timestamp : call.timestamp;
   })();
 
-  // Sequence progress mini-bar — only when a live sequence is running.
   const hasLiveSequence =
     lifecycle &&
     lifecycle.total_steps > 0 &&
@@ -307,8 +405,6 @@ export function ProgressCell({
         borderRadius: 14,
         border: "1px solid #e5edf5",
         overflow: "hidden",
-        // Hover lift + faint glow in the hero color. Matches Linear's
-        // "this is clickable" affordance without a heavy outline.
         boxShadow: hover
           ? `0 8px 24px -8px ${heroPalette.ring}, 0 0 0 1px ${heroPalette.ring}`
           : "inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(15,39,68,0.04)",
@@ -317,19 +413,19 @@ export function ProgressCell({
         cursor: "pointer",
       }}
     >
-      {/* Pipedrive-style accent strip on the left edge, colored by the
-          hottest channel signal. Sits flush with the card edge. */}
       <div style={{
         position: "absolute", left: 0, top: 0, bottom: 0,
         width: 3,
-        background: `linear-gradient(180deg, ${heroPalette.bar} 0%, ${heroPalette.bar}99 100%)`,
+        background: heroColor
+          ? `linear-gradient(180deg, ${heroPalette.bar} 0%, ${heroPalette.bar}99 100%)`
+          : "#e5edf5",
       }} />
 
-      {/* Hero strip — score + status pill + last-touch. Tinted gradient
-          background matching the hottest signal. */}
       <div style={{
         padding: "10px 14px 8px",
-        background: `linear-gradient(135deg, ${heroPalette.tint} 0%, #ffffff 70%)`,
+        background: heroColor
+          ? `linear-gradient(135deg, ${heroPalette.tint} 0%, #ffffff 70%)`
+          : "#ffffff",
         borderBottom: "1px solid #eef2f7",
         display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between",
       }}>
@@ -339,9 +435,9 @@ export function ProgressCell({
           color: heroPalette.chipFg,
           padding: "3px 9px", borderRadius: 999,
           background: heroPalette.chipBg,
-          border: `1px solid ${heroPalette.ring.replace("0.20", "0.32").replace("0.22", "0.36").replace("0.24", "0.38").replace("0.26", "0.40")}`,
+          border: `1px solid ${heroPalette.ring}`,
         }}>
-          {heroState.label}
+          {heroColor ? heroState.label : "No activity"}
         </span>
         {lastTouch ? (
           <span style={{
@@ -352,19 +448,16 @@ export function ProgressCell({
           </span>
         ) : (
           <span style={{ fontSize: 10.5, color: "#9aa9bb", fontWeight: 600, fontStyle: "italic" }}>
-            No activity
+            No touches yet
           </span>
         )}
       </div>
 
-      {/* Channel rows */}
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
         <ChannelRow Icon={Mail} channel="Email" state={email} />
         <ChannelRow Icon={PhoneCall} channel="Call" state={call} />
       </div>
 
-      {/* Sequence progress mini-bar — HubSpot-style. Only when a live
-          sequence is running. */}
       {hasLiveSequence ? (
         <div style={{
           padding: "6px 14px 10px",

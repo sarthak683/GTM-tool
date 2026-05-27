@@ -75,6 +75,14 @@ _MEETING_BOOKED_DISPOSITIONS = {
     "meeting_confirmed",
 }
 
+# Dispositions for which the rep is expected to attach a follow-up datetime
+# (next_followup_at). When the disposition is anything else we clear the
+# stored follow-up so a stale date doesn't keep showing on the prospect row.
+_FOLLOWUP_DISPOSITIONS = {
+    "interested_follow_up_required",
+    "call_back_later_rescheduled",
+}
+
 
 def _should_advance(current: Optional[str], target: str) -> bool:
     """Decide whether to move from `current` to `target`.
@@ -187,6 +195,14 @@ async def apply_call_disposition_effects(
     changes: dict[str, str] = {}
     if not disposition:
         return changes
+
+    # If the rep moved the contact off of a follow-up disposition (or to a
+    # terminal one like "not_interested"), drop any previously-saved
+    # next_followup_at so the prospect-page no longer shows a stale date.
+    if disposition not in _FOLLOWUP_DISPOSITIONS and contact.next_followup_at is not None:
+        changes["next_followup_at"] = f"{contact.next_followup_at} -> None"
+        contact.next_followup_at = None
+        session.add(contact)
 
     new_status = derive_status_from_call_disposition(
         disposition, contact.sequence_status

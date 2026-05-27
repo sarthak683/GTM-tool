@@ -88,6 +88,30 @@ const FOLLOWUP_DISPOSITIONS = new Set<string>([
   "call_back_later_rescheduled",
 ]);
 
+// Progress-dot color filter options. Labels use unicode color circles so the
+// dropdown reads the same way the prospect-row dots do. Values must match
+// the backend's `call_outcome_color` / `email_outcome_color` enums in
+// app/repositories/contact.py — change them together.
+const CALL_OUTCOME_COLOR_OPTIONS: { value: string; label: string }[] = [
+  { value: "yellow", label: "\u{1F7E1} Attempted (no outcome)" },
+  { value: "blue",   label: "\u{1F535} Callback scheduled" },
+  { value: "green",  label: "\u{1F7E2} Meeting / interested" },
+  { value: "red",    label: "\u{1F534} Not interested / wrong number" },
+];
+const EMAIL_OUTCOME_COLOR_OPTIONS: { value: string; label: string }[] = [
+  { value: "yellow", label: "\u{1F7E1} Sent (no open)" },
+  { value: "blue",   label: "\u{1F535} Opened (no reply)" },
+  { value: "green",  label: "\u{1F7E2} Positive reply / meeting" },
+  { value: "red",    label: "\u{1F534} Negative reply" },
+];
+const CALL_ATTEMPTS_BUCKET_OPTIONS: { value: string; label: string }[] = [
+  { value: "0",     label: "0 calls" },
+  { value: "1",     label: "1 call" },
+  { value: "2",     label: "2 calls" },
+  { value: "3",     label: "3 calls" },
+  { value: "4plus", label: "4+ calls" },
+];
+
 // Default follow-up datetime, expressed in the *user's local timezone*
 // formatted for <input type="datetime-local">. Anchored to "tomorrow at
 // 10:00 AM PST" — a fixed instant in time — so a PST rep sees "10:00 AM"
@@ -281,12 +305,20 @@ export default function Contacts() {
     return Boolean(
       searchParams.get("seq") || searchParams.get("call") || searchParams.get("ae") ||
       searchParams.get("sdr") || searchParams.get("own") || searchParams.get("tz") ||
-      searchParams.get("co") || searchParams.get("owner") === "mine"
+      searchParams.get("co") || searchParams.get("owner") === "mine" ||
+      searchParams.get("cc") || searchParams.get("ec") || searchParams.get("ca")
     );
   });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
   const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
+  // Progress-dot color filters. Map 1:1 to the dot colors rendered by
+  // `ProgressCell`. URL keys: `cc` (call color), `ec` (email color), `ca`
+  // (call attempts bucket). The backend translates colors to disposition /
+  // sequence_status / count buckets — see app/repositories/contact.py.
+  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("cc")));
+  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ec")));
+  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ca")));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   // Client-side toggle wired to the "Emails opened" KPI tile. When true, the
   // prospect table is narrowed to contacts whose email_open_count > 0 so the
@@ -515,6 +547,9 @@ export default function Contacts() {
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
+      callOutcomeColor: callOutcomeColorFilter.length ? callOutcomeColorFilter : undefined,
+      emailOutcomeColor: emailOutcomeColorFilter.length ? emailOutcomeColorFilter : undefined,
+      callAttemptsBucket: callAttemptsBucketFilter.length ? callAttemptsBucketFilter : undefined,
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
       // Owner filter: any selected user matches contacts they own as AE OR SDR.
@@ -697,6 +732,9 @@ export default function Contacts() {
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
+      callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
+      emailOutcomeColorFilter.length ? next.set("ec", emailOutcomeColorFilter.join(",")) : next.delete("ec");
+      callAttemptsBucketFilter.length ? next.set("ca", callAttemptsBucketFilter.join(",")) : next.delete("ca");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
@@ -705,7 +743,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -716,7 +754,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -729,7 +767,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   useEffect(() => {
     if (contacts.length === 0 || selectedContactIds.size === 0) return;
@@ -1033,11 +1071,19 @@ export default function Contacts() {
         callContact.sequence_status,
       );
       const nowIso = new Date().toISOString();
+      // When a follow-up disposition is paired with a datetime, persist it on
+      // the contact so the prospect-row progress bar can render the date next
+      // to the blue+white dot pair. The backend clears this field automatically
+      // when the disposition changes to something that doesn't imply a follow-up.
+      const followupIso = (FOLLOWUP_DISPOSITIONS.has(callDisposition) && followupAt)
+        ? (() => { const d = new Date(followupAt); return Number.isNaN(d.getTime()) ? undefined : d.toISOString(); })()
+        : undefined;
       await contactsApi.update(callContact.id, {
         call_status: callStatus,
         call_disposition: callDisposition,
         call_notes: callNotes || undefined,
         call_last_at: nowIso,
+        ...(followupIso ? { next_followup_at: followupIso } : {}),
         ...(derivedSeqStatus && derivedSeqStatus !== callContact.sequence_status
           ? { sequence_status: derivedSeqStatus }
           : {}),
@@ -1969,6 +2015,9 @@ export default function Contacts() {
                 ownerScope === "mine" ||
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
+                callOutcomeColorFilter.length ||
+                emailOutcomeColorFilter.length ||
+                callAttemptsBucketFilter.length ||
                 aeFilter.length ||
                 sdrFilter.length ||
                 ownerFilter.length ||
@@ -2045,6 +2094,35 @@ export default function Contacts() {
                     options={CALL_DISPOSITION_FILTER_OPTIONS}
                     allLabel="All call outcomes"
                     minWidth={190}
+                  />
+                  {/* Outcome-color + attempt filters — match the dots
+                      rendered by ProgressCell so the rep can click "Green"
+                      and see only the prospects with a positive reply or
+                      booked meeting. Backend translates colors via
+                      app/repositories/contact.py. */}
+                  <MultiSelectFilter
+                    label="Call dots"
+                    values={callOutcomeColorFilter}
+                    onChange={setCallOutcomeColorFilter}
+                    options={CALL_OUTCOME_COLOR_OPTIONS}
+                    allLabel="All call outcomes"
+                    minWidth={210}
+                  />
+                  <MultiSelectFilter
+                    label="Email dots"
+                    values={emailOutcomeColorFilter}
+                    onChange={setEmailOutcomeColorFilter}
+                    options={EMAIL_OUTCOME_COLOR_OPTIONS}
+                    allLabel="All email outcomes"
+                    minWidth={210}
+                  />
+                  <MultiSelectFilter
+                    label="Call attempts"
+                    values={callAttemptsBucketFilter}
+                    onChange={setCallAttemptsBucketFilter}
+                    options={CALL_ATTEMPTS_BUCKET_OPTIONS}
+                    allLabel="Any count"
+                    minWidth={150}
                   />
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
@@ -2203,6 +2281,8 @@ export default function Contacts() {
                         setSearch("");
                         setOwnerScope("all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
+                        setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
+                        setCallAttemptsBucketFilter([]);
                         setAeFilter([]); setSdrFilter([]);
                         setOwnerFilter([]);
                         setTimezoneFilter([]);

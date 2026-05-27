@@ -107,6 +107,9 @@ class ContactRepository(BaseRepository[Contact]):
         scope_any_match: bool = False,
         prospect_only: bool = False,
         timezone: Optional[str] = None,
+        call_outcome_color: Optional[list[str]] = None,
+        email_outcome_color: Optional[list[str]] = None,
+        call_attempts_bucket: Optional[list[str]] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -118,12 +121,23 @@ class ContactRepository(BaseRepository[Contact]):
         """
         ae_user = aliased(User)
         sdr_user = aliased(User)
+        # Correlated subquery: number of activity rows of type='call' for this
+        # contact. Drives the new prospect-page progress dots (one yellow dot
+        # per attempt) and the `call_attempts_bucket` filter below.
+        call_attempt_count_subq = (
+            select(func.count(Activity.id))
+            .where(Activity.contact_id == Contact.id)
+            .where(Activity.type == "call")
+            .correlate(Contact)
+            .scalar_subquery()
+        )
         base_stmt = (
             select(
                 Contact,
                 Company.name.label("company_name"),
                 ae_user.name.label("assigned_to_name"),
                 sdr_user.name.label("sdr_name"),
+                call_attempt_count_subq.label("call_attempt_count"),
             )
             .outerjoin(Company, Contact.company_id == Company.id)
             .outerjoin(ae_user, Contact.assigned_to_id == ae_user.id)
@@ -388,6 +402,105 @@ class ContactRepository(BaseRepository[Contact]):
                 base_stmt = base_stmt.where(sdr_filter)
                 count_stmt = count_stmt.where(sdr_filter)
 
+        # Call-outcome color filter. Each color maps to a set of call_disposition
+        # values; "yellow" means "attempts exist but no decisive outcome". The
+        # frontend prospect-page uses these to render dot colors.
+        CALL_COLOR_DISPOSITIONS: dict[str, set[str]] = {
+            "green": {
+                "demo_scheduled_booked",
+                "meeting_confirmed",
+                "interested_follow_up_required",
+            },
+            "red": {
+                "connected_not_interested",
+                "contact_poor_fit",
+                "do_not_contact_dnc",
+                "invalid_number_wrong_number",
+            },
+            "blue": {"call_back_later_rescheduled"},
+        }
+        ALL_KNOWN_CALL_DISPOSITIONS = (
+            CALL_COLOR_DISPOSITIONS["green"]
+            | CALL_COLOR_DISPOSITIONS["red"]
+            | CALL_COLOR_DISPOSITIONS["blue"]
+        )
+
+        if call_outcome_color:
+            colors = [c.strip().lower() for c in call_outcome_color if c and c.strip()]
+            clauses = []
+            for color in colors:
+                if color in CALL_COLOR_DISPOSITIONS:
+                    clauses.append(
+                        Contact.call_disposition.in_(tuple(CALL_COLOR_DISPOSITIONS[color]))
+                    )
+                elif color == "yellow":
+                    clauses.append(
+                        and_(
+                            call_attempt_count_subq > 0,
+                            or_(
+                                Contact.call_disposition.is_(None),
+                                Contact.call_disposition == "",
+                                ~Contact.call_disposition.in_(tuple(ALL_KNOWN_CALL_DISPOSITIONS)),
+                            ),
+                        )
+                    )
+            if clauses:
+                call_color_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
+                base_stmt = base_stmt.where(call_color_filter)
+                count_stmt = count_stmt.where(call_color_filter)
+
+        if email_outcome_color:
+            colors = [c.strip().lower() for c in email_outcome_color if c and c.strip()]
+            email_positive = ("replied", "meeting_booked")
+            email_negative = "not_interested"
+            terminal_states = ("replied", "meeting_booked", "not_interested")
+            clauses = []
+            for color in colors:
+                if color == "green":
+                    clauses.append(Contact.sequence_status.in_(email_positive))
+                elif color == "red":
+                    clauses.append(Contact.sequence_status == email_negative)
+                elif color == "blue":
+                    clauses.append(
+                        and_(
+                            Contact.email_open_count > 0,
+                            or_(
+                                Contact.sequence_status.is_(None),
+                                ~Contact.sequence_status.in_(terminal_states),
+                            ),
+                        )
+                    )
+                elif color == "yellow":
+                    clauses.append(
+                        and_(
+                            Contact.sequence_status.in_(("queued_instantly", "sent")),
+                            Contact.email_open_count == 0,
+                        )
+                    )
+            if clauses:
+                email_color_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
+                base_stmt = base_stmt.where(email_color_filter)
+                count_stmt = count_stmt.where(email_color_filter)
+
+        if call_attempts_bucket:
+            buckets = [b.strip().lower() for b in call_attempts_bucket if b and b.strip()]
+            clauses = []
+            for bucket in buckets:
+                if bucket == "0":
+                    clauses.append(call_attempt_count_subq == 0)
+                elif bucket == "1":
+                    clauses.append(call_attempt_count_subq == 1)
+                elif bucket == "2":
+                    clauses.append(call_attempt_count_subq == 2)
+                elif bucket == "3":
+                    clauses.append(call_attempt_count_subq == 3)
+                elif bucket == "4plus":
+                    clauses.append(call_attempt_count_subq >= 4)
+            if clauses:
+                attempts_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
+                base_stmt = base_stmt.where(attempts_filter)
+                count_stmt = count_stmt.where(attempts_filter)
+
         # Timezone filter: comma-separated list. Each value is matched
         # case-insensitively against Contact.timezone (e.g. "Asia/Kolkata").
         if timezone:
@@ -437,11 +550,12 @@ class ContactRepository(BaseRepository[Contact]):
         ).all()
 
         result: list[ContactRead] = []
-        for contact, company_name, assigned_to_name, sdr_name in rows:
+        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
             read.assigned_to_name = assigned_to_name
             read.sdr_name = sdr_name
+            read.call_attempt_count = int(call_attempt_count or 0)
             result.append(read)
 
         await apply_contact_tracking(self.session, result)

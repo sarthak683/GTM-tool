@@ -78,6 +78,7 @@ function EventCard({
   tone,
   preview,
   startExpanded = false,
+  count,
 }: {
   kind: string;             // "Sent" | "Opened" | "Replied" | "Call logged" | ...
   ev: LifecycleEvent | null | undefined;
@@ -85,6 +86,11 @@ function EventCard({
   tone: { fg: string; bg: string; border: string };
   preview?: string | null;  // 1-line preview shown while collapsed
   startExpanded?: boolean;
+  // When provided and > 1, rendered as a small "· N times" subscript next
+  // to the kind label so the drawer matches the prospect-row's open/click
+  // counter. The card's whenIso still points to the FIRST event — the
+  // count is the multiplier.
+  count?: number;
 }) {
   const [expanded, setExpanded] = useState(startExpanded);
   if (!ev && !whenIso) return null;
@@ -121,6 +127,19 @@ function EventCard({
           textTransform: "uppercase", letterSpacing: "0.05em",
           flexShrink: 0,
         }}>{kind}</span>
+        {count && count > 1 ? (
+          <span
+            title={`${count} ${kind.toLowerCase()} events on this step`}
+            style={{
+              fontSize: 11, fontWeight: 800, color: tone.fg,
+              background: "#ffffffcc", padding: "2px 7px", borderRadius: 999,
+              border: `1px solid ${tone.border}`,
+              fontVariantNumeric: "tabular-nums", flexShrink: 0,
+            }}
+          >
+            {count}×
+          </span>
+        ) : null}
         <span style={{ fontSize: 12, color: "#334155", fontWeight: 600, flexShrink: 0 }}>
           {formatLifecycleDate(whenIso)}
         </span>
@@ -254,12 +273,14 @@ export function LifecycleStepRow({ step }: { step: LifecycleStep }) {
               ev={step.open_event}
               whenIso={step.opened_at}
               tone={TONE.teal}
+              count={step.open_count}
             />
             <EventCard
               kind="Clicked"
               ev={step.click_event}
               whenIso={step.clicked_at}
               tone={TONE.sky}
+              count={step.click_count}
             />
             <EventCard
               kind="Replied"

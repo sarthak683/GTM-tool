@@ -64,6 +64,13 @@ export const contactsApi = {
     sequenceStatus?: string[];
     callDisposition?: string[];
     emailState?: string[];
+    // Outcome-color filters wired to the prospect-row progress dots.
+    // Backend maps each color to a set of dispositions / sequence states
+    // (see app/repositories/contact.py). Multi-value = OR.
+    callOutcomeColor?: string[];
+    emailOutcomeColor?: string[];
+    // Call attempts bucket — values: "0" | "1" | "2" | "3" | "4plus".
+    callAttemptsBucket?: string[];
     aeId?: string[];
     sdrId?: string[];
     ownerId?: string | string[];
@@ -85,6 +92,9 @@ export const contactsApi = {
     if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
     if (params.callDisposition?.length) search.set("call_disposition", params.callDisposition.join(","));
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
+    if (params.callOutcomeColor?.length) search.set("call_outcome_color", params.callOutcomeColor.join(","));
+    if (params.emailOutcomeColor?.length) search.set("email_outcome_color", params.emailOutcomeColor.join(","));
+    if (params.callAttemptsBucket?.length) search.set("call_attempts_bucket", params.callAttemptsBucket.join(","));
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
     if (params.ownerId) {
@@ -510,6 +520,11 @@ export interface LifecycleStep {
   clicked_at?: string | null;
   replied_at?: string | null;
   bounced_at?: string | null;
+  // Per-step engagement counts. Counted from Activity rows within this
+  // step's window so the drawer's "Opened N times" label always matches
+  // the timeline below — never the contact-wide aggregate.
+  open_count?: number;
+  click_count?: number;
   call_outcome?: string | null;
   note?: string | null;
   skip_reason?: string | null;

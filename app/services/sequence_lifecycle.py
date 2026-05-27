@@ -216,6 +216,12 @@ def _reconcile_email_step(
         state = "sent"
         break
 
+    # Per-step engagement counts. Counted from the actual Activity rows so the
+    # drawer's "Opened N times" label always matches what's in the timeline
+    # for this step's window — never the contact-wide aggregate, which would
+    # over-count for multi-step sequences.
+    open_count = 0
+    click_count = 0
     if fired_at:
         # Find opens/clicks/replies/bounces that happened after this send
         # but before the next step's sent (caller won't pass future ones).
@@ -224,12 +230,16 @@ def _reconcile_email_step(
                 continue
             meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
             event_type = str(meta.get("event_type") or "").lower()
-            if event_type == "email_opened" and not opened_at:
-                opened_at = activity.created_at
-                state = "opened"
-            elif event_type == "email_link_clicked" and not clicked_at:
-                clicked_at = activity.created_at
-                state = "clicked"
+            if event_type == "email_opened":
+                open_count += 1
+                if not opened_at:
+                    opened_at = activity.created_at
+                    state = "opened"
+            elif event_type == "email_link_clicked":
+                click_count += 1
+                if not clicked_at:
+                    clicked_at = activity.created_at
+                    state = "clicked"
             elif event_type == "reply_received" and not replied_at:
                 replied_at = activity.created_at
                 state = "replied"
@@ -282,6 +292,8 @@ def _reconcile_email_step(
         "clicked_at": clicked_at.isoformat() if clicked_at else None,
         "replied_at": replied_at.isoformat() if replied_at else None,
         "bounced_at": bounced_at.isoformat() if bounced_at else None,
+        "open_count": open_count,
+        "click_count": click_count,
         "subject": subject,
         # Rich event payloads (None if the event hasn't fired yet)
         "send_event": _activity_payload(send_activity) if send_activity else None,

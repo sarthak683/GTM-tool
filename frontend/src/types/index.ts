@@ -91,6 +91,13 @@ export interface Contact {
   call_disposition?: string;  // interested | not_interested | callback | wrong_number | no_answer
   call_notes?: string;
   call_last_at?: string;
+  // Aggregate count of Activity rows with type='call' for this contact.
+  // Drives the per-attempt yellow-dot rail on the prospect-page progress cell.
+  call_attempt_count?: number;
+  // Scheduled follow-up datetime for `interested_follow_up_required` /
+  // `call_back_later_rescheduled` dispositions. Cleared automatically when
+  // the disposition changes to something that doesn't imply a follow-up.
+  next_followup_at?: string;
   linkedin_status?: string;   // none | sent | accepted | replied
   linkedin_last_at?: string;
   timezone?: string;

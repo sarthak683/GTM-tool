@@ -168,6 +168,18 @@ async def list_contacts(
     scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter"),
     prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
     timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')"),
+    call_outcome_color: Optional[list[str]] = Query(
+        default=None,
+        description="Filter by call-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.",
+    ),
+    email_outcome_color: Optional[list[str]] = Query(
+        default=None,
+        description="Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.",
+    ),
+    call_attempts_bucket: Optional[list[str]] = Query(
+        default=None,
+        description="Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together.",
+    ),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -197,6 +209,9 @@ async def list_contacts(
         scope_any_match=scope_any_match,
         prospect_only=prospect_only,
         timezone=timezone,
+        call_outcome_color=call_outcome_color,
+        email_outcome_color=email_outcome_color,
+        call_attempts_bucket=call_attempts_bucket,
         skip=pagination.skip,
         limit=pagination.limit,
     )
