@@ -264,7 +264,7 @@ function EngagementBadge({
         Math.max(8, rect.left),
         window.innerWidth - POPOVER_WIDTH - 8,
       );
-      setCoords({ top: rect.top - 8, left });
+      setCoords({ top: rect.bottom + 8, left });
     }
     setShowDetail(true);
   };
@@ -321,7 +321,7 @@ function EngagementBadge({
             position: "fixed",
             top: coords.top,
             left: coords.left,
-            transform: "translateY(-100%)",
+            transform: "none",
             zIndex: 9999,
             width: POPOVER_WIDTH,
             pointerEvents: "auto",

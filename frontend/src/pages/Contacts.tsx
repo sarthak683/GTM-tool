@@ -1,3 +1,4 @@
+import "./prospects-refresh.css";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, settingsApi } from "../lib/api";
@@ -184,6 +185,43 @@ function expandTimezoneFilter(labels: string[]): string[] {
   return Array.from(set);
 }
 
+function relativeTimeShort(iso?: string | null): string {
+  if (!iso) return "";
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return "";
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
+function latestProspectActivity(c: Contact): string | undefined {
+  const candidates = [
+    c.email_last_opened_at,
+    c.call_last_at,
+    c.linkedin_last_at,
+    c.tracking_last_activity_at,
+  ].filter(Boolean) as string[];
+  if (!candidates.length) return undefined;
+  return candidates.sort()[candidates.length - 1];
+}
+
+function personaChipStyle(personaType?: string): { bg: string; fg: string; border: string; label: string } {
+  const t = (personaType || "").toLowerCase();
+  if (t === "champion") return { bg: "#ecfdf5", fg: "#047857", border: "#a7f3d0", label: "Champion" };
+  if (t === "buyer")    return { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe", label: "Buyer" };
+  if (t === "evaluator")return { bg: "#f5f3ff", fg: "#6d28d9", border: "#ddd6fe", label: "Evaluator" };
+  if (t === "blocker")  return { bg: "#fef2f2", fg: "#b91c1c", border: "#fecaca", label: "Blocker" };
+  return { bg: "#f1f5f9", fg: "#475569", border: "#e2e8f0", label: personaType || "Unknown" };
+}
+
 function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey[] {
   if (!raw) return DEFAULT_CONTACT_TABLE_COLUMNS;
   try {
@@ -191,9 +229,6 @@ function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey
     if (!Array.isArray(parsed)) return DEFAULT_CONTACT_TABLE_COLUMNS;
     const allowed = new Set(CONTACT_TABLE_COLUMNS.map((column) => column.key));
     const next = parsed.filter((value): value is ContactTableColumnKey => typeof value === "string" && allowed.has(value as ContactTableColumnKey));
-    for (const required of CONTACT_TABLE_COLUMNS.filter((column) => column.required).map((column) => column.key)) {
-      if (!next.includes(required)) next.push(required);
-    }
     return next.length ? next : DEFAULT_CONTACT_TABLE_COLUMNS;
   } catch {
     return DEFAULT_CONTACT_TABLE_COLUMNS;
@@ -394,13 +429,12 @@ export default function Contacts() {
   };
 
   const toggleTableColumn = (key: ContactTableColumnKey) => {
-    const column = CONTACT_TABLE_COLUMNS.find((item) => item.key === key);
-    if (column?.required) return;
-    setTableColumns((current) => (
-      current.includes(key)
+    setTableColumns((current) => {
+      const next = current.includes(key)
         ? current.filter((item) => item !== key)
-        : [...current, key]
-    ));
+        : [...current, key];
+      return next.length === 0 ? current : next;
+    });
   };
 
   const saveTimezone = async (contact: Contact, nextTimezone: string) => {
@@ -1252,94 +1286,70 @@ export default function Contacts() {
         <div className="prospect-desktop-only" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
           {/* Row 1 — tab cards */}
-          {/* SDR Activity Cards — replace single large contacts count */}
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            {/* Prospects card */}
-            <div style={{
-              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
-              padding: "14px 18px", borderRadius: 14,
-              border: "1.5px solid #b8d0f0",
-              background: "linear-gradient(135deg, #f0f6ff 0%, #e8f0fb 100%)",
-              boxShadow: "0 4px 16px rgba(23, 80, 137, 0.08)",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#175089", color: "#fff" }}>
-                <Users size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#0f2744", lineHeight: 1 }}>{contactsTotal}</div>
-                <div style={{ fontSize: 11, color: "#7a96b0", marginTop: 2, fontWeight: 600 }}>Prospects</div>
-              </div>
-            </div>
-            {/* Calls made */}
-            <div style={{
-              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
-              padding: "14px 18px", borderRadius: 14,
-              border: "1.5px solid #bfdbfe",
-              background: "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#2563eb", color: "#fff" }}>
-                <PhoneCall size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#1e3a8a", lineHeight: 1 }}>
-                  {myCallsTodayCount}
+          {/* SDR Activity Cards — unified, modern, info-filled */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            {([
+              { label: "Total prospects", value: contactsTotal, icon: Users, color: "#1d4ed8", sub: contactsTotal > 0 ? "Active pipeline" : "No prospects yet" },
+              { label: "Calls today", value: myCallsTodayCount, icon: PhoneCall, color: "#0891b2", sub: myCallsTodayCount > 0 ? "Logged today" : "No calls yet" },
+              { label: "Emails opened", value: emailsOpenedCount, icon: Mail, color: "#16a34a", sub: emailsOpenedCount > 0 ? "Engaged readers" : "Awaiting opens" },
+              { label: "LinkedIn touches", value: linkedinActiveCount, icon: Link2, color: "#7c3aed", sub: linkedinActiveCount > 0 ? "Active threads" : "No threads yet" },
+              { label: "Meetings booked", value: meetingsBookedCount, icon: Clock, color: "#d97706", sub: meetingsBookedCount > 0 ? "Pipeline added" : "None yet" },
+            ] as const).map(({ label, value, icon: Icon, color, sub }) => (
+              <div
+                key={label}
+                className="prospect-kpi-card"
+                style={{
+                  position: "relative",
+                  display: "flex", flexDirection: "column", gap: 10,
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  border: "1px solid #e4ebf3",
+                  background: "#ffffff",
+                  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                  overflow: "hidden",
+                  minWidth: 0,
+                }}
+              >
+                {/* top accent strip */}
+                <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, right: 0, height: 3, background: color }} />
+                {/* radial wash in the top-right corner — fills the empty space subtly */}
+                <span aria-hidden="true" style={{
+                  position: "absolute", right: -36, top: -36, width: 120, height: 120, borderRadius: "50%",
+                  background: `radial-gradient(circle, ${color}1a, transparent 70%)`,
+                  pointerEvents: "none",
+                }} />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, borderRadius: 10,
+                    background: color, color: "#ffffff",
+                    boxShadow: `0 4px 10px ${color}40`,
+                  }}>
+                    <Icon size={15} />
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: 0.08, textTransform: "uppercase",
+                    color: "#7d8ea6",
+                  }}>
+                    {label}
+                  </span>
                 </div>
-                <div style={{ fontSize: 11, color: "#3b82f6", marginTop: 2, fontWeight: 600 }}>My Calls Today</div>
-              </div>
-            </div>
-            {/* Emails opened */}
-            <div style={{
-              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
-              padding: "14px 18px", borderRadius: 14,
-              border: "1.5px solid #bbf7d0",
-              background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#16a34a", color: "#fff" }}>
-                <Mail size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", lineHeight: 1 }}>
-                  {emailsOpenedCount}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{
+                    fontSize: 28, fontWeight: 800, color: "#0f1f33", lineHeight: 1, letterSpacing: "-0.025em",
+                  }}>
+                    {value}
+                  </span>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color, opacity: 0.85,
+                  }}>
+                    {sub}
+                  </span>
                 </div>
-                <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2, fontWeight: 600 }}>Emails Opened</div>
               </div>
-            </div>
-            {/* LinkedIn connected */}
-            <div style={{
-              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
-              padding: "14px 18px", borderRadius: 14,
-              border: "1.5px solid #e9d5ff",
-              background: "linear-gradient(135deg, #fdf4ff 0%, #f3e8ff 100%)",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#7c3aed", color: "#fff" }}>
-                <Link2 size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#4c1d95", lineHeight: 1 }}>
-                  {linkedinActiveCount}
-                </div>
-                <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2, fontWeight: 600 }}>LinkedIn Active</div>
-              </div>
-            </div>
-            {/* Meeting booked */}
-            <div style={{
-              flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12,
-              padding: "14px 18px", borderRadius: 14,
-              border: "1.5px solid #fde68a",
-              background: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#d97706", color: "#fff" }}>
-                <Clock size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#78350f", lineHeight: 1 }}>
-                  {meetingsBookedCount}
-                </div>
-                <div style={{ fontSize: 11, color: "#d97706", marginTop: 2, fontWeight: 600 }}>Meetings Booked</div>
-              </div>
-            </div>
+            ))}
             {hasNoSyncedEngagement && (
-              <div style={{ flexBasis: "100%", border: "1px solid #f5ddaa", background: "#fff8e8", color: "#6f5a2d", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.55 }}>
+              <div style={{ gridColumn: "1 / -1", border: "1px solid #f5ddaa", background: "#fff8e8", color: "#6f5a2d", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.55 }}>
                 Engagement metrics are waiting for synced or logged activity. {aircallEnabled ? "Calls, email opens, LinkedIn touches, and booked meetings will populate as reps log activity or integrations sync." : "AirCall is currently off, so call counts will stay empty until it is enabled or calls are logged manually."}
               </div>
             )}
@@ -1927,30 +1937,6 @@ export default function Contacts() {
               </div>
             </div>
 
-            <div
-              className="prospect-desktop-only"
-              style={{
-                background: "#fff8e8",
-                border: "1px solid #f5ddaa",
-                borderRadius: 14,
-                padding: "12px 16px",
-                display: "flex",
-                alignItems: "start",
-                justifyContent: "space-between",
-                gap: 12,
-                flexWrap: "wrap",
-              }}
-            >
-              <div style={{ display: "grid", gap: 4 }}>
-                <div style={{ color: "#8a5b00", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
-                  Prospect sourcing update
-                </div>
-                <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6, maxWidth: 860 }}>
-                  Beacon is temporarily not pulling contacts during company research. Use this to migrate prospects into Beacon and map them onto sourced companies. If a company is missing, Beacon will ask whether you want to add and enrich that account now.
-                </div>
-              </div>
-            </div>
-
             {/* Filters — hidden by default; toggled by the "Filters" button in
                 the top action row. Auto-shown when the user already has active
                 filters so they can see what's narrowing the list. */}
@@ -2115,8 +2101,10 @@ export default function Contacts() {
                     </button>
                     {columnMenuOpen && (
                       <div style={{
-                        position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 30,
-                        width: 280, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff",
+                        position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30,
+                        width: 320, maxWidth: "calc(100vw - 32px)",
+                        maxHeight: "70vh", overflowY: "auto",
+                        borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff",
                         boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 10, display: "flex", flexDirection: "column", gap: 8,
                       }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em", padding: "2px 4px" }}>
@@ -2160,12 +2148,10 @@ export default function Contacts() {
                                 <GripVertical size={13} />
                               </button>
                               <span style={{ flex: 1, fontSize: 12.5, color: "#24364b", fontWeight: 600 }}>{column.label}</span>
-                              {!column.required && (
-                                <button type="button" onClick={() => toggleTableColumn(column.key)} style={{ border: "1px solid #dce8f4", background: active ? "#fff3ec" : "#fff", color: active ? "#b85024" : "#546679", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                  <EyeOff size={11} />
-                                  {active ? "Hide" : "Show"}
-                                </button>
-                              )}
+                              <button type="button" onClick={() => toggleTableColumn(column.key)} style={{ border: "1px solid #dce8f4", background: active ? "#fff3ec" : "#fff", color: active ? "#b85024" : "#546679", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <EyeOff size={11} />
+                                {active ? "Hide" : "Show"}
+                              </button>
                               <button type="button" onClick={() => moveTableColumn(column.key, 1)} disabled={!active} title="Move right" style={{ border: "none", background: "transparent", cursor: active ? "pointer" : "default", color: active ? "#7a8ea4" : "#c5d1de", display: "inline-flex" }}>
                                 <ArrowLeftRight size={13} />
                               </button>
@@ -2374,36 +2360,100 @@ export default function Contacts() {
                           )}
                           {visibleColumns.map((column) => {
                             switch (column.key) {
-                              case "name":
+                              case "name": {
+                                const persona = c.persona_type ? personaChipStyle(c.persona_type) : null;
+                                const lastTouch = latestProspectActivity(c);
+                                const opens = c.email_open_count ?? 0;
+                                const clicks = c.email_click_count ?? 0;
                                 return (
                                   <td key={column.key}>
                                     <div className="flex items-center gap-3 min-w-0">
-                                      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[13px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
+                                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
                                         {getInitials(`${c.first_name} ${c.last_name}`)}
                                       </div>
-                                      <div className="min-w-0">
-                                        <p className="font-bold text-[#25384d] truncate">{c.first_name} {c.last_name}</p>
-                                        <p className="text-[13px] text-[#7a8ea4] mt-0.5">{c.seniority ?? "-"}</p>
+                                      <div className="min-w-0" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                        <p className="font-bold text-[#0f1f33] truncate" style={{ fontSize: 13.5, lineHeight: 1.25 }}>
+                                          {c.first_name} {c.last_name}
+                                        </p>
+                                        {c.seniority && (
+                                          <p style={{ fontSize: 11.5, color: "#7d8ea6", fontWeight: 600, lineHeight: 1.2, margin: 0 }}>
+                                            {c.seniority}
+                                          </p>
+                                        )}
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+                                          {persona && (
+                                            <span style={{
+                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              borderRadius: 999, background: persona.bg, color: persona.fg,
+                                              border: `1px solid ${persona.border}`, lineHeight: 1.4, whiteSpace: "nowrap",
+                                            }}>
+                                              {persona.label}
+                                            </span>
+                                          )}
+                                          {opens > 0 && (
+                                            <span title={`${opens} email opens`} style={{
+                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              borderRadius: 999, background: "#fef3c7", color: "#92400e",
+                                              border: "1px solid #fde68a", lineHeight: 1.4, whiteSpace: "nowrap",
+                                            }}>
+                                              👁 {opens}
+                                            </span>
+                                          )}
+                                          {clicks > 0 && (
+                                            <span title={`${clicks} email clicks`} style={{
+                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              borderRadius: 999, background: "#dcfce7", color: "#166534",
+                                              border: "1px solid #bbf7d0", lineHeight: 1.4, whiteSpace: "nowrap",
+                                            }}>
+                                              ↗ {clicks}
+                                            </span>
+                                          )}
+                                          {lastTouch && (
+                                            <span title={new Date(lastTouch).toLocaleString()} style={{
+                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              borderRadius: 999, background: "#eef2ff", color: "#3730a3",
+                                              border: "1px solid #c7d2fe", lineHeight: 1.4, whiteSpace: "nowrap",
+                                            }}>
+                                              {relativeTimeShort(lastTouch)}
+                                            </span>
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
                                   </td>
                                 );
+                              }
                               case "company":
                                 return (
                                   <td key={column.key}>
-                                    {c.company_name ? (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
-                                        }}
-                                        className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
-                                      >
-                                        {c.company_name}
-                                      </button>
-                                    ) : (
-                                      <span className="text-[#96a7ba]">-</span>
-                                    )}
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                                      {c.company_name ? (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
+                                          }}
+                                          className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
+                                          style={{ textAlign: "left", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                        >
+                                          {c.company_name}
+                                        </button>
+                                      ) : (
+                                        <span className="text-[#96a7ba]">-</span>
+                                      )}
+                                      {c.outreach_lane && (
+                                        <span title={`Outreach lane: ${c.outreach_lane}`} style={{
+                                          alignSelf: "flex-start",
+                                          fontSize: 10, fontWeight: 700,
+                                          padding: "2px 7px", borderRadius: 999,
+                                          background: "#fef3c7", color: "#92400e",
+                                          border: "1px solid #fde68a", lineHeight: 1.3,
+                                          whiteSpace: "nowrap",
+                                        }}>
+                                          {c.outreach_lane}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                 );
                               case "title":
@@ -2411,19 +2461,42 @@ export default function Contacts() {
                               case "email":
                                 return (
                                   <td key={column.key}>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
                                       {c.email
-                                        ? <span style={{ fontSize: 13, color: "#1e3a52", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
-                                        : <span className="text-[#96a7ba]">-</span>
+                                        ? (
+                                          <span
+                                            title={c.email}
+                                            style={{ fontSize: 12.5, color: "#1e3a52", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}
+                                          >
+                                            {c.email_verified && (
+                                              <span title="Email verified" style={{ flexShrink: 0, width: 6, height: 6, borderRadius: 999, background: "#22c55e", boxShadow: "0 0 0 2px #dcfce7" }} />
+                                            )}
+                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
+                                          </span>
+                                        )
+                                        : <span className="text-[#96a7ba]">No email</span>
                                       }
-                                      <div style={{ color: "#7a8ea4", fontSize: 11.5 }}>
-                                        {c.phone && c.linkedin_url
-                                          ? "Phone and LinkedIn ready"
-                                          : c.phone
-                                            ? "Phone ready"
-                                            : c.linkedin_url
-                                              ? "LinkedIn ready"
-                                              : "No direct channel saved"}
+                                      <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+                                        <span title={c.phone ? `Phone: ${c.phone}` : "No phone"} style={{
+                                          display: "inline-flex", alignItems: "center", gap: 3,
+                                          fontSize: 10.5, fontWeight: 700, padding: "2px 7px",
+                                          borderRadius: 999, lineHeight: 1.3,
+                                          background: c.phone ? "#ecfeff" : "#f1f5f9",
+                                          color: c.phone ? "#0891b2" : "#94a3b8",
+                                          border: `1px solid ${c.phone ? "#a5f3fc" : "#e2e8f0"}`,
+                                        }}>
+                                          <Phone size={9} strokeWidth={2.5} /> {c.phone ? "Call" : "—"}
+                                        </span>
+                                        <span title={c.linkedin_url ? "LinkedIn available" : "No LinkedIn"} style={{
+                                          display: "inline-flex", alignItems: "center", gap: 3,
+                                          fontSize: 10.5, fontWeight: 700, padding: "2px 7px",
+                                          borderRadius: 999, lineHeight: 1.3,
+                                          background: c.linkedin_url ? "#eff6ff" : "#f1f5f9",
+                                          color: c.linkedin_url ? "#1d4ed8" : "#94a3b8",
+                                          border: `1px solid ${c.linkedin_url ? "#bfdbfe" : "#e2e8f0"}`,
+                                        }}>
+                                          <Link2 size={9} strokeWidth={2.5} /> {c.linkedin_url ? "LI" : "—"}
+                                        </span>
                                       </div>
                                     </div>
                                   </td>
@@ -3326,179 +3399,342 @@ export default function Contacts() {
         }}
       />
 
-      {/* ── Call Disposition Sidebar ─────────────────────────────────── */}
-      {callContact && (
-        <div className="prospect-call-drawer-shell" style={{
-          position: "fixed", inset: 0, zIndex: 200,
-          display: "flex", justifyContent: "flex-end",
-        }}>
-          {/* Dim backdrop — clicking it does NOT close (must fill disposition first) */}
-          <div className="prospect-call-drawer-backdrop" style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} />
+      {/* ── Call Disposition Sidebar — redesigned ────────────────────── */}
+      {callContact && (() => {
+        const outcomes: Array<{ value: string; label: string; icon: typeof Phone; color: string }> = [
+          { value: "connected", label: "Connected",  icon: CheckCircle2, color: "#16a34a" },
+          { value: "voicemail", label: "Voicemail",  icon: Mail,         color: "#7c3aed" },
+          { value: "callback",  label: "Callback",   icon: Clock,        color: "#d97706" },
+          { value: "attempted", label: "No answer",  icon: Phone,        color: "#64748b" },
+        ];
+        const dispoGroups: Array<{ title: string; tone: { bg: string; fg: string; border: string }; values: string[] }> = [
+          {
+            title: "Positive",
+            tone: { bg: "#ecfdf5", fg: "#047857", border: "#a7f3d0" },
+            values: ["demo_scheduled_booked", "interested_follow_up_required", "meeting_confirmed"],
+          },
+          {
+            title: "Follow-up",
+            tone: { bg: "#fffbeb", fg: "#92400e", border: "#fde68a" },
+            values: ["call_back_later_rescheduled", "gatekeeper_connected_to_admin"],
+          },
+          {
+            title: "Negative",
+            tone: { bg: "#fef2f2", fg: "#b91c1c", border: "#fecaca" },
+            values: ["connected_not_interested", "do_not_contact_dnc"],
+          },
+          {
+            title: "No contact",
+            tone: { bg: "#f1f5f9", fg: "#475569", border: "#e2e8f0" },
+            values: ["no_answer_busy_signal", "invalid_number_wrong_number"],
+          },
+        ];
+        const dispoLabel = (v: string) => CALL_DISPOSITION_OPTIONS.find((o) => o.value === v)?.label ?? v;
+        const localTime = callContact.timezone
+          ? (() => { try { return new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: callContact.timezone }); } catch { return null; } })()
+          : null;
+        const noteChips = ["Send follow-up email", "Booked meeting", "Asked to call back later", "Not the right person", "Voicemail left, no callback yet"];
 
-          {/* Panel */}
-          <div className="prospect-call-drawer-panel" style={{
-            width: 400, maxWidth: "100vw",
-            background: "#fff",
-            borderLeft: "1px solid #d5e3ef",
-            boxShadow: "-24px 0 48px rgba(14,38,66,0.16)",
-            display: "flex", flexDirection: "column",
-            overflowY: "auto",
+        return (
+          <div className="prospect-call-drawer-shell" style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            display: "flex", justifyContent: "flex-end",
           }}>
-            {/* Header */}
-            <div className="prospect-call-drawer-header" style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5" }}>
-              <div className="prospect-call-drawer-titleline" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                <div className="prospect-call-drawer-heading" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div className="prospect-call-drawer-icon" style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f2744,#175089)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <PhoneCall size={16} color="#fff" />
+            <div className="prospect-call-drawer-backdrop" style={{ flex: 1, background: "rgba(10,20,40,0.45)", backdropFilter: "blur(2px)" }} />
+
+            <div className="prospect-call-drawer-panel" style={{
+              width: "min(760px, 92vw)", maxWidth: "100vw",
+              background: "#ffffff",
+              borderLeft: "1px solid #d5e3ef",
+              boxShadow: "-24px 0 60px rgba(14,38,66,0.18)",
+              display: "flex", flexDirection: "column",
+              position: "relative",
+            }}>
+              {/* SCROLLABLE BODY */}
+              <div style={{ flex: 1, overflowY: "auto" }}>
+
+                {/* HERO — contact identity */}
+                <div style={{
+                  padding: "18px 22px 16px",
+                  background: "linear-gradient(180deg, #f7faff 0%, #ffffff 100%)",
+                  borderBottom: "1px solid #e8eef5",
+                  position: "relative",
+                }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #1d4ed8, #06b6d4)" }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: "#16a34a", boxShadow: "0 0 0 3px #dcfce7", animation: "callpulse 1.6s ease-in-out infinite" }} />
+                      Call in progress
+                    </span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <span style={{ fontSize: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
+                        Disposition required
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCallContact(null)}
+                        aria-label="Close"
+                        style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#546679", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Call in progress</div>
-                    <div className="prospect-call-drawer-contact-name" style={{ fontSize: 12, color: "#7a96b0" }}>{callContact.first_name} {callContact.last_name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[15px] font-extrabold ${avatarColor(callContact.first_name + callContact.last_name)}`} style={{ boxShadow: "0 0 0 3px #fff, 0 4px 12px rgba(15,23,42,0.10)" }}>
+                      {getInitials(`${callContact.first_name} ${callContact.last_name}`)}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1f33", letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+                        {callContact.first_name} {callContact.last_name}
+                      </div>
+                      {callContact.title && (
+                        <div style={{ fontSize: 12.5, color: "#4a5b73", marginTop: 2, fontWeight: 600 }}>{callContact.title}</div>
+                      )}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                        {callContact.company_name && (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+                            <Building2 size={10} /> {callContact.company_name}
+                          </span>
+                        )}
+                        {callContact.timezone && (
+                          <span title={`Local time: ${localTime ?? "—"}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "#f5f3ff", color: "#6d28d9", border: "1px solid #ddd6fe" }}>
+                            <Clock size={10} /> {callContact.timezone}{localTime ? ` · ${localTime}` : ""}
+                          </span>
+                        )}
+                        {callContact.persona_type && (() => {
+                          const p = personaChipStyle(callContact.persona_type);
+                          return (
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: p.bg, color: p.fg, border: `1px solid ${p.border}` }}>
+                              {p.label}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="prospect-call-drawer-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span className="prospect-call-drawer-required" style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
-                    Disposition required
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setCallContact(null)}
-                    aria-label="Close call sidebar"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: 8,
-                      border: "1px solid #d5e3ef",
-                      background: "#fff",
-                      color: "#546679",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="prospect-call-drawer-quickfacts">
-                {callContact.phone && (
-                  <div className="prospect-call-drawer-quickfact">
-                    <Phone size={13} />
-                    <span>{callContact.phone}</span>
-                  </div>
-                )}
-                {callContact.company_name && (
-                  <div className="prospect-call-drawer-quickfact">
-                    <Building2 size={13} />
-                    <span>{callContact.company_name}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Pre-call intel — rich, data-driven panel fetched from
-                /contacts/:id/precall-brief. Gives the rep everything they
-                need before the prospect picks up: last email opened? recent
-                signals? talking points? objection handles? in ~300ms. */}
-            <PreCallIntelPanel
-              contact={callContact}
-              brief={precallBrief}
-              loading={precallLoading}
-            />
-
-            {/* Disposition form */}
-            <div className="prospect-call-drawer-form" style={{ padding: "16px 22px", flex: 1 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Log this call</div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Call outcome</label>
-                <select
-                  value={callStatus}
-                  onChange={(e) => setCallStatus(e.target.value)}
-                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none" }}
-                >
-                  <option value="attempted">Attempted — no answer</option>
-                  <option value="voicemail">Left voicemail</option>
-                  <option value="connected">Connected — spoke with prospect</option>
-                  <option value="callback">Requested callback</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Disposition *</label>
-                <select
-                  value={callDisposition}
-                  onChange={(e) => handleCallDispositionChange(e.target.value)}
-                  style={{ width: "100%", border: `1px solid ${callDisposition ? "#c8d9e8" : "#f87171"}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, color: callDisposition ? "#0f2744" : "#7a96b0", background: "#fff", outline: "none" }}
-                >
-                  <option value="">— Select disposition —</option>
-                  {CALL_DISPOSITION_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-                {!callDisposition && (
-                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>Required before closing</div>
-                )}
-              </div>
-
-              {/* Follow-up scheduler — only when the chosen disposition
-                  implies a future touchpoint. Default = tomorrow 10am PST
-                  in the rep's local TZ; user can edit. Persists as a
-                  Reminder on Save. */}
-              {FOLLOWUP_DISPOSITIONS.has(callDisposition) && (
-                <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 12, background: "#fff8e8", border: "1px solid #f5ddaa" }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#8a5b00", display: "block", marginBottom: 6 }}>
-                    Follow-up date & time
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={followupAt}
-                    onChange={(e) => setFollowupAt(e.target.value)}
-                    style={{
-                      width: "100%", border: "1px solid #e8c682", borderRadius: 10,
-                      padding: "9px 12px", fontSize: 13, color: "#0f2744",
-                      background: "#fff", outline: "none", fontFamily: "inherit",
-                    }}
-                  />
-                  <div style={{ fontSize: 11, color: "#6c5a2f", marginTop: 6, lineHeight: 1.5 }}>
-                    Default is tomorrow 10:00 AM PST (shown in your local time). A reminder will be created on this contact when you save.
+                  {/* Contact reach row */}
+                  <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+                    {callContact.phone && (
+                      <span style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "8px 10px", borderRadius: 10, background: "#ecfeff", color: "#0e7490", border: "1px solid #a5f3fc" }}>
+                        <Phone size={12} /> {callContact.phone}
+                      </span>
+                    )}
+                    {callContact.email && (
+                      <a
+                        href={gmailComposeUrl(callContact.email)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#1d4ed8", border: "1px solid #bfdbfe", textDecoration: "none" }}
+                        title="Open in Gmail compose"
+                      >
+                        <Mail size={12} /> Email
+                      </a>
+                    )}
+                    {callContact.linkedin_url && (
+                      <a
+                        href={callContact.linkedin_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#0a66c2", border: "1px solid #bfdbfe", textDecoration: "none" }}
+                      >
+                        <Link2 size={12} /> LinkedIn
+                      </a>
+                    )}
                   </div>
                 </div>
-              )}
 
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes</label>
-                <textarea
-                  value={callNotes}
-                  onChange={(e) => setCallNotes(e.target.value)}
-                  placeholder="What came up on the call? Any objections or signals…"
-                  rows={4}
-                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                {/* PRECALL INTEL */}
+                <PreCallIntelPanel
+                  contact={callContact}
+                  brief={precallBrief}
+                  loading={precallLoading}
                 />
+
+                {/* FORM */}
+                <div style={{ padding: "18px 22px 100px" }}>
+                  {/* Call outcome — segmented cards */}
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Call outcome
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                      {outcomes.map((o) => {
+                        const active = callStatus === o.value;
+                        return (
+                          <button
+                            key={o.value}
+                            type="button"
+                            onClick={() => setCallStatus(o.value)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "9px 11px",
+                              borderRadius: 10,
+                              border: `1.5px solid ${active ? o.color : "#e4ebf3"}`,
+                              background: active ? `${o.color}11` : "#fff",
+                              color: active ? o.color : "#4a5b73",
+                              fontSize: 12.5, fontWeight: 700,
+                              cursor: "pointer",
+                              transition: "all 0.12s ease",
+                            }}
+                          >
+                            <span style={{
+                              display: "inline-flex", width: 22, height: 22, borderRadius: 6,
+                              alignItems: "center", justifyContent: "center",
+                              background: active ? o.color : "#f1f5f9",
+                              color: active ? "#fff" : "#64748b",
+                              flexShrink: 0,
+                            }}>
+                              <o.icon size={12} />
+                            </span>
+                            {o.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Disposition — grouped pills */}
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        Disposition <span style={{ color: "#ef4444" }}>*</span>
+                      </div>
+                      {callDisposition && (
+                        <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <CheckCircle2 size={11} /> Selected
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {dispoGroups.map((g) => (
+                        <div key={g.title}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                            {g.title}
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {g.values.map((v) => {
+                              const active = callDisposition === v;
+                              return (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => handleCallDispositionChange(v)}
+                                  style={{
+                                    padding: "5px 11px",
+                                    borderRadius: 999,
+                                    border: `1.5px solid ${active ? g.tone.fg : g.tone.border}`,
+                                    background: active ? g.tone.fg : g.tone.bg,
+                                    color: active ? "#ffffff" : g.tone.fg,
+                                    fontSize: 11.5, fontWeight: 700,
+                                    cursor: "pointer",
+                                    transition: "all 0.12s ease",
+                                    boxShadow: active ? `0 2px 8px ${g.tone.fg}40` : "none",
+                                  }}
+                                >
+                                  {dispoLabel(v)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {!callDisposition && (
+                      <div style={{ fontSize: 11, color: "#ef4444", marginTop: 8 }}>Pick a disposition to enable Save.</div>
+                    )}
+                  </div>
+
+                  {/* Follow-up scheduler — conditional */}
+                  {FOLLOWUP_DISPOSITIONS.has(callDisposition) && (
+                    <div style={{ marginBottom: 18, padding: "12px 14px", borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                        <label style={{ fontSize: 11.5, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <Clock size={12} /> Follow-up
+                        </label>
+                        <span style={{ fontSize: 10.5, color: "#92400e", fontWeight: 600 }}>Reminder created on save</span>
+                      </div>
+                      <input
+                        type="datetime-local"
+                        value={followupAt}
+                        onChange={(e) => setFollowupAt(e.target.value)}
+                        style={{
+                          width: "100%", border: "1px solid #f5d77a", borderRadius: 10,
+                          padding: "9px 12px", fontSize: 13, color: "#0f1f33",
+                          background: "#fff", outline: "none", fontFamily: "inherit",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Notes — with quick chips */}
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Notes
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                      {noteChips.map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => setCallNotes((current) => (current ? `${current}\n${chip}` : chip))}
+                          style={{
+                            padding: "4px 9px", borderRadius: 999,
+                            border: "1px dashed #c8d6e6", background: "#f7fafc",
+                            color: "#475569", fontSize: 11, fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                          title="Add to notes"
+                        >
+                          + {chip}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={callNotes}
+                      onChange={(e) => setCallNotes(e.target.value)}
+                      placeholder="What came up on the call? Objections, signals, next steps..."
+                      rows={5}
+                      style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "11px 13px", fontSize: 13, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }}
+                    />
+                  </div>
+                </div>
               </div>
 
-              <button
-                className="prospect-call-drawer-save"
-                onClick={() => void saveCallDisposition()}
-                disabled={!callDisposition || savingDisposition}
-                style={{
-                  width: "100%", padding: "11px 0", borderRadius: 12, border: "none",
-                  background: callDisposition ? "linear-gradient(135deg,#0f2744,#175089)" : "#e8eef5",
-                  color: callDisposition ? "#fff" : "#9aafbe",
-                  fontSize: 14, fontWeight: 700,
-                  cursor: callDisposition ? "pointer" : "not-allowed",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  opacity: savingDisposition ? 0.7 : 1,
-                }}
-              >
-                {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-                {savingDisposition ? "Saving…" : "Save & close"}
-              </button>
+              {/* STICKY SAVE BAR */}
+              <div style={{
+                position: "sticky", bottom: 0, left: 0, right: 0,
+                padding: "12px 18px",
+                background: "rgba(255,255,255,0.97)",
+                backdropFilter: "saturate(180%) blur(10px)",
+                borderTop: "1px solid #e4ebf3",
+                boxShadow: "0 -8px 24px rgba(15,23,42,0.06)",
+              }}>
+                <button
+                  className="prospect-call-drawer-save"
+                  onClick={() => void saveCallDisposition()}
+                  disabled={!callDisposition || savingDisposition}
+                  style={{
+                    width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+                    background: callDisposition ? "linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)" : "#e8eef5",
+                    color: callDisposition ? "#fff" : "#9aafbe",
+                    fontSize: 14, fontWeight: 800, letterSpacing: "-0.005em",
+                    cursor: callDisposition ? "pointer" : "not-allowed",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    opacity: savingDisposition ? 0.7 : 1,
+                    boxShadow: callDisposition ? "0 6px 16px rgba(29,78,216,0.32)" : "none",
+                    transition: "all 0.14s ease",
+                  }}
+                >
+                  {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  {savingDisposition ? "Saving..." : callDisposition ? `Save: ${dispoLabel(callDisposition)}` : "Save & close"}
+                </button>
+              </div>
+              <style>{`@keyframes callpulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── LinkedIn Touch Logger ────────────────────────────────────── */}
       {linkedinContact && (

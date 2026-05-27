@@ -1,3 +1,4 @@
+import "./account-sourcing-refresh.css";
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
@@ -641,7 +642,7 @@ export default function AccountSourcing() {
   }, [createForm.companiesText, load]);
 
   return (
-    <div style={pageStyle}>
+    <div className="account-sourcing-page" style={pageStyle}>
       <style>{`
         @media (max-width: 768px) {
           .as-hero-card { padding: 16px !important; }

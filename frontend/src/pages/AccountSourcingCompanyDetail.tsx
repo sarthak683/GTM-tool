@@ -1,3 +1,4 @@
+import "./account-sourcing-refresh.css";
 import { CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -656,7 +657,7 @@ export default function AccountSourcingCompanyDetail() {
   const tier = company.icp_tier || "cold";
 
   return (
-    <div style={pageStyle}>
+    <div className="account-sourcing-detail-page ascd-page" style={pageStyle}>
       <style>{`
         @media (max-width: 768px) {
           .ascd-hero { padding: 14px !important; }
