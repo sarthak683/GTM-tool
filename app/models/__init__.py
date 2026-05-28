@@ -24,6 +24,7 @@ from app.models.angel import (
     AngelMapping, AngelMappingCreate, AngelMappingRead, AngelMappingUpdate,
 )
 from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
+from app.models.call_recording import CallRecording, CallRecordingRead
 from app.models.task import (
     Task, TaskCreate, TaskRead, TaskUpdate,
     TaskComment, TaskCommentCreate, TaskCommentRead,
@@ -53,6 +54,7 @@ __all__ = [
     "AngelInvestor", "AngelInvestorCreate", "AngelInvestorRead", "AngelInvestorUpdate",
     "AngelMapping", "AngelMappingCreate", "AngelMappingRead", "AngelMappingUpdate",
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",
+    "CallRecording", "CallRecordingRead",
     "Task", "TaskCreate", "TaskRead", "TaskUpdate",
     "TaskComment", "TaskCommentCreate", "TaskCommentRead",
     "ZippyConversation", "ZippyConversationRead",

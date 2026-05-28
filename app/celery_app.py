@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.tasks.sales_reports",
         "app.tasks.instantly_sync",
         "app.tasks.pre_meeting_brief",
+        "app.tasks.transcribe_call",
     ],
 )
 
@@ -34,6 +35,8 @@ celery_app.conf.update(
         "app.tasks.enrichment.icp_research_single_task": {"queue": "priority"},
         "app.tasks.enrichment.icp_research_free_task": {"queue": "priority"},
         "app.tasks.enrichment.icp_research_batch_task": {"queue": "priority"},
+        # Real-time call transcription — rep is waiting on this in the UI.
+        "app.tasks.transcribe_call.transcribe_call_task": {"queue": "priority"},
     },
     # Daily deal health recalculation at 02:00 UTC
     beat_schedule={

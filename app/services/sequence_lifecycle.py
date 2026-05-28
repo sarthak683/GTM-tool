@@ -57,7 +57,10 @@ def _activity_payload(activity: Activity) -> dict[str, Any]:
     meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
     return {
         "activity_id": str(activity.id) if activity.id else None,
+        "created_at": activity.created_at.isoformat() if activity.created_at else None,
         "source": activity.source or None,
+        "external_source": activity.external_source or None,
+        "external_source_id": activity.external_source_id or None,
         "medium": activity.medium or None,
         "content": activity.content or None,           # full body / log text
         "ai_summary": activity.ai_summary or None,
@@ -68,8 +71,10 @@ def _activity_payload(activity: Activity) -> dict[str, Any]:
         "call_duration_seconds": activity.call_duration,
         "recording_url": activity.recording_url or None,
         "aircall_user_name": activity.aircall_user_name or None,
+        "call_id": activity.call_id or None,
         "created_by_id": str(activity.created_by_id) if activity.created_by_id else None,
         "event_type": str(meta.get("event_type") or "").lower() or None,
+        "metadata": meta or None,
     }
 
 
@@ -222,6 +227,8 @@ def _reconcile_email_step(
     # over-count for multi-step sequences.
     open_count = 0
     click_count = 0
+    open_activities: list[Activity] = []
+    click_activities: list[Activity] = []
     if fired_at:
         # Find opens/clicks/replies/bounces that happened after this send
         # but before the next step's sent (caller won't pass future ones).
@@ -232,11 +239,13 @@ def _reconcile_email_step(
             event_type = str(meta.get("event_type") or "").lower()
             if event_type == "email_opened":
                 open_count += 1
+                open_activities.append(activity)
                 if not opened_at:
                     opened_at = activity.created_at
                     state = "opened"
             elif event_type == "email_link_clicked":
                 click_count += 1
+                click_activities.append(activity)
                 if not clicked_at:
                     clicked_at = activity.created_at
                     state = "clicked"
@@ -299,6 +308,8 @@ def _reconcile_email_step(
         "send_event": _activity_payload(send_activity) if send_activity else None,
         "open_event": _activity_payload(open_activity) if open_activity else None,
         "click_event": _activity_payload(click_activity) if click_activity else None,
+        "open_events": [_activity_payload(a) for a in open_activities],
+        "click_events": [_activity_payload(a) for a in click_activities],
         "reply_event": _activity_payload(reply_activity) if reply_activity else None,
         "bounce_event": _activity_payload(bounce_activity) if bounce_activity else None,
     }
@@ -502,6 +513,7 @@ async def build_sequence_lifecycle(
     # one User lookup.
     user_cache: dict[UUID, str] = {}
     event_keys = ("send_event", "open_event", "click_event", "reply_event", "bounce_event", "call_event", "linkedin_event")
+    event_list_keys = ("open_events", "click_events")
     for row in reconciled:
         for k in event_keys:
             ev = row.get(k)
@@ -514,6 +526,20 @@ async def build_sequence_lifecycle(
                     ev["created_by_name"] = label
                 except (ValueError, TypeError):
                     pass
+        for k in event_list_keys:
+            events = row.get(k) or []
+            if not isinstance(events, list):
+                continue
+            for ev in events:
+                if not isinstance(ev, dict):
+                    continue
+                uid_raw = ev.get("created_by_id")
+                if uid_raw:
+                    try:
+                        label = await _resolve_user_label(session, UUID(uid_raw), user_cache)
+                        ev["created_by_name"] = label
+                    except (ValueError, TypeError):
+                        pass
 
     # If the prospect replied or booked, mark remaining email steps skipped.
     contact_status = (contact.sequence_status or "").lower()

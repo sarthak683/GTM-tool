@@ -1,6 +1,7 @@
 import type {
   Activity,
   Battlecard,
+  CallRecording,
   Company,
   Contact,
   CrmImportResponse,
@@ -284,6 +285,54 @@ export const crmImportsApi = {
     ),
 };
 
+// Browser-mic call recording flow. `upload` POSTs a multipart blob and
+// returns the freshly-created CallRecording row in `uploaded` status.
+// The frontend then polls `get` every few seconds until status is
+// `ready` (transcript + AI disposition populated) or `failed`.
+export const callRecordingsApi = {
+  upload: async (params: {
+    audio: Blob;
+    contactId: string;
+    consentAcknowledgedAt: string; // ISO timestamp
+    durationSeconds?: number;
+  }): Promise<CallRecording> => {
+    const form = new FormData();
+    // Hand the browser a filename so multipart bookkeeping is clean —
+    // the backend ignores the name itself.
+    const file = new File([params.audio], `call-${Date.now()}.webm`, {
+      type: params.audio.type || "audio/webm",
+    });
+    form.append("audio", file);
+    form.append("contact_id", params.contactId);
+    form.append("consent_acknowledged_at", params.consentAcknowledgedAt);
+    if (params.durationSeconds != null) {
+      form.append("duration_seconds", String(params.durationSeconds));
+    }
+    // request() forces Content-Type: application/json; for multipart we
+    // need fetch directly so the browser sets the multipart boundary.
+    const res = await fetch(`${BASE}/api/v1/calls/recordings/`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Recording upload failed (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    }
+    return res.json();
+  },
+  get: (id: string) => request<CallRecording>(`/api/v1/calls/recordings/${id}`),
+  listForContact: (contactId: string, limit = 50) =>
+    request<CallRecording[]>(`/api/v1/calls/recordings/?contact_id=${contactId}&limit=${limit}`),
+  patch: (id: string, payload: { transcript?: string; ai_disposition?: string; ai_summary?: string }) =>
+    request<CallRecording>(`/api/v1/calls/recordings/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  retry: (id: string) =>
+    request<CallRecording>(`/api/v1/calls/recordings/${id}/retry`, { method: "POST" }),
+};
+
 export const activitiesApi = {
   list: (dealId?: string, contactId?: string) => {
     const params = new URLSearchParams();
@@ -491,7 +540,10 @@ export type LifecycleStatus =
 
 export interface LifecycleEvent {
   activity_id?: string | null;
+  created_at?: string | null;
   source?: string | null;
+  external_source?: string | null;
+  external_source_id?: string | null;
   medium?: string | null;
   content?: string | null;
   ai_summary?: string | null;
@@ -502,9 +554,11 @@ export interface LifecycleEvent {
   call_duration_seconds?: number | null;
   recording_url?: string | null;
   aircall_user_name?: string | null;
+  call_id?: string | null;
   created_by_id?: string | null;
   created_by_name?: string | null;
   event_type?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface LifecycleStep {
@@ -532,6 +586,8 @@ export interface LifecycleStep {
   send_event?: LifecycleEvent | null;
   open_event?: LifecycleEvent | null;
   click_event?: LifecycleEvent | null;
+  open_events?: LifecycleEvent[];
+  click_events?: LifecycleEvent[];
   reply_event?: LifecycleEvent | null;
   bounce_event?: LifecycleEvent | null;
   call_event?: LifecycleEvent | null;

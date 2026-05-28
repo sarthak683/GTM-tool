@@ -95,7 +95,7 @@ services:
     depends_on:
       <<: *common-depends
     command: >
-      sh -c "celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo"
+      sh -c "celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo -Q celery,priority"
 
   beat:
     build:

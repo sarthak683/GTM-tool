@@ -199,7 +199,13 @@
       "Bash(docker info *)",
       "Bash(curl -s \"http://localhost:8000/api/v1/contacts/?limit=1\")",
       "Bash(curl -s -o /dev/null -w \"filters: %{http_code}\\\\n\" \"http://localhost:8000/api/v1/contacts/?limit=1&call_outcome_color=green&email_outcome_color=blue&call_attempts_bucket=1,2\")",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Bash(export KCFG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml)",
+      "Bash(xargs -I{} echo \"key length: {} chars \\(0 = not set\\)\")",
+      "Bash(curl -s -o /dev/null -w 'http=%{http_code}\\\\n' -X POST http://localhost:8000/api/v1/calls/recordings/)",
+      "Bash(curl -s -o /dev/null -w 'list=%{http_code}\\\\n' \"http://localhost:8000/api/v1/calls/recordings/?contact_id=00000000-0000-0000-0000-000000000000\")",
+      "Bash(curl -s -o /dev/null -w 'retry=%{http_code}\\\\n' -X POST \"http://localhost:8000/api/v1/calls/recordings/00000000-0000-0000-0000-000000000000/retry\")",
+      "Bash(curl -s -o /dev/null -w 'patch=%{http_code}\\\\n' -X PATCH -H 'Content-Type: application/json' -d '{\"transcript\":\"x\"}' \"http://localhost:8000/api/v1/calls/recordings/00000000-0000-0000-0000-000000000000\")"
     ]
   },
   "enabledMcpjsonServers": [

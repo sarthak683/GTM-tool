@@ -63,6 +63,14 @@ def _parse_multi_query(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_multi_values(values: Optional[list[str]]) -> list[str]:
+    """Normalize FastAPI repeatable params plus frontend comma-joined values."""
+    parsed: list[str] = []
+    for value in values or []:
+        parsed.extend(_parse_multi_query(value))
+    return parsed
+
+
 def _parse_uuid_values(value: str | None) -> list[UUID]:
     parsed: list[UUID] = []
     for item in _parse_multi_query(value):
@@ -409,15 +417,18 @@ class ContactRepository(BaseRepository[Contact]):
             "green": {
                 "demo_scheduled_booked",
                 "meeting_confirmed",
-                "interested_follow_up_required",
             },
             "red": {
                 "connected_not_interested",
                 "contact_poor_fit",
+                "gatekeeper_connected_to_admin",
                 "do_not_contact_dnc",
                 "invalid_number_wrong_number",
             },
-            "blue": {"call_back_later_rescheduled"},
+            "blue": {
+                "interested_follow_up_required",
+                "call_back_later_rescheduled",
+            },
         }
         ALL_KNOWN_CALL_DISPOSITIONS = (
             CALL_COLOR_DISPOSITIONS["green"]
@@ -426,7 +437,7 @@ class ContactRepository(BaseRepository[Contact]):
         )
 
         if call_outcome_color:
-            colors = [c.strip().lower() for c in call_outcome_color if c and c.strip()]
+            colors = [c.strip().lower() for c in _parse_multi_values(call_outcome_color)]
             clauses = []
             for color in colors:
                 if color in CALL_COLOR_DISPOSITIONS:
@@ -450,7 +461,7 @@ class ContactRepository(BaseRepository[Contact]):
                 count_stmt = count_stmt.where(call_color_filter)
 
         if email_outcome_color:
-            colors = [c.strip().lower() for c in email_outcome_color if c and c.strip()]
+            colors = [c.strip().lower() for c in _parse_multi_values(email_outcome_color)]
             email_positive = ("replied", "meeting_booked")
             email_negative = "not_interested"
             terminal_states = ("replied", "meeting_booked", "not_interested")
@@ -483,7 +494,7 @@ class ContactRepository(BaseRepository[Contact]):
                 count_stmt = count_stmt.where(email_color_filter)
 
         if call_attempts_bucket:
-            buckets = [b.strip().lower() for b in call_attempts_bucket if b and b.strip()]
+            buckets = [b.strip().lower() for b in _parse_multi_values(call_attempts_bucket)]
             clauses = []
             for bucket in buckets:
                 if bucket == "0":

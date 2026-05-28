@@ -33,6 +33,7 @@ import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany 
 import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
 import { ProgressCell } from "./contacts/ProgressCell";
 import { LifecycleDrawer } from "./contacts/LifecycleDrawer";
+import { CallRecordingPanel, type AISuggestion } from "./contacts/CallRecordingPanel";
 import { PreCallIntelPanel } from "./contacts/PreCallIntelPanel";
 import { ProspectingTabButton } from "./contacts/ProspectingTabButton";
 import { AngelOverviewCard, SnapshotRow, StrengthBadge } from "./contacts/AngelOverviewCard";
@@ -94,8 +95,8 @@ const FOLLOWUP_DISPOSITIONS = new Set<string>([
 // app/repositories/contact.py — change them together.
 const CALL_OUTCOME_COLOR_OPTIONS: { value: string; label: string }[] = [
   { value: "yellow", label: "\u{1F7E1} Attempted (no outcome)" },
-  { value: "blue",   label: "\u{1F535} Callback scheduled" },
-  { value: "green",  label: "\u{1F7E2} Meeting / interested" },
+  { value: "blue",   label: "\u{1F535} Follow-up / callback" },
+  { value: "green",  label: "\u{1F7E2} Meeting booked" },
   { value: "red",    label: "\u{1F534} Not interested / wrong number" },
 ];
 const EMAIL_OUTCOME_COLOR_OPTIONS: { value: string; label: string }[] = [
@@ -359,6 +360,10 @@ export default function Contacts() {
   const [callContact, setCallContact] = useState<Contact | null>(null);
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
+  // Id of the recording attached to the in-progress call disposition,
+  // if any. Threaded into the Activity row's metadata on save so the
+  // lifecycle drawer can later surface the transcript.
+  const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState("attempted");
   const [savingDisposition, setSavingDisposition] = useState(false);
   // Follow-up scheduling — only visible when the disposition is a callback
@@ -1027,6 +1032,7 @@ export default function Contacts() {
     setCallDisposition("");
     setCallNotes("");
     setFollowupAt("");
+    setCurrentRecordingId(null);
     if (aircallEnabled && contact.phone) {
       if (window.__aircallDial) {
         window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
@@ -1102,6 +1108,13 @@ export default function Contacts() {
           content: activityContent,
           contact_id: callContact.id,
           call_outcome: callStatus || undefined,
+          // Link to the recording if one was attached. The lifecycle
+          // drawer's activity timeline reads this to surface the
+          // transcript + AI summary inline. Null/undefined means a
+          // plain non-recorded call (the existing flow).
+          ...(currentRecordingId
+            ? { event_metadata: { recording_id: currentRecordingId } }
+            : {}),
         } as Partial<Activity>);
       } catch {
         // Non-fatal — contact state already saved above; warn the rep so they
@@ -3662,6 +3675,20 @@ export default function Contacts() {
                   loading={precallLoading}
                 />
 
+                {/* RECORDING PANEL — optional. When the rep records the
+                    call, Whisper transcribes it and Claude pre-fills the
+                    disposition below. The rep still confirms before save. */}
+                <CallRecordingPanel
+                  contactId={callContact.id}
+                  onRecordingChange={setCurrentRecordingId}
+                  onSuggestion={(s: AISuggestion) => {
+                    handleCallDispositionChange(s.disposition);
+                    // Don't clobber notes the rep already typed — only
+                    // seed the AI summary into an empty notes field.
+                    setCallNotes((existing) => existing.trim() ? existing : s.summary);
+                  }}
+                />
+
                 {/* FORM */}
                 <div style={{ padding: "18px 22px 100px" }}>
                   {/* Call outcome — segmented cards */}
@@ -3974,5 +4001,4 @@ export default function Contacts() {
     </>
   );
 }
-
 

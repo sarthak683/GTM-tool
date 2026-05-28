@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Mail, PhoneCall, Link2, ChevronDown, ChevronRight, ExternalLink, User, Clock, AtSign, Headphones } from "lucide-react";
+import { Mail, PhoneCall, Link2, ChevronDown, ChevronRight, ExternalLink, User, Clock, AtSign, Headphones, Info } from "lucide-react";
 import type { LifecycleStep, LifecycleStepState, LifecycleEvent } from "../../lib/api";
 
 export const LIFECYCLE_DOT_STYLE: Record<LifecycleStepState, { bg: string; ring: string; border: string; text: string }> = {
@@ -33,6 +33,28 @@ function formatDuration(seconds: number | null | undefined): string | null {
   const s = Math.floor(seconds % 60);
   if (m === 0) return `${s}s`;
   return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+function formatMetadataValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function metadataRows(meta: Record<string, unknown> | null | undefined): Array<[string, string]> {
+  if (!meta) return [];
+  const hidden = new Set([
+    "event_type", "subject", "from", "to", "cc", "body", "content",
+    "html", "text", "email_subject", "email_from", "email_to",
+  ]);
+  return Object.entries(meta)
+    .filter(([key, value]) => !hidden.has(key) && value != null && value !== "")
+    .slice(0, 8)
+    .map(([key, value]) => [key.replace(/_/g, " "), formatMetadataValue(value)]);
 }
 
 /** Best-effort actor label for a recorded event. CRM user wins, then
@@ -101,7 +123,9 @@ function EventCard({
   const actor = actorLabel(ev);
   const duration = formatDuration(ev?.call_duration_seconds);
   const recording = ev?.recording_url;
-  const hasExpandableContent = Boolean(body || summary || ev?.email_to || ev?.email_cc || recording || duration);
+  const rows = metadataRows(ev?.metadata);
+  const eventWhen = whenIso || ev?.created_at;
+  const hasExpandableContent = Boolean(body || summary || ev?.email_to || ev?.email_cc || recording || duration || ev?.source || ev?.external_source_id || rows.length);
 
   return (
     <div style={{
@@ -141,7 +165,7 @@ function EventCard({
           </span>
         ) : null}
         <span style={{ fontSize: 12, color: "#334155", fontWeight: 600, flexShrink: 0 }}>
-          {formatLifecycleDate(whenIso)}
+          {formatLifecycleDate(eventWhen)}
         </span>
         {actor ? (
           <span style={{ fontSize: 11.5, color: "#64748b", display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
@@ -177,6 +201,8 @@ function EventCard({
             <MetaRow icon={<AtSign size={12} />} label="To" value={ev?.email_to} />
             <MetaRow icon={<AtSign size={12} />} label="Cc" value={ev?.email_cc} />
             <MetaRow icon={<Clock size={12} />} label="Duration" value={duration} />
+            <MetaRow icon={<Info size={12} />} label="Source" value={ev?.source || ev?.external_source} />
+            <MetaRow icon={<Info size={12} />} label="Event ID" value={ev?.external_source_id || ev?.activity_id} />
             <MetaRow
               icon={<Headphones size={12} />}
               label="Recording"
@@ -186,6 +212,9 @@ function EventCard({
                 </a>
               ) : null}
             />
+            {rows.map(([key, value]) => (
+              <MetaRow key={key} icon={<Info size={12} />} label={key} value={value} />
+            ))}
           </div>
           {summary ? (
             <div style={{ padding: "8px 10px", background: "#ffffff", borderRadius: 8, border: "1px solid #e2e8f0" }}>
@@ -205,6 +234,87 @@ function EventCard({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function EventList({
+  title,
+  events,
+  tone,
+}: {
+  title: string;
+  events: LifecycleEvent[] | undefined;
+  tone: { fg: string; bg: string; border: string };
+}) {
+  if (!events || events.length === 0) return null;
+  return (
+    <div style={{
+      border: `1px solid ${tone.border}`,
+      background: "#ffffff",
+      borderRadius: 10,
+      padding: "8px 10px",
+      display: "grid",
+      gap: 7,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 900, color: tone.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          {title}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: tone.fg, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 999, padding: "2px 7px" }}>
+          {events.length}
+        </span>
+      </div>
+      <div style={{ display: "grid", gap: 5 }}>
+        {events.map((ev, idx) => {
+          const actor = actorLabel(ev);
+          const rows = metadataRows(ev.metadata).slice(0, 3);
+          return (
+            <div
+              key={ev.activity_id || `${title}-${idx}`}
+              style={{
+                display: "grid",
+                gap: 3,
+                padding: "7px 8px",
+                borderRadius: 8,
+                background: tone.bg,
+                border: `1px solid ${tone.border}`,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                  {formatLifecycleDate(ev.created_at)}
+                </span>
+                {actor ? (
+                  <span style={{ fontSize: 11.5, color: "#64748b", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <User size={11} /> {actor}
+                  </span>
+                ) : null}
+              </div>
+              {rows.length > 0 ? (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {rows.map(([key, value]) => (
+                    <span key={key} style={{
+                      fontSize: 11,
+                      color: "#475569",
+                      background: "#fff",
+                      border: `1px solid ${tone.border}`,
+                      borderRadius: 999,
+                      padding: "2px 7px",
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}>
+                      <strong style={{ color: "#334155" }}>{key}:</strong> {value}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -275,6 +385,7 @@ export function LifecycleStepRow({ step }: { step: LifecycleStep }) {
               tone={TONE.teal}
               count={step.open_count}
             />
+            <EventList title="All opens" events={step.open_events} tone={TONE.teal} />
             <EventCard
               kind="Clicked"
               ev={step.click_event}
@@ -282,6 +393,7 @@ export function LifecycleStepRow({ step }: { step: LifecycleStep }) {
               tone={TONE.sky}
               count={step.click_count}
             />
+            <EventList title="All clicks" events={step.click_events} tone={TONE.sky} />
             <EventCard
               kind="Replied"
               ev={step.reply_event}

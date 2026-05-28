@@ -235,7 +235,7 @@ function DotRail({ dots, overflowCount, terminalDot, followupDateLabel }: {
 }) {
   const isEmpty = dots.length === 0 && !overflowCount && !terminalDot && !followupDateLabel;
   if (isEmpty) {
-    return <span style={{ fontSize: 10.5, color: "#9aa9bb", fontStyle: "italic", fontWeight: 600 }}>—</span>;
+    return <span aria-hidden="true" style={{ width: 1, height: 10, display: "inline-block" }} />;
   }
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>

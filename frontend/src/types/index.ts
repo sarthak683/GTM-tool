@@ -319,6 +319,34 @@ export interface Activity {
   email_cc?: string;
 }
 
+// In-browser call recording (manual call on phone speakerphone, laptop
+// mic captures both sides). Audio is not persisted server-side — see
+// app/tasks/transcribe_call.py. Only the transcript and AI-classified
+// disposition are stored long-term.
+export type CallRecordingStatus =
+  | "uploaded"
+  | "transcribing"
+  | "classifying"
+  | "ready"
+  | "failed";
+
+export interface CallRecording {
+  id: string;
+  contact_id: string;
+  created_by_id?: string;
+  status: CallRecordingStatus;
+  consent_acknowledged_at?: string;
+  audio_duration_seconds?: number;
+  audio_size_bytes?: number;
+  transcript?: string;
+  ai_disposition?: string;
+  ai_confidence?: number;
+  ai_summary?: string;
+  failure_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TaskComment {
   id: string;
   task_id: string;
