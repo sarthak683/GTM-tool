@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Square, Loader2, CheckCircle2, AlertTriangle, Sparkles, History, RefreshCw, Edit3, Save, XCircle } from "lucide-react";
+import { Mic, Square, Loader2, CheckCircle2, AlertTriangle, Sparkles, History, RefreshCw, Edit3, Save, XCircle, FileText, ChevronDown, ChevronRight } from "lucide-react";
 import { callRecordingsApi } from "../../lib/api";
 import type { CallRecording } from "../../types";
 
@@ -75,6 +75,10 @@ export function CallRecordingPanel({
   const [transcriptDraft, setTranscriptDraft] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // Set of past-recording IDs whose full transcript is currently
+  // expanded in the past-recordings strip. Per-row toggle so the rep can
+  // peek at one transcript without flooding the panel with several.
+  const [expandedPastTranscripts, setExpandedPastTranscripts] = useState<Set<string>>(() => new Set());
 
   // MediaRecorder + Web Audio analyser live in refs so re-renders don't
   // tear them down. Cleanup happens in the stop handler and on unmount.
@@ -403,6 +407,46 @@ export function CallRecordingPanel({
                   ) : r.failure_reason ? (
                     <div style={{ color: "#b91c1c" }}>{r.failure_reason}</div>
                   ) : null}
+                  {r.transcript ? (() => {
+                    const isOpen = expandedPastTranscripts.has(r.id);
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPastTranscripts((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
+                            return next;
+                          })}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            marginTop: 6, padding: "3px 8px",
+                            border: `1px solid ${tone.border}`, borderRadius: 7,
+                            background: "#ffffff", color: tone.fg,
+                            fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                          }}
+                          title={`${r.transcript.length.toLocaleString()} chars`}
+                        >
+                          {isOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                          <FileText size={10} />
+                          {isOpen ? "Hide transcript" : "Show transcript"}
+                          <span style={{ color: "#64748b", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                            · {r.transcript.length.toLocaleString()}
+                          </span>
+                        </button>
+                        {isOpen ? (
+                          <div style={{
+                            marginTop: 6, padding: 10, borderRadius: 8,
+                            background: "#ffffff", border: `1px solid ${tone.border}`,
+                            whiteSpace: "pre-wrap", maxHeight: 260, overflowY: "auto",
+                            color: "#1e293b", lineHeight: 1.55, fontSize: 12,
+                          }}>
+                            {r.transcript}
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })() : null}
                 </div>
               );
             })}
