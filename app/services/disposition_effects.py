@@ -23,7 +23,7 @@ same behavior for free.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -82,6 +82,12 @@ _FOLLOWUP_DISPOSITIONS = {
     "interested_follow_up_required",
     "call_back_later_rescheduled",
 }
+
+
+def _default_followup_utc() -> datetime:
+    """Tomorrow at 10am PST, stored as naive UTC for DB consistency."""
+    now = datetime.utcnow()
+    return (now + timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
 
 
 def _should_advance(current: Optional[str], target: str) -> bool:
@@ -202,6 +208,16 @@ async def apply_call_disposition_effects(
     if disposition not in _FOLLOWUP_DISPOSITIONS and contact.next_followup_at is not None:
         changes["next_followup_at"] = f"{contact.next_followup_at} -> None"
         contact.next_followup_at = None
+        session.add(contact)
+
+    # Follow-up/callback outcomes are not complete without a next date. The
+    # UI normally sends one, but this backend default protects API callers,
+    # older clients, and failed browser state from leaving reps with a blue /
+    # white progress marker and no due date.
+    if disposition in _FOLLOWUP_DISPOSITIONS and contact.next_followup_at is None:
+        contact.next_followup_at = _default_followup_utc()
+        changes["next_followup_at"] = f"None -> {contact.next_followup_at}"
+        contact.updated_at = datetime.utcnow()
         session.add(contact)
 
     new_status = derive_status_from_call_disposition(

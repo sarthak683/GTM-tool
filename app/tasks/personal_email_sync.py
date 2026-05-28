@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from uuid import UUID
 
 from app.celery_app import celery_app
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # How often the per-user sync runs (controlled by the beat task interval)
 PERSONAL_SYNC_INTERVAL_SECONDS = 600  # 10 minutes
+
+
+def _is_invalid_grant(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "invalid_grant" in message or "expired or revoked" in message
 
 
 def _run_async_task(coro):
@@ -68,6 +74,14 @@ def sync_personal_inbox(self, connection_id: str) -> dict:
     try:
         return _run_async_task(_async_sync_inbox(connection_id))
     except Exception as exc:
+        if _is_invalid_grant(exc):
+            logger.warning(
+                "Personal email sync needs reconnect for connection %s: %s",
+                connection_id,
+                exc,
+            )
+            _run_async_task(_mark_connection_reconnect_required(connection_id, str(exc)))
+            return {"status": "reconnect_required", "reason": "invalid_grant"}
         logger.error("Personal email sync failed for connection %s: %s", connection_id, exc)
         raise self.retry(exc=exc)
 
@@ -116,6 +130,21 @@ async def _enqueue_all_inboxes() -> dict:
         return {"queued": queued}
     finally:
         await engine.dispose()
+
+
+async def _mark_connection_reconnect_required(connection_id: str, error: str) -> None:
+    from app.database import task_session
+    from app.models.user_email_connection import UserEmailConnection
+
+    async with task_session() as session:
+        conn = await session.get(UserEmailConnection, connection_id)
+        if not conn:
+            return
+        conn.is_active = False
+        conn.last_error = f"Reconnect Gmail: {error}"[:500]
+        conn.updated_at = datetime.utcnow()
+        session.add(conn)
+        await session.commit()
 
 
 async def _async_sync_inbox(connection_id: str) -> dict:
@@ -198,6 +227,8 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                         )
                         cal_meetings_created = cal_stats["meetings_created"]
                 except Exception as cal_exc:
+                    if _is_invalid_grant(cal_exc):
+                        raise
                     logger.warning("calendar_sync (no-mail path) failed: %s", cal_exc)
 
                 connection.last_sync_epoch = current_epoch
@@ -254,6 +285,8 @@ async def _async_sync_inbox(connection_id: str) -> dict:
                         cal_stats["meetings_updated"],
                     )
             except Exception as cal_exc:
+                if _is_invalid_grant(cal_exc):
+                    raise
                 # Calendar failure must not block email sync
                 logger.warning("calendar_sync failed for %s: %s", connection.email_address, cal_exc)
 
@@ -284,8 +317,10 @@ async def _async_sync_inbox(connection_id: str) -> dict:
             async with SessionLocal() as err_session:
                 conn = await err_session.get(UserEmailConnection, connection_id)
                 if conn:
+                    if _is_invalid_grant(exc):
+                        conn.is_active = False
                     conn.last_error = str(exc)[:500]
-                    conn.updated_at = __import__("datetime").datetime.utcnow()
+                    conn.updated_at = datetime.utcnow()
                     err_session.add(conn)
                     await err_session.commit()
         except Exception:

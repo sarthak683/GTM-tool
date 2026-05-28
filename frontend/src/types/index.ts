@@ -319,6 +319,25 @@ export interface Activity {
   email_cc?: string;
 }
 
+// System-generated bell notification. Distinct from Tasks: signals that
+// decay on read, not durable work. See app/services/notifications.py.
+export type NotificationType = "meeting_booked_suggest_deal";
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  type: NotificationType | string; // string fallback so unknown future types still render
+  title: string;
+  body?: string;
+  action_payload?: Record<string, unknown>;
+  dedup_key?: string;
+  read_at?: string;
+  dismissed_at?: string;
+  accepted_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // In-browser call recording (manual call on phone speakerphone, laptop
 // mic captures both sides). Audio is not persisted server-side — see
 // app/tasks/transcribe_call.py. Only the transcript and AI-classified

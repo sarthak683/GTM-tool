@@ -1,5 +1,6 @@
 import type {
   Activity,
+  AppNotification,
   Battlecard,
   CallRecording,
   Company,
@@ -331,6 +332,28 @@ export const callRecordingsApi = {
     }),
   retry: (id: string) =>
     request<CallRecording>(`/api/v1/calls/recordings/${id}/retry`, { method: "POST" }),
+};
+
+// Bell-icon notification feed. Distinct from Tasks: signals decay once
+// acknowledged. See app/services/notifications.py for the producer side.
+export const notificationsApi = {
+  list: (params?: { unreadOnly?: boolean; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.unreadOnly) search.set("unread_only", "true");
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return request<AppNotification[]>(`/api/v1/notifications/${qs ? `?${qs}` : ""}`);
+  },
+  unreadCount: () => request<{ unread: number }>(`/api/v1/notifications/unread/count`),
+  markRead: (id: string) =>
+    request<AppNotification>(`/api/v1/notifications/${id}/read`, { method: "POST" }),
+  dismiss: (id: string) =>
+    request<AppNotification>(`/api/v1/notifications/${id}/dismiss`, { method: "POST" }),
+  accept: (id: string) =>
+    request<{ deal_id?: string; deal_name?: string; stage?: string; notification: AppNotification }>(
+      `/api/v1/notifications/${id}/accept`,
+      { method: "POST" },
+    ),
 };
 
 export const activitiesApi = {

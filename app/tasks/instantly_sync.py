@@ -7,7 +7,7 @@ counts for all contacts linked to active Instantly campaigns.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlmodel import select
@@ -16,10 +16,126 @@ from app.celery_app import celery_app
 from app.clients.instantly import InstantlyClient, InstantlyError
 from app.config import settings
 from app.database import task_session
+from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_instantly_datetime(value) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _existing_synced_event_count(session, contact_id: UUID, event_type: str) -> int:
+    result = await session.execute(
+        select(Activity.id).where(
+            Activity.contact_id == contact_id,
+            Activity.source == "instantly",
+            Activity.medium == "email",
+            Activity.event_metadata["event_type"].as_string() == event_type,
+        )
+    )
+    return len(result.scalars().all())
+
+
+async def _backfill_synced_email_events(
+    session,
+    *,
+    contact: Contact,
+    campaign_id: str,
+    campaign_name: str | None,
+    lead: dict,
+    event_type: str,
+    count_field: str,
+    timestamp_field: str,
+    content_label: str,
+) -> int:
+    """Persist activity rows for Instantly counters seen during polling.
+
+    Instantly's lead polling endpoint usually exposes aggregate counters, not
+    a complete event stream. The lifecycle drawer still needs a row per open
+    or click so reps can inspect the cadence history. We create deterministic,
+    idempotent synthetic rows for any counter value that does not yet have a
+    matching activity.
+    """
+    if not contact.id or not contact.email:
+        return 0
+
+    target_count = _safe_int(lead.get(count_field))
+    if target_count <= 0:
+        return 0
+
+    existing_count = await _existing_synced_event_count(session, contact.id, event_type)
+    missing = target_count - existing_count
+    if missing <= 0:
+        return 0
+
+    anchor = _parse_instantly_datetime(lead.get(timestamp_field)) or datetime.utcnow()
+    created = 0
+    email = contact.email.lower().strip()
+    subject = lead.get("subject") or lead.get("email_subject") or None
+    sender = lead.get("email_account") or lead.get("from_email") or None
+
+    for index in range(existing_count + 1, target_count + 1):
+        external_id = f"{campaign_id}:{email}:{event_type}:{index}"
+        duplicate = (
+            await session.execute(
+                select(Activity.id).where(
+                    Activity.external_source == "instantly_sync",
+                    Activity.external_source_id == external_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if duplicate:
+            continue
+
+        # If several events are discovered in one poll, only the latest event's
+        # exact timestamp is known. Stagger earlier synthetic events slightly so
+        # ordering remains readable without inventing misleading dates.
+        created_at = anchor - timedelta(minutes=max(target_count - index, 0))
+        activity = Activity(
+            type="email",
+            source="instantly",
+            medium="email",
+            content=f"{content_label}: {email}",
+            contact_id=contact.id,
+            external_source="instantly_sync",
+            external_source_id=external_id,
+            event_metadata={
+                "event_type": event_type,
+                "synthetic_from_sync": True,
+                "counter_index": index,
+                "counter_total": target_count,
+                "campaign_id": campaign_id,
+                "campaign_name": campaign_name,
+                "lead_email": email,
+                "synced_at": datetime.utcnow().isoformat(),
+                "source_timestamp": anchor.isoformat(),
+            },
+            email_subject=subject,
+            email_from=sender,
+            email_to=email,
+            created_at=created_at,
+        )
+        session.add(activity)
+        created += 1
+
+    return created
 
 
 def _run_async_task(coro):
@@ -137,15 +253,42 @@ async def _async_sync_active_campaigns() -> dict:
 
                                 if lead.get("email_open_count", 0) > (contact.email_open_count or 0):
                                     contact.email_open_count = lead["email_open_count"]
-                                    if lead.get("timestamp_last_open"):
-                                        contact.email_last_opened_at = datetime.fromisoformat(
-                                            lead["timestamp_last_open"].replace("Z", "+00:00")
-                                        ).replace(tzinfo=None)
+                                    last_open = _parse_instantly_datetime(lead.get("timestamp_last_open"))
+                                    if last_open:
+                                        contact.email_last_opened_at = last_open
                                 if lead.get("email_click_count", 0) > (contact.email_click_count or 0):
                                     contact.email_click_count = lead["email_click_count"]
 
+                                events_created = 0
+                                events_created += await _backfill_synced_email_events(
+                                    session,
+                                    contact=contact,
+                                    campaign_id=campaign_id,
+                                    campaign_name=getattr(seq, "campaign_name", None),
+                                    lead=lead,
+                                    event_type="email_opened",
+                                    count_field="email_open_count",
+                                    timestamp_field="timestamp_last_open",
+                                    content_label="Email opened (synced from Instantly)",
+                                )
+                                events_created += await _backfill_synced_email_events(
+                                    session,
+                                    contact=contact,
+                                    campaign_id=campaign_id,
+                                    campaign_name=getattr(seq, "campaign_name", None),
+                                    lead=lead,
+                                    event_type="email_link_clicked",
+                                    count_field="email_click_count",
+                                    timestamp_field="timestamp_last_click",
+                                    content_label="Email link clicked (synced from Instantly)",
+                                )
+
                                 contact.updated_at = datetime.utcnow()
                                 session.add(contact)
+                                if events_created:
+                                    from app.services.tasks import refresh_system_tasks_for_entity
+
+                                    await refresh_system_tasks_for_entity(session, "contact", contact.id)
                                 synced += 1
                     except Exception:
                         errors += 1

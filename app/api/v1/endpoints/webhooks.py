@@ -689,6 +689,9 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     elif event_type == "email_opened":
         content = f"Email opened: {subject} by {lead_email}"
         activity_type = "email"
+        email_subject = subject
+        email_sender = payload.get("email_account") or payload.get("from_email") or ""
+        email_recipient = lead_email
         if contact:
             contact.email_open_count = (contact.email_open_count or 0) + 1
             contact.email_last_opened_at = now
@@ -698,6 +701,9 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     elif event_type in ("link_clicked", "email_link_clicked"):
         content = f"Link clicked in email: {subject} by {lead_email}"
         activity_type = "email"
+        email_subject = subject
+        email_sender = payload.get("email_account") or payload.get("from_email") or ""
+        email_recipient = lead_email
         if contact:
             contact.email_click_count = (contact.email_click_count or 0) + 1
             contact.updated_at = now
@@ -706,6 +712,9 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     elif event_type == "email_bounced":
         content = f"Email bounced: {lead_email} — {subject}"
         activity_type = "email"
+        email_subject = subject
+        email_sender = payload.get("email_account") or payload.get("from_email") or ""
+        email_recipient = lead_email
         # Mark the contact's email as invalid
         if contact:
             contact.email_verified = False
@@ -724,6 +733,9 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
             + (f"\n\n{reply_body[:1000]}" if reply_body else "")
         )
         activity_type = "email"
+        email_subject = subject
+        email_sender = lead_email
+        email_recipient = payload.get("email_account") or payload.get("to_email") or ""
         # Update contact + sequence to "replied"
         if contact:
             contact.sequence_status = "replied"
@@ -764,6 +776,53 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
                     contact.sequence_status = "unsubscribed"
                     contact.instantly_status = "unsubscribed"
                     session.add(contact)
+                # Bell notification: when the classifier sees a positive
+                # reply expressing interest, suggest creating a Deal. The
+                # rep accepts / dismisses from the navbar bell — we never
+                # auto-create. Dedup on the message id so a re-delivered
+                # webhook can't spawn duplicates.
+                if (
+                    contact
+                    and verdict.get("sentiment") == "positive"
+                    and verdict.get("intent") == "interested"
+                    and event_external_id
+                ):
+                    assignee_id = contact.sdr_id or contact.assigned_to_id
+                    if assignee_id:
+                        try:
+                            from app.services.notifications import create_notification
+
+                            contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or (contact.email or "Prospect")
+                            company_name = None
+                            if contact.company_id:
+                                from app.models.company import Company
+
+                                co = (await session.execute(
+                                    select(Company).where(Company.id == contact.company_id)
+                                )).scalar_one_or_none()
+                                if co:
+                                    company_name = co.name
+                            await create_notification(
+                                session,
+                                user_id=assignee_id,
+                                type="meeting_booked_suggest_deal",
+                                title=f"Positive reply from {contact_name}",
+                                body=verdict.get("one_line") or "Prospect wants to talk — create a deal?",
+                                action_payload={
+                                    "contact_id": str(contact.id),
+                                    "contact_name": contact_name,
+                                    "company_id": str(contact.company_id) if contact.company_id else None,
+                                    "company_name": company_name,
+                                    "reply_summary": verdict.get("one_line"),
+                                    "reply_intent": verdict.get("intent"),
+                                    "reply_sentiment": verdict.get("sentiment"),
+                                    "suggested_response": verdict.get("suggested_response"),
+                                    "reply_event_id": event_external_id,
+                                },
+                                dedup_key=f"meeting_booked:{contact.id}:{event_external_id}",
+                            )
+                        except Exception as exc:
+                            logger.warning("notification create failed for reply %s: %s", event_external_id, exc)
         except Exception as exc:
             logger.warning("reply_sentiment classification failed: %s", exc)
 

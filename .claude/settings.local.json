@@ -205,7 +205,10 @@
       "Bash(curl -s -o /dev/null -w 'http=%{http_code}\\\\n' -X POST http://localhost:8000/api/v1/calls/recordings/)",
       "Bash(curl -s -o /dev/null -w 'list=%{http_code}\\\\n' \"http://localhost:8000/api/v1/calls/recordings/?contact_id=00000000-0000-0000-0000-000000000000\")",
       "Bash(curl -s -o /dev/null -w 'retry=%{http_code}\\\\n' -X POST \"http://localhost:8000/api/v1/calls/recordings/00000000-0000-0000-0000-000000000000/retry\")",
-      "Bash(curl -s -o /dev/null -w 'patch=%{http_code}\\\\n' -X PATCH -H 'Content-Type: application/json' -d '{\"transcript\":\"x\"}' \"http://localhost:8000/api/v1/calls/recordings/00000000-0000-0000-0000-000000000000\")"
+      "Bash(curl -s -o /dev/null -w 'patch=%{http_code}\\\\n' -X PATCH -H 'Content-Type: application/json' -d '{\"transcript\":\"x\"}' \"http://localhost:8000/api/v1/calls/recordings/00000000-0000-0000-0000-000000000000\")",
+      "Bash(curl -s -o /dev/null -w 'list=%{http_code}\\\\n' \"http://localhost:8000/api/v1/notifications/\")",
+      "Bash(curl -s -o /dev/null -w 'count=%{http_code}\\\\n' \"http://localhost:8000/api/v1/notifications/unread/count\")",
+      "Bash(curl -s -o /dev/null -w 'accept=%{http_code}\\\\n' -X POST \"http://localhost:8000/api/v1/notifications/00000000-0000-0000-0000-000000000000/accept\")"
     ]
   },
   "enabledMcpjsonServers": [

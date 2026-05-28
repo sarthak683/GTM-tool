@@ -121,6 +121,12 @@ async def get_contact_sequence(contact_id: UUID, session: DBSession, _user: Curr
     return seq
 
 
+@router.get("/contacts/{contact_id}/sequence", response_model=Optional[OutreachSequenceRead])
+async def get_contact_sequence_optional(contact_id: UUID, session: DBSession, _user: CurrentUser):
+    """Return the contact's sequence when present without logging a 404 in the browser."""
+    return await OutreachRepository(session).get_by_contact(contact_id)
+
+
 @router.patch("/sequences/{sequence_id}", response_model=OutreachSequenceRead)
 async def update_sequence(sequence_id: UUID, updates: dict, session: DBSession, _user: CurrentUser):
     repo = OutreachRepository(session)

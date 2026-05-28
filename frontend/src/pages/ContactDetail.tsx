@@ -46,7 +46,7 @@ export default function ContactDetail() {
       }
       tasks.push(
         outreachApi
-          .getSequence(id)
+          .getSequenceOptional(id)
           .then((s) => setSequence(s))
           .catch(() => setSequence(null))
       );

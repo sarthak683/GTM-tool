@@ -28,6 +28,8 @@ export const outreachApi = {
     }),
   getSequence: (contactId: string) =>
     request<OutreachSequence>(`/api/v1/outreach/sequences/${contactId}`),
+  getSequenceOptional: (contactId: string) =>
+    request<OutreachSequence | null>(`/api/v1/outreach/contacts/${contactId}/sequence`),
   bulkGenerate: (companyId: string, personaFilter?: string) => {
     const params = personaFilter ? `?persona_filter=${personaFilter}` : "";
     return request<{ generated: number; skipped_existing: number; sequences: unknown[] }>(

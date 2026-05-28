@@ -884,10 +884,10 @@ export default function Contacts() {
     setLinkedinSuggestionLoading(true);
     setLinkedinSuggestionCopied(false);
     outreachApi
-      .getSequence(linkedinContact.id)
+      .getSequenceOptional(linkedinContact.id)
       .then((seq) => {
         if (cancelled) return;
-        setLinkedinSuggestion((seq.linkedin_message || "").trim() || null);
+        setLinkedinSuggestion((seq?.linkedin_message || "").trim() || null);
       })
       .catch(() => {
         // No sequence yet — we just don't show the suggestion panel.
@@ -1047,10 +1047,16 @@ export default function Contacts() {
         .then((res) => {
           if (res.sent > 0) {
             toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
+          } else if (res.configured === 0) {
+            toast.warning("Mobile push is not configured yet. The call drawer is ready here.", "Mobile ring unavailable");
+          } else if (res.total === 0) {
+            toast.info("No mobile PWA is registered for your user yet. Enable mobile notifications from Settings.", "Mobile not registered");
+          } else {
+            toast.warning("No mobile device accepted the call notification. Re-enable notifications on the phone.", "Mobile ring failed");
           }
         })
         .catch(() => {
-          /* swallow — push is opt-in and non-essential */
+          toast.info("Call drawer is ready here. Mobile notification could not be sent.", "Mobile ring skipped");
         });
     }
   };
@@ -1081,9 +1087,21 @@ export default function Contacts() {
       // the contact so the prospect-row progress bar can render the date next
       // to the blue+white dot pair. The backend clears this field automatically
       // when the disposition changes to something that doesn't imply a follow-up.
-      const followupIso = (FOLLOWUP_DISPOSITIONS.has(callDisposition) && followupAt)
-        ? (() => { const d = new Date(followupAt); return Number.isNaN(d.getTime()) ? undefined : d.toISOString(); })()
+      const needsFollowup = FOLLOWUP_DISPOSITIONS.has(callDisposition);
+      const followupLocal = needsFollowup ? (followupAt || defaultFollowupLocalString()) : "";
+      const followupIso = needsFollowup
+        ? (() => {
+            const d = new Date(followupLocal);
+            return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+          })()
         : undefined;
+      if (needsFollowup && !followupIso) {
+        toast.error("Choose a valid follow-up date and time before saving.", "Follow-up required");
+        return;
+      }
+      if (needsFollowup && !followupAt) {
+        setFollowupAt(followupLocal);
+      }
       await contactsApi.update(callContact.id, {
         call_status: callStatus,
         call_disposition: callDisposition,
@@ -1108,13 +1126,18 @@ export default function Contacts() {
           content: activityContent,
           contact_id: callContact.id,
           call_outcome: callStatus || undefined,
+          event_metadata: {
+            event_type: "manual_call_logged",
+            call_disposition: callDisposition,
+            call_status: callStatus,
+            followup_at: followupIso,
+            logged_at: nowIso,
+            ...(currentRecordingId ? { recording_id: currentRecordingId } : {}),
+          },
           // Link to the recording if one was attached. The lifecycle
           // drawer's activity timeline reads this to surface the
           // transcript + AI summary inline. Null/undefined means a
           // plain non-recorded call (the existing flow).
-          ...(currentRecordingId
-            ? { event_metadata: { recording_id: currentRecordingId } }
-            : {}),
         } as Partial<Activity>);
       } catch {
         // Non-fatal — contact state already saved above; warn the rep so they
@@ -1126,9 +1149,9 @@ export default function Contacts() {
       // persist it as a Reminder. The datetime-local input value is naive
       // (no TZ); we treat it as the rep's local time and convert to ISO via
       // the Date constructor, which interprets unsuffixed strings as local.
-      if (FOLLOWUP_DISPOSITIONS.has(callDisposition) && followupAt) {
+      if (needsFollowup && followupIso) {
         try {
-          const due = new Date(followupAt);
+          const due = new Date(followupIso);
           if (!Number.isNaN(due.getTime())) {
             await remindersApi.create({
               contact_id: callContact.id,
@@ -3788,7 +3811,7 @@ export default function Contacts() {
                     <div style={{ marginBottom: 18, padding: "12px 14px", borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                         <label style={{ fontSize: 11.5, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <Clock size={12} /> Follow-up
+                          <Clock size={12} /> Follow-up <span style={{ color: "#dc2626" }}>*</span>
                         </label>
                         <span style={{ fontSize: 10.5, color: "#92400e", fontWeight: 600 }}>Reminder created on save</span>
                       </div>
@@ -4001,4 +4024,3 @@ export default function Contacts() {
     </>
   );
 }
-

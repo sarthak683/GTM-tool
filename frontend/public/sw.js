@@ -46,7 +46,12 @@ self.addEventListener("push", (event) => {
     // the device instead of being collapsed silently by the OS.
     renotify: true,
     requireInteraction: true,
-    data: { tel, contact_id: payload.contact_id || null, type: payload.type || "ring-mobile" },
+    data: {
+      tel,
+      contact_id: payload.contact_id || null,
+      contact_name: payload.contact_name || "",
+      type: payload.type || "ring-mobile",
+    },
     actions: tel
       ? [{ action: "dial", title: "Call now" }]
       : [],

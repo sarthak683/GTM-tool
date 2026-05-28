@@ -4,6 +4,7 @@ import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
 import GlobalSearchModal from "./GlobalSearchModal";
+import { NotificationBell } from "./NotificationBell";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { ZippyProvider } from "../zippy/ZippyContext";
 import { useAuth } from "../../lib/AuthContext";
@@ -170,6 +171,7 @@ function Layout() {
               </div>
               <span className="crm-search-kbd">Ctrl + K</span>
             </button>
+            <NotificationBell />
             <div style={{ position: "relative" }}>
               <button
                 type="button"

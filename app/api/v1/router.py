@@ -31,6 +31,7 @@ from app.api.v1.endpoints import (
     global_search,
     knowledge,
     meetings,
+    notifications,
     outreach,
     performance,
     prospecting,
@@ -85,6 +86,7 @@ router.include_router(drive.router)
 router.include_router(push.router)
 router.include_router(reminders.router)
 router.include_router(call_recordings.router)
+router.include_router(notifications.router)
 router.include_router(workspace.router)
 router.include_router(knowledge.router)
 router.include_router(zippy.router)

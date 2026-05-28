@@ -190,8 +190,14 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
     setSequenceApproved(false);
 
     outreachApi
-      .getSequence(contact.id)
+      .getSequenceOptional(contact.id)
       .then((s) => {
+        if (!s) {
+          setSeq(null);
+          setSteps([]);
+          setError("");
+          return;
+        }
         setSeq(s);
         setError("");
         void loadSteps(s.id, s);
