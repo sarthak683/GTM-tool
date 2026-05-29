@@ -424,7 +424,7 @@ function SearchSelect<T extends { id: string }>({
               onQueryChange("");
               setOpen(false);
             }}
-            style={{ width: "100%", border: "none", background: value ? "#f8fbff" : "#eef4ff", color: "#315a9e", padding: "9px 12px", textAlign: "left", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+            style={{ width: "100%", border: "none", background: value ? "#f8fbff" : "#f3fbe3", color: "#4d7c0f", padding: "9px 12px", textAlign: "left", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
           >
             — No {label.toLowerCase()} —
           </button>
@@ -443,7 +443,7 @@ function SearchSelect<T extends { id: string }>({
                 onQueryChange(getLabel(item));
                 setOpen(false);
               }}
-              style={{ width: "100%", border: "none", background: item.id === value ? "#eef4ff" : "#fff", color: "#24364b", padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "grid", gap: 2 }}
+              style={{ width: "100%", border: "none", background: item.id === value ? "#f3fbe3" : "#fff", color: "#24364b", padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "grid", gap: 2 }}
             >
               <span style={{ fontSize: 13, fontWeight: 800 }}>{getLabel(item)}</span>
               {getMeta?.(item) ? <span style={{ fontSize: 11, color: "#7890aa" }}>{getMeta(item)}</span> : null}
@@ -1060,7 +1060,7 @@ export default function MeetingDetail() {
           <div style={{ marginTop: 20, padding: "16px 18px", borderRadius: 14, border: "1px solid #d5e5ff", background: "#f3f8ff" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: "#24364b", display: "flex", alignItems: "center", gap: 6 }}>
-                <Link2 size={14} style={{ color: "#1f6feb" }} /> Link Company &amp; Deal
+                <Link2 size={14} style={{ color: "#4d7c0f" }} /> Link Company &amp; Deal
               </span>
               <button type="button" onClick={() => setShowLinkPanel(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8ea4" }}>
                 <X size={14} />
@@ -1115,7 +1115,7 @@ export default function MeetingDetail() {
                 type="button"
                 disabled={linkSaving}
                 onClick={handleSaveLink}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#1f6feb", border: "1px solid #1f6feb", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "#6fae27", border: "1px solid #6fae27", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
               >
                 <Save size={13} /> {linkSaving ? "Saving…" : "Save"}
               </button>
@@ -1235,7 +1235,7 @@ export default function MeetingDetail() {
           SECTION 0a — Pre-meeting prep (company facts + ICP research, always shown)
       ══════════════════════════════════════════════════════════════════════ */}
       {company && (
-        <Section title="Meeting Prep" icon={<Briefcase size={15} className="text-[#1f6feb]" />} defaultOpen={true}>
+        <Section title="Meeting Prep" icon={<Briefcase size={15} className="text-[#9ace3d]" />} defaultOpen={true}>
           <div style={{ display: "grid", gap: 20 }}>
 
             {/* ── Company snapshot ── */}
@@ -1303,8 +1303,8 @@ export default function MeetingDetail() {
                 {/* Open with + Beacon angle */}
                 <div style={{ display: "grid", gridTemplateColumns: icpConversationStarter && (company.beacon_angle || company.why_now) ? "1fr 1fr" : "1fr", gap: 12 }}>
                   {icpConversationStarter && (
-                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f0f7ff, #e8f2ff)", border: "1px solid #c7dcf8" }}>
-                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#1d4ed8", marginBottom: 6 }}>Open With This</p>
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #f7fce9, #eef7db)", border: "1px solid #cfe89a" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#4d7c0f", marginBottom: 6 }}>Open With This</p>
                       <p style={{ fontSize: 13, color: "#1e3a5f", lineHeight: 1.65, fontStyle: "italic", margin: 0 }}>"{icpConversationStarter}"</p>
                     </div>
                   )}
@@ -1568,7 +1568,7 @@ export default function MeetingDetail() {
       )}
 
       {hasMeetingReadiness && company && (
-        <Section title="Meeting Readiness" icon={<Target size={15} className="text-[#2563eb]" />} badge="Prep">
+        <Section title="Meeting Readiness" icon={<Target size={15} className="text-[#9ace3d]" />} badge="Prep">
           <div className="meeting-readiness">
             {committeeCoverage && (
               <div className="readiness-coverage-card">

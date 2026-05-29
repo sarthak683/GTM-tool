@@ -264,6 +264,28 @@ export const dealsApi = {
     }),
   delete: (id: string) =>
     request<void>(`/api/v1/deals/${id}`, { method: "DELETE" }),
+  bulkUpdate: (payload: {
+    deal_ids: string[];
+    stage?: string;
+    add_tags?: string[];
+    reassign?: boolean;
+    assigned_to_id?: string | null;
+  }) =>
+    request<{ updated: number }>("/api/v1/deals/bulk-update", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getStageHistory: (dealId: string) =>
+    request<Array<{
+      id: string;
+      deal_id: string;
+      from_stage: string | null;
+      to_stage: string;
+      changed_by_id: string | null;
+      changed_at: string;
+      reason: string | null;
+      source: string | null;
+    }>>(`/api/v1/deals/${dealId}/stage-history`),
   getContacts: (dealId: string) =>
     request<import("../../types").DealContact[]>(`/api/v1/deals/${dealId}/contacts`),
   addContact: (dealId: string, contactId: string, role?: string) =>
@@ -364,6 +386,8 @@ export const notificationsApi = {
     request<AppNotification>(`/api/v1/notifications/${id}/read`, { method: "POST" }),
   dismiss: (id: string) =>
     request<AppNotification>(`/api/v1/notifications/${id}/dismiss`, { method: "POST" }),
+  dismissAll: () =>
+    request<{ dismissed: number }>(`/api/v1/notifications/dismiss-all`, { method: "POST" }),
   accept: (id: string) =>
     request<{ deal_id?: string; deal_name?: string; stage?: string; notification: AppNotification }>(
       `/api/v1/notifications/${id}/accept`,

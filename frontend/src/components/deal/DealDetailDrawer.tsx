@@ -323,6 +323,11 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const [replyCtx, setReplyCtx] = useState<ReplyContext | null>(null);
+  // Whether the current user's connected Gmail has the send scope. null = unknown/not connected.
+  // Drives the "Reconnect to reply" prompt so reps don't hit a send-time error.
+  const [sendScopeOk, setSendScopeOk] = useState<boolean | null>(null);
+  const [reconnectingGmail, setReconnectingGmail] = useState(false);
+  const [stageHistory, setStageHistory] = useState<StageHistoryRow[]>([]);
   const [autoFillingMeddpicc, setAutoFillingMeddpicc] = useState(false);
   const [comment, setComment] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
@@ -389,7 +394,22 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
       .then((res) => setEmailThreads(res.threads))
       .catch(() => setEmailThreads([]))
       .finally(() => setLoadingEmails(false));
+    // Check whether the rep's Gmail can actually send, so Reply can prompt a
+    // reconnect up front instead of failing after they've written the email.
+    personalEmailSyncApi.getStatus()
+      .then((s) => setSendScopeOk(Boolean(s.has_send_scope)))
+      .catch(() => setSendScopeOk(null));
   }, [activeTab, deal.id]);
+
+  const handleReconnectGmail = async () => {
+    setReconnectingGmail(true);
+    try {
+      const { url } = await personalEmailSyncApi.getConnectUrl();
+      window.location.assign(url);
+    } catch {
+      setReconnectingGmail(false);
+    }
+  };
 
   useEffect(() => {
     settingsApi.getGmailSync().then((data) => {
@@ -397,6 +417,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
       setSharedEmailSyncConnected(Boolean(data.configured));
     }).catch(() => {});
   }, []);
+
+  // Stage journey — refetched when the stage changes so an in-drawer move
+  // immediately reflects the new transition.
+  useEffect(() => {
+    dealsApi.getStageHistory(deal.id).then(setStageHistory).catch(() => setStageHistory([]));
+  }, [deal.id, deal.stage]);
 
   useEffect(() => {
     setActiveTab("overview");
@@ -635,9 +661,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
         {/* ── Header ───────────────────────────────────────────────── */}
         <div style={{
-          padding: "22px 28px 18px", borderBottom: "1px solid #e8eef5",
+          padding: "22px 28px 18px", borderBottom: "1px solid #e4eecf",
           display: "flex", flexDirection: "column", gap: 12,
-          background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
+          background: "linear-gradient(180deg, #f4fbe6 0%, #ffffff 100%)",
         }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
             {/* Name */}
@@ -649,8 +675,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 onBlur={handleNameSave}
                 onKeyDown={(e) => e.key === "Enter" && handleNameSave()}
                 style={{
-                  fontSize: 20, fontWeight: 700, color: "#1f2d3d", flex: 1,
-                  border: "1px solid #b8d0f0", borderRadius: 8, padding: "4px 8px",
+                  fontSize: 23, fontWeight: 800, color: "#1f2d3d", flex: 1, letterSpacing: "-0.01em",
+                  border: "1px solid #cfe89a", borderRadius: 8, padding: "4px 8px",
                   outline: "none",
                 }}
               />
@@ -659,8 +685,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <h2
                   onClick={() => { setEditingName(true); setNameVal(deal.name); }}
                   style={{
-                    fontSize: 20, fontWeight: 700, color: "#1f2d3d", cursor: "pointer",
-                    lineHeight: 1.3, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    fontSize: 23, fontWeight: 800, color: "#1f2d3d", cursor: "pointer", letterSpacing: "-0.01em",
+                    lineHeight: 1.25, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}
                   title="Click to edit"
                 >
@@ -672,9 +698,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     onClick={() => navigate(`/account-sourcing/${deal.company_id}`)}
                     title={`Open ${selectedCompanyName} account`}
                     style={{
-                      border: "1px solid #c8daf0",
-                      background: "#f0f6ff",
-                      color: "#175089",
+                      border: "1px solid #cfe89a",
+                      background: "#f3fbe3",
+                      color: "#4d7c0f",
                       borderRadius: 8,
                       padding: "3px 8px",
                       fontSize: 11,
@@ -712,7 +738,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "4px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                  background: "#eaf2ff", color: "#175089", border: "1px solid #c8daf0",
+                  background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
                   cursor: "pointer",
                 }}
               >
@@ -734,8 +760,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                         display: "block", width: "100%", textAlign: "left",
                         padding: "8px 12px", borderRadius: 8, fontSize: 13,
                         cursor: "pointer", border: "none",
-                        background: s.id === deal.stage ? "#f0f6ff" : "transparent",
-                        color: s.id === deal.stage ? "#175089" : "#2d4258",
+                        background: s.id === deal.stage ? "#f3fbe3" : "transparent",
+                        color: s.id === deal.stage ? "#4d7c0f" : "#2d4258",
                         fontWeight: s.id === deal.stage ? 600 : 400,
                       }}
                       onMouseEnter={(e) => { if (s.id !== deal.stage) e.currentTarget.style.background = "#f8fafc"; }}
@@ -820,15 +846,19 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id as DrawerTab)}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#f3f6fa"; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                   style={{
-                    border: active ? "1px solid #bfd6f3" : "1px solid transparent",
-                    background: active ? "#f0f6ff" : "transparent",
-                    color: active ? "#175089" : "#6f8399",
+                    border: active ? "1px solid #cfe89a" : "1px solid transparent",
+                    background: active ? "#f3fbe3" : "transparent",
+                    color: active ? "#4d7c0f" : "#6f8399",
                     borderRadius: 10,
-                    padding: "8px 12px",
+                    padding: "8px 13px",
                     fontSize: 13,
                     fontWeight: 700,
                     cursor: "pointer",
+                    boxShadow: active ? "0 1px 3px rgba(111, 174, 39, 0.18)" : "none",
+                    transition: "background 0.12s ease, color 0.12s ease",
                   }}
                 >
                   {item.label}
@@ -839,10 +869,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
         </div>
 
         {/* ── Scrollable body ──────────────────────────────────────── */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 24, background: "#fcfdff" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 22, background: "#f5f8fc" }}>
           {activeTab === "overview" ? (
             <>
 
+          <SectionLabel>Deal Details</SectionLabel>
+          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
           {/* ── Fields section ──────────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             {/* Company */}
@@ -866,9 +898,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       style={{
                         marginLeft: "auto",
                         marginRight: 6,
-                        border: "1px solid #c8daf0",
-                        background: "#f0f6ff",
-                        color: "#175089",
+                        border: "1px solid #cfe89a",
+                        background: "#f3fbe3",
+                        color: "#4d7c0f",
                         borderRadius: 8,
                         padding: "3px 7px",
                         fontSize: 10,
@@ -924,7 +956,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                           <div
                             key={c.id}
                             onClick={() => { patchDeal({ company_id: c.id } as Partial<Deal>); setCompanyDropdownOpen(false); }}
-                            style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", background: deal.company_id === c.id ? "#eff6ff" : "transparent", color: deal.company_id === c.id ? "#2563eb" : "#1a202c", fontWeight: deal.company_id === c.id ? 500 : 400 }}
+                            style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", background: deal.company_id === c.id ? "#f3fbe3" : "transparent", color: deal.company_id === c.id ? "#6fae27" : "#1a202c", fontWeight: deal.company_id === c.id ? 500 : 400 }}
                             onMouseEnter={e => { if (deal.company_id !== c.id) e.currentTarget.style.background = "#f8fafc"; }}
                             onMouseLeave={e => { if (deal.company_id !== c.id) e.currentTarget.style.background = "transparent"; }}
                           >
@@ -1068,7 +1100,10 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               </label>
             </FieldRow>
           </div>
+          </div>
 
+          <SectionLabel>Next Step &amp; Notes</SectionLabel>
+          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)", display: "flex", flexDirection: "column", gap: 16 }}>
           {/* Next Step */}
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#5e738b", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
@@ -1085,6 +1120,32 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 fontSize: 13, outline: "none",
               }}
             />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Clock3 size={12} style={{ color: "#7a96b0" }} />
+                <input
+                  type="datetime-local"
+                  value={toLocalDatetimeInput(deal.next_step_due_at)}
+                  onChange={(e) => patchDeal({ next_step_due_at: fromLocalDatetimeInput(e.target.value) } as Partial<Deal>)}
+                  title="When the next step is due — Beacon reminds the owner when it passes"
+                  style={{ height: 34, borderRadius: 9, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 12.5, color: "#2d4258", outline: "none" }}
+                />
+              </div>
+              {deal.next_step_due_at && (() => {
+                const d = dueLabel(deal.next_step_due_at);
+                if (!d) return null;
+                return (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, padding: "3px 9px", borderRadius: 999, background: d.overdue ? "#fef2f2" : "#f3fbe3", color: d.overdue ? "#b91c1c" : "#4d7c0f", border: `1px solid ${d.overdue ? "#fecaca" : "#cfe89a"}` }}>
+                    {d.overdue ? "Overdue" : "Due"} · {d.text}
+                  </span>
+                );
+              })()}
+              {deal.next_step_due_at && (
+                <button type="button" onClick={() => patchDeal({ next_step_due_at: undefined } as Partial<Deal>)} style={{ fontSize: 11, fontWeight: 700, color: "#7a96b0", background: "none", border: "none", cursor: "pointer" }}>
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           <div>
@@ -1119,9 +1180,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                   }}
                   style={{
                     borderRadius: 8,
-                    border: "1px solid #c8daf0",
-                    background: "#eef5ff",
-                    color: "#175089",
+                    border: "1px solid #cfe89a",
+                    background: "#f3fbe3",
+                    color: "#4d7c0f",
                     padding: "6px 10px",
                     fontSize: 12,
                     fontWeight: 700,
@@ -1189,9 +1250,11 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               }}
             />
           </div>
+          </div>
 
+          <SectionLabel>People</SectionLabel>
           {/* ── Contacts section ───────────────────────────────────── */}
-          <div>
+          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
               marginBottom: 12,
@@ -1204,7 +1267,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 style={{
                   display: "flex", alignItems: "center", gap: 4,
                   padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: "#f0f6ff", color: "#175089", border: "1px solid #c8daf0",
+                  background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
                   cursor: "pointer",
                 }}
               >
@@ -1254,7 +1317,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                           padding: "8px 10px", borderRadius: 8, border: "none",
                           cursor: "pointer", background: "transparent", textAlign: "left",
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "#f0f6ff"}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "#f3fbe3"}
                         onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                       >
                         <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(c.first_name + c.last_name)}`}
@@ -1316,7 +1379,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       {dc.role && (
                         <span style={{
                           fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
-                          background: "#e8f0fb", color: "#175089",
+                          background: "#f3fbe3", color: "#4d7c0f",
                         }}>
                           {dc.role.replace(/_/g, " ")}
                         </span>
@@ -1361,9 +1424,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                         fontWeight: 800,
                         padding: "5px 9px",
                         borderRadius: 8,
-                        background: "#eef5ff",
-                        color: "#175089",
-                        border: "1px solid #c8daf0",
+                        background: "#f3fbe3",
+                        color: "#4d7c0f",
+                        border: "1px solid #cfe89a",
                         cursor: "pointer",
                         whiteSpace: "nowrap",
                       }}
@@ -1400,7 +1463,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                             }}
                             style={{
                               fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
-                              background: "#eef5ff", color: "#175089", border: "1px solid #c8daf0",
+                              background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
                               cursor: "pointer",
                             }}
                           >
@@ -1413,6 +1476,11 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 </div>
               );
             })()}
+          </div>
+
+          <SectionLabel>Stage Journey</SectionLabel>
+          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
+            <StageJourney history={stageHistory} deal={deal} stages={stages} />
           </div>
 
           {/* ── Danger zone ──────────────────────────────────────── */}
@@ -1605,6 +1673,25 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 </div>
               </div>
 
+              {sendScopeOk === false && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", borderRadius: 12, border: "1px solid #ffd8b4", background: "#fff8f1", padding: "12px 14px" }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#9a4f16" }}>Reply needs Gmail send access</div>
+                    <div style={{ fontSize: 12, color: "#a86b3c", marginTop: 2, lineHeight: 1.5 }}>
+                      Your inbox is connected for reading but not sending. Reconnect to reply to threads directly from Beacon.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleReconnectGmail()}
+                    disabled={reconnectingGmail}
+                    style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: "#6fae27", border: "1px solid #6fae27", borderRadius: 9, padding: "8px 14px", cursor: reconnectingGmail ? "wait" : "pointer", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
+                  >
+                    <Mail size={13} /> {reconnectingGmail ? "Redirecting…" : "Reconnect Gmail"}
+                  </button>
+                </div>
+              )}
+
               {loadingEmails ? (
                 <div style={{ textAlign: "center", padding: "32px 0", color: "#7c86a6" }}>
                   <Loader2 size={22} style={{ margin: "0 auto 8px", display: "block" }} className="animate-spin" />
@@ -1706,6 +1793,21 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                                 {msg.body_preview && msg.body_preview.length >= 299 && <span style={{ color: "#7c86a6" }}>…</span>}
                               </p>
                               <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                                {sendScopeOk === false ? (
+                                  <button
+                                    onClick={() => void handleReconnectGmail()}
+                                    disabled={reconnectingGmail}
+                                    title="Your connected Gmail can't send yet — reconnect to enable Reply from the CRM"
+                                    style={{
+                                      fontSize: 12, fontWeight: 700, color: "#9a4f16",
+                                      background: "#fff8f1", border: "1px solid #ffd8b4",
+                                      borderRadius: 8, padding: "5px 12px", cursor: reconnectingGmail ? "wait" : "pointer",
+                                      display: "inline-flex", alignItems: "center", gap: 5,
+                                    }}
+                                  >
+                                    <Mail size={11} /> {reconnectingGmail ? "Redirecting…" : "Reconnect Gmail to reply"}
+                                  </button>
+                                ) : (
                                 <button
                                   onClick={() => {
                                     const replySubject = msg.subject?.toLowerCase().startsWith("re:")
@@ -1726,14 +1828,15 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                                     });
                                   }}
                                   style={{
-                                    fontSize: 12, fontWeight: 700, color: "#175089",
-                                    background: "#f0f6ff", border: "1px solid #bfd6f3",
+                                    fontSize: 12, fontWeight: 700, color: "#4d7c0f",
+                                    background: "#f3fbe3", border: "1px solid #cfe89a",
                                     borderRadius: 8, padding: "5px 12px", cursor: "pointer",
                                     display: "inline-flex", alignItems: "center", gap: 5,
                                   }}
                                 >
                                   <Send size={11} /> Reply
                                 </button>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -1792,10 +1895,73 @@ export default memo(DealDetailDrawer);
 function FieldRow({ label, icon, children }: { label: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#7a96b0", marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#8295a8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
         {icon} {label}
       </div>
       {children}
+    </div>
+  );
+}
+
+// Lightweight section heading used to chunk the Overview tab into labeled
+// groups (Deal details, Next step & notes, People). Pure presentation.
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 2px" }}>
+      <span style={{ width: 4, height: 16, borderRadius: 3, background: "linear-gradient(180deg, #9ace3d 0%, #6fae27 100%)", flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 800, color: "#2d4258", textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{children}</span>
+      <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, #e0e9f2, transparent)" }} />
+    </div>
+  );
+}
+
+type StageHistoryRow = { from_stage: string | null; to_stage: string; changed_at: string };
+
+function _parseUtcMs(iso?: string | null): number {
+  if (!iso) return NaN;
+  return new Date(iso.endsWith("Z") ? iso : `${iso}Z`).getTime();
+}
+function _formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
+// Renders the deal's stage journey from recorded transitions, showing how long
+// it spent in each stage. Surfaces data already captured in deal_stage_history.
+function StageJourney({ history, deal, stages }: { history: StageHistoryRow[]; deal: Deal; stages: { id: string; label: string; color?: string }[] }) {
+  const labelOf = (id: string) => stages.find((s) => s.id === id)?.label ?? id.replace(/_/g, " ");
+  const colorOf = (id: string) => stages.find((s) => s.id === id)?.color ?? "#94a3b8";
+
+  const points: { stage: string; at: number }[] = [];
+  if (history.length > 0) {
+    if (history[0].from_stage) points.push({ stage: history[0].from_stage, at: _parseUtcMs(deal.created_at) });
+    for (const h of history) points.push({ stage: h.to_stage, at: _parseUtcMs(h.changed_at) });
+  } else {
+    points.push({ stage: deal.stage, at: _parseUtcMs(deal.stage_entered_at || deal.created_at) });
+  }
+
+  const now = Date.now();
+  const segments = points.map((p, i) => {
+    const end = i < points.length - 1 ? points[i + 1].at : now;
+    return { stage: p.stage, duration: end - p.at, current: i === points.length - 1 };
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {segments.map((seg, i) => (
+        <div key={`${seg.stage}-${i}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: colorOf(seg.stage), flexShrink: 0 }} />
+          <span style={{ fontSize: 13, fontWeight: seg.current ? 800 : 600, color: seg.current ? "#1f2d3d" : "#46586d", flex: 1, textTransform: "capitalize" }}>
+            {labelOf(seg.stage)}
+            {seg.current && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 999, padding: "1px 7px" }}>current</span>}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_formatDuration(seg.duration)}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1895,7 +2061,7 @@ function MeddpiccPanel({
       <div style={{
         display: "flex", alignItems: "center", gap: 16,
         padding: "16px 20px", borderRadius: 14,
-        background: "linear-gradient(135deg, #f8fafc 0%, #f0f6ff 100%)",
+        background: "linear-gradient(135deg, #f8fafc 0%, #f3fbe3 100%)",
         border: "1px solid #e2eaf2",
       }}>
         <div style={{
@@ -2071,7 +2237,7 @@ function MeddpiccPanel({
                   fontWeight: 800,
                   padding: "2px 8px",
                   borderRadius: 999,
-                  background: "#eef4ff",
+                  background: "#f3fbe3",
                   color: "#3555c4",
                 }}>
                   Beacon AI
@@ -2412,7 +2578,7 @@ function ActivityPanel({
                 height: 40,
                 borderRadius: 10,
                 border: "none",
-                background: comment.trim() ? "#175089" : "#e8eef5",
+                background: comment.trim() ? "#4d7c0f" : "#e8eef5",
                 color: comment.trim() ? "#fff" : "#94a3b8",
                 cursor: comment.trim() ? "pointer" : "default",
                 display: "inline-flex",
@@ -2507,7 +2673,7 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
           alignItems: "center",
           justifyContent: "center",
           background: isEmail ? "#eef4fb" : isSystem ? "#eaf0f7" : "#eef4fb",
-          color: isEmail ? "#175089" : isSystem ? "#60758b" : "#175089",
+          color: isEmail ? "#4d7c0f" : isSystem ? "#60758b" : "#4d7c0f",
           flexShrink: 0,
         }}>
           <Icon size={16} />
@@ -2548,7 +2714,7 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
                     <span style={{ fontWeight: 600, color: "#7a96b0", minWidth: 30 }}>From</span>
                     <span style={{
                       padding: "1px 6px", borderRadius: 4,
-                      background: "#f0f6ff", color: "#2d4258", fontSize: 11,
+                      background: "#f3fbe3", color: "#2d4258", fontSize: 11,
                     }}>
                       {activity.email_from}
                     </span>
@@ -2587,10 +2753,10 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
                 <div style={{
                   padding: "8px 10px",
                   borderRadius: 8,
-                  background: "#f0f6ff",
+                  background: "#f3fbe3",
                   border: "1px solid #d4e2f4",
                   fontSize: 12,
-                  color: "#175089",
+                  color: "#4d7c0f",
                   fontWeight: 500,
                   marginBottom: 6,
                 }}>
@@ -2604,14 +2770,14 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
                   padding: "10px 12px",
                   borderRadius: 10,
                   border: "1px solid #bfdbfe",
-                  background: "#eff6ff",
+                  background: "#f3fbe3",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 12,
                   flexWrap: "wrap",
                 }}>
-                  <div style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700 }}>
+                  <div style={{ fontSize: 12, color: "#4d7c0f", fontWeight: 700 }}>
                     Buyer sounds aligned on a POC. Move this deal to POC Agreed?
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -2646,8 +2812,8 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
                       }}
                       style={{
                         borderRadius: 8,
-                        border: "1px solid #2563eb",
-                        background: "#2563eb",
+                        border: "1px solid #6fae27",
+                        background: "#6fae27",
                         color: "#fff",
                         padding: "6px 10px",
                         fontSize: 12,
@@ -2740,7 +2906,31 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
 }
 
 const fieldInputStyle: React.CSSProperties = {
-  width: "100%", height: 34, borderRadius: 10,
-  border: "1px solid #e2eaf2", padding: "0 10px",
-  fontSize: 13, background: "#fff", outline: "none",
+  width: "100%", height: 38, borderRadius: 10,
+  border: "1px solid #dbe5f0", padding: "0 12px",
+  fontSize: 13, color: "#1f2d3d", background: "#fff", outline: "none",
+  transition: "border-color 0.15s ease, box-shadow 0.15s ease",
 };
+
+// Backend stores next_step_due_at as a naive-UTC timestamp. These convert
+// to/from the browser's local time for a <input type="datetime-local">.
+function toLocalDatetimeInput(iso?: string | null): string {
+  if (!iso) return "";
+  const utc = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
+  if (Number.isNaN(utc.getTime())) return "";
+  return new Date(utc.getTime() - utc.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function fromLocalDatetimeInput(local: string): string | undefined {
+  if (!local) return undefined;
+  const d = new Date(local); // interpreted as local wall-clock
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString().slice(0, -1); // drop trailing Z → naive UTC for the DB
+}
+function dueLabel(iso?: string | null): { text: string; overdue: boolean } | null {
+  if (!iso) return null;
+  const due = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
+  if (Number.isNaN(due.getTime())) return null;
+  const overdue = due.getTime() < Date.now();
+  const text = due.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return { text, overdue };
+}

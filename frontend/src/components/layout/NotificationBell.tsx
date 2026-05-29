@@ -125,6 +125,18 @@ export function NotificationBell() {
     }
   };
 
+  const handleDismissAll = async () => {
+    setError(null);
+    try {
+      await notificationsApi.dismissAll();
+      setItems([]);
+      setUnread(0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear notifications.");
+      void refreshList();
+    }
+  };
+
   const handleAccept = async (n: AppNotification) => {
     setBusyId(n.id);
     try {
@@ -207,8 +219,19 @@ export function NotificationBell() {
             background: "#f8fafd",
           }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: "#0f1f33" }}>Notifications</div>
-            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>
-              {unread > 0 ? `${unread} unread` : "All clear"}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+                {unread > 0 ? `${unread} unread` : "All clear"}
+              </span>
+              {visibleItems.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDismissAll()}
+                  style={{ border: "none", background: "transparent", color: "#1d4ed8", fontSize: 11.5, fontWeight: 800, cursor: "pointer", padding: 0 }}
+                >
+                  Clear all
+                </button>
+              ) : null}
             </div>
           </div>
 

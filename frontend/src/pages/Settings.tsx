@@ -46,6 +46,23 @@ import type {
 
 type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications";
 
+// Curated IANA timezones for the pre-meeting daily-send picker. The backend
+// validates against the full zoneinfo database, so any value here is accepted;
+// a non-listed stored value is appended at render time so it stays selectable.
+const PRE_MEETING_TIMEZONES = [
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
+
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
   return new Date(epoch * 1000).toLocaleString();
@@ -2435,6 +2452,70 @@ export default function SettingsPage() {
                   <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
                     Generate missing prep earlier, then send at the send window. Must be at least the send window.
                   </div>
+                </div>
+              </div>
+
+              <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>When to send</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {([
+                    { key: "hours_before", label: "Hours before each meeting", desc: "Send each brief a set number of hours ahead of that meeting." },
+                    { key: "daily_time", label: "Daily at a fixed time", desc: "Send all upcoming briefs once a day at a chosen time." },
+                  ] as const).map((opt) => {
+                    const active = (preMeetingSettings?.send_mode ?? "hours_before") === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        disabled={!isAdmin || !preMeetingSettings}
+                        onClick={() => updatePreMeetingField("send_mode", opt.key)}
+                        style={{
+                          flex: "1 1 240px", textAlign: "left", borderRadius: 12, padding: 14, display: "grid", gap: 6,
+                          border: active ? "2px solid #9ace3d" : "1px solid #e7eaf5",
+                          background: active ? "#f3fbe3" : "#fff",
+                          cursor: isAdmin && preMeetingSettings ? "pointer" : "default",
+                        }}
+                      >
+                        <span style={{ fontSize: 14, fontWeight: 800, color: "#182042" }}>{opt.label}</span>
+                        <span className="crm-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>{opt.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {preMeetingSettings?.send_mode === "daily_time" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginTop: 2 }}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <label style={{ fontSize: 13, fontWeight: 700, color: "#3a4566" }}>Send time</label>
+                      <input
+                        type="time"
+                        value={preMeetingSettings?.send_time ?? "07:00"}
+                        onChange={(event) => updatePreMeetingField("send_time", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ height: 44, padding: "0 14px", fontSize: 14 }}
+                      />
+                      <span className="crm-muted" style={{ fontSize: 12.5 }}>Briefs go out once a day at this time.</span>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <label style={{ fontSize: 13, fontWeight: 700, color: "#3a4566" }}>Timezone</label>
+                      <select
+                        value={preMeetingSettings?.timezone ?? "UTC"}
+                        onChange={(event) => updatePreMeetingField("timezone", event.target.value)}
+                        disabled={!isAdmin}
+                        style={{ height: 44, padding: "0 14px", fontSize: 14 }}
+                      >
+                        {PRE_MEETING_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                        {preMeetingSettings?.timezone && !PRE_MEETING_TIMEZONES.includes(preMeetingSettings.timezone) && (
+                          <option value={preMeetingSettings.timezone}>{preMeetingSettings.timezone}</option>
+                        )}
+                      </select>
+                      <span className="crm-muted" style={{ fontSize: 12.5 }}>Send time is interpreted in this timezone.</span>
+                    </div>
+                  </div>
+                )}
+                <div className="crm-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                  {preMeetingSettings?.send_mode === "daily_time"
+                    ? "At the send time, Beacon emails briefs for meetings starting within the “Send window” hours above (it doubles as the daily look-ahead)."
+                    : "Each brief is sent the “Send window” hours before its meeting starts."}
                 </div>
               </div>
 

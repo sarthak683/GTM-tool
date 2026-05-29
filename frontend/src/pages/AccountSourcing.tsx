@@ -83,7 +83,7 @@ function SummaryCard({
 }) {
   const toneStyle = {
     neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub, activeBorder: "#94a3b8" },
-    primary: { bg: "#eef5ff", border: "#cfe0fb", accent: colors.primary, activeBorder: colors.primary },
+    primary: { bg: "#f3fbe3", border: "#cfe89a", accent: colors.primary, activeBorder: colors.primary },
     warm: { bg: "#fff7eb", border: "#ffe0b2", accent: colors.amber, activeBorder: colors.amber },
     green: { bg: "#eefcf5", border: "#cdeedc", accent: colors.green, activeBorder: colors.green },
   }[tone];
@@ -162,7 +162,7 @@ function UploadPanel({
           display: "inline-flex",
           alignItems: "center",
           gap: 8,
-          background: uploading ? "#eef2ff" : "#4f46e5",
+          background: uploading ? "#eef7db" : "#6fae27",
           color: uploading ? colors.sub : "#fff",
           padding: "8px 14px",
           borderRadius: 10,
@@ -664,12 +664,12 @@ export default function AccountSourcing() {
           style={{
             ...cardStyle,
             padding: "26px 26px 22px",
-            background: "radial-gradient(circle at top right, #eaf2ff 0%, transparent 28%), radial-gradient(circle at left center, #fff2ea 0%, transparent 24%), #ffffff",
+            background: "radial-gradient(circle at top right, #eef7db 0%, transparent 28%), radial-gradient(circle at left center, #fff2ea 0%, transparent 24%), #ffffff",
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#eef5ff", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#f1f9e2", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
                 <Sparkles size={13} />
                 GTM ENGINEERING
               </div>
@@ -688,7 +688,7 @@ export default function AccountSourcing() {
                     onClick={() => setActiveTab(tab.id as "accounts" | "imports")}
                     style={{
                       border: 0,
-                      background: activeTab === tab.id ? "#eef5ff" : "transparent",
+                      background: activeTab === tab.id ? "#f1f9e2" : "transparent",
                       color: activeTab === tab.id ? colors.primary : colors.sub,
                       borderRadius: 10,
                       padding: "10px 14px",
@@ -706,7 +706,7 @@ export default function AccountSourcing() {
                 onClick={() => setShowCreateModal(true)}
                 style={{
                   border: 0,
-                  background: "#4f46e5",
+                  background: "#6fae27",
                   color: "#fff",
                   borderRadius: 12,
                   padding: "10px 14px",
@@ -876,9 +876,9 @@ export default function AccountSourcing() {
                     }}
                     disabled={bulkEnriching}
                     style={{
-                      border: `1px solid #c8daf0`,
-                      background: "#eaf2ff",
-                      color: "#175089",
+                      border: `1px solid #cfe89a`,
+                      background: "#f3fbe3",
+                      color: "#4d7c0f",
                       borderRadius: 12,
                       padding: "10px 14px",
                       display: "inline-flex",
@@ -922,33 +922,11 @@ export default function AccountSourcing() {
           </div>
         )}
         {bulkEnrichResult && (
-          <div style={{ borderRadius: 12, border: "1px solid #c8daf0", background: "#eaf2ff", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-            <span style={{ fontSize: 13, color: "#175089", fontWeight: 600 }}>{bulkEnrichResult}</span>
+          <div style={{ borderRadius: 12, border: "1px solid #cfe89a", background: "#f3fbe3", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontSize: 13, color: "#4d7c0f", fontWeight: 600 }}>{bulkEnrichResult}</span>
             <button onClick={() => setBulkEnrichResult(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a96b0" }}><X size={14} /></button>
           </div>
         )}
-
-        <div
-          style={{
-            borderRadius: 16,
-            border: "1px solid #f5ddaa",
-            background: "#fff8e8",
-            padding: "12px 16px",
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "grid", gap: 4 }}>
-            <div style={{ color: "#8a5b00", fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
-              Prospect sourcing update
-            </div>
-            <div style={{ color: "#6c5a2f", fontSize: 13, lineHeight: 1.6 }}>
-              Beacon is temporarily not getting contacts during company research. Use Prospecting to upload stakeholder CSVs and map them onto sourced accounts once the companies are ready.
-            </div>
-          </div>
-        </div>
 
         {(() => {
           // Toggle helpers — each card clears its own filter on a second click so
@@ -1385,7 +1363,7 @@ export default function AccountSourcing() {
                         }}
                         style={{
                           height: 38, padding: "0 16px", borderRadius: 10,
-                          border: "1px solid #175089", background: "#175089",
+                          border: "1px solid #6fae27", background: "#6fae27",
                           color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
                           opacity: !advValue || (advOp === "between" && !advValue2) ? 0.6 : 1,
                         }}
@@ -1482,7 +1460,7 @@ export default function AccountSourcing() {
                   }}
                   style={{
                     height: 36, padding: "0 12px", borderRadius: 10,
-                    border: "1px solid #175089", background: "#175089",
+                    border: "1px solid #6fae27", background: "#6fae27",
                     color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
                     display: "inline-flex", alignItems: "center", gap: 6,
                     opacity: downloadingFiltered ? 0.7 : 1,

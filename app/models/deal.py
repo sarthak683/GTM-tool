@@ -88,6 +88,9 @@ class Deal(DealBase, table=True):
     # write bumps them), so the UI can't use them to answer "is this note
     # current?". Set in the create/update endpoints when next_step diffs.
     next_step_updated_at: Optional[datetime] = None
+    # When the next step is due. Drives the pipeline reminder task, which fires a
+    # one-time in-app notification to the assigned rep when this time passes.
+    next_step_due_at: Optional[datetime] = None
     commit_to_deal: bool = Field(default=False)
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_input_hash: Optional[str] = None
@@ -110,6 +113,7 @@ class DealCreate(SQLModel):
     source: Optional[str] = None
     description: Optional[str] = None
     next_step: Optional[str] = None
+    next_step_due_at: Optional[datetime] = None
     tags: list[str] = []
     qualification: Optional[Any] = None
     health: str = "green"
@@ -128,6 +132,7 @@ class DealRead(DealBase):
     description: Optional[str] = None
     next_step: Optional[str] = None
     next_step_updated_at: Optional[datetime] = None
+    next_step_due_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     # Joined fields populated by board/detail queries
@@ -175,6 +180,7 @@ class DealUpdate(SQLModel):
     source: Optional[str] = None
     description: Optional[str] = None
     next_step: Optional[str] = None
+    next_step_due_at: Optional[datetime] = None
     days_in_stage: Optional[int] = None
     stage_entered_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None

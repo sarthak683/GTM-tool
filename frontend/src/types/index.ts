@@ -175,6 +175,7 @@ export interface Deal {
   description?: string;
   next_step?: string;
   next_step_updated_at?: string;
+  next_step_due_at?: string;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;
@@ -718,6 +719,9 @@ export interface RolePermissionsSettings {
 
 export interface PreMeetingAutomationSettings {
   enabled: boolean;
+  send_mode: "hours_before" | "daily_time";
+  send_time: string; // "HH:MM" 24h, in `timezone`
+  timezone: string; // IANA tz, e.g. "America/New_York"
   send_hours_before: number;
   generate_hours_before: number;
   auto_generate_if_missing: boolean;

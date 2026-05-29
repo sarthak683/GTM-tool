@@ -526,7 +526,7 @@ function MultiSelectFilter({
 }
 
 function SummaryCard({ label, value, tone = "default", action }: { label: string; value: string | number; tone?: "default" | "accent" | "success"; action?: ReactNode }) {
-  const palette = tone === "accent" ? { bg: "#f0f6ff", border: "#b8d0f0", value: "#175089" } : tone === "success" ? { bg: "#f0fdf4", border: "#bbf7d0", value: "#15803d" } : { bg: "#f8fafc", border: "#e8eef5", value: "#48607b" };
+  const palette = tone === "accent" ? { bg: "#f3fbe3", border: "#cfe89a", value: "#4d7c0f" } : tone === "success" ? { bg: "#f0fdf4", border: "#bbf7d0", value: "#15803d" } : { bg: "#f8fafc", border: "#e8eef5", value: "#48607b" };
   return (
     <div style={{ padding: "10px 10px", borderRadius: 10, background: palette.bg, border: `1px solid ${palette.border}` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -946,13 +946,23 @@ function CrmImportModal({
 }
 
 
-function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; accountPriorityTag?: "P0" | "P1" | "P2" | null }) {
+function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; accountPriorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
 
   return (
-    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Header row: grip + name + close date */}
+    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Header row: select + grip + name + close date */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={Boolean(selected)}
+            onChange={(e) => { e.stopPropagation(); onToggleSelect(); }}
+            onClick={(e) => e.stopPropagation()}
+            title="Select for bulk action"
+            style={{ marginTop: 2, width: 14, height: 14, accentColor: "#6fae27", cursor: "pointer", flexShrink: 0 }}
+          />
+        )}
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0, cursor: "grab" }} />
         <button type="button" onClick={onClick} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35 }}>{deal.name}</span>
@@ -1076,15 +1086,15 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {contact.email
             ? <Mail size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Email</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Email</span>
           }
           {contact.phone
             ? <Phone size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Phone</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Phone</span>
           }
           {contact.linkedin_url
             ? <Globe size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+LinkedIn</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+LinkedIn</span>
           }
         </div>
       </div>
@@ -1120,13 +1130,13 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, on
         {typeof totalValue === "number" && Number.isFinite(totalValue) && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14 }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
-            <span style={{ fontSize: 13, fontWeight: 800, color: totalValue > 0 ? "#1d4ed8" : "#94a3b8", letterSpacing: "0.01em" }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: totalValue > 0 ? "#4d7c0f" : "#94a3b8", letterSpacing: "0.01em" }}>
               {formatCurrency(totalValue)}
             </span>
           </div>
         )}
       </div>
-      <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 0, maxHeight: "100%", borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#eef6ff" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #93c5fd" : "1px solid #e8eef5", overflowY: "auto", transition: "all 0.15s ease", scrollbarGutter: "stable" }}>
+      <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 0, maxHeight: "100%", borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#f3fbe3" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #9ace3d" : "1px solid #e8eef5", boxShadow: dropActive ? "0 0 0 3px rgba(154, 206, 61, 0.18)" : "none", overflowY: "auto", transition: "all 0.15s ease", scrollbarGutter: "stable" }}>
         {children}
       </div>
     </div>
@@ -1235,7 +1245,7 @@ function ProspectDetailDrawer({
                 type="button"
                 disabled={converting}
                 onClick={onConvert}
-                style={{ borderRadius: 10, border: "1px solid #2563eb", background: "#2563eb", color: "#fff", padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: converting ? "wait" : "pointer" }}
+                style={{ borderRadius: 10, border: "1px solid #6fae27", background: "#6fae27", color: "#fff", padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: converting ? "wait" : "pointer" }}
               >
                 {converting ? "Converting..." : "Convert to Deal"}
               </button>
@@ -1331,7 +1341,7 @@ function ProspectDetailDrawer({
                         setSavingContact(false);
                       }
                     }}
-                    style={{ borderRadius: 10, border: "1px solid #2563eb", background: "#2563eb", color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact || !hasProspectChanges ? "default" : "pointer", opacity: savingContact || !hasProspectChanges ? 0.7 : 1 }}
+                    style={{ borderRadius: 10, border: "1px solid #6fae27", background: "#6fae27", color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: savingContact || !hasProspectChanges ? "default" : "pointer", opacity: savingContact || !hasProspectChanges ? 0.7 : 1 }}
                   >
                     {savingContact ? "Saving..." : "Save changes"}
                   </button>
@@ -1361,7 +1371,7 @@ function ProspectDetailDrawer({
                   ) : (
                     <>
                       <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No email yet</span>
-                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
                     </>
                   )}
                 </div>
@@ -1375,7 +1385,7 @@ function ProspectDetailDrawer({
                   ) : (
                     <>
                       <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No phone yet</span>
-                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
                     </>
                   )}
                 </div>
@@ -1386,7 +1396,7 @@ function ProspectDetailDrawer({
                   ) : (
                     <>
                       <span style={{ flex: 1, fontSize: 13, color: "#94a3b8" }}>No LinkedIn yet</span>
-                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", background: "#eef4ff", border: "1px solid #c8daf0", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
+                      <button type="button" onClick={() => setEditingProspect(true)} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>+ Add</button>
                     </>
                   )}
                 </div>
@@ -1548,6 +1558,10 @@ export default function Pipeline() {
   const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState<PipelineTab>("deal");
   const [mobileStage, setMobileStage] = useState<string>("all");
+  // Bulk selection (deal tab only) — set of selected deal ids + a pending tag input.
+  const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkTag, setBulkTag] = useState("");
   const [dealBoard, setDealBoard] = useState<Record<string, Deal[]>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -2057,6 +2071,42 @@ export default function Pipeline() {
     const scopeName = scope?.stage ? fileSafeSegment(scope.stage.label) : "visible";
     downloadCsv(`${tab === "deal" ? "pipeline-deals" : "pipeline-prospects"}-${scopeName}-${date}.csv`, rows);
   };
+
+  // ── Bulk selection actions (deal tab) ──────────────────────────────────────
+  const clearSelection = () => setSelectedDealIds(new Set());
+  const toggleDealSelect = (id: string) =>
+    setSelectedDealIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const runBulk = async (payload: { stage?: string; add_tags?: string[]; reassign?: boolean; assigned_to_id?: string | null }) => {
+    if (selectedDealIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      await dealsApi.bulkUpdate({ deal_ids: [...selectedDealIds], ...payload });
+      await loadBoard();
+      clearSelection();
+      setBulkTag("");
+    } catch {
+      // Board stays as-is on failure; selection is preserved so the rep can retry.
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkExportSelected = () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const rows = effectiveDealStages.flatMap((stage) =>
+      dealExportRows((filteredDealBoard[stage.id] ?? []).filter((d) => selectedDealIds.has(d.id)), stage),
+    );
+    if (!rows.length) return;
+    downloadCsv(`pipeline-deals-selected-${date}.csv`, rows);
+  };
+
+  // Selection is deal-tab only; drop it when switching tabs.
+  useEffect(() => { setSelectedDealIds(new Set()); }, [tab]);
 
 
   const resetFilters = () => {
@@ -2645,7 +2695,7 @@ export default function Pipeline() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#6b7f95" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GripVertical size={11} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>
-              {busyStage && <span style={{ color: "#2563eb", fontWeight: 600 }}>Updating lane...</span>}
+              {busyStage && <span style={{ color: "#4d7c0f", fontWeight: 600 }}>Updating lane...</span>}
             </div>
           </div>
 
@@ -2676,7 +2726,7 @@ export default function Pipeline() {
                             next.set("deal", deal.id);
                             return next;
                           }, { replace: true });
-                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} accountPriorityTag={deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} accountPriorityTag={deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -2756,6 +2806,27 @@ export default function Pipeline() {
           })
         )}
       </div>
+
+      {tab === "deal" && selectedDealIds.size > 0 && (
+        <div style={{ position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 60, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderRadius: 14, background: "#0b0c0e", boxShadow: "0 18px 44px rgba(11,12,14,0.42)", border: "1px solid #23262b", maxWidth: "calc(100vw - 24px)" }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>{selectedDealIds.size} selected</span>
+          <span style={{ width: 1, height: 22, background: "rgba(255,255,255,0.14)" }} />
+          <select disabled={bulkBusy} value="" onChange={(e) => { if (e.target.value) runBulk({ stage: e.target.value }); }} style={{ height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "#16181c", color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "0 8px", cursor: "pointer" }}>
+            <option value="" disabled>Move to stage…</option>
+            {effectiveDealStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <select disabled={bulkBusy} value="" onChange={(e) => { const v = e.target.value; if (v) runBulk({ reassign: true, assigned_to_id: v === "__unassign__" ? null : v }); }} style={{ height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "#16181c", color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "0 8px", cursor: "pointer" }}>
+            <option value="" disabled>Reassign to…</option>
+            <option value="__unassign__">Unassigned</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <input value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && bulkTag.trim()) runBulk({ add_tags: [bulkTag.trim()] }); }} placeholder="Add tag…" disabled={bulkBusy} style={{ height: 32, width: 104, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "#16181c", color: "#fff", fontSize: 12.5, padding: "0 10px", outline: "none" }} />
+          <button type="button" disabled={bulkBusy || !bulkTag.trim()} onClick={() => bulkTag.trim() && runBulk({ add_tags: [bulkTag.trim()] })} style={{ height: 32, borderRadius: 8, border: "none", background: "#6fae27", color: "#fff", fontSize: 12.5, fontWeight: 800, padding: "0 12px", cursor: bulkBusy || !bulkTag.trim() ? "default" : "pointer", opacity: bulkBusy || !bulkTag.trim() ? 0.5 : 1 }}>Add tag</button>
+          <button type="button" disabled={bulkBusy} onClick={bulkExportSelected} style={{ height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: 12.5, fontWeight: 700, padding: "0 12px", cursor: "pointer" }}>Export</button>
+          <button type="button" onClick={clearSelection} style={{ height: 32, borderRadius: 8, border: "none", background: "transparent", color: "#c7cdd6", fontSize: 12.5, fontWeight: 700, padding: "0 8px", cursor: "pointer" }}>Clear</button>
+          {bulkBusy && <span style={{ fontSize: 12, fontWeight: 700, color: "#9ace3d" }}>Working…</span>}
+        </div>
+      )}
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
       {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => {

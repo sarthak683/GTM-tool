@@ -124,7 +124,7 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
               {getProspectTrackingStage(contact)}
             </span>
             {contact.outreach_lane ? (
-              <span style={{ background: "#eef5ff", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
+              <span style={{ background: "#f3fbe3", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
                 {contact.outreach_lane.replace(/_/g, " ")}
               </span>
             ) : null}
@@ -699,7 +699,7 @@ export default function AccountSourcingCompanyDetail() {
         >
           <div className="ascd-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 20, alignItems: "start" }}>
             <div style={{ minWidth: 0, maxWidth: 980 }}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#eef5ff", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#f3fbe3", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
                 <Brain size={13} />
                 ACCOUNT INTELLIGENCE
               </div>
@@ -943,7 +943,7 @@ export default function AccountSourcingCompanyDetail() {
               <button
                 type="button"
                 onClick={() => setShowTasksModal(true)}
-                style={{ width: "100%", border: `1px solid #d5e5ff`, background: "#eef5ff", color: colors.primary, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                style={{ width: "100%", border: `1px solid #cfe89a`, background: "#f3fbe3", color: colors.primary, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
                 <CheckCircle2 size={13} /> Tasks
               </button>
@@ -1222,7 +1222,7 @@ export default function AccountSourcingCompanyDetail() {
                     </span>
                   )}
                   {evidenceLevel && (
-                    <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "#eef5ff", color: colors.primary }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "#f3fbe3", color: colors.primary }}>
                       {evidenceLevel.toUpperCase()} EVIDENCE
                     </span>
                   )}
@@ -1324,7 +1324,7 @@ export default function AccountSourcingCompanyDetail() {
                         </div>
                       )}
                       {typeof implCycle.mid_market === "string" && implCycle.mid_market && (
-                        <div style={{ background: "#eef5ff", border: "1px solid #d5e5ff", borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 10, padding: "10px 14px" }}>
                           <div style={{ color: colors.primary, fontSize: 11, fontWeight: 700, letterSpacing: 0.3 }}>MID-MARKET</div>
                           <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>{implCycle.mid_market}</div>
                         </div>
@@ -1421,7 +1421,7 @@ export default function AccountSourcingCompanyDetail() {
                       </div>
                       {item.summary ? <div style={{ marginTop: 8, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{String(item.summary)}</div> : null}
                       {item.pitch_angle ? (
-                        <div style={{ marginTop: 10, borderRadius: 10, background: "#eef5ff", border: "1px solid #d5e5ff", padding: "10px 12px" }}>
+                        <div style={{ marginTop: 10, borderRadius: 10, background: "#f3fbe3", border: "1px solid #cfe89a", padding: "10px 12px" }}>
                           <div style={{ color: colors.primary, fontSize: 11, fontWeight: 800, letterSpacing: 0.3 }}>PITCH ANGLE</div>
                           <div style={{ marginTop: 4, color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{String(item.pitch_angle)}</div>
                         </div>

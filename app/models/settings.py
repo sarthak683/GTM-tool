@@ -361,6 +361,9 @@ class RolePermissionsUpdate(SQLModel):
 
 class PreMeetingAutomationSettingsRead(SQLModel):
     enabled: bool
+    send_mode: str = "hours_before"
+    send_time: str = "07:00"
+    timezone: str = "UTC"
     send_hours_before: int
     generate_hours_before: int
     auto_generate_if_missing: bool
@@ -368,6 +371,9 @@ class PreMeetingAutomationSettingsRead(SQLModel):
 
 class PreMeetingAutomationSettingsUpdate(SQLModel):
     enabled: bool
+    send_mode: str = "hours_before"
+    send_time: str = "07:00"
+    timezone: str = "UTC"
     send_hours_before: int
     generate_hours_before: int
     auto_generate_if_missing: bool

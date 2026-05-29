@@ -630,7 +630,7 @@ export default function AccountSourcingContactDetail() {
                       type="button"
                       className="prospect-detail-secondary-action"
                       onClick={() => setShowTasksModal(true)}
-                      style={{ border: `1px solid #d5e5ff`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+                      style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
                     >
                       <CheckCircle2 size={14} />
                       Tasks
@@ -721,7 +721,7 @@ export default function AccountSourcingContactDetail() {
             <button
               type="button"
               onClick={() => setShowTasksModal(true)}
-              style={{ border: `1px solid #d5e5ff`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+              style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
             >
               <CheckCircle2 size={14} />
               Tasks
@@ -908,7 +908,7 @@ export default function AccountSourcingContactDetail() {
                     const mediumLabel = act.medium ? act.medium.replace(/_/g, " ") : act.type;
                     const sourceTone =
                       act.source === "instantly"
-                        ? { bg: colors.primarySoft, color: colors.primary, border: "#cfe0fb", label: "Instantly" }
+                        ? { bg: colors.primarySoft, color: colors.primary, border: "#cfe89a", label: "Instantly" }
                         : act.source === "aircall"
                           ? { bg: colors.greenSoft, color: colors.green, border: "#cdeedc", label: "Aircall" }
                           : { bg: "#f1f5f9", color: colors.sub, border: colors.border, label: act.source || "Beacon" };

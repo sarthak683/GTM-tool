@@ -10,8 +10,8 @@ export const colors = {
   text: "#1d2b3c",
   sub: "#55657a",
   faint: "#7f8fa5",
-  primary: "#1f6feb",
-  primarySoft: "#eef5ff",
+  primary: "#6fae27",
+  primarySoft: "#f3fbe3",
   green: "#1f8f5f",
   greenSoft: "#e8f8f0",
   amber: "#b56d00",
@@ -104,7 +104,7 @@ export function MetricCard({ label, value, hint, tone = "primary" }: {
   tone?: "primary" | "green" | "warm" | "violet" | "danger";
 }) {
   const toneStyle = {
-    primary: { bg: colors.primarySoft, border: "#cfe0fb", accent: colors.primary },
+    primary: { bg: colors.primarySoft, border: "#cfe89a", accent: colors.primary },
     green: { bg: colors.greenSoft, border: "#cdeedc", accent: colors.green },
     warm: { bg: colors.amberSoft, border: "#ffe0b2", accent: colors.amber },
     violet: { bg: colors.violetSoft, border: "#e2d2fb", accent: colors.violet },
@@ -142,7 +142,7 @@ export function Chip({
   tone?: "primary" | "warm" | "violet" | "green" | "neutral";
 }) {
   const style = {
-    primary: { bg: colors.primarySoft, color: colors.primary, border: "#d5e5ff" },
+    primary: { bg: colors.primarySoft, color: colors.primary, border: "#cfe89a" },
     warm: { bg: colors.amberSoft, color: colors.amber, border: "#ffe3b3" },
     violet: { bg: colors.violetSoft, color: colors.violet, border: "#eadbff" },
     green: { bg: colors.greenSoft, color: colors.green, border: "#caecd8" },
@@ -215,7 +215,7 @@ export function ContactActionButton({
   const style = tone === "green"
     ? { color: colors.green, background: colors.greenSoft, border: "#bfe8d1" }
     : tone === "primary"
-      ? { color: colors.primary, background: colors.primarySoft, border: "#cfe0fb" }
+      ? { color: colors.primary, background: colors.primarySoft, border: "#cfe89a" }
       : { color: colors.sub, background: "#ffffff", border: colors.border };
 
   const commonStyle: CSSProperties = {
@@ -262,7 +262,7 @@ export function SequenceStepCard({
   const channelTone = channel.includes("connector")
     ? { bg: colors.amberSoft, border: "#ffe3b3", text: colors.amber }
     : channel === "email"
-      ? { bg: colors.primarySoft, border: "#d5e5ff", text: colors.primary }
+      ? { bg: colors.primarySoft, border: "#cfe89a", text: colors.primary }
       : { bg: colors.violetSoft, border: "#eadbff", text: colors.violet };
 
   return (

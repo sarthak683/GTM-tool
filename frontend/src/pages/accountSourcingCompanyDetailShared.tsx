@@ -10,8 +10,8 @@ export const colors = {
   text: "#1d2b3c",
   sub: "#55657a",
   faint: "#7f8fa5",
-  primary: "#1f6feb",
-  primarySoft: "#e8f0ff",
+  primary: "#6fae27",
+  primarySoft: "#f1f9e2",
   green: "#1f8f5f",
   greenSoft: "#e8f8f0",
   violet: "#7a2dd9",
@@ -25,13 +25,13 @@ export const colors = {
 export const ICP_STYLE: Record<string, CSSProperties> = {
   hot: { background: "#ffecef", color: "#b42336", border: "1px solid #ffd0d8" },
   warm: { background: "#fff4df", color: "#9b5a00", border: "1px solid #ffe4b0" },
-  monitor: { background: "#ebf3ff", color: "#1f5ecc", border: "1px solid #d5e5ff" },
+  monitor: { background: "#ebf3ff", color: "#1f5ecc", border: "1px solid #cfe89a" },
   cold: { background: "#eef2f7", color: "#5e6d83", border: "1px solid #d9e1ec" },
 };
 
 export const PERSONA_STYLE: Record<string, CSSProperties> = {
   champion: { background: colors.greenSoft, color: colors.green },
-  buyer: { background: "#eaf2ff", color: "#2556c4" },
+  buyer: { background: "#f3fbe3", color: "#2556c4" },
   evaluator: { background: colors.amberSoft, color: colors.amber },
   blocker: { background: colors.redSoft, color: colors.red },
   influencer: { background: "#f0e6ff", color: "#6b3fa0" },
@@ -55,7 +55,7 @@ export const PRIORITY_STYLE: Record<"high" | "medium" | "low", CSSProperties> = 
 };
 
 export const INTEREST_STYLE: Record<"high" | "medium" | "low", CSSProperties> = {
-  high: { background: "#eef5ff", color: "#1f6feb" },
+  high: { background: "#f3fbe3", color: "#6fae27" },
   medium: { background: "#f3eaff", color: "#7a2dd9" },
   low: { background: "#ffecef", color: "#b42336" },
 };
@@ -88,7 +88,7 @@ export const OUTREACH_LANE_OPTIONS = [
 
 export const FALLBACK_DEAL_STAGES: DealStageSetting[] = [
   { id: "discovery", label: "discovery", group: "active", color: "#3b82f6" },
-  { id: "evaluation", label: "evaluation", group: "active", color: "#6366f1" },
+  { id: "evaluation", label: "evaluation", group: "active", color: "#6fae27" },
   { id: "proposal", label: "proposal", group: "active", color: "#8b5cf6" },
   { id: "negotiation", label: "negotiation", group: "active", color: "#f59e0b" },
 ];
@@ -186,7 +186,7 @@ export function MetricCard({ label, value, hint, tone = "neutral", onClick }: {
 }) {
   const toneStyle = {
     neutral: { bg: "#fbfdff", border: colors.border, accent: colors.sub },
-    primary: { bg: "#eef5ff", border: "#cfe0fb", accent: colors.primary },
+    primary: { bg: "#f3fbe3", border: "#cfe89a", accent: colors.primary },
     warm: { bg: "#fff7eb", border: "#ffe0b2", accent: colors.amber },
     green: { bg: "#eefcf5", border: "#cdeedc", accent: colors.green },
   }[tone];

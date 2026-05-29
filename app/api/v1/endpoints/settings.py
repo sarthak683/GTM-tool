@@ -782,7 +782,9 @@ async def update_pre_meeting_automation_settings(
         raise HTTPException(status_code=422, detail="generate_hours_before must be between send_hours_before and 168")
 
     row = await _get_or_create(session)
-    row.pre_meeting_automation_settings = body.model_dump()
+    # Normalize before persisting so send_mode / send_time / timezone are
+    # validated (bad values fall back to safe defaults instead of being stored).
+    row.pre_meeting_automation_settings = normalize_pre_meeting_settings(body.model_dump())
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -792,7 +794,8 @@ async def update_pre_meeting_automation_settings(
 @router.post("/pre-meeting-automation/run-now", response_model=dict)
 async def run_pre_meeting_automation_now(session: DBSession, _admin: AdminUser):
     _ = session
-    return await run_due_pre_meeting_intel_once()
+    # Manual admin trigger — bypass the daily-time window so it sends now.
+    return await run_due_pre_meeting_intel_once(force_time=True)
 
 
 # ── Zippy system prompt ──────────────────────────────────────────────────────

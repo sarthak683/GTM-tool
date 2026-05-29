@@ -254,7 +254,10 @@
       "Bash(awk 'NR>=791 && NR<=1671 && /^ return /{print NR\": \"$0}' app/api/v1/endpoints/analytics.py)",
       "Bash(KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml kubectl exec -i -n gtm-prod gtm-backend-deployment-6bd6d876c-f56np -- python -)",
       "Bash(echo \"=== exit $? ===\")",
-      "Bash(python -m py_compile app/api/v1/endpoints/analytics.py)"
+      "Bash(python -m py_compile app/api/v1/endpoints/analytics.py)",
+      "Bash(awk 'NR>=843 && NR<=1520' components/deal/DealDetailDrawer.tsx)",
+      "Bash(make backend-compile *)",
+      "Bash(make rebuild-backend-all *)"
     ]
   },
   "enabledMcpjsonServers": [

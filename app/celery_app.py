@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.tasks.instantly_sync",
         "app.tasks.pre_meeting_brief",
         "app.tasks.transcribe_call",
+        "app.tasks.deal_reminders",
     ],
 )
 
@@ -86,6 +87,12 @@ celery_app.conf.update(
         "send-due-pre-meeting-briefs": {
             "task": "app.tasks.pre_meeting_brief.send_due_pre_meeting_briefs",
             "schedule": 1800,
+        },
+        # Nudge reps when a deal's next step comes due. Runs every 15 min; the
+        # notification dedup_key keeps each due date to a single reminder.
+        "send-due-next-step-reminders": {
+            "task": "app.tasks.deal_reminders.send_due_next_step_reminders",
+            "schedule": 900,
         },
     },
 )

@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Briefcase, CalendarDays, CheckSquare, ChevronDown, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
+import { Briefcase, CalendarDays, CheckSquare, ChevronDown, Eye, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
 import GlobalSearchModal from "./GlobalSearchModal";
@@ -27,7 +27,8 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
 function Layout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, realUser, logout, isAdmin, isSuperAdmin, viewAsRole, setViewAsRole } = useAuth();
+  const impersonating = isSuperAdmin && !!viewAsRole && viewAsRole !== realUser?.role;
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -240,9 +241,41 @@ function Layout() {
                       {isAdmin ? <Shield size={11} color="#4561d5" /> : <User size={11} color="#7b8ca2" />}
                       <span style={{ color: isAdmin ? "#4561d5" : "#7b8ca2", fontSize: "11px", textTransform: "capitalize" }}>
                         {user?.role?.replace("_", " ")}
+                        {impersonating ? " · viewing" : ""}
                       </span>
                     </div>
                   </div>
+                  {isSuperAdmin && (
+                    <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "10px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b8ca2", marginBottom: "8px" }}>
+                        <Eye size={11} /> View as role
+                      </div>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        {(["admin", "ae", "sdr"] as const).map((r) => {
+                          const active = (viewAsRole ?? realUser?.role) === r;
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() => setViewAsRole(r === realUser?.role ? null : r)}
+                              style={{
+                                flex: 1, padding: "6px 0", borderRadius: "8px", fontSize: "11.5px", fontWeight: 800, textTransform: "uppercase",
+                                border: active ? "1.5px solid #9ace3d" : "1px solid #dde6f0",
+                                background: active ? "#f3fbe3" : "#fff",
+                                color: active ? "#4d7c0f" : "#5d6f84",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {r}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: "10.5px", color: "#94a3b8", marginTop: "6px", lineHeight: 1.5 }}>
+                        Preview the app from this role's perspective. Your real access and data don't change.
+                      </div>
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => { setShowUserMenu(false); logout(); }}
@@ -271,6 +304,15 @@ function Layout() {
             </div>
           </div>
         </header>
+        {impersonating && (
+          <div style={{ position: "fixed", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, display: "inline-flex", alignItems: "center", gap: 10, padding: "7px 8px 7px 14px", borderRadius: 999, background: "#0b0c0e", color: "#fff", boxShadow: "0 12px 30px rgba(11,12,14,0.42)", border: "1px solid #23262b", fontSize: 12.5, fontWeight: 700 }}>
+            <Eye size={13} style={{ color: "#9ace3d" }} />
+            Viewing as <strong style={{ textTransform: "uppercase", color: "#9ace3d", letterSpacing: "0.04em" }}>{viewAsRole}</strong>
+            <button type="button" onClick={() => setViewAsRole(null)} style={{ border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "4px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
+              Exit
+            </button>
+          </div>
+        )}
         <section className={`crm-content ${isPipelineRoute ? "crm-content--pipeline" : ""}`}>
           <div className={`crm-content-inner ${isPipelineRoute ? "crm-content-inner--pipeline" : ""}`}>
             <Outlet />

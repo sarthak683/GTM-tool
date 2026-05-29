@@ -19,7 +19,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.models.notification import Notification, NotificationRead
@@ -55,6 +55,27 @@ async def unread_count(session: DBSession, user: CurrentUser) -> dict[str, int]:
         )
     )).scalar_one()
     return {"unread": int(n or 0)}
+
+
+@router.post("/dismiss-all")
+async def dismiss_all(session: DBSession, user: CurrentUser) -> dict[str, int]:
+    """Clear all of the caller's active notifications in one shot — dismiss them
+    and mark any unread ones read. Powers the bell's 'Clear all' button."""
+    now = datetime.utcnow()
+    result = await session.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.dismissed_at.is_(None),
+        )
+        .values(
+            dismissed_at=now,
+            read_at=func.coalesce(Notification.read_at, now),
+            updated_at=now,
+        )
+    )
+    await session.commit()
+    return {"dismissed": int(result.rowcount or 0)}
 
 
 async def _own_or_404(session, user, notification_id: UUID) -> Notification:

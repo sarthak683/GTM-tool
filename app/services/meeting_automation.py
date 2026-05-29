@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,10 +56,35 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS = {
     "enabled": True,
+    # send_mode controls *when* briefs go out:
+    #   "hours_before" — per meeting, send_hours_before hours ahead (original behavior)
+    #   "daily_time"   — once a day at send_time (workspace timezone), covering all
+    #                    upcoming meetings within the send_hours_before lookahead
+    "send_mode": "hours_before",
+    "send_time": "07:00",
+    "timezone": "UTC",
     "send_hours_before": 12,
     "generate_hours_before": 48,
     "auto_generate_if_missing": True,
 }
+
+_SEND_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _normalize_send_time(value: Any) -> str:
+    match = _SEND_TIME_RE.match(str(value or "").strip())
+    if not match:
+        return DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_time"]
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+def _normalize_timezone(value: Any) -> str:
+    tz = str(value or "").strip() or "UTC"
+    try:
+        ZoneInfo(tz)
+    except Exception:
+        return "UTC"
+    return tz
 
 
 def normalize_pre_meeting_settings(value: Any) -> dict[str, Any]:
@@ -66,8 +93,14 @@ def normalize_pre_meeting_settings(value: Any) -> dict[str, Any]:
     generate_hours_before = int(raw.get("generate_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["generate_hours_before"]))
     send_hours_before = max(1, min(send_hours_before, 168))
     generate_hours_before = max(send_hours_before, min(generate_hours_before, 168))
+    send_mode = raw.get("send_mode", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_mode"])
+    if send_mode not in ("hours_before", "daily_time"):
+        send_mode = DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_mode"]
     return {
         "enabled": bool(raw.get("enabled", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["enabled"])),
+        "send_mode": send_mode,
+        "send_time": _normalize_send_time(raw.get("send_time")),
+        "timezone": _normalize_timezone(raw.get("timezone")),
         "send_hours_before": send_hours_before,
         "generate_hours_before": generate_hours_before,
         "auto_generate_if_missing": bool(
@@ -210,12 +243,33 @@ def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
     return subject, "\n".join(lines).strip()
 
 
-async def run_due_pre_meeting_intel_once() -> dict[str, int]:
+async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, int]:
+    """Generate + send due pre-meeting briefs.
+
+    force_time=True bypasses the daily-time window (used by the manual
+    "Run now" admin action so it sends immediately regardless of clock time).
+    The `enabled` flag is always respected.
+    """
     async with AsyncSessionLocal() as session:
         settings_row = await _get_or_create_settings(session)
         config = normalize_pre_meeting_settings(settings_row.pre_meeting_automation_settings)
         if not config["enabled"]:
             return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+
+        # Daily-time mode: only dispatch during a ~1h window starting at the
+        # configured local send_time. Beat runs every 30 min, so one or two
+        # ticks land in the window; per-meeting intel_email_sent_at dedup keeps
+        # each brief single-send even if both ticks fire.
+        if config["send_mode"] == "daily_time" and not force_time:
+            try:
+                tz = ZoneInfo(config["timezone"])
+            except Exception:
+                tz = ZoneInfo("UTC")
+            now_local = datetime.now(tz)
+            hour, minute = (int(part) for part in config["send_time"].split(":"))
+            send_at = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if not (send_at <= now_local < send_at + timedelta(hours=1)):
+                return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
 
         now = datetime.utcnow()
         generate_window_end = now + timedelta(hours=config["generate_hours_before"])

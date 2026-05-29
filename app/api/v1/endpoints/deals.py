@@ -4,12 +4,14 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy import or_, select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity, ActivityRead
 from app.models.contact import Contact
+from app.models.deal_stage_history import DealStageHistory, DealStageHistoryRead
 from app.models.deal import (
     ALL_STAGES, DEAL_STAGES, PROSPECT_STAGES, PRIORITIES,
     Deal, DealContactCreate, DealContactRead, DealCreate, DealRead, DealUpdate,
@@ -135,6 +137,89 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
     await session.commit()
 
     return await DealRepository(session).get_with_joins(deal.id) or deal
+
+
+# ── Bulk actions ─────────────────────────────────────────────────────────────
+
+class BulkDealUpdate(BaseModel):
+    deal_ids: list[UUID]
+    # stage: move all selected deals to this stage (validated per pipeline_type)
+    stage: Optional[str] = None
+    # add_tags: union these tags into each deal's existing tags (no removals)
+    add_tags: Optional[list[str]] = None
+    # reassign=True applies assigned_to_id (which may be None to unassign);
+    # the flag distinguishes "set to unassigned" from "leave owner alone".
+    reassign: bool = False
+    assigned_to_id: Optional[UUID] = None
+
+
+@router.post("/bulk-update", response_model=dict)
+async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: CurrentUser):
+    """Apply the same change (stage / owner / tags) to many deals at once.
+
+    Mirrors the per-deal update side effects: stage moves record a stage_change
+    activity, a stage milestone, and a stage-history transition so velocity and
+    the timeline stay accurate. Missing deal ids are skipped.
+    """
+    if not payload.deal_ids:
+        raise ValidationError("deal_ids is required")
+    if len(payload.deal_ids) > 200:
+        raise ValidationError("Too many deals in one bulk update (max 200)")
+
+    repo = DealRepository(session)
+    now = datetime.utcnow()
+    valid_cache: dict[str, frozenset[str]] = {}
+    updated = 0
+
+    for deal_id in payload.deal_ids:
+        deal = await session.get(Deal, deal_id)
+        if deal is None:
+            continue
+
+        update_data: dict = {}
+        previous_stage = deal.stage
+        stage_changed = False
+
+        if payload.stage and payload.stage != deal.stage:
+            if deal.pipeline_type not in valid_cache:
+                valid_cache[deal.pipeline_type] = await _valid_stages(session, deal.pipeline_type)
+            if payload.stage not in valid_cache[deal.pipeline_type]:
+                raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid_cache[deal.pipeline_type])}")
+            update_data["stage"] = payload.stage
+            update_data["stage_entered_at"] = now
+            update_data["days_in_stage"] = 0
+            stage_changed = True
+
+        if payload.reassign:
+            update_data["assigned_to_id"] = payload.assigned_to_id
+
+        if payload.add_tags:
+            existing = list(deal.tags or [])
+            update_data["tags"] = existing + [t for t in payload.add_tags if t and t not in existing]
+
+        if not update_data:
+            continue
+
+        update_data["updated_at"] = now
+        upd = await repo.update(deal, update_data)
+        updated += 1
+
+        if stage_changed:
+            session.add(Activity(
+                deal_id=deal_id, type="stage_change", source="system",
+                content=f"Stage moved from {previous_stage} to {upd.stage} (bulk)",
+            ))
+            await record_deal_stage_milestone(
+                session, deal=upd, stage=upd.stage,
+                reached_at=upd.stage_entered_at or upd.updated_at, source="bulk_update",
+            )
+            await record_stage_transition(
+                session, deal_id=deal_id, from_stage=previous_stage, to_stage=upd.stage,
+                changed_by_id=_user.id, source="bulk_update", changed_at=upd.stage_entered_at,
+            )
+
+    await session.commit()
+    return {"updated": updated}
 
 
 # ── Get single ───────────────────────────────────────────────────────────────
@@ -408,6 +493,20 @@ async def list_deal_timeline(
     """Unified chronological timeline: activities + meetings, newest first."""
     await DealRepository(session).get_or_raise(deal_id)
     return {"items": await build_deal_timeline(session, deal_id, limit=limit)}
+
+
+@router.get("/{deal_id}/stage-history", response_model=list[DealStageHistoryRead])
+async def list_deal_stage_history(deal_id: UUID, session: DBSession, _user: CurrentUser):
+    """Ordered stage transitions for a deal (oldest first), so the UI can show
+    the stage journey and time spent in each stage."""
+    rows = (
+        await session.execute(
+            select(DealStageHistory)
+            .where(DealStageHistory.deal_id == deal_id)
+            .order_by(DealStageHistory.changed_at.asc())
+        )
+    ).scalars().all()
+    return rows
 
 
 @router.get("/{deal_id}/activities", response_model=list[ActivityRead])
