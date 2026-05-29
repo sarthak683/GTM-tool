@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { resourcesApi } from "../lib/api";
 import type { SalesResource, Paginated } from "../types";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ const s: Record<string, CSSProperties> = {
     padding: "8px 16px",
     borderRadius: 10,
     border: "none",
-    background: "#ff6b35",
+    background: "#9ace3d",
     color: "white",
     fontWeight: 700,
     fontSize: 13,
@@ -355,7 +356,7 @@ export default function KnowledgeBase() {
       {/* Header */}
       <div style={{ ...s.panel, ...s.header }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <BookOpen size={22} style={{ color: "#ff6b35" }} />
+          <BookOpen size={22} style={{ color: "#9ace3d" }} />
           <h2 style={s.title}>Sales Knowledge Base</h2>
         </div>
         <p style={s.subtitle}>
@@ -363,7 +364,7 @@ export default function KnowledgeBase() {
           These resources automatically feed into AI modules — pre-meeting intel, outreach, demo strategy, and more.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-          <span style={{ ...s.modulePill, background: "#fff4e6", color: "#d9480f", border: "1px solid #ffd8a8" }}>
+          <span style={{ ...s.modulePill, background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a" }}>
             {total} resource{total !== 1 ? "s" : ""}
           </span>
           <span style={s.modulePill}>
@@ -413,9 +414,7 @@ export default function KnowledgeBase() {
 
         {/* Resource list */}
         {loading ? (
-          <div style={{ padding: "36px 20px", textAlign: "center", color: "#96a7ba", fontSize: 14 }}>
-            Loading resources...
-          </div>
+          <SkeletonList rows={5} />
         ) : resources.length === 0 ? (
           <div style={s.empty}>
             <BookOpen size={32} style={{ color: "#d0d8e4", margin: "0 auto 12px" }} />
@@ -431,7 +430,7 @@ export default function KnowledgeBase() {
           resources.map((r) => {
             const catStyle = CATEGORY_COLORS[r.category] || CATEGORY_COLORS.other;
             return (
-              <div key={r.id} style={s.card}>
+              <div key={r.id} className="crm-hover-lift" style={s.card}>
                 <div
                   style={{
                     width: 38,
@@ -509,7 +508,7 @@ export default function KnowledgeBase() {
       {/* Upload / Create Modal */}
       {showModal && (
         <div style={s.overlay} onClick={() => setShowModal(false)}>
-          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+          <div className="beacon-pop" style={s.modal} onClick={(e) => e.stopPropagation()}>
             <div style={s.modalHeader}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#2b3f55" }}>Add Resource</h3>
               <button
@@ -588,14 +587,14 @@ export default function KnowledgeBase() {
                   <div
                     style={{
                       ...s.dropZone,
-                      borderColor: file ? "#ff6b35" : "#d0d8e4",
+                      borderColor: file ? "#9ace3d" : "#d0d8e4",
                       background: file ? "#fff8f5" : "#fafbfd",
                     }}
                     onClick={() => fileRef.current?.click()}
                   >
                     {file ? (
                       <div style={{ fontSize: 13, color: "#2b3f55" }}>
-                        <FileText size={20} style={{ color: "#ff6b35", margin: "0 auto 6px" }} />
+                        <FileText size={20} style={{ color: "#9ace3d", margin: "0 auto 6px" }} />
                         <p style={{ margin: 0, fontWeight: 700 }}>{file.name}</p>
                         <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6a7c8f" }}>
                           {(file.size / 1024).toFixed(0)} KB — click to change

@@ -268,7 +268,7 @@ export default function Companies() {
         <div className="crm-panel companies-importer-panel">
           <div className="companies-importer-head">
             <div className="flex items-center gap-2">
-              <FileSpreadsheet className="h-4 w-4 text-[#ff6b35]" />
+              <FileSpreadsheet className="h-4 w-4 text-[#9ace3d]" />
               <h3 className="text-[15px] font-bold text-[#2b3f55]">Bulk Prospecting Import</h3>
             </div>
             <p className="text-[12px] text-[#6f8399] mt-1">Upload a CSV with a <strong>company name</strong> or <strong>domain</strong> column. Beacon will enrich each row with ICP score, industry, employee count, and funding stage — then kick off prospecting in the background.</p>
@@ -396,7 +396,7 @@ export default function Companies() {
                           {getInitials(c.name)}
                         </div>
                         <div className="min-w-0">
-                          <Link to={`/account-sourcing/${c.id}`} className="font-bold text-[#24364b] hover:text-[#ff6b35] transition-colors">
+                          <Link to={`/account-sourcing/${c.id}`} className="font-bold text-[#24364b] hover:text-[#9ace3d] transition-colors">
                             {c.name}
                           </Link>
                           <p className="text-[13px] text-[#7a8ea4] truncate mt-0.5">{c.domain}</p>
@@ -410,7 +410,7 @@ export default function Companies() {
                       {c.icp_score != null ? (
                         <div className="flex items-center gap-2.5">
                           <div className="h-2 w-28 bg-[#edf3fa] rounded-full overflow-hidden">
-                            <div className="h-2 bg-[#ff6b35] rounded-full" style={{ width: `${c.icp_score}%` }} />
+                            <div className="h-2 bg-[#9ace3d] rounded-full" style={{ width: `${c.icp_score}%` }} />
                           </div>
                           <span className="font-bold tabular text-[12px] text-[#2d4056]">{c.icp_score}</span>
                         </div>

@@ -94,12 +94,12 @@ function Layout() {
                   padding: "0 14px",
                   borderRadius: 14,
                   border: "1px solid #ffcab8",
-                  background: "linear-gradient(135deg, #ff7a45 0%, #ff5d2b 100%)",
+                  background: "linear-gradient(135deg, #a4d64a 0%, #7fb52f 100%)",
                   color: "#fff",
                   fontSize: 13,
                   fontWeight: 800,
                   cursor: "pointer",
-                  boxShadow: "0 14px 28px rgba(255,107,53,0.18)",
+                  boxShadow: "0 14px 28px rgba(154, 206, 61,0.18)",
                 }}
               >
                 <Plus size={15} />
@@ -149,7 +149,7 @@ function Layout() {
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#f6f9fd")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                       >
-                        <span style={{ width: 28, height: 28, borderRadius: 10, background: "#fff1ea", color: "#ff6b35", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                        <span style={{ width: 28, height: 28, borderRadius: 10, background: "#f3fbe3", color: "#9ace3d", display: "grid", placeItems: "center", flexShrink: 0 }}>
                           <Icon size={14} />
                         </span>
                         <span style={{ display: "grid", gap: 2 }}>

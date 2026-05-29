@@ -69,8 +69,8 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
   buttonPrimary: {
-    border: "1px solid #ff6b35",
-    background: "#ff6b35",
+    border: "1px solid #9ace3d",
+    background: "#9ace3d",
     color: "white",
     borderRadius: 10,
     padding: "9px 14px",

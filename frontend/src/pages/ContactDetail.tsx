@@ -162,7 +162,7 @@ export default function ContactDetail() {
               </div>
               <div className="flex items-center gap-3 mt-3 text-[13px] text-[#4d6178] flex-wrap" style={{ marginTop: 14, rowGap: 10, columnGap: 12 }}>
                 {company && (
-                  <Link to={`/account-sourcing/${company.id}`} className="hover:text-[#ff6b35] font-semibold">
+                  <Link to={`/account-sourcing/${company.id}`} className="hover:text-[#9ace3d] font-semibold">
                     {company.name}
                   </Link>
                 )}
@@ -180,7 +180,7 @@ export default function ContactDetail() {
                   </button>
                 )}
                 {contact.linkedin_url && (
-                  <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#2a5f8c] hover:text-[#ff6b35]">
+                  <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#2a5f8c] hover:text-[#9ace3d]">
                     <Linkedin size={13} />LinkedIn
                   </a>
                 )}
@@ -220,7 +220,7 @@ export default function ContactDetail() {
         <section className="crm-panel p-6" style={{ padding: 26 }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <UserCircle2 size={16} className="text-[#ff6b35]" />
+              <UserCircle2 size={16} className="text-[#9ace3d]" />
               <h3 className="text-[16px] font-bold">AI Brief</h3>
             </div>
             <button className="crm-button soft" onClick={handleGetBrief} disabled={briefLoading}>

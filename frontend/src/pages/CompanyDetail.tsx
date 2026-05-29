@@ -301,7 +301,7 @@ export default function CompanyDetail() {
             Back
           </button>
           <div className="flex flex-wrap items-center gap-2">
-            {enrichMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{enrichMsg}</span>}
+            {enrichMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{enrichMsg}</span>}
             <button className="crm-button soft" onClick={handleEnrich} disabled={enriching}>
               <RefreshCw className={`h-3.5 w-3.5 ${enriching ? "animate-spin" : ""}`} />
               {enriching ? "Enriching..." : "Re-enrich"}
@@ -341,7 +341,7 @@ export default function CompanyDetail() {
                   <p className="text-[11px] uppercase tracking-[0.12em] text-[#7c8ea1] font-semibold">Account Overview</p>
                   <h2 className="text-[34px] leading-tight font-extrabold tracking-tight text-[#1f2d3d] mt-2">{company.name}</h2>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-[14px] text-[#61788f]">
-                    <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-[#ff6b35]">
+                    <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-[#9ace3d]">
                       {company.domain}
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -368,7 +368,7 @@ export default function CompanyDetail() {
                   <Sparkles className="h-3.5 w-3.5" />
                   {bulkGenerating ? "Generating..." : "Generate Outreach For All"}
                 </button>
-                {bulkMsg && <p className="text-[12px] text-[#ff6b35]">{bulkMsg}</p>}
+                {bulkMsg && <p className="text-[12px] text-[#9ace3d]">{bulkMsg}</p>}
               </div>
             </div>
 
@@ -405,7 +405,7 @@ export default function CompanyDetail() {
                   <p className="text-[12px] font-semibold text-[#516779]">{company.icp_score}% match to ICP</p>
                 </div>
                 <div className="h-2.5 rounded-full bg-[#eaf0f6] overflow-hidden">
-                  <div className="h-2.5 rounded-full bg-[#ff6b35]" style={{ width: `${company.icp_score}%` }} />
+                  <div className="h-2.5 rounded-full bg-[#9ace3d]" style={{ width: `${company.icp_score}%` }} />
                 </div>
               </div>
             )}
@@ -445,7 +445,7 @@ export default function CompanyDetail() {
               title={`Stakeholders (${contacts.length})`}
               action={
                 <div className="flex items-center gap-2">
-                  {discoverMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{discoverMsg}</span>}
+                  {discoverMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{discoverMsg}</span>}
                   <button className="crm-button soft" onClick={handleDiscoverContacts} disabled={discoveringContacts}>
                     <Users className={`h-3.5 w-3.5 ${discoveringContacts ? "animate-pulse" : ""}`} />
                     {discoveringContacts ? "Searching..." : "Find Contacts"}
@@ -475,7 +475,7 @@ export default function CompanyDetail() {
                               <div className="flex flex-wrap items-center gap-2 mt-3 text-[12px] text-[#688097]">
                                 {c.email && <span className="rounded-full bg-[#f2f6fa] px-2.5 py-1">{c.email}</span>}
                                 {c.linkedin_url && (
-                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#ff6b35]">
+                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#9ace3d]">
                                     LinkedIn
                                   </a>
                                 )}
@@ -551,7 +551,7 @@ export default function CompanyDetail() {
               title="Signals"
               action={
                 <div className="flex items-center gap-2">
-                  {signalsMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{signalsMsg}</span>}
+                  {signalsMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{signalsMsg}</span>}
                   <button className="crm-button soft h-10 px-3" onClick={handleRefreshSignals} disabled={signalsRefreshing}>
                     <RefreshCw className={`h-3.5 w-3.5 ${signalsRefreshing ? "animate-spin" : ""}`} />
                     Refresh
@@ -630,7 +630,7 @@ export default function CompanyDetail() {
             >
               <div className="rounded-2xl border border-[#e5edf5] bg-[#fbfdff] p-4 mb-4">
                 <div className="flex items-start gap-3">
-                  <div className="rounded-xl bg-[#fff1eb] p-2 text-[#ff6b35]">
+                  <div className="rounded-xl bg-[#fff1eb] p-2 text-[#9ace3d]">
                     <Target className="h-4 w-4" />
                   </div>
                   <div>
@@ -649,7 +649,7 @@ export default function CompanyDetail() {
                   {companyDeals.map((d) => (
                     <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
+                        <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#9ace3d]">
                           {d.name}
                         </Link>
                         <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>

@@ -242,7 +242,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 
   return (
     <div
-      className="as-company-card"
+      className="as-company-card crm-hover-lift"
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
@@ -251,7 +251,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
         display: "flex",
         alignItems: "center",
         gap: 16,
-        transition: "background 0.15s",
+        transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background 0.15s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
@@ -1451,8 +1451,8 @@ export default function AccountSourcing() {
                 style={{
                   height: 36, padding: "0 12px", borderRadius: 10,
                   border: hasAdvancedFilter ? "1.5px solid #ffb995" : `1px solid ${colors.border}`,
-                  background: hasAdvancedFilter ? "#fff3ec" : colors.card,
-                  color: hasAdvancedFilter ? "#b85024" : colors.text,
+                  background: hasAdvancedFilter ? "#f3fbe3" : colors.card,
+                  color: hasAdvancedFilter ? "#4d7c0f" : colors.text,
                   fontSize: 13, fontWeight: 700, cursor: "pointer",
                   display: "inline-flex", alignItems: "center", gap: 6,
                 }}
@@ -1513,8 +1513,8 @@ export default function AccountSourcing() {
                   style={{
                     height: 42,
                     borderRadius: 12,
-                    border: ownerScope === "mine" ? "1.5px solid #ffc9b4" : "1px solid #d9e1ec",
-                    background: ownerScope === "mine" ? "#fff3ec" : "#fff",
+                    border: ownerScope === "mine" ? "1.5px solid #cfe89a" : "1px solid #d9e1ec",
+                    background: ownerScope === "mine" ? "#f3fbe3" : "#fff",
                     padding: "0 32px 0 12px",
                     fontSize: 13,
                     color: "#1d2b3c",

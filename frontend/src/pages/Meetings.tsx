@@ -6,6 +6,7 @@ import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import { useAuth } from "../lib/AuthContext";
 import type { Company, Contact, Deal, Meeting, User } from "../types";
 import { formatOptionalDate, isValidDateValue } from "../lib/utils";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 const MEETING_TYPES = ["discovery", "demo", "poc", "qbr", "other"];
 const PAGE_SIZE = 25;
@@ -738,8 +739,8 @@ export default function Meetings() {
       </div>
 
       {loading ? (
-        <div style={{ ...styles.panel, padding: "46px 20px", textAlign: "center", color: "#7a8ea4", fontSize: 14 }}>
-          Loading meetings...
+        <div style={{ ...styles.panel, padding: 18 }}>
+          <SkeletonList rows={6} />
         </div>
       ) : (
         <div style={{ ...styles.panel, overflow: "hidden" }}>

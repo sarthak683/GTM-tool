@@ -62,8 +62,8 @@ export default function MultiSelectFilter({
     width: "100%",
     height: 42,
     borderRadius: 12,
-    border: values.length ? "1.5px solid #ffc9b4" : "1px solid #d9e1ec",
-    background: values.length ? "#fff3ec" : "#fff",
+    border: values.length ? "1.5px solid #cfe89a" : "1px solid #d9e1ec",
+    background: values.length ? "#f3fbe3" : "#fff",
     padding: "0 28px 0 12px",
     fontSize: 13,
     color: "#1d2b3c",
@@ -98,7 +98,7 @@ export default function MultiSelectFilter({
                 height: 18,
                 padding: "0 6px",
                 borderRadius: 999,
-                background: "#ff6b35",
+                background: "#9ace3d",
                 color: "#fff",
                 fontSize: 10,
                 fontWeight: 800,
@@ -120,7 +120,7 @@ export default function MultiSelectFilter({
                 <button
                   type="button"
                   onClick={() => onChange([])}
-                  style={{ border: "none", background: "transparent", color: "#ff6b35", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                  style={{ border: "none", background: "transparent", color: "#9ace3d", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
                 >
                   Clear
                 </button>
@@ -143,7 +143,7 @@ export default function MultiSelectFilter({
                 <button
                   type="button"
                   onClick={() => onChange([])}
-                  style={{ border: "none", background: values.length === 0 ? "#fff3ec" : "transparent", color: values.length === 0 ? "#b85024" : "#4d6178", borderRadius: 8, padding: "8px 9px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
+                  style={{ border: "none", background: values.length === 0 ? "#f3fbe3" : "transparent", color: values.length === 0 ? "#4d7c0f" : "#4d6178", borderRadius: 8, padding: "8px 9px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
                 >
                   {allLabel}
                 </button>

@@ -1,5 +1,5 @@
 import "./prospects-refresh.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, settingsApi } from "../lib/api";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
@@ -11,6 +11,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
+  Mic,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -25,6 +26,8 @@ import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import RangeFilter from "../components/filters/RangeFilter";
+import DateRangeFilter, { type DateRangeValue } from "../components/filters/DateRangeFilter";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import AddProspectModal from "./contacts/AddProspectModal";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
@@ -33,7 +36,7 @@ import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany 
 import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
 import { ProgressCell } from "./contacts/ProgressCell";
 import { LifecycleDrawer } from "./contacts/LifecycleDrawer";
-import { CallRecordingPanel, type AISuggestion } from "./contacts/CallRecordingPanel";
+import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } from "./contacts/CallRecordingPanel";
 import { PreCallIntelPanel } from "./contacts/PreCallIntelPanel";
 import { ProspectingTabButton } from "./contacts/ProspectingTabButton";
 import { AngelOverviewCard, SnapshotRow, StrengthBadge } from "./contacts/AngelOverviewCard";
@@ -210,6 +213,47 @@ function expandTimezoneFilter(labels: string[]): string[] {
   return Array.from(set);
 }
 
+// Convert a `YYYY-MM-DD` date-filter value into a UTC ISO bound. `dayStartIso`
+// anchors to local midnight (start of the rep's day) and `dayEndIso` to the
+// last millisecond, so a single-day pick captures the whole day. The backend
+// compares these against UTC-naive columns, so converting the local-day
+// boundary to UTC ISO gives the rep "their day" semantics.
+function dayStartIso(date: string): string | undefined {
+  if (!date) return undefined;
+  const d = new Date(`${date}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+function dayEndIso(date: string): string | undefined {
+  if (!date) return undefined;
+  const d = new Date(`${date}T23:59:59.999`);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+// Local `YYYY-MM-DD` for the date-range presets. Offsets are in days from
+// today; getRange() is evaluated at render/click time so "Today" always means
+// the actual current day rather than page-load day.
+function localDateStr(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Forward-looking presets for the scheduled-follow-up filter.
+const followupDuePresets: { label: string; getRange: () => DateRangeValue }[] = [
+  { label: "Overdue", getRange: () => ({ from: "", to: localDateStr(-1) }) },
+  { label: "Today", getRange: () => ({ from: localDateStr(0), to: localDateStr(0) }) },
+  { label: "Next 7 days", getRange: () => ({ from: localDateStr(0), to: localDateStr(7) }) },
+  { label: "Next 30 days", getRange: () => ({ from: localDateStr(0), to: localDateStr(30) }) },
+];
+
+// Backward-looking presets for the last-call filter.
+const lastCallPresets: { label: string; getRange: () => DateRangeValue }[] = [
+  { label: "Today", getRange: () => ({ from: localDateStr(0), to: localDateStr(0) }) },
+  { label: "Last 7 days", getRange: () => ({ from: localDateStr(-7), to: localDateStr(0) }) },
+  { label: "Last 30 days", getRange: () => ({ from: localDateStr(-30), to: localDateStr(0) }) },
+];
+
 function relativeTimeShort(iso?: string | null): string {
   if (!iso) return "";
   const ts = new Date(iso).getTime();
@@ -307,7 +351,10 @@ export default function Contacts() {
       searchParams.get("seq") || searchParams.get("call") || searchParams.get("ae") ||
       searchParams.get("sdr") || searchParams.get("own") || searchParams.get("tz") ||
       searchParams.get("co") || searchParams.get("owner") === "mine" ||
-      searchParams.get("cc") || searchParams.get("ec") || searchParams.get("ca")
+      searchParams.get("cc") || searchParams.get("ec") || searchParams.get("ca") ||
+      searchParams.get("fcmin") || searchParams.get("fcmax") ||
+      searchParams.get("nfa") || searchParams.get("nfb") ||
+      searchParams.get("cla") || searchParams.get("clb")
     );
   });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
@@ -320,6 +367,26 @@ export default function Contacts() {
   const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("cc")));
   const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ec")));
   const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ca")));
+  // Follow-up count range (calls logged). URL keys: `fcmin` / `fcmax`. Either
+  // bound may be null (open-ended). Backend maps these to call_attempt_min/max.
+  const parseCountParam = (raw: string | null): number | null => {
+    if (raw == null || raw.trim() === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  };
+  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(searchParams.get("fcmin")));
+  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(searchParams.get("fcmax")));
+  // Date-range filters. `nextFollowupRange` filters on the rep-scheduled
+  // callback (next_followup_at); `callLastRange` on the last call (call_last_at).
+  // Values are `YYYY-MM-DD`; "" means unbounded. URL keys: nfa/nfb, cla/clb.
+  const [nextFollowupRange, setNextFollowupRange] = useState<DateRangeValue>(() => ({
+    from: searchParams.get("nfa") ?? "",
+    to: searchParams.get("nfb") ?? "",
+  }));
+  const [callLastRange, setCallLastRange] = useState<DateRangeValue>(() => ({
+    from: searchParams.get("cla") ?? "",
+    to: searchParams.get("clb") ?? "",
+  }));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   // Client-side toggle wired to the "Emails opened" KPI tile. When true, the
   // prospect table is narrowed to contacts whose email_open_count > 0 so the
@@ -358,6 +425,20 @@ export default function Contacts() {
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
   const [bulkClaimingSdr, setBulkClaimingSdr] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
+  // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
+  // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
+  // is the seconds remaining (null = not counting); `dialTimerRef` holds the
+  // interval id so Stop / Call-now / drawer-close can cancel it.
+  const [dialCountdown, setDialCountdown] = useState<number | null>(null);
+  const dialTimerRef = useRef<number | null>(null);
+  // Imperative handle to the recording panel so the countdown can auto-start
+  // recording when it elapses.
+  const callRecordingRef = useRef<CallRecordingPanelHandle | null>(null);
+  // Captured scrollTop of the page scroll container (.crm-content, rendered by
+  // Layout) so we can restore the rep's place in a long prospect list after the
+  // call drawer closes. Queried via the DOM since the element lives outside
+  // this component's tree.
+  const restoreScrollRef = useRef<number | null>(null);
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
   // Id of the recording attached to the in-progress call disposition,
@@ -539,8 +620,11 @@ export default function Contacts() {
     }
   };
 
-  const loadContacts = () => {
-    setLoading(true);
+  const loadContacts = (opts?: { silent?: boolean }) => {
+    // Silent reloads skip the loading state so the table stays mounted — this
+    // is what lets us preserve scroll position after the call drawer closes
+    // (the loading flash would otherwise unmount the list and reset scroll).
+    if (!opts?.silent) setLoading(true);
     contactsApi.searchPaginated({
       skip: (page - 1) * pageSize,
       limit: pageSize,
@@ -555,6 +639,12 @@ export default function Contacts() {
       callOutcomeColor: callOutcomeColorFilter.length ? callOutcomeColorFilter : undefined,
       emailOutcomeColor: emailOutcomeColorFilter.length ? emailOutcomeColorFilter : undefined,
       callAttemptsBucket: callAttemptsBucketFilter.length ? callAttemptsBucketFilter : undefined,
+      followupCountMin: followupCountMin ?? undefined,
+      followupCountMax: followupCountMax ?? undefined,
+      nextFollowupAfter: dayStartIso(nextFollowupRange.from),
+      nextFollowupBefore: dayEndIso(nextFollowupRange.to),
+      callLastAfter: dayStartIso(callLastRange.from),
+      callLastBefore: dayEndIso(callLastRange.to),
       aeId: aeFilter.length ? aeFilter : undefined,
       sdrId: sdrFilter.length ? sdrFilter : undefined,
       // Owner filter: any selected user matches contacts they own as AE OR SDR.
@@ -571,7 +661,17 @@ export default function Contacts() {
       setContacts(result.items);
       setContactsTotal(result.total);
       setContactsPages(result.pages);
-    }).finally(() => setLoading(false));
+      // On a silent reload, put the list back where the rep left it once the
+      // new rows have painted (rAF waits for the post-state-update layout).
+      if (opts?.silent && restoreScrollRef.current != null) {
+        const target = restoreScrollRef.current;
+        restoreScrollRef.current = null;
+        requestAnimationFrame(() => {
+          const scroller = document.querySelector<HTMLElement>(".crm-content");
+          if (scroller) scroller.scrollTop = target;
+        });
+      }
+    }).finally(() => { if (!opts?.silent) setLoading(false); });
   };
 
   const downloadProspectTemplate = () => {
@@ -740,6 +840,12 @@ export default function Contacts() {
       callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
       emailOutcomeColorFilter.length ? next.set("ec", emailOutcomeColorFilter.join(",")) : next.delete("ec");
       callAttemptsBucketFilter.length ? next.set("ca", callAttemptsBucketFilter.join(",")) : next.delete("ca");
+      followupCountMin != null ? next.set("fcmin", String(followupCountMin)) : next.delete("fcmin");
+      followupCountMax != null ? next.set("fcmax", String(followupCountMax)) : next.delete("fcmax");
+      nextFollowupRange.from ? next.set("nfa", nextFollowupRange.from) : next.delete("nfa");
+      nextFollowupRange.to ? next.set("nfb", nextFollowupRange.to) : next.delete("nfb");
+      callLastRange.from ? next.set("cla", callLastRange.from) : next.delete("cla");
+      callLastRange.to ? next.set("clb", callLastRange.to) : next.delete("clb");
       aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
@@ -748,7 +854,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -759,7 +865,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -772,7 +878,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   useEffect(() => {
     if (contacts.length === 0 || selectedContactIds.size === 0) return;
@@ -1026,40 +1132,115 @@ export default function Contacts() {
     }
   };
 
+  const clearDialTimer = () => {
+    if (dialTimerRef.current != null) {
+      window.clearInterval(dialTimerRef.current);
+      dialTimerRef.current = null;
+    }
+  };
+
+  // The actual dial: trigger Aircall (if enabled) and ring the rep's mobile
+  // PWA. Runs once the countdown elapses or the rep taps "Call now".
+  const performDial = (contact: Contact) => {
+    if (!contact.phone) return;
+    if (aircallEnabled && window.__aircallDial) {
+      window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
+    }
+    // Best-effort: ring the user's mobile PWA so they can tap-to-dial on
+    // their phone. Never blocks the sidebar — failures, missing VAPID, no
+    // subscription, etc. all silently no-op.
+    pushApi
+      .ringMobile(contact.id)
+      .then((res) => {
+        if (res.sent > 0) {
+          toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
+        } else if (res.configured === 0) {
+          toast.warning("Mobile push is not configured yet. The call drawer is ready here.", "Mobile ring unavailable");
+        } else if (res.total === 0) {
+          toast.info("No mobile PWA is registered for your user yet. Enable mobile notifications from Settings.", "Mobile not registered");
+        } else {
+          toast.warning("No mobile device accepted the call notification. Re-enable notifications on the phone.", "Mobile ring failed");
+        }
+      })
+      .catch(() => {
+        toast.info("Call drawer is ready here. Mobile notification could not be sent.", "Mobile ring skipped");
+      });
+  };
+
+  // What "the call starts" means once the countdown elapses (or the rep taps
+  // "Start now"): kick off the in-browser recording AND ring the phone. The
+  // recording panel guards against double-starting if the rep already hit
+  // Record manually during the countdown.
+  const beginCall = (contact: Contact) => {
+    callRecordingRef.current?.startRecording();
+    performDial(contact);
+  };
+
+  // Hold the start for 10s. A closure-local counter drives the tick so the
+  // call begins exactly once at zero (no side effects inside a setState
+  // updater, which would double-fire under StrictMode).
+  const startDialCountdown = (contact: Contact) => {
+    clearDialTimer();
+    let remaining = 10;
+    setDialCountdown(remaining);
+    dialTimerRef.current = window.setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearDialTimer();
+        setDialCountdown(null);
+        beginCall(contact);
+      } else {
+        setDialCountdown(remaining);
+      }
+    }, 1000);
+  };
+
+  // Stop the auto-start within the 10s window — drawer stays open so the rep
+  // can still record/log the call manually whenever they're ready.
+  const cancelDial = () => {
+    clearDialTimer();
+    setDialCountdown(null);
+  };
+
+  // Skip the wait and start the call (recording + dial) immediately.
+  const dialNow = () => {
+    if (!callContact) return;
+    clearDialTimer();
+    setDialCountdown(null);
+    beginCall(callContact);
+  };
+
   const openCallSidebar = async (contact: Contact) => {
+    // Remember where the rep is in the list so closing the drawer doesn't
+    // bounce them back to the top of a long, scrolled prospect list.
+    const scroller = document.querySelector<HTMLElement>(".crm-content");
+    restoreScrollRef.current = scroller ? scroller.scrollTop : null;
     setCallContact(contact);
     setCallStatus("attempted");
     setCallDisposition("");
     setCallNotes("");
     setFollowupAt("");
     setCurrentRecordingId(null);
-    if (aircallEnabled && contact.phone) {
-      if (window.__aircallDial) {
-        window.__aircallDial(contact.phone, `${contact.first_name} ${contact.last_name}`.trim());
-      }
-    }
-    // Best-effort: ring the user's mobile PWA so they can tap-to-dial on
-    // their phone. Never blocks the sidebar — failures, missing VAPID, no
-    // subscription, etc. all silently no-op.
-    if (contact.phone) {
-      pushApi
-        .ringMobile(contact.id)
-        .then((res) => {
-          if (res.sent > 0) {
-            toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
-          } else if (res.configured === 0) {
-            toast.warning("Mobile push is not configured yet. The call drawer is ready here.", "Mobile ring unavailable");
-          } else if (res.total === 0) {
-            toast.info("No mobile PWA is registered for your user yet. Enable mobile notifications from Settings.", "Mobile not registered");
-          } else {
-            toast.warning("No mobile device accepted the call notification. Re-enable notifications on the phone.", "Mobile ring failed");
-          }
-        })
-        .catch(() => {
-          toast.info("Call drawer is ready here. Mobile notification could not be sent.", "Mobile ring skipped");
-        });
-    }
+    startDialCountdown(contact);
   };
+
+  // Safety net: whenever the drawer closes (any path), kill a pending
+  // countdown so a dial can't fire after the rep moved on. NOTE: we must NOT
+  // put clearDialTimer in this effect's cleanup — on the open transition
+  // (null → contact) React runs the prior cleanup right after
+  // openCallSidebar has already started the interval, which would clear it
+  // instantly. Unmount cleanup lives in its own empty-deps effect below.
+  useEffect(() => {
+    if (!callContact) {
+      clearDialTimer();
+      setDialCountdown(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callContact]);
+
+  // Clear any running countdown only when the page itself unmounts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => clearDialTimer(), []);
 
   const handleCallDispositionChange = (value: string) => {
     setCallDisposition(value);
@@ -1169,7 +1350,9 @@ export default function Contacts() {
 
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
       setCallContact(null);
-      loadContacts();
+      // Silent reload keeps the rep's scroll position in a long list instead of
+      // snapping back to the top (see loadContacts + restoreScrollRef).
+      loadContacts({ silent: true });
       // Refresh the rep-scoped tile so it reflects the just-saved call. It
       // queries activities directly so it doesn't depend on which page of
       // contacts is currently visible.
@@ -1409,7 +1592,7 @@ export default function Contacts() {
                   overflow: "hidden",
                   minWidth: 0,
                   cursor: isInteractive ? "pointer" : "default",
-                  transition: "border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease",
+                  transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease",
                 }}
               >
                 {/* top accent strip */}
@@ -1779,8 +1962,8 @@ export default function Contacts() {
                         padding: "0 12px",
                         borderRadius: 12,
                         border: ownerScope === "mine" ? "1px solid #ffb995" : "1px solid #d3e0ed",
-                        background: ownerScope === "mine" ? "#fff3ec" : "#ffffff",
-                        color: ownerScope === "mine" ? "#b85024" : "#35546f",
+                        background: ownerScope === "mine" ? "#f3fbe3" : "#ffffff",
+                        color: ownerScope === "mine" ? "#4d7c0f" : "#35546f",
                         fontSize: 12,
                         fontWeight: 800,
                       }}
@@ -2054,6 +2237,10 @@ export default function Contacts() {
                 callOutcomeColorFilter.length ||
                 emailOutcomeColorFilter.length ||
                 callAttemptsBucketFilter.length ||
+                followupCountMin != null ||
+                followupCountMax != null ||
+                nextFollowupRange.from || nextFollowupRange.to ||
+                callLastRange.from || callLastRange.to ||
                 aeFilter.length ||
                 sdrFilter.length ||
                 ownerFilter.length ||
@@ -2089,10 +2276,10 @@ export default function Contacts() {
                         height: 34,
                         padding: "0 28px 0 10px",
                         borderRadius: 9,
-                        border: ownerScope === "mine" ? "1.5px solid #ffc9b4" : "1px solid #c8d9e8",
+                        border: ownerScope === "mine" ? "1.5px solid #cfe89a" : "1px solid #c8d9e8",
                         fontSize: 13,
                         color: "#0f2744",
-                        background: ownerScope === "mine" ? "#fff3ec" : "#fff",
+                        background: ownerScope === "mine" ? "#f3fbe3" : "#fff",
                         outline: "none",
                         minWidth: 140,
                         cursor: "pointer",
@@ -2159,6 +2346,45 @@ export default function Contacts() {
                     options={CALL_ATTEMPTS_BUCKET_OPTIONS}
                     allLabel="Any count"
                     minWidth={150}
+                  />
+                  {/* Follow-up count range — number of logged calls. More
+                      granular than the bucket filter above (e.g. "called 2–5
+                      times"). Backed by call_attempt_count on the server. */}
+                  <RangeFilter
+                    label="Follow-ups"
+                    min={followupCountMin}
+                    max={followupCountMax}
+                    onChange={(min, max) => { setFollowupCountMin(min); setFollowupCountMax(max); }}
+                    allLabel="Any number"
+                    unit="calls"
+                    minWidth={150}
+                    presets={[
+                      { label: "1+", min: 1, max: null },
+                      { label: "2+", min: 2, max: null },
+                      { label: "3–5", min: 3, max: 5 },
+                      { label: "6+", min: 6, max: null },
+                    ]}
+                  />
+                  {/* Scheduled follow-up date range — filters next_followup_at,
+                      the callback the rep booked. Presets target the common
+                      "who do I owe a follow-up" workflows. */}
+                  <DateRangeFilter
+                    label="Follow-up due"
+                    value={nextFollowupRange}
+                    onChange={setNextFollowupRange}
+                    allLabel="Any follow-up date"
+                    minWidth={190}
+                    presets={followupDuePresets}
+                  />
+                  {/* Last-call date range — filters call_last_at, when the
+                      prospect was last dialed. */}
+                  <DateRangeFilter
+                    label="Last call"
+                    value={callLastRange}
+                    onChange={setCallLastRange}
+                    allLabel="Any last-call date"
+                    minWidth={190}
+                    presets={lastCallPresets}
                   />
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
@@ -2286,7 +2512,7 @@ export default function Contacts() {
                                 <GripVertical size={13} />
                               </button>
                               <span style={{ flex: 1, fontSize: 12.5, color: "#24364b", fontWeight: 600 }}>{column.label}</span>
-                              <button type="button" onClick={() => toggleTableColumn(column.key)} style={{ border: "1px solid #dce8f4", background: active ? "#fff3ec" : "#fff", color: active ? "#b85024" : "#546679", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <button type="button" onClick={() => toggleTableColumn(column.key)} style={{ border: "1px solid #dce8f4", background: active ? "#f3fbe3" : "#fff", color: active ? "#4d7c0f" : "#546679", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                                 <EyeOff size={11} />
                                 {active ? "Hide" : "Show"}
                               </button>
@@ -2319,6 +2545,9 @@ export default function Contacts() {
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
                         setCallAttemptsBucketFilter([]);
+                        setFollowupCountMin(null); setFollowupCountMax(null);
+                        setNextFollowupRange({ from: "", to: "" });
+                        setCallLastRange({ from: "", to: "" });
                         setAeFilter([]); setSdrFilter([]);
                         setOwnerFilter([]);
                         setTimezoneFilter([]);
@@ -2734,7 +2963,7 @@ export default function Contacts() {
                                   return <td key={column.key}><span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span></td>;
                                 }
                                 const toneMap = {
-                                  high: { bg: "#fff4ed", border: "#fed7aa", color: "#c2410c" },
+                                  high: { bg: "#f3fbe3", border: "#fed7aa", color: "#c2410c" },
                                   medium: { bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1" },
                                   low: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
                                 };
@@ -2762,10 +2991,21 @@ export default function Contacts() {
                               case "action":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
-                                    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                      <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
-                                        <Phone size={13} /> Call
-                                      </button>
+                                    <div style={{ position: "relative", display: "inline-flex", alignItems: "flex-start", gap: 8 }}>
+                                      {/* Call button + a caption showing how many
+                                          times this prospect was called and how
+                                          recently — so a rep sees touch history
+                                          without opening the drawer. */}
+                                      <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "stretch", gap: 3 }}>
+                                        <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
+                                          <Phone size={13} /> Call
+                                        </button>
+                                        <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.15, textAlign: "center", whiteSpace: "nowrap", color: (c.call_attempt_count ?? 0) > 0 ? "#5b6b7d" : "#9fb0c0" }}>
+                                          {(c.call_attempt_count ?? 0) > 0
+                                            ? `${c.call_attempt_count} call${c.call_attempt_count === 1 ? "" : "s"}${c.call_last_at ? ` · ${relativeTimeShort(c.call_last_at)}` : ""}`
+                                            : "No calls yet"}
+                                        </span>
+                                      </div>
                                       <a href={c.email ? gmailComposeUrl(c.email) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.email) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: c.email ? "#ecfdf3" : "#f6f8fb", color: c.email ? "#1f7a4d" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.email ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.email ? `Email ${c.email} in Gmail` : "No email saved"}>
                                         <Mail size={13} /> Email
                                       </a>
@@ -3600,6 +3840,44 @@ export default function Contacts() {
               {/* SCROLLABLE BODY */}
               <div style={{ flex: 1, overflowY: "auto" }}>
 
+                {/* PRE-CALL COUNTDOWN — recording auto-starts when this hits 0.
+                    The rep can Stop it within the window, or skip the wait with
+                    Start now. */}
+                {dialCountdown != null && (
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14,
+                    padding: "14px 22px",
+                    background: "linear-gradient(90deg, #fff7ed 0%, #fbfef4 100%)",
+                    borderBottom: "1px solid #e9f6d2",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+                      <div style={{
+                        width: 46, height: 46, borderRadius: "50%", flexShrink: 0,
+                        display: "grid", placeItems: "center",
+                        background: "#fff", border: "2px solid #9ace3d",
+                        color: "#5fa024", fontSize: 18, fontWeight: 800,
+                        boxShadow: "0 0 0 4px #e3f4c6",
+                      }}>
+                        {dialCountdown}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#3f6212" }}>Recording starts in {dialCountdown}s…</div>
+                        <div style={{ fontSize: 11.5, color: "#5b7a32", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {callContact.phone ? `Dialing ${callContact.phone} — ` : ""}get ready, or stop before it begins.
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      <button type="button" onClick={cancelDial} style={{ height: 36, padding: "0 14px", borderRadius: 10, border: "1px solid #f3b6b6", background: "#fff", color: "#b91c1c", fontSize: 12.5, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <X size={13} /> Stop
+                      </button>
+                      <button type="button" onClick={dialNow} style={{ height: 36, padding: "0 14px", borderRadius: 10, border: "none", background: "#9ace3d", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <Mic size={13} /> Start now
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* HERO — contact identity */}
                 <div style={{
                   padding: "18px 22px 16px",
@@ -3702,6 +3980,7 @@ export default function Contacts() {
                     call, Whisper transcribes it and Claude pre-fills the
                     disposition below. The rep still confirms before save. */}
                 <CallRecordingPanel
+                  ref={callRecordingRef}
                   contactId={callContact.id}
                   onRecordingChange={setCurrentRecordingId}
                   onSuggestion={(s: AISuggestion) => {

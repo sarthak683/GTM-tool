@@ -180,6 +180,24 @@ async def list_contacts(
         default=None,
         description="Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together.",
     ),
+    call_attempt_min: Optional[int] = Query(
+        default=None, ge=0, description="Follow-up count lower bound (inclusive): minimum number of logged calls."
+    ),
+    call_attempt_max: Optional[int] = Query(
+        default=None, ge=0, description="Follow-up count upper bound (inclusive): maximum number of logged calls."
+    ),
+    next_followup_after: Optional[datetime] = Query(
+        default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/after this UTC datetime."
+    ),
+    next_followup_before: Optional[datetime] = Query(
+        default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/before this UTC datetime."
+    ),
+    call_last_after: Optional[datetime] = Query(
+        default=None, description="Only contacts last called (call_last_at) at/after this UTC datetime."
+    ),
+    call_last_before: Optional[datetime] = Query(
+        default=None, description="Only contacts last called (call_last_at) at/before this UTC datetime."
+    ),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -212,6 +230,12 @@ async def list_contacts(
         call_outcome_color=call_outcome_color,
         email_outcome_color=email_outcome_color,
         call_attempts_bucket=call_attempts_bucket,
+        call_attempt_min=call_attempt_min,
+        call_attempt_max=call_attempt_max,
+        next_followup_after=next_followup_after,
+        next_followup_before=next_followup_before,
+        call_last_after=call_last_after,
+        call_last_before=call_last_before,
         skip=pagination.skip,
         limit=pagination.limit,
     )

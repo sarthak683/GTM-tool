@@ -424,7 +424,7 @@ function MeetingIntelCard({
   // in a long list. Imminent = coral; in-progress/overdue = amber; soon = blue;
   // otherwise neutral.
   const accent =
-    urgency === "imminent" ? "#ff6b35"
+    urgency === "imminent" ? "#9ace3d"
     : urgency === "in_progress" ? "#b56d00"
     : urgency === "overdue" ? "#c0392b"
     : urgency === "soon" ? "#4261d6"
@@ -1691,7 +1691,7 @@ export default function PreMeetingAssistance() {
                   padding: "12px 16px",
                   borderRadius: 14,
                   border: `1px solid ${imminent ? "#ffcdb8" : today ? "#c5d6ff" : "#d7dffb"}`,
-                  background: imminent ? "#fff3ec" : today ? "#eef4ff" : "#f6f8ff",
+                  background: imminent ? "#f3fbe3" : today ? "#eef4ff" : "#f6f8ff",
                   color: colors.text,
                   textDecoration: "none",
                   minWidth: 280,
@@ -1699,11 +1699,11 @@ export default function PreMeetingAssistance() {
                 }}
                 title="Jump to the next upcoming meeting"
               >
-                <div style={{ width: 38, height: 38, borderRadius: 10, background: "#fff", border: "1px solid #e3ebf4", display: "grid", placeItems: "center", color: imminent ? "#b85024" : "#3555c4" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: "#fff", border: "1px solid #e3ebf4", display: "grid", placeItems: "center", color: imminent ? "#4d7c0f" : "#3555c4" }}>
                   <CalendarDays size={18} />
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: imminent ? "#b85024" : "#3555c4" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: imminent ? "#4d7c0f" : "#3555c4" }}>
                     Next up · {countdown}
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: colors.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

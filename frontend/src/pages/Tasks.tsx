@@ -7,6 +7,7 @@ import { useAuth } from "../lib/AuthContext";
 import { formatDate, formatDomain, isPlaceholderDomain } from "../lib/utils";
 import type { GlobalSearchItem, TaskWorkspaceItem } from "../types";
 import { getSystemTaskGuidance } from "../components/tasks/systemTaskGuidance";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 const colors = {
   border: "#d9e1ec",
@@ -304,7 +305,7 @@ function TaskWorkspaceCard({
   const templates = getTaskTemplates(task);
 
   return (
-    <div className="crm-panel" style={{ padding: 18, boxShadow: "none", display: "grid", gap: 12 }}>
+    <div className="crm-panel crm-hover-lift" style={{ padding: 18, boxShadow: "none", display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "start" }}>
           {isOpen && (
@@ -1144,7 +1145,7 @@ export default function TasksPage() {
 
       <section style={{ display: "grid", gap: 14 }}>
         {loading ? (
-          <div className="crm-panel" style={{ padding: 24, color: colors.faint }}>Loading tasks…</div>
+          <div className="crm-panel" style={{ padding: 18 }}><SkeletonList rows={6} /></div>
         ) : visibleTasks.length === 0 ? (
           <div className="crm-panel" style={{ padding: 28, color: colors.faint, display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 800, color: colors.text }}>No tasks match these filters</div>

@@ -48,7 +48,7 @@ export default function DealCard({ deal, companyName }: DealCardProps) {
           </div>
           <button
             onClick={() => navigate(`/pipeline?deal=${deal.id}`)}
-            className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[12px] font-semibold text-[#ff6b35]"
+            className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[12px] font-semibold text-[#9ace3d]"
           >
             Open <ArrowRight className="h-3 w-3" />
           </button>

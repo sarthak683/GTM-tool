@@ -207,7 +207,7 @@ export default function ImportPage() {
     <div className="import-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <section className="crm-panel p-8 import-main-card" style={{ padding: 32 }}>
         <div className="flex items-start gap-4" style={{ gap: 18 }}>
-          <div className="h-12 w-12 rounded-xl bg-[#fff1ec] border border-[#ffd6c8] grid place-items-center text-[#ff6b35]">
+          <div className="h-12 w-12 rounded-xl bg-[#fff1ec] border border-[#ffd6c8] grid place-items-center text-[#9ace3d]">
             <Upload size={18} />
           </div>
           <div className="min-w-0">

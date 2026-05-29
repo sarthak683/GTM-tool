@@ -460,11 +460,11 @@ function MultiSelectFilter({
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
-          style={{ width: "100%", height: 38, borderRadius: 12, border: values.length ? "1.5px solid #ffc9b4" : "1px solid #e2eaf2", background: values.length ? "#fff3ec" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12, fontWeight: 600, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
+          style={{ width: "100%", height: 38, borderRadius: 12, border: values.length ? "1.5px solid #cfe89a" : "1px solid #e2eaf2", background: values.length ? "#f3fbe3" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12, fontWeight: 600, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
         >
           {displayLabel}
           {values.length > 1 && (
-            <span style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, background: "#ff6b35", color: "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, background: "#9ace3d", color: "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
               {values.length}
             </span>
           )}
@@ -478,7 +478,7 @@ function MultiSelectFilter({
                 <button
                   type="button"
                   onClick={() => onChange([])}
-                  style={{ border: "none", background: "transparent", color: "#ff6b35", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                  style={{ border: "none", background: "transparent", color: "#9ace3d", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
                 >
                   Clear
                 </button>
@@ -503,7 +503,7 @@ function MultiSelectFilter({
                 <button
                   type="button"
                   onClick={() => onChange([])}
-                  style={{ border: "none", background: values.length === 0 ? "#fff3ec" : "transparent", color: values.length === 0 ? "#b85024" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
+                  style={{ border: "none", background: values.length === 0 ? "#f3fbe3" : "transparent", color: values.length === 0 ? "#4d7c0f" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
                 >
                   {allLabel}
                 </button>
@@ -950,7 +950,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag }:
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
 
   return (
-    <div draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       {/* Header row: grip + name + close date */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0, cursor: "grab" }} />
@@ -1048,7 +1048,7 @@ function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
 
 function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDelete }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void; onDelete?: () => void }) {
   return (
-    <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <button type="button" className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
@@ -2538,8 +2538,8 @@ export default function Pipeline() {
                       height: 32,
                       padding: "0 12px",
                       borderRadius: 8,
-                      border: mineActive ? "1.5px solid #ffc9b4" : "1px solid #e2eaf2",
-                      background: mineActive ? "#fff3ec" : "#f8fafc",
+                      border: mineActive ? "1.5px solid #cfe89a" : "1px solid #e2eaf2",
+                      background: mineActive ? "#f3fbe3" : "#f8fafc",
                       color: mineActive ? "#a04a1c" : "#48607b",
                       fontSize: 12,
                       fontWeight: 700,

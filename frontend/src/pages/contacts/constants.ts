@@ -18,7 +18,7 @@ export const STRENGTH_STYLE: Record<number, CSSProperties> = {
   5: { color: "#166534", background: "#dcfce7", border: "1px solid #bbf7d0" },
   4: { color: "#1e40af", background: "#dbeafe", border: "1px solid #bfdbfe" },
   3: { color: "#854d0e", background: "#fef9c3", border: "1px solid #fde68a" },
-  2: { color: "#9a3412", background: "#ffedd5", border: "1px solid #fed7aa" },
+  2: { color: "#3f6212", background: "#ffedd5", border: "1px solid #fed7aa" },
   1: { color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca" },
 };
 

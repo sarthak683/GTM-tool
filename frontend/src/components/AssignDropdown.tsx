@@ -170,6 +170,7 @@ export default function AssignDropdown({
 
       {open && (
         <div
+          className="beacon-pop"
           style={{
             position: "absolute",
             top: "calc(100% + 4px)",

@@ -39,7 +39,7 @@ function matchesFilter(kind: string, filter: Filter): boolean {
 
 function iconFor(kind: string): { Icon: typeof Mail; color: string } {
   switch (kind) {
-    case "email": return { Icon: Mail, color: "#ff6b35" };
+    case "email": return { Icon: Mail, color: "#9ace3d" };
     case "call": return { Icon: Phone, color: "#16a34a" };
     case "linkedin": return { Icon: Linkedin, color: "#0a66c2" };
     case "meeting": return { Icon: CalendarDays, color: "#7c3aed" };

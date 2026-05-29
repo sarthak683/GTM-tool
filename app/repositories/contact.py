@@ -5,6 +5,7 @@ Key addition over the base: list_with_company_name() runs a LEFT JOIN against
 companies so the frontend gets company_name in a single API call instead of two.
 """
 import re
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -118,6 +119,12 @@ class ContactRepository(BaseRepository[Contact]):
         call_outcome_color: Optional[list[str]] = None,
         email_outcome_color: Optional[list[str]] = None,
         call_attempts_bucket: Optional[list[str]] = None,
+        call_attempt_min: Optional[int] = None,
+        call_attempt_max: Optional[int] = None,
+        next_followup_after: Optional[datetime] = None,
+        next_followup_before: Optional[datetime] = None,
+        call_last_after: Optional[datetime] = None,
+        call_last_before: Optional[datetime] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -511,6 +518,48 @@ class ContactRepository(BaseRepository[Contact]):
                 attempts_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
                 base_stmt = base_stmt.where(attempts_filter)
                 count_stmt = count_stmt.where(attempts_filter)
+
+        # Follow-up count range — inclusive min/max over the same call-attempt
+        # subquery the buckets use. Lets a rep ask "called between 2 and 5
+        # times" without being limited to fixed buckets. Either bound is
+        # optional; an open-ended range (min only / max only) is valid.
+        if call_attempt_min is not None:
+            base_stmt = base_stmt.where(call_attempt_count_subq >= call_attempt_min)
+            count_stmt = count_stmt.where(call_attempt_count_subq >= call_attempt_min)
+        if call_attempt_max is not None:
+            base_stmt = base_stmt.where(call_attempt_count_subq <= call_attempt_max)
+            count_stmt = count_stmt.where(call_attempt_count_subq <= call_attempt_max)
+
+        # Date-range filters over the two follow-up timestamps. `next_followup_at`
+        # is the rep-scheduled callback time; `call_last_at` is when the prospect
+        # was last called. Stored values are UTC-naive (the contacts PUT strips
+        # tzinfo), so we normalize incoming bounds to naive UTC before comparing.
+        # A `>=`/`<=` against a column also implicitly excludes NULL rows, which
+        # is what we want — "has a follow-up in this window" must have a value.
+        def _to_naive(value: Optional[datetime]) -> Optional[datetime]:
+            # Frontend sends UTC ISO bounds; drop the tzinfo so the comparison
+            # stays in the same UTC wall-clock the columns are stored in.
+            if value is not None and value.tzinfo is not None:
+                return value.replace(tzinfo=None)
+            return value
+
+        nf_after = _to_naive(next_followup_after)
+        nf_before = _to_naive(next_followup_before)
+        if nf_after is not None:
+            base_stmt = base_stmt.where(Contact.next_followup_at >= nf_after)
+            count_stmt = count_stmt.where(Contact.next_followup_at >= nf_after)
+        if nf_before is not None:
+            base_stmt = base_stmt.where(Contact.next_followup_at <= nf_before)
+            count_stmt = count_stmt.where(Contact.next_followup_at <= nf_before)
+
+        cl_after = _to_naive(call_last_after)
+        cl_before = _to_naive(call_last_before)
+        if cl_after is not None:
+            base_stmt = base_stmt.where(Contact.call_last_at >= cl_after)
+            count_stmt = count_stmt.where(Contact.call_last_at >= cl_after)
+        if cl_before is not None:
+            base_stmt = base_stmt.where(Contact.call_last_at <= cl_before)
+            count_stmt = count_stmt.where(Contact.call_last_at <= cl_before)
 
         # Timezone filter: comma-separated list. Each value is matched
         # case-insensitively against Contact.timezone (e.g. "Asia/Kolkata").

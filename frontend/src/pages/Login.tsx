@@ -1,4 +1,3 @@
-import { Sparkles } from "lucide-react";
 import { authApi } from "../lib/api";
 
 export default function Login() {
@@ -12,37 +11,42 @@ export default function Login() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(135deg, #0a0e1a 0%, #141b2d 50%, #0a0e1a 100%)",
+        background:
+          "radial-gradient(120% 70% at 50% -5%, rgba(154, 206, 61, 0.12), transparent 55%), linear-gradient(135deg, #0b0c0e 0%, #0a0b0d 60%, #08090a 100%)",
         padding: "24px",
         overflow: "auto",
       }}
     >
       <div
+        className="beacon-pop"
         style={{
-          background: "rgba(20, 27, 45, 0.8)",
-          border: "1px solid rgba(99, 132, 255, 0.15)",
+          background: "rgba(15, 17, 19, 0.85)",
+          border: "1px solid rgba(154, 206, 61, 0.18)",
           borderRadius: "16px",
           padding: "48px",
           maxWidth: "420px",
           width: "100%",
           textAlign: "center",
           backdropFilter: "blur(20px)",
+          boxShadow: "0 30px 80px rgba(0, 0, 0, 0.45)",
         }}
       >
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "12px", marginBottom: "8px" }}>
           <div
             style={{
-              width: "40px",
-              height: "40px",
-              borderRadius: "10px",
-              background: "linear-gradient(135deg, #6384ff, #8b5cf6)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              width: "44px",
+              height: "44px",
+              borderRadius: "13px",
+              background: "#0d0e10",
+              border: "1px solid rgba(154, 206, 61, 0.32)",
+              boxShadow: "0 0 18px rgba(154, 206, 61, 0.22)",
+              display: "grid",
+              placeItems: "center",
+              overflow: "hidden",
             }}
           >
-            <Sparkles size={20} color="white" />
+            <img src="/beacon-logo.jpg" alt="Beacon" style={{ width: "76%", height: "76%", objectFit: "contain" }} />
           </div>
           <span style={{ fontSize: "24px", fontWeight: 700, color: "#e2e8f0" }}>
             beacon.li
@@ -80,7 +84,7 @@ export default function Login() {
           }}
           onMouseEnter={(e) => {
             (e.target as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
-            (e.target as HTMLElement).style.borderColor = "rgba(99, 132, 255, 0.4)";
+            (e.target as HTMLElement).style.borderColor = "rgba(154, 206, 61, 0.45)";
           }}
           onMouseLeave={(e) => {
             (e.target as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";

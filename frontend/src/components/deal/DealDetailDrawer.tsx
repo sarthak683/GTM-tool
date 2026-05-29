@@ -1930,8 +1930,8 @@ function MeddpiccPanel({
               padding: "0 14px",
               borderRadius: 10,
               border: "1px solid #ffc8b4",
-              background: autoFilling ? "#fff7f2" : "#fff3ec",
-              color: "#b85024",
+              background: autoFilling ? "#fff7f2" : "#f3fbe3",
+              color: "#4d7c0f",
               fontSize: 12,
               fontWeight: 800,
               cursor: autoFilling ? "default" : "pointer",
@@ -2007,7 +2007,7 @@ function MeddpiccPanel({
                     Captured detail
                   </span>
                   {detail?.change_reason && (
-                    <span style={{ fontSize: 10, color: "#9a3412", fontWeight: 700 }}>
+                    <span style={{ fontSize: 10, color: "#3f6212", fontWeight: 700 }}>
                       {formatMeddpiccChangeReason(detail.change_reason)}
                     </span>
                   )}
@@ -2043,7 +2043,7 @@ function MeddpiccPanel({
                           padding: "2px 7px",
                           borderRadius: 999,
                           background: "#fff",
-                          color: "#9a3412",
+                          color: "#3f6212",
                           border: "1px solid #fed7aa",
                         }}
                       >

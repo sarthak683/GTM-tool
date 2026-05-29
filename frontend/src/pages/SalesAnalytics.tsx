@@ -690,7 +690,7 @@ function RepActivityTable({
             padding: "14px 16px",
             borderRadius: 15,
             border: "1px solid #e7edf5",
-            background: index === 0 ? "linear-gradient(135deg, #fffdf8 0%, #fff6e9 100%)" : "#fff",
+            background: index === 0 ? "linear-gradient(135deg, #fbfef4 0%, #fff6e9 100%)" : "#fff",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -1975,7 +1975,7 @@ export default function SalesAnalytics() {
         className="crm-panel"
         style={{
           padding: 24,
-          background: "radial-gradient(circle at top left, rgba(255, 107, 53, 0.14), transparent 30%), radial-gradient(circle at top right, rgba(76, 107, 230, 0.12), transparent 26%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          background: "radial-gradient(circle at top left, rgba(154, 206, 61, 0.14), transparent 30%), radial-gradient(circle at top right, rgba(76, 107, 230, 0.12), transparent 26%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
           display: "grid",
           gap: 18,
         }}
@@ -1988,7 +1988,7 @@ export default function SalesAnalytics() {
               A manager-friendly read on rep activity, pipeline composition, deal aging, forecast timing, and funnel health. The structure follows the best CRM pattern: summary first, diagnosis second, drilldown last.
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#fff3ec", border: "1px solid #ffd5c3", color: "#b85024", fontSize: 12, fontWeight: 800 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f3fbe3", border: "1px solid #ffd5c3", color: "#4d7c0f", fontSize: 12, fontWeight: 800 }}>
                 <TrendingUp size={14} />
                 Forecast and hygiene in one view
               </span>
@@ -2016,8 +2016,8 @@ export default function SalesAnalytics() {
                     padding: "0 14px",
                     borderRadius: 999,
                     border: !usingCustomRange && value === windowDays ? "1px solid #ffbeab" : "1px solid #d9e3ef",
-                    background: !usingCustomRange && value === windowDays ? "#fff1ea" : "#fff",
-                    color: !usingCustomRange && value === windowDays ? "#b85024" : "#506378",
+                    background: !usingCustomRange && value === windowDays ? "#f3fbe3" : "#fff",
+                    color: !usingCustomRange && value === windowDays ? "#4d7c0f" : "#506378",
                     fontSize: 12,
                     fontWeight: 800,
                     cursor: "pointer",
@@ -2063,8 +2063,8 @@ export default function SalesAnalytics() {
                       height: 36,
                       padding: "0 14px",
                       borderRadius: 10,
-                      border: mineActive ? "1.5px solid #ffc9b4" : "1px solid #d7e2fb",
-                      background: mineActive ? "#fff3ec" : "#fff",
+                      border: mineActive ? "1.5px solid #cfe89a" : "1px solid #d7e2fb",
+                      background: mineActive ? "#f3fbe3" : "#fff",
                       color: mineActive ? "#a04a1c" : "#3555c4",
                       fontSize: 12,
                       fontWeight: 700,

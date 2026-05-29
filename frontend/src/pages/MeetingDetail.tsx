@@ -188,7 +188,7 @@ interface WebResearch {
 // ── Demo strategy section config ─────────────────────────────────────────────
 
 const STORY_SECTIONS = [
-  { icon: Lightbulb,            color: "#ff6b35", bg: "#fff8f5", border: "#ffd5be", label: "Opening Hook" },
+  { icon: Lightbulb,            color: "#9ace3d", bg: "#fff8f5", border: "#ffd5be", label: "Opening Hook" },
   { icon: Search,               color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe", label: "Discovery Question" },
   { icon: PlayCircle,           color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe", label: "Story Lineup" },
   { icon: Swords,               color: "#0f766e", bg: "#f0fdfa", border: "#99f6e4", label: "Key Differentiation" },
@@ -341,7 +341,7 @@ function ReadinessStep({ done, label, detail, action }: {
 }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) auto", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 12, border: `1px solid ${done ? "#c7e8d3" : "#ffd9c2"}`, background: done ? "#f4fbf7" : "#fff8f3" }}>
-      <div style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: done ? "#dff6e8" : "#ffe9dc", color: done ? "#15803d" : "#c05621", fontWeight: 900, fontSize: 13 }}>
+      <div style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: done ? "#dff6e8" : "#e3f4c6", color: done ? "#15803d" : "#c05621", fontWeight: 900, fontSize: 13 }}>
         {done ? "✓" : "!"}
       </div>
       <div style={{ minWidth: 0 }}>
@@ -884,12 +884,12 @@ export default function MeetingDetail() {
             <p className="text-[14px] text-[#647a91] mt-2 flex items-center gap-2 flex-wrap">
               {company ? (
                 <>
-                  <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#ff6b35]">
+                  <Link to={`/account-sourcing/${company.id}`} className="font-semibold text-[#24364b] hover:text-[#9ace3d]">
                     {company.name}
                   </Link>
                   ·
                   <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 hover:text-[#ff6b35]">
+                    className="inline-flex items-center gap-1 hover:text-[#9ace3d]">
                     {company.domain} <ExternalLink size={12} />
                   </a>
                 </>
@@ -924,7 +924,7 @@ export default function MeetingDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {statusMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{statusMsg}</span>}
+            {statusMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{statusMsg}</span>}
             <button className="crm-button soft" onClick={handleOpenAttendeeEditor}>
               <Users size={14} /> Manage Attendees
             </button>
@@ -1308,7 +1308,7 @@ export default function MeetingDetail() {
                     </div>
                   )}
                   {(company.beacon_angle || company.why_now) && (
-                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fff8f4, #fff3ec)", border: "1px solid #ffd5be" }}>
+                    <div style={{ padding: "14px 16px", borderRadius: 12, background: "linear-gradient(135deg, #fff8f4, #f3fbe3)", border: "1px solid #ffd5be" }}>
                       <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "#c2410c", marginBottom: 6 }}>Beacon Angle</p>
                       <p style={{ fontSize: 13, color: "#431407", lineHeight: 1.65, margin: 0 }}>{company.beacon_angle || icpBeaconAngle}</p>
                     </div>
@@ -1561,7 +1561,7 @@ export default function MeetingDetail() {
           SECTION 0 — Executive Briefing (GPT-4o synthesis of all intel)
       ══════════════════════════════════════════════════════════════════════ */}
       {hasExecutiveBriefing && (
-        <Section title="Sales Briefing" icon={<Briefcase size={15} className="text-[#ff6b35]" />} badge="Pre-call">
+        <Section title="Sales Briefing" icon={<Briefcase size={15} className="text-[#9ace3d]" />} badge="Pre-call">
           <MarkdownBrief text={webResearch.executive_briefing!} />
         </Section>
       )}
@@ -1705,7 +1705,7 @@ export default function MeetingDetail() {
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 1 — Account Intelligence (existing DB data, shown immediately)
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Account Intelligence" icon={<Building2 size={15} className="text-[#ff6b35]" />} defaultOpen={Boolean(company)}>
+      <Section title="Account Intelligence" icon={<Building2 size={15} className="text-[#9ace3d]" />} defaultOpen={Boolean(company)}>
         {!company ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 16px", borderRadius: 12, background: "#fff8f3", border: "1px solid #ffd9c2" }}>
             <div>
@@ -1825,12 +1825,12 @@ export default function MeetingDetail() {
             {(webResearch.recent_news?.length ?? 0) > 0 && (
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-2">
-                  Recent News & Signals <span className="text-[#ff6b35] normal-case font-normal">(web research)</span>
+                  Recent News & Signals <span className="text-[#9ace3d] normal-case font-normal">(web research)</span>
                 </p>
                 <div className="space-y-2" style={{ rowGap: 10, display: "grid" }}>
                   {webResearch.recent_news!.map((item, i) => (
                     <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
-                      className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#ff6b35] transition-colors">
+                      className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#9ace3d] transition-colors">
                       <Newspaper size={13} className="text-[#9eb0c3] mt-0.5 shrink-0" />
                       <div className="min-w-0">
                         <p className="text-[13px] font-semibold text-[#24364b]">{item.title}</p>
@@ -1847,12 +1847,12 @@ export default function MeetingDetail() {
             {hasMilestones && (
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-[#7d8fa3] font-semibold mb-2">
-                  Company Milestones <span className="text-[#ff6b35] normal-case font-normal">(web research)</span>
+                  Company Milestones <span className="text-[#9ace3d] normal-case font-normal">(web research)</span>
                 </p>
                 <div className="space-y-2" style={{ rowGap: 10, display: "grid" }}>
                   {webResearch.milestones!.map((item, i) => (
                     <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
-                      className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#ff6b35] transition-colors">
+                      className="flex items-start gap-3 rounded-xl border border-[#e3eaf3] bg-white px-4 py-3 hover:border-[#9ace3d] transition-colors">
                       <TrendingUp size={13} className="text-[#9eb0c3] mt-0.5 shrink-0" />
                       <div className="min-w-0">
                         <p className="text-[13px] font-semibold text-[#24364b]">{item.title}</p>
@@ -2091,7 +2091,7 @@ export default function MeetingDetail() {
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 3 — Demo Strategy & Story Lineup (GPT-4o, on-demand)
       ══════════════════════════════════════════════════════════════════════ */}
-      <Section title="Demo Strategy & Story Lineup" icon={<Sparkles size={15} className="text-[#ff6b35]" />}>
+      <Section title="Demo Strategy & Story Lineup" icon={<Sparkles size={15} className="text-[#9ace3d]" />}>
         {meeting.demo_strategy ? (
           <DemoStrategyCards strategy={meeting.demo_strategy} onRegenerate={handleGenerateDemoStrategy} regenerating={generatingStory} />
         ) : !company ? (

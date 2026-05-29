@@ -134,7 +134,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 14,
-    background: "radial-gradient(circle at top left, rgba(255, 107, 53, 0.14), transparent 34%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+    background: "radial-gradient(circle at top left, rgba(154, 206, 61, 0.14), transparent 34%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
   },
   title: {
     margin: 0,
@@ -243,8 +243,8 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
   },
   primaryAction: {
-    background: "#ff6b35",
-    border: "1px solid #ff6b35",
+    background: "#9ace3d",
+    border: "1px solid #9ace3d",
     color: "white",
     borderRadius: 10,
     textDecoration: "none",
@@ -309,7 +309,7 @@ export default function SalesWorkspace() {
             One command center for the full GTM cycle from pipeline visibility to meeting execution, with Beacon highlighting what needs attention before managers have to hunt for it.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#fff6ef", border: "1px solid #ffd5c3", color: "#b85024", fontSize: 12, fontWeight: 800 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#fff6ef", border: "1px solid #ffd5c3", color: "#4d7c0f", fontSize: 12, fontWeight: 800 }}>
               <CheckCircle2 size={14} />
               {activeStageCount}/{STAGES.length} modules active
             </span>
@@ -326,7 +326,7 @@ export default function SalesWorkspace() {
             <div
               style={{
                 height: "100%",
-                background: "linear-gradient(90deg, #ff6b35 0%, #ff8a57 100%)",
+                background: "linear-gradient(90deg, #9ace3d 0%, #ff8a57 100%)",
                 width: `${stageProgress}%`,
                 transition: "width 300ms ease",
               }}
@@ -342,7 +342,7 @@ export default function SalesWorkspace() {
                 <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6f8195", fontWeight: 800 }}>Workspace Snapshot</p>
                 <p style={{ margin: "6px 0 0", fontSize: 14, color: "#5c7087" }}>A quick read on volume, risk, and flow across the GTM system.</p>
               </div>
-              <ChartColumnBig size={18} color="#ff6b35" />
+              <ChartColumnBig size={18} color="#9ace3d" />
             </div>
             <div style={styles.statGrid}>
               <div style={styles.statTile}>
@@ -369,7 +369,7 @@ export default function SalesWorkspace() {
             <div style={{ display: "grid", gap: 10 }}>
               {focusItems.map((item) => (
                 <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 16, background: "#f8fbff", border: "1px solid #e7edf5" }}>
-                  <CheckCircle2 size={15} color="#ff6b35" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <CheckCircle2 size={15} color="#9ace3d" style={{ marginTop: 2, flexShrink: 0 }} />
                   <p style={{ margin: 0, fontSize: 13, color: "#395066", lineHeight: 1.6 }}>{item}</p>
                 </div>
               ))}
@@ -414,11 +414,11 @@ export default function SalesWorkspace() {
                         width: 42,
                         height: 42,
                         borderRadius: 14,
-                        background: isActive ? "#fff1ea" : "#f5f8fc",
+                        background: isActive ? "#f3fbe3" : "#f5f8fc",
                         border: `1px solid ${isActive ? "#ffd6c7" : "#e4ebf3"}`,
                         display: "grid",
                         placeItems: "center",
-                        color: isActive ? "#ff6b35" : "#3a536d",
+                        color: isActive ? "#9ace3d" : "#3a536d",
                         flexShrink: 0,
                       }}
                     >
@@ -439,7 +439,7 @@ export default function SalesWorkspace() {
                       textTransform: "uppercase",
                       letterSpacing: "0.08em",
                       fontWeight: 700,
-                      color: isActive ? "#ff6b35" : "#96a7ba",
+                      color: isActive ? "#9ace3d" : "#96a7ba",
                     }}
                   >
                     {isActive ? (
@@ -481,7 +481,7 @@ export default function SalesWorkspace() {
               </span>
             )}
           </div>
-          <Link to="/sales-analytics" style={{ fontSize: 12, color: "#ff6b35", fontWeight: 700, textDecoration: "none" }}>
+          <Link to="/sales-analytics" style={{ fontSize: 12, color: "#9ace3d", fontWeight: 700, textDecoration: "none" }}>
             View all
           </Link>
         </div>
@@ -554,7 +554,7 @@ export default function SalesWorkspace() {
                   style={{
                     border: "none",
                     background: "transparent",
-                    color: "#ff6b35",
+                    color: "#9ace3d",
                     fontWeight: 700,
                     fontSize: 12,
                     cursor: "pointer",
