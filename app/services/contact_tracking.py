@@ -373,5 +373,18 @@ async def to_contact_read(
     read = ContactRead.model_validate(contact)
     if company_name:
         read.company_name = company_name
+    # Populate the call-attempt aggregate (count of type='call' activities) so
+    # single-contact reads (GET/{id}, create, update, enrich) match the list
+    # endpoint, which computes it via a correlated subquery. Without this the
+    # single-contact response always reports 0 calls.
+    if getattr(contact, "id", None) is not None:
+        call_count = (
+            await session.execute(
+                select(func.count(Activity.id))
+                .where(Activity.contact_id == contact.id)
+                .where(Activity.type == "call")
+            )
+        ).scalar_one()
+        read.call_attempt_count = int(call_count or 0)
     await apply_contact_tracking(session, [read])
     return read

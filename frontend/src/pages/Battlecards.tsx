@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Plus, Search, Swords, RefreshCw, Pencil, Trash2, X } from "lucide-react";
 import { battlecardsApi } from "../lib/api";
 import type { Battlecard } from "../types";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 const CATEGORIES = [
   { key: "all", label: "All" },
@@ -351,8 +352,8 @@ export default function Battlecards() {
       </div>
 
       {loading ? (
-        <div style={{ ...styles.panel, padding: "46px 20px", textAlign: "center", color: "#7a8ea4", fontSize: 14 }}>
-          Loading battlecards...
+        <div style={{ ...styles.panel, padding: 18 }}>
+          <SkeletonList rows={5} />
         </div>
       ) : (
         <div style={styles.cardsGrid}>

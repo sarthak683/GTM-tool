@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   AlertTriangle,
   BrainCircuit,
@@ -424,7 +425,7 @@ function MeetingIntelCard({
   // in a long list. Imminent = coral; in-progress/overdue = amber; soon = blue;
   // otherwise neutral.
   const accent =
-    urgency === "imminent" ? "#9ace3d"
+    urgency === "imminent" ? "var(--accent)"
     : urgency === "in_progress" ? "#b56d00"
     : urgency === "overdue" ? "#c0392b"
     : urgency === "soon" ? "#4261d6"
@@ -1925,9 +1926,8 @@ export default function PreMeetingAssistance() {
 
       {/* Meeting cards */}
       {loading ? (
-        <div className="crm-panel" style={{ padding: 32, display: "flex", alignItems: "center", gap: 10, color: colors.faint }}>
-          <Loader2 size={18} className="animate-spin" />
-          <span style={{ fontSize: 14 }}>Loading meetings...</span>
+        <div className="crm-panel" style={{ padding: 18 }}>
+          <SkeletonList rows={5} />
         </div>
       ) : sorted.length === 0 ? (
         <div className="crm-panel" style={{ padding: 40, textAlign: "center" }}>

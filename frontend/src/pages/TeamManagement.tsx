@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Shield, User, UserPlus, Loader2, CheckCircle2 } from "lucide-react";
 import { authApi, settingsApi } from "../lib/api";
+import { SkeletonList } from "../components/ui/Skeleton";
 import { useAuth } from "../lib/AuthContext";
 import type { User as UserType } from "../types";
 
@@ -173,7 +174,7 @@ export default function TeamManagement() {
 
         {/* Stats */}
         <div className="team-mgmt-stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
-          <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
+          <div className="crm-hover-lift" style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 12, padding: "18px 20px" }}>
             <div style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 600, textTransform: "uppercase" }}>Total Members</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1d2b3c", marginTop: 4 }}>{users.length}</div>
           </div>
@@ -194,8 +195,8 @@ export default function TeamManagement() {
         {/* User List */}
         <div style={{ background: "#fff", border: "1px solid #d9e1ec", borderRadius: 16, overflow: "hidden" }}>
           {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#7f8fa5" }}>
-              <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ padding: 16 }}>
+              <SkeletonList rows={5} />
             </div>
           ) : (
             <table className="crm-table" style={{ width: "100%", borderCollapse: "collapse" }}>

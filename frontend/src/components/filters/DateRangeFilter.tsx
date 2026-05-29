@@ -24,6 +24,7 @@ export default function DateRangeFilter({
   allLabel,
   minWidth,
   presets,
+  hideLabel,
 }: {
   label: string;
   value: DateRangeValue;
@@ -31,6 +32,7 @@ export default function DateRangeFilter({
   allLabel: string;
   minWidth?: number;
   presets?: { label: string; getRange: () => DateRangeValue }[];
+  hideLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -95,7 +97,7 @@ export default function DateRangeFilter({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>
+      {!hideLabel && <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>}
       <div ref={ref} style={{ position: "relative" }}>
         <button type="button" onClick={() => setOpen((current) => !current)} style={buttonStyle}>
           <CalendarRange size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: active ? "#9ace3d" : "#7f8fa5" }} />
@@ -103,7 +105,7 @@ export default function DateRangeFilter({
           <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7f8fa5" }} />
         </button>
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 20, minWidth: 260, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="beacon-pop" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 20, minWidth: 260, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
               {active && (

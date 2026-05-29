@@ -298,10 +298,18 @@ export type SalesDashboardSummary = {
   stale_deal_count: number;
   demo_done_count: number;
   poc_agreed_count: number;
+  poc_wip_count?: number;
   poc_done_count: number;
   closed_won_count: number;
   closed_won_value: number;
   milestone_deals: MilestoneDealRow[];
+  // Previous equal-length window — for period-over-period trend deltas.
+  prev_demo_done_count?: number;
+  prev_poc_agreed_count?: number;
+  prev_poc_wip_count?: number;
+  prev_poc_done_count?: number;
+  prev_closed_won_count?: number;
+  prev_closed_won_value?: number;
 };
 
 export type SalesRepActivityRow = {
@@ -433,6 +441,7 @@ export type SalesDashboard = {
   pipeline_by_owner: SalesPipelineOwnerRow[];
   velocity_by_stage: SalesVelocityRow[];
   forecast_by_month: SalesForecastRow[];
+  forecast_by_week?: SalesForecastRow[];
   forecast_buckets?: SalesForecastRow[];
   forecast_granularity?: "week" | "month";
   conversion_funnel: SalesFunnelStep[];

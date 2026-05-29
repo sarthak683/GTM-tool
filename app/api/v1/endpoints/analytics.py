@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
@@ -18,11 +19,43 @@ from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.meeting import Meeting
 from app.models.user import User
+from app.services.analytics_settings import get_analytics_settings
 from app.services.company_stage_milestones import MILESTONE_LABELS, backfill_company_stage_milestones
 from app.services.deal_stages import get_configured_deal_stages
 from app.services.outreach_analytics import build_outreach_overview
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+def _utcnow() -> datetime:
+    """Naive UTC now. The DB stores naive-UTC timestamps, so we keep comparisons
+    naive (mixing tz-aware and naive datetimes raises). This replaces the
+    deprecated stdlib ``utcnow()`` without changing window-boundary semantics."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Short-TTL snapshot cache for the sales dashboard. The dashboard is explicitly a
+# point-in-time "snapshot" (it surfaces `generated_at`), and the identical query
+# fires repeatedly from polling / re-renders. A few-second cache collapses those
+# repeated full recomputes — each of which scans all deals, contacts, in-window
+# activities and meetings — without making the numbers misleadingly stale.
+_DASHBOARD_CACHE: dict[tuple, tuple[float, "SalesDashboardRead"]] = {}
+_DASHBOARD_CACHE_TTL_SECONDS = 45.0
+
+
+def _dashboard_cache_get(key: tuple):
+    hit = _DASHBOARD_CACHE.get(key)
+    if hit is not None and (time.monotonic() - hit[0]) < _DASHBOARD_CACHE_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
+def _dashboard_cache_set(key: tuple, value: "SalesDashboardRead") -> None:
+    _DASHBOARD_CACHE[key] = (time.monotonic(), value)
+    if len(_DASHBOARD_CACHE) > 256:  # opportunistic eviction of expired entries
+        now = time.monotonic()
+        for stale in [k for k, (ts, _) in _DASHBOARD_CACHE.items() if now - ts >= _DASHBOARD_CACHE_TTL_SECONDS]:
+            _DASHBOARD_CACHE.pop(stale, None)
 
 PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"}
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
@@ -55,6 +88,15 @@ class SalesSummary(BaseModel):
     closed_won_count: int = 0
     closed_won_value: float = 0.0
     milestone_deals: list[MilestoneDealRow] = []
+    # Same metrics for the immediately-preceding window of equal length, so the
+    # UI can render period-over-period trend deltas on the milestone KPIs. These
+    # are window-bound counts (point-in-time pipeline metrics are not compared).
+    prev_demo_done_count: int = 0
+    prev_poc_agreed_count: int = 0
+    prev_poc_wip_count: int = 0
+    prev_poc_done_count: int = 0
+    prev_closed_won_count: int = 0
+    prev_closed_won_value: float = 0.0
 
 
 class RepActivityRow(BaseModel):
@@ -186,6 +228,7 @@ class SalesDashboardRead(BaseModel):
     pipeline_by_owner: list[PipelineOwnerRow]
     velocity_by_stage: list[VelocityRow]
     forecast_by_month: list[ForecastRow]
+    forecast_by_week: list[ForecastRow] = []
     forecast_buckets: list[ForecastRow] = []
     forecast_granularity: str = "month"
     conversion_funnel: list[FunnelStep]
@@ -265,7 +308,7 @@ def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
 
 
 def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
-    now = datetime.utcnow()
+    now = _utcnow()
     if from_date:
         window_start = datetime.fromisoformat(from_date)
     else:
@@ -773,7 +816,7 @@ async def sales_activity_drilldown(
     if metric in {"meetings", "total"}:
         has_more = has_more or len(locals().get("meeting_rows", [])) > limit
     return SalesActivityDrilldownRead(
-        generated_at=datetime.utcnow(),
+        generated_at=_utcnow(),
         metric=metric,
         window_days=window_days,
         from_date=from_date,
@@ -801,7 +844,21 @@ async def sales_dashboard(
 ):
     filter_rep_ids = rep_id or []
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
-    now = datetime.utcnow()
+
+    # Snapshot cache — return a recent identical computation if one is fresh.
+    cache_key = (
+        window_days,
+        tuple(sorted(str(r) for r in filter_rep_ids)),
+        tuple(sorted(filter_geographies)),
+        from_date,
+        to_date,
+        forecast_granularity,
+    )
+    cached = _dashboard_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    now = _utcnow()
     today = date.today()
 
     window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
@@ -815,6 +872,19 @@ async def sales_dashboard(
     stage_settings = await get_configured_deal_stages(session)
     stage_map = {stage["id"]: stage for stage in stage_settings}
     active_stage_ids = {stage["id"] for stage in stage_settings if stage.get("group") != "closed"}
+
+    # Weighted pipeline / forecast use admin-configured stage probabilities when
+    # present, falling back to the hardcoded defaults per stage. Previously the
+    # configured `stage_probabilities` setting was ignored, so any admin tuning
+    # (or a custom stage) silently had no effect on weighted numbers.
+    analytics_settings = await get_analytics_settings(session)
+    configured_probabilities = {
+        **DEFAULT_STAGE_PROBABILITIES,
+        **(analytics_settings.get("stage_probabilities") or {}),
+    }
+
+    def stage_probability(stage_id: str) -> float:
+        return float(configured_probabilities.get(stage_id, 0.0))
 
     deal_stmt = select(
         Deal.id,
@@ -926,10 +996,10 @@ async def sales_dashboard(
     pipeline_by_owner: dict[str, dict] = {}
     velocity_by_stage: dict[str, dict[str, object]] = {}
     forecast_by_month: dict[str, dict[str, float | int | str]] = {}
-    # Parallel bucket map driven by `forecast_granularity` (week or month).
-    # Kept separate from forecast_by_month so existing consumers that read
-    # the monthly buckets keep working unchanged.
-    forecast_by_bucket: dict[str, dict[str, float | int | str]] = {}
+    # Both week and month buckets are ALWAYS built so the client can toggle
+    # granularity instantly without refetching the whole dashboard. `forecast_buckets`
+    # in the payload points at whichever the caller requested (back-compat).
+    forecast_by_week: dict[str, dict[str, float | int | str]] = {}
     rep_activity: dict[str, dict[str, object]] = {}
     weekly_rep_activity: dict[str, dict[str, object]] = {}
 
@@ -948,7 +1018,7 @@ async def sales_dashboard(
 
         active_deals += 1
         amount = _to_float(row.value)
-        probability = _stage_probability(stage_id)
+        probability = stage_probability(stage_id)
         weighted_amount = round(amount * probability, 2)
         pipeline_amount += amount
         weighted_pipeline_amount += weighted_amount
@@ -975,30 +1045,24 @@ async def sales_dashboard(
             month_bucket["amount"] += amount
             month_bucket["weighted_amount"] += weighted_amount
 
-            # Granular bucket (week or month). ISO weeks make the key
-            # unambiguous across years (2026-W01, etc.).
-            if forecast_granularity == "week":
-                iso_year, iso_week, _ = row.close_date_est.isocalendar()
-                bucket_key = f"{iso_year}-W{iso_week:02d}"
-                # Label is the Monday of the ISO week, e.g. "Week of Mar 03".
-                week_start = row.close_date_est - timedelta(days=row.close_date_est.weekday())
-                bucket_label = f"Week of {week_start.strftime('%b %d')}"
-            else:
-                bucket_key = month_key
-                bucket_label = _month_label(month_key)
-            granular_bucket = forecast_by_bucket.setdefault(
-                bucket_key,
+            # Week bucket — always built. ISO weeks make the key unambiguous
+            # across years (2026-W01, etc.); the label is the Monday of the week.
+            iso_year, iso_week, _ = row.close_date_est.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            week_start = row.close_date_est - timedelta(days=row.close_date_est.weekday())
+            week_bucket = forecast_by_week.setdefault(
+                week_key,
                 {
-                    "key": bucket_key,
-                    "label": bucket_label,
+                    "key": week_key,
+                    "label": f"Week of {week_start.strftime('%b %d')}",
                     "deal_count": 0,
                     "amount": 0.0,
                     "weighted_amount": 0.0,
                 },
             )
-            granular_bucket["deal_count"] += 1
-            granular_bucket["amount"] += amount
-            granular_bucket["weighted_amount"] += weighted_amount
+            week_bucket["deal_count"] += 1
+            week_bucket["amount"] += amount
+            week_bucket["weighted_amount"] += weighted_amount
 
         if (row.days_in_stage or 0) >= 30:
             stale_deal_count += 1
@@ -1448,7 +1512,7 @@ async def sales_dashboard(
         for bucket in sorted(forecast_by_month.values(), key=lambda value: str(value["key"]))
     ]
 
-    forecast_bucket_rows = [
+    forecast_week_rows = [
         ForecastRow(
             key=str(bucket["key"]),
             label=str(bucket["label"]),
@@ -1456,8 +1520,12 @@ async def sales_dashboard(
             amount=round(float(bucket["amount"]), 2),
             weighted_amount=round(float(bucket["weighted_amount"]), 2),
         )
-        for bucket in sorted(forecast_by_bucket.values(), key=lambda value: str(value["key"]))
+        for bucket in sorted(forecast_by_week.values(), key=lambda value: str(value["key"]))
     ]
+    # `forecast_buckets` mirrors the requested granularity for back-compat; the
+    # client also receives both forecast_by_month and forecast_by_week so it can
+    # switch week/month with no extra request.
+    forecast_bucket_rows = forecast_week_rows if forecast_granularity == "week" else forecast_rows
 
     leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
     meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
@@ -1510,6 +1578,38 @@ async def sales_dashboard(
     ms_poc_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_done")
     ms_closed_won = sum(1 for r in milestone_summary_rows if r.milestone_key == "closed_won")
     ms_closed_won_value = sum(_to_float(r.deal_value) for r in milestone_summary_rows if r.milestone_key == "closed_won")
+
+    # Previous window of equal length, immediately before this one — powers the
+    # period-over-period trend deltas on the milestone KPI cards. Same rep +
+    # geography filters so the comparison is apples-to-apples.
+    prev_window_len = window_end - window_start
+    prev_window_end = window_start
+    prev_window_start = window_start - prev_window_len
+    prev_stmt = (
+        select(
+            CompanyStageMilestone.milestone_key,
+            Deal.value.label("deal_value"),
+            Deal.geography.label("deal_geography"),
+        )
+        .outerjoin(Deal, CompanyStageMilestone.deal_id == Deal.id)
+        .where(
+            CompanyStageMilestone.first_reached_at >= prev_window_start,
+            CompanyStageMilestone.first_reached_at < prev_window_end,
+            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_wip", "poc_done", "closed_won"]),
+        )
+    )
+    if filter_rep_ids:
+        prev_stmt = prev_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+    prev_rows = (await session.execute(prev_stmt)).all()
+    if filter_geographies:
+        prev_rows = [r for r in prev_rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
+
+    prev_demo_done = sum(1 for r in prev_rows if r.milestone_key == "demo_done")
+    prev_poc_agreed = sum(1 for r in prev_rows if r.milestone_key == "poc_agreed")
+    prev_poc_wip = sum(1 for r in prev_rows if r.milestone_key == "poc_wip")
+    prev_poc_done = sum(1 for r in prev_rows if r.milestone_key == "poc_done")
+    prev_closed_won = sum(1 for r in prev_rows if r.milestone_key == "closed_won")
+    prev_closed_won_value = sum(_to_float(r.deal_value) for r in prev_rows if r.milestone_key == "closed_won")
     ms_milestone_deals = [
         MilestoneDealRow(
             milestone_key=r.milestone_key,
@@ -1612,7 +1712,7 @@ async def sales_dashboard(
 
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 
-    return SalesDashboardRead(
+    result = SalesDashboardRead(
         generated_at=now,
         window_days=window_days,
         from_date=from_date,
@@ -1633,6 +1733,12 @@ async def sales_dashboard(
             closed_won_count=ms_closed_won,
             closed_won_value=round(ms_closed_won_value, 2),
             milestone_deals=ms_milestone_deals,
+            prev_demo_done_count=prev_demo_done,
+            prev_poc_agreed_count=prev_poc_agreed,
+            prev_poc_wip_count=prev_poc_wip,
+            prev_poc_done_count=prev_poc_done,
+            prev_closed_won_count=prev_closed_won,
+            prev_closed_won_value=round(prev_closed_won_value, 2),
         ),
         highlights=highlights[:5],
         rep_activity=rep_activity_rows,
@@ -1641,6 +1747,7 @@ async def sales_dashboard(
         pipeline_by_owner=owner_rows,
         velocity_by_stage=velocity_rows,
         forecast_by_month=forecast_rows,
+        forecast_by_week=forecast_week_rows,
         forecast_buckets=forecast_bucket_rows,
         forecast_granularity=forecast_granularity,
         conversion_funnel=funnel_rows,
@@ -1651,6 +1758,8 @@ async def sales_dashboard(
             message="Add rep or team targets to unlock quota attainment and gap-to-goal charts.",
         ),
     )
+    _dashboard_cache_set(cache_key, result)
+    return result
 
 
 @router.get("/outreach")

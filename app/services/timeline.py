@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 
 from app.models.activity import Activity
-from app.models.deal import Deal
+from app.models.deal import DealContact
 from app.models.meeting import Meeting
 
 TimelineEvent = dict[str, Any]
@@ -155,9 +155,10 @@ async def build_contact_timeline(
     )
     activities = activities_result.scalars().all()
 
-    # Meetings for any deal where this contact is the primary contact
+    # Meetings for any deal this contact is linked to (via the deal_contacts
+    # junction — the Deal model has no direct contact_id column).
     deal_ids_result = await session.execute(
-        select(Deal.id).where(Deal.contact_id == contact_id)
+        select(DealContact.deal_id).where(DealContact.contact_id == contact_id)
     )
     deal_ids = [row[0] for row in deal_ids_result.all()]
     meetings: list[Meeting] = []

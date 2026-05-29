@@ -238,7 +238,23 @@
       "mcp__playwright__browser_console_messages",
       "Bash(xargs -I{} sh -c 'echo \"{}: $\\(grep -coiE \"#\\(c2410c|7c2d12|fed7aa|ea580c|f97316|ffedd5\\)\" {}\\)\"')",
       "Bash(sort -t: -k2 -rn)",
-      "Bash(perl -i -pe 's/#ffd3c3/#cfe89a/gi; s/#ffd2bf/#cfe89a/gi; s/#ffd9c6/#cfe89a/gi; s/#ffceb9/#cfe89a/gi;' index.css)"
+      "Bash(perl -i -pe 's/#ffd3c3/#cfe89a/gi; s/#ffd2bf/#cfe89a/gi; s/#ffd9c6/#cfe89a/gi; s/#ffceb9/#cfe89a/gi;' index.css)",
+      "Bash(sed -i.bak 's/const pageSize = 50;/const pageSize = 5;/' frontend/src/pages/Contacts.tsx)",
+      "Bash(rm -f frontend/src/pages/Contacts.tsx.bak)",
+      "Bash(echo \"baseline tsc=$?\")",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' http://localhost:8000/api/v1/contacts/__TRACKED_VAR__/timeline -o /dev/null -w 'code=%{http_code}\\\\n')",
+      "mcp__playwright__browser_wait_for",
+      "Bash(echo \"---exit $?---\")",
+      "Bash(echo \"exit $?\")",
+      "Bash([ -f \"$KC\" ])",
+      "Bash(KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml kubectl get ns)",
+      "Bash(KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml kubectl get pods -n gtm-prod)",
+      "Bash(KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml kubectl logs -n gtm-prod gtm-backend-deployment-6bd6d876c-f56np --since=24h)",
+      "Bash(awk 'NR>=791 && NR<=1300 && /return /{print NR\": \"$0}' app/api/v1/endpoints/analytics.py)",
+      "Bash(awk 'NR>=791 && NR<=1671 && /^ return /{print NR\": \"$0}' app/api/v1/endpoints/analytics.py)",
+      "Bash(KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml kubectl exec -i -n gtm-prod gtm-backend-deployment-6bd6d876c-f56np -- python -)",
+      "Bash(echo \"=== exit $? ===\")",
+      "Bash(python -m py_compile app/api/v1/endpoints/analytics.py)"
     ]
   },
   "enabledMcpjsonServers": [

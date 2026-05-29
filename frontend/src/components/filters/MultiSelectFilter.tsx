@@ -10,6 +10,7 @@ export default function MultiSelectFilter({
   label,
   allLabel,
   minWidth,
+  hideLabel,
 }: {
   values: string[];
   onChange: (value: string[]) => void;
@@ -17,6 +18,7 @@ export default function MultiSelectFilter({
   label: string;
   allLabel: string;
   minWidth?: number;
+  hideLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
@@ -83,8 +85,8 @@ export default function MultiSelectFilter({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>
-      <div ref={ref} style={{ position: "relative" }}>
+      {!hideLabel && <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>}
+      <div ref={ref} style={{ position: "relative" }} title={label}>
         <button type="button" onClick={() => setOpen((current) => !current)} style={buttonStyle}>
           {displayLabel}
           {values.length > 1 && (
@@ -113,7 +115,7 @@ export default function MultiSelectFilter({
           <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7f8fa5" }} />
         </button>
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 300 }}>
+          <div className="beacon-pop" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 300 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 0" }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
               {values.length > 0 && (

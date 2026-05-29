@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   ChevronDown,
   ChevronUp,
@@ -287,7 +288,7 @@ export default function CustomDemoAssistance() {
         </div>
 
         {demosLoading ? (
-          <div style={{ padding: 24, color: "#69809f", fontSize: 13 }}>Loading demos...</div>
+          <div style={{ padding: 18 }}><SkeletonList rows={4} /></div>
         ) : demos.length === 0 ? (
           <div style={{ padding: 24, color: "#69809f", fontSize: 13 }}>
             No demos yet. Create your first interactive HTML demo above.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   AlertTriangle,
   ArrowRight,
@@ -445,9 +446,8 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="crm-page">
-        <div className="crm-panel" style={{ padding: 28, display: "flex", alignItems: "center", gap: 12 }}>
-          <LoaderCircle size={18} className="animate-spin" style={{ color: "#384eb7" }} />
-          <span className="crm-muted" style={{ fontSize: 14 }}>Loading CRM insights...</span>
+        <div className="crm-panel" style={{ padding: 18 }}>
+          <SkeletonList rows={5} />
         </div>
       </div>
     );

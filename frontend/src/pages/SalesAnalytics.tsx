@@ -5,6 +5,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -20,6 +21,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  Download,
   Link2,
   LoaderCircle,
   Mail,
@@ -42,6 +44,7 @@ import {
   type SalesActivityDrilldownRow,
   type SalesDashboard,
   type SalesForecastRow,
+  type SalesFunnelStep,
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type SalesRepActivityRow,
@@ -53,6 +56,7 @@ import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary } from "../lib/api";
 import OutreachAnalyticsTab from "../components/analytics/OutreachAnalyticsTab";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   PerformanceTabContent,
   PERFORMANCE_TABS,
@@ -63,6 +67,26 @@ const WINDOW_OPTIONS = [30, 90, 180] as const;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total";
+
+// Brand-green chart palette. Kept here so every Recharts surface on this page
+// pulls from one source of truth instead of scattering hex literals. The funnel
+// ramp deepens green as a company advances, ending in gold for "won".
+const CHART = {
+  raw: "#cfe89a",          // soft green — unweighted/raw pipeline
+  weighted: "#5a9216",     // deep green — weighted pipeline (the "real" number)
+  primary: "#6fae27",
+  primarySoft: "#f1f9e2",
+  grid: "#eef2f8",
+  axis: "#7d8ea3",
+};
+// Sequential funnel colors, light → deep green, gold for the closed-won crown.
+const FUNNEL_COLORS: Record<string, string> = {
+  demo_done: "#bfe08a",
+  poc_agreed: "#9ace3d",
+  poc_wip: "#6fae27",
+  poc_done: "#4d7c0f",
+  closed_won: "#d9952b",
+};
 
 function isDeveloperUser(user?: Pick<User, "email" | "name"> | null) {
   if (!user) return false;
@@ -102,6 +126,32 @@ function fmtMilestoneDate(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
+
+// Client-side CSV export — builds a CSV from headers + rows and triggers a
+// download, no backend round-trip. Quotes any field containing a comma, quote,
+// or newline per RFC 4180.
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const exportBtnStyle: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 6,
+  border: "1px solid #cfe0d2", background: "#f1f9e2", color: "#4d7c0f",
+  borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer",
+};
 
 function MilestoneDealsModal({
   label,
@@ -162,16 +212,31 @@ function MilestoneDealsModal({
               </span>}
             </h3>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
-              border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
-              cursor: "pointer", display: "grid", placeItems: "center",
-            }}
-          >×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {deals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadCsv(
+                  `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
+                  ["Deal", "Company", dateLabel, "Amount"],
+                  deals.map((d) => [d.deal_name || "", d.company_name || "", fmtMilestoneDate(d.reached_at || d.close_date_est), d.deal_value ?? 0]),
+                )}
+                style={exportBtnStyle}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
+                border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
+                cursor: "pointer", display: "grid", placeItems: "center",
+              }}
+            >×</button>
+          </div>
         </div>
 
         {/* Table */}
@@ -307,6 +372,19 @@ function HighlightDealsModal({
                 {formatCurrency(total)} total
               </span>
             )}
+            {!loading && deals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadCsv(
+                  `${title.toLowerCase().replace(/\s+/g, "-")}`,
+                  ["Deal", "Company", "Stage", "Owner", "Close Date", "Days In Stage", "Amount"],
+                  deals.map((d) => [d.name || "", d.company_name || "", d.stage.replace(/_/g, " "), d.assigned_rep_name || "Unassigned", fmtMilestoneDate(d.close_date_est), d.days_in_stage ?? 0, Number(d.value ?? 0)]),
+                )}
+                style={exportBtnStyle}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
             {!loading && deals.length > 0 && onCreateTasks ? (
               <button
                 type="button"
@@ -330,9 +408,8 @@ function HighlightDealsModal({
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: loading ? 24 : "8px 0" }}>
           {loading ? (
-            <div style={{ display: "grid", placeItems: "center", gap: 10, minHeight: 220, color: "#6f8095" }}>
-              <LoaderCircle size={22} className="spin" />
-              <span>Loading details...</span>
+            <div style={{ minHeight: 220 }}>
+              <SkeletonList rows={5} />
             </div>
           ) : deals.length === 0 ? (
             <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 220, color: "#6f8095", padding: 24, textAlign: "center" }}>
@@ -424,13 +501,36 @@ function ActivityDrilldownModal({
               Showing the latest source rows for this metric. The dashboard count remains the source of truth; this view is sampled and paginated for fast validation.
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {!loading && !error && data && data.rows.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadCsv(
+                  `${title.toLowerCase().replace(/[\s·]+/g, "-")}-sources`,
+                  ["When", "Direction/Type", "Source", "Person", "Company", "Subject/Outcome", "From", "To"],
+                  data.rows.map((row) => [
+                    formatSnapshotTime(row.occurred_at),
+                    row.direction || row.activity_type || "",
+                    row.source_label || row.source || row.kind || "",
+                    row.contact_name || row.contact_email || "",
+                    row.company_name || row.deal_name || "",
+                    row.subject || row.call_outcome || "",
+                    row.from_email || "",
+                    row.to_email || "",
+                  ]),
+                )}
+                style={exportBtnStyle}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto" }}>
           {loading ? (
-            <div style={{ minHeight: 260, display: "grid", placeItems: "center", gap: 10, color: "#6f8095" }}>
-              <LoaderCircle size={22} className="spin" />
-              <span>Loading source rows...</span>
+            <div style={{ minHeight: 260, padding: "16px 22px" }}>
+              <SkeletonList rows={4} />
             </div>
           ) : error ? (
             <div style={{ minHeight: 220, display: "grid", placeItems: "center", color: "#b45454", padding: 24, textAlign: "center" }}>{error}</div>
@@ -492,6 +592,27 @@ const tdSty: React.CSSProperties = {
   padding: "12px 22px", verticalAlign: "top",
 };
 
+// Period-over-period badge for window-bound KPIs. Compares the current window
+// to the immediately-preceding equal window. Pure formatting — no data access.
+function TrendBadge({ curr, prev }: { curr: number; prev: number }) {
+  if (prev === 0 && curr === 0) return null;
+  const isNew = prev === 0 && curr > 0;
+  const pct = prev === 0 ? null : Math.round(((curr - prev) / prev) * 100);
+  const flat = pct === 0;
+  const up = isNew || (pct !== null && pct > 0);
+  const color = flat ? "#6b7a8d" : up ? "#2b8a5d" : "#cc5d5d";
+  const bg = flat ? "#eef2f7" : up ? "#eafaf1" : "#fdecec";
+  const text = isNew ? "New" : flat ? "0%" : `${up ? "▲" : "▼"} ${Math.abs(pct as number)}%`;
+  return (
+    <span
+      title={`${curr} this period vs ${prev} in the prior period`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: bg, color, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}
+    >
+      {text}
+    </span>
+  );
+}
+
 function MetricCard({
   label,
   value,
@@ -499,6 +620,7 @@ function MetricCard({
   tone,
   icon: Icon,
   deals,
+  trend,
 }: {
   label: string;
   value: string;
@@ -506,6 +628,7 @@ function MetricCard({
   tone: "blue" | "green" | "amber" | "red";
   icon: LucideIcon;
   deals?: MilestoneDealRow[];
+  trend?: { curr: number; prev: number };
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const palette = {
@@ -550,7 +673,10 @@ function MetricCard({
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
+            {trend && <TrendBadge curr={trend.curr} prev={trend.prev} />}
+          </div>
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
           {hasDeals && (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
@@ -810,6 +936,36 @@ function WeeklyRepTooltip({ active, payload, label }: TooltipProps<number, strin
   );
 }
 
+// Shared tooltip for currency-valued bar charts (forecast + pipeline). Renders
+// each series with a colored dot, its name, and a short-currency value, plus an
+// optional deal-count footer carried on the datum.
+function CurrencyBarTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  const dealCount = (payload[0]?.payload as { deal_count?: number } | undefined)?.deal_count;
+  return (
+    <div style={{ borderRadius: 14, border: "1px solid #dfe7f2", background: "rgba(255,255,255,0.96)", boxShadow: "0 18px 34px rgba(21, 42, 68, 0.12)", padding: "12px 14px", minWidth: 190 }}>
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        {payload.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? CHART.primary }} />
+              {entry.name}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{formatShortCurrency(Number(entry.value ?? 0))}</span>
+          </div>
+        ))}
+        {typeof dealCount === "number" && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 6, marginTop: 2, borderTop: "1px solid #eef2f8" }}>
+            <span style={{ fontSize: 11, color: "#8696aa" }}>Deals</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{dealCount}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
@@ -1047,29 +1203,34 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
 }
 
 function PipelineStageView({ rows }: { rows: SalesStageBucket[] }) {
-  const maxAmount = useMemo(() => Math.max(...rows.map((row) => row.amount), 1), [rows]);
+  const chartData = useMemo(
+    () => rows.map((row) => ({ label: row.label, amount: row.amount, weighted: row.weighted_amount, deal_count: row.deal_count })),
+    [rows],
+  );
 
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No open pipeline to chart yet.</p>;
   }
 
+  // Horizontal layout keeps long stage names readable and turns the chart into
+  // a natural funnel top-to-bottom. Height scales with the stage count.
+  const height = rows.length * 52 + 44;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {rows.map((row) => (
-        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#75869a" }}>{row.deal_count} deals · {formatShortCurrency(row.amount)}</p>
-          </div>
-          <div style={{ height: 14, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
-            <div style={{ width: `${Math.max((row.amount / maxAmount) * 100, row.amount > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: row.color }} />
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{formatShortCurrency(row.amount)}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
-          </div>
-        </div>
-      ))}
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart layout="vertical" data={chartData} margin={{ top: 8, right: 56, bottom: 0, left: 4 }} barGap={2}>
+          <CartesianGrid horizontal={false} stroke={CHART.grid} />
+          <XAxis type="number" tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => formatShortCurrency(Number(v))} />
+          <YAxis type="category" dataKey="label" tick={{ fill: "#46586d", fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} width={132} />
+          <Tooltip content={<CurrencyBarTooltip />} cursor={{ fill: "rgba(111, 174, 39, 0.06)" }} />
+          <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+          <Bar dataKey="amount" name="Open" fill={CHART.raw} radius={[0, 6, 6, 0]} maxBarSize={16}>
+            <LabelList dataKey="amount" position="right" formatter={(v: number) => formatShortCurrency(Number(v))} fill="#46586d" fontSize={11} fontWeight={700} />
+          </Bar>
+          <Bar dataKey="weighted" name="Weighted" fill={CHART.weighted} radius={[0, 6, 6, 0]} maxBarSize={16} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -1141,7 +1302,7 @@ function VelocityView({
         >
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: row.stale_deals > 0 ? "#4561d5" : "#76879b" }}>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: row.stale_deals > 0 ? "#5a9216" : "#76879b" }}>
               {row.deal_count} deals • {row.stale_deals} stale{row.stale_deals > 0 ? " · click to open" : ""}
             </p>
           </div>
@@ -1156,88 +1317,56 @@ function VelocityView({
 }
 
 function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
-  // One scale per chart — derived from the larger of raw/weighted across all
-  // buckets so both bars share a comparable visual base. Avoids the bug where
-  // a single huge "weighted" bucket flattens every "raw" bar to nothing.
-  const maxValue = useMemo(
-    () => Math.max(...rows.flatMap((row) => [row.amount, row.weighted_amount]), 1),
-    [rows],
-  );
   const totalRaw = useMemo(() => rows.reduce((sum, row) => sum + row.amount, 0), [rows]);
   const totalWeighted = useMemo(() => rows.reduce((sum, row) => sum + row.weighted_amount, 0), [rows]);
   const totalDeals = useMemo(() => rows.reduce((sum, row) => sum + row.deal_count, 0), [rows]);
+  const chartData = useMemo(
+    () => rows.map((row) => ({ label: row.label, raw: row.amount, weighted: row.weighted_amount, deal_count: row.deal_count })),
+    [rows],
+  );
 
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No dated pipeline yet. Add close dates to unlock forecast timing.</p>;
   }
 
-  // Each bucket gets a fixed minimum width; the wrapper scrolls horizontally
-  // when there are too many to fit. Cleaner than squashing 26 weekly buckets
-  // into a 6-column grid.
-  const minColWidth = 110;
-  const chartHeight = 200;
+  // Give each bucket a minimum slot so weekly views (26+ buckets) stay readable;
+  // the wrapper scrolls horizontally rather than crushing bars together. When
+  // there are few buckets, minWidth is small and the chart simply fills 100%.
+  const minWidth = Math.max(rows.length * 78, 480);
+
+  const totals: Array<{ label: string; value: string; color: string }> = [
+    { label: "Total Raw", value: formatShortCurrency(totalRaw), color: "#223547" },
+    { label: "Total Weighted", value: formatShortCurrency(totalWeighted), color: CHART.weighted },
+    { label: "Deals", value: String(totalDeals), color: "#223547" },
+    { label: "Buckets", value: String(rows.length), color: "#223547" },
+  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Totals bar — quick read at the top of the chart */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "10px 14px", borderRadius: 12, background: "#f5f7fb", border: "1px solid #e3e9f3" }}>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Raw</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{formatShortCurrency(totalRaw)}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Weighted</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color: "#4e6be6" }}>{formatShortCurrency(totalWeighted)}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deals</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{totalDeals}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#7a8aa1", textTransform: "uppercase", letterSpacing: "0.5px" }}>Buckets</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color: "#223547" }}>{rows.length}</span>
-        </div>
+      {/* Totals strip — quick read above the chart */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+        {totals.map((item) => (
+          <div key={item.label} style={{ borderRadius: 14, background: CHART.primarySoft, border: "1px solid #e4f0cd", padding: "12px 14px" }}>
+            <span style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#6f8a4f", textTransform: "uppercase", letterSpacing: "0.06em" }}>{item.label}</span>
+            <span style={{ display: "block", marginTop: 6, fontSize: 19, fontWeight: 800, color: item.color }}>{item.value}</span>
+          </div>
+        ))}
       </div>
 
-      {/* Chart — scrolls when buckets exceed available width */}
+      {/* Real grouped bar chart — scrolls horizontally when buckets overflow */}
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, minWidth: rows.length * minColWidth }}>
-          {rows.map((row) => {
-            const rawHeight = row.amount > 0 ? Math.max((row.amount / maxValue) * chartHeight, 6) : 0;
-            const weightedHeight = row.weighted_amount > 0 ? Math.max((row.weighted_amount / maxValue) * chartHeight, 6) : 0;
-            return (
-              <div key={row.key} style={{ flex: 1, minWidth: minColWidth, display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ height: chartHeight, display: "flex", alignItems: "flex-end", gap: 6 }}>
-                  <div
-                    title={`Raw: ${formatShortCurrency(row.amount)}`}
-                    style={{
-                      flex: 1,
-                      height: `${rawHeight}px`,
-                      borderRadius: "6px 6px 0 0",
-                      background: "#dbe7ff",
-                      transition: "height 200ms ease",
-                    }}
-                  />
-                  <div
-                    title={`Weighted: ${formatShortCurrency(row.weighted_amount)}`}
-                    style={{
-                      flex: 1,
-                      height: `${weightedHeight}px`,
-                      borderRadius: "6px 6px 0 0",
-                      background: "#4e6be6",
-                      transition: "height 200ms ease",
-                    }}
-                  />
-                </div>
-                <div style={{ borderTop: "1px solid #e3e9f3", paddingTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
-                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: "#223547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.label}>{row.label}</p>
-                  <p style={{ margin: 0, fontSize: 10, color: "#6d7f93" }}>{formatShortCurrency(row.amount)}</p>
-                  <p style={{ margin: 0, fontSize: 10, color: "#4e6be6", fontWeight: 700 }}>{formatShortCurrency(row.weighted_amount)}</p>
-                  <p style={{ margin: 0, fontSize: 10, color: "#9aa9bd" }}>{row.deal_count} {row.deal_count === 1 ? "deal" : "deals"}</p>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ width: "100%", minWidth, height: 300 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 12, right: 8, bottom: 0, left: -6 }} barGap={4}>
+              <CartesianGrid vertical={false} stroke={CHART.grid} />
+              <XAxis dataKey="label" tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={rows.length > 8 ? -25 : 0} textAnchor={rows.length > 8 ? "end" : "middle"} height={rows.length > 8 ? 56 : 30} />
+              <YAxis tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v) => formatShortCurrency(Number(v))} />
+              <Tooltip content={<CurrencyBarTooltip />} cursor={{ fill: "rgba(111, 174, 39, 0.06)" }} />
+              <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+              <Bar dataKey="raw" name="Raw" fill={CHART.raw} radius={[6, 6, 0, 0]} maxBarSize={34} />
+              <Bar dataKey="weighted" name="Weighted" fill={CHART.weighted} radius={[6, 6, 0, 0]} maxBarSize={34} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>
@@ -1245,62 +1374,104 @@ function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
 }
 
 
-function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
-  const maxCount = useMemo(
-    () => Math.max(
-      ...rows.flatMap((row) => [row.demo_done, row.poc_agreed, row.poc_wip, row.poc_done, row.closed_won]),
-      1,
-    ),
-    [rows],
+function FunnelCountTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div style={{ borderRadius: 14, border: "1px solid #dfe7f2", background: "rgba(255,255,255,0.96)", boxShadow: "0 18px 34px rgba(21, 42, 68, 0.12)", padding: "12px 14px", minWidth: 190 }}>
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        {payload.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? CHART.primary }} />
+              {entry.name}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{Number(entry.value ?? 0)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
+}
 
+function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
   const series = [
-    { key: "demo_done" as const, label: "Demo Done", color: "#4e6be6" },
-    { key: "poc_agreed" as const, label: "POC Agreed", color: "#7c3aed" },
-    { key: "poc_wip" as const, label: "POC WIP", color: "#17a2b8" },
-    { key: "poc_done" as const, label: "POC Done", color: "#2fa56b" },
-    { key: "closed_won" as const, label: "Closed Won", color: "#d58b2a" },
+    { key: "demo_done" as const, label: "Demo Done", color: FUNNEL_COLORS.demo_done },
+    { key: "poc_agreed" as const, label: "POC Agreed", color: FUNNEL_COLORS.poc_agreed },
+    { key: "poc_wip" as const, label: "POC WIP", color: FUNNEL_COLORS.poc_wip },
+    { key: "poc_done" as const, label: "POC Done", color: FUNNEL_COLORS.poc_done },
+    { key: "closed_won" as const, label: "Closed Won", color: FUNNEL_COLORS.closed_won },
   ];
 
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>No milestone history available yet.</p>;
   }
 
+  // One grouped column cluster per month, five bars per cluster. Each month
+  // needs enough room for the cluster, so the chart scrolls horizontally when
+  // there are many months rather than smashing the bars into slivers.
+  const minWidth = Math.max(rows.length * 132, 520);
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ width: "100%", minWidth, height: 340 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} margin={{ top: 12, right: 8, bottom: 0, left: -18 }} barGap={2} barCategoryGap="22%">
+            <CartesianGrid vertical={false} stroke={CHART.grid} />
+            <XAxis dataKey="label" tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
+            <YAxis tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} width={34} allowDecimals={false} />
+            <Tooltip content={<FunnelCountTooltip />} cursor={{ fill: "rgba(111, 174, 39, 0.06)" }} />
+            <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+            {series.map((item) => (
+              <Bar key={item.key} dataKey={item.key} name={item.label} fill={item.color} radius={[5, 5, 0, 0]} maxBarSize={22} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// Lead → Meeting → Proposal → Closed Won funnel with step-to-step conversion.
+// Surfaces the conversion_funnel the backend already computes (previously it
+// shipped in the payload but was never rendered). Replaces the dead quota panel.
+function ConversionFunnelView({ steps }: { steps: SalesFunnelStep[] }) {
+  if (!steps || steps.length === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No funnel data yet for this window.</p>;
+  }
+  const max = Math.max(...steps.map((s) => s.count), 1);
+  const first = steps[0]?.count ?? 0;
+  const last = steps[steps.length - 1]?.count ?? 0;
+  const overall = first > 0 ? Math.round((last / first) * 100) : null;
+  const colors = ["#bfe08a", "#9ace3d", "#6fae27", "#4d7c0f"];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#6e8095" }}>
-        {series.map((item) => (
-          <span key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 999, background: item.color }} />
-            {item.label}
-          </span>
-        ))}
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "8px 14px", borderRadius: 12, background: "#f1f9e2", border: "1px solid #d8ecb4", color: "#4d7c0f", fontSize: 13, fontWeight: 800 }}>
+        <Trophy size={15} />
+        Lead → Won conversion: {overall === null ? "—" : `${overall}%`}
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 860 }}>
-          {rows.map((row) => (
-            <div key={row.month_key} style={{ display: "grid", gridTemplateColumns: "110px repeat(5, minmax(110px, 1fr))", gap: 12, alignItems: "center" }}>
-              <div>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547" }}>{row.label}</p>
-                <p style={{ margin: "4px 0 0", fontSize: 11, color: "#73849a" }}>Unique companies</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {steps.map((step, i) => {
+          const pct = step.count > 0 ? Math.max((step.count / max) * 100, 6) : 0;
+          const color = colors[i % colors.length];
+          return (
+            <div key={step.key} style={{ display: "grid", gridTemplateColumns: "minmax(86px, 0.5fr) minmax(120px, 2fr) auto", gap: 12, alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#2a3d54" }}>{step.label}</span>
+              <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: color, transition: "width 240ms ease" }} />
               </div>
-              {series.map((item) => {
-                const value = row[item.key];
-                return (
-                  <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#6d7f93" }}>{item.label}</span>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: "#213547" }}>{value}</span>
-                    </div>
-                    <div style={{ height: 10, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
-                      <div style={{ width: `${Math.max((value / maxCount) * 100, value > 0 ? 8 : 0)}%`, height: "100%", borderRadius: 999, background: item.color }} />
-                    </div>
-                  </div>
-                );
-              })}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: "#1f3144", fontVariantNumeric: "tabular-nums" }}>{step.count}</span>
+                {typeof step.conversion_from_previous === "number" && (
+                  <span title={`${step.conversion_from_previous}% of the previous step converted here`} style={{ fontSize: 11, fontWeight: 700, color: "#5a7184", background: "#f4f7fb", border: "1px solid #e3ebf4", borderRadius: 999, padding: "2px 8px" }}>
+                    {step.conversion_from_previous}%
+                  </span>
+                )}
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1555,14 +1726,6 @@ export default function SalesAnalytics() {
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    if (activeTab === "overview") return;
-    const id = window.setTimeout(() => {
-      tabContentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [activeTab]);
-
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
@@ -1631,7 +1794,9 @@ export default function SalesAnalytics() {
       .then((payload) => {
         if (!cancelled) {
           setData(payload);
-          setForecastRows(payload.forecast_buckets && payload.forecast_buckets.length > 0 ? payload.forecast_buckets : payload.forecast_by_month);
+          // week/month forecast rows are derived from `data` (both arrays now
+          // ship in the payload) — see displayForecastRows. `forecastRows` state
+          // is only used for the custom-range fetch below.
         }
       })
       .catch((err: Error) => {
@@ -1646,21 +1811,15 @@ export default function SalesAnalytics() {
     };
   }, [windowDays, repFilter, geographyFilter, fromDate, toDate]);
 
-  const forecastInitRef = useRef(true);
+  // Week/month forecast buckets both ship in the main payload, so toggling
+  // granularity is now instant and client-side (no refetch). Only a custom date
+  // range needs its own request, since it scopes the data differently.
   useEffect(() => {
-    if (forecastInitRef.current) {
-      forecastInitRef.current = false;
-      return;
-    }
+    if (forecastGranularity !== "custom" || !forecastCustomFrom || !forecastCustomTo) return;
     let cancelled = false;
     setForecastLoading(true);
-
-    const gran = forecastGranularity === "custom" ? undefined : forecastGranularity;
-    const fd = forecastGranularity === "custom" ? forecastCustomFrom : (fromDate || undefined);
-    const td = forecastGranularity === "custom" ? forecastCustomTo : (toDate || undefined);
-
     analyticsApi
-      .salesDashboard(windowDays, repFilter, geographyFilter, fd, td, gran)
+      .salesDashboard(windowDays, repFilter, geographyFilter, forecastCustomFrom, forecastCustomTo, undefined)
       .then((payload) => {
         if (!cancelled) {
           setForecastRows(payload.forecast_buckets && payload.forecast_buckets.length > 0 ? payload.forecast_buckets : payload.forecast_by_month);
@@ -1670,9 +1829,16 @@ export default function SalesAnalytics() {
       .finally(() => {
         if (!cancelled) setForecastLoading(false);
       });
-
     return () => { cancelled = true; };
-  }, [forecastGranularity, forecastCustomFrom, forecastCustomTo, windowDays, repFilter, geographyFilter, fromDate, toDate]);
+  }, [forecastGranularity, forecastCustomFrom, forecastCustomTo, windowDays, repFilter, geographyFilter]);
+
+  // The rows the Forecast chart actually renders: custom uses the fetched rows;
+  // week/month read straight from the already-loaded dashboard payload.
+  const displayForecastRows = useMemo<SalesForecastRow[]>(() => {
+    if (forecastGranularity === "custom") return forecastRows;
+    if (forecastGranularity === "week") return data?.forecast_by_week ?? [];
+    return data?.forecast_by_month ?? [];
+  }, [forecastGranularity, forecastRows, data?.forecast_by_week, data?.forecast_by_month]);
 
   const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
     const labelByMetric: Record<SalesActivityMetric, string> = {
@@ -1711,10 +1877,12 @@ export default function SalesAnalytics() {
     tone: "blue" | "green" | "amber" | "red";
     icon: LucideIcon;
     deals?: MilestoneDealRow[];
+    trend?: { curr: number; prev: number };
   }> = data ? (() => {
-    const summaryWithPocWip = data.summary as typeof data.summary & { poc_wip_count?: number };
-    const pocProcuredCount = data.summary.poc_agreed_count + (summaryWithPocWip.poc_wip_count ?? 0);
-    const pocProcuredDeals = (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed" || d.milestone_key === "poc_wip");
+    const s = data.summary;
+    const pocProcuredCount = s.poc_agreed_count + (s.poc_wip_count ?? 0);
+    const pocProcuredPrev = (s.prev_poc_agreed_count ?? 0) + (s.prev_poc_wip_count ?? 0);
+    const pocProcuredDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed" || d.milestone_key === "poc_wip");
 
     return [
     {
@@ -1761,11 +1929,12 @@ export default function SalesAnalytics() {
     },
     {
       label: "Demo Done",
-      value: String(data.summary.demo_done_count),
+      value: String(s.demo_done_count),
       hint: "Unique companies that reached Demo Done for the first time in this window",
       tone: "blue" as const,
       icon: Check,
-      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_done"),
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_done"),
+      trend: { curr: s.demo_done_count, prev: s.prev_demo_done_count ?? 0 },
     },
     {
       label: "POC WIP",
@@ -1774,30 +1943,34 @@ export default function SalesAnalytics() {
       tone: "blue" as const,
       icon: ArrowUpRight,
       deals: pocProcuredDeals,
+      trend: { curr: pocProcuredCount, prev: pocProcuredPrev },
     },
     {
       label: "POC Done",
-      value: String(data.summary.poc_done_count),
+      value: String(s.poc_done_count),
       hint: "Unique companies that completed a POC for the first time in this window",
       tone: "green" as const,
       icon: Check,
-      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_done"),
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_done"),
+      trend: { curr: s.poc_done_count, prev: s.prev_poc_done_count ?? 0 },
     },
     {
       label: "Closed Won",
-      value: String(data.summary.closed_won_count),
-      hint: `${formatShortCurrency(data.summary.closed_won_value)} in won deal value in this window`,
-      tone: data.summary.closed_won_count > 0 ? "green" : "blue" as const,
+      value: String(s.closed_won_count),
+      hint: `${formatShortCurrency(s.closed_won_value)} in won deal value in this window`,
+      tone: s.closed_won_count > 0 ? "green" : "blue" as const,
       icon: Trophy,
-      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
+      trend: { curr: s.closed_won_count, prev: s.prev_closed_won_count ?? 0 },
     },
     {
       label: "Won Value",
-      value: formatShortCurrency(data.summary.closed_won_value),
-      hint: `${data.summary.closed_won_count} deals closed won in this window`,
-      tone: data.summary.closed_won_value > 0 ? "green" : "blue" as const,
+      value: formatShortCurrency(s.closed_won_value),
+      hint: `${s.closed_won_count} deals closed won in this window`,
+      tone: s.closed_won_value > 0 ? "green" : "blue" as const,
       icon: TrendingUp,
-      deals: (data.summary.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "closed_won"),
+      trend: { curr: s.closed_won_value, prev: s.prev_closed_won_value ?? 0 },
     },
     ];
   })() : [];
@@ -1988,7 +2161,7 @@ export default function SalesAnalytics() {
               A manager-friendly read on rep activity, pipeline composition, deal aging, forecast timing, and funnel health. The structure follows the best CRM pattern: summary first, diagnosis second, drilldown last.
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f3fbe3", border: "1px solid #ffd5c3", color: "#4d7c0f", fontSize: 12, fontWeight: 800 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f3fbe3", border: "1px solid #d8ecb4", color: "#4d7c0f", fontSize: 12, fontWeight: 800 }}>
                 <TrendingUp size={14} />
                 Forecast and hygiene in one view
               </span>
@@ -2015,7 +2188,7 @@ export default function SalesAnalytics() {
                     height: 38,
                     padding: "0 14px",
                     borderRadius: 999,
-                    border: !usingCustomRange && value === windowDays ? "1px solid #ffbeab" : "1px solid #d9e3ef",
+                    border: !usingCustomRange && value === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
                     background: !usingCustomRange && value === windowDays ? "#f3fbe3" : "#fff",
                     color: !usingCustomRange && value === windowDays ? "#4d7c0f" : "#506378",
                     fontSize: 12,
@@ -2065,7 +2238,7 @@ export default function SalesAnalytics() {
                       borderRadius: 10,
                       border: mineActive ? "1.5px solid #cfe89a" : "1px solid #d7e2fb",
                       background: mineActive ? "#f3fbe3" : "#fff",
-                      color: mineActive ? "#a04a1c" : "#3555c4",
+                      color: mineActive ? "#4d7c0f" : "#3555c4",
                       fontSize: 12,
                       fontWeight: 700,
                       cursor: "pointer",
@@ -2127,7 +2300,7 @@ export default function SalesAnalytics() {
 
       <TabStrip active={activeTab} />
 
-      <div ref={tabContentRef}>
+      <div ref={tabContentRef} className="sa-tab-content">
         {activeTab === "outreach" ? (
           <OutreachAnalyticsTab />
         ) : activeTab !== "overview" ? (
@@ -2141,9 +2314,8 @@ export default function SalesAnalytics() {
       )}
 
       {loading ? (
-        <div className="crm-panel" style={{ padding: "46px 20px", display: "grid", placeItems: "center", color: "#6f8095", gap: 10 }}>
-          <LoaderCircle size={22} className="spin" />
-          <span>Loading sales analytics...</span>
+        <div className="crm-panel" style={{ padding: 18 }}>
+          <SkeletonList rows={6} />
         </div>
       ) : !data ? null : (
         <>
@@ -2157,7 +2329,7 @@ export default function SalesAnalytics() {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 18 }}>
             {metricCards.map((card) => (
               <MetricCard key={card.label} {...card} />
             ))}
@@ -2174,17 +2346,10 @@ export default function SalesAnalytics() {
             </SectionCard>
 
             <SectionCard
-              title="Quota Attainment"
-              subtitle="This spot is reserved for target-vs-actual reporting once team or rep quotas are configured in Beacon."
+              title="Conversion Funnel"
+              subtitle="How this window's pipeline moves from Lead to Closed Won, with step-to-step conversion rates."
             >
-              <div style={{ borderRadius: 18, border: "1px dashed #d9e2ef", background: "linear-gradient(180deg, #fbfcfe 0%, #f7f9fc 100%)", padding: 20, minHeight: 220, display: "flex", flexDirection: "column", justifyContent: "center", gap: 10 }}>
-                <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#1f3246" }}>{data.quota.title}</p>
-                <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: "#6f8095" }}>{data.quota.message}</p>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "9px 12px", borderRadius: 999, background: "#eef4ff", color: "#4561d5", border: "1px solid #dbe4fb", fontSize: 12, fontWeight: 700 }}>
-                  <TrendingUp size={14} />
-                  Add quota model in next phase
-                </div>
-              </div>
+              <ConversionFunnelView steps={data.conversion_funnel} />
             </SectionCard>
           </div>
 
@@ -2246,10 +2411,10 @@ export default function SalesAnalytics() {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#6e8095" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#dbe7ff" }} /> Raw</span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#4e6be6" }} /> Weighted</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#cfe89a" }} /> Raw</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#5a9216" }} /> Weighted</span>
                   {forecastGranularity === "custom" && forecastCustomFrom && forecastCustomTo && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#4e6be6", fontWeight: 700 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: "#f1f9e2", color: "#5a9216", fontWeight: 700 }}>
                       {forecastCustomFrom} → {forecastCustomTo}
                     </span>
                   )}
@@ -2266,7 +2431,7 @@ export default function SalesAnalytics() {
                           padding: "6px 14px",
                           fontSize: 12,
                           fontWeight: 700,
-                          background: active ? "#4e6be6" : "#fff",
+                          background: active ? "#5a9216" : "#fff",
                           color: active ? "#fff" : "#3f5066",
                           border: "none",
                           cursor: "pointer",
@@ -2311,7 +2476,7 @@ export default function SalesAnalytics() {
                 <span style={{ fontSize: 12 }}>Loading forecast...</span>
               </div>
             ) : (
-              <ForecastView rows={forecastRows} />
+              <ForecastView rows={displayForecastRows} />
             )}
           </SectionCard>
 

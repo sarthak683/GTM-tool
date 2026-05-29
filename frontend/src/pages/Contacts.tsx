@@ -11,7 +11,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic,
+  Mic, ArrowRight,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -28,6 +28,7 @@ import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import RangeFilter from "../components/filters/RangeFilter";
 import DateRangeFilter, { type DateRangeValue } from "../components/filters/DateRangeFilter";
+import { Pagination } from "../components/ui/Pagination";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import AddProspectModal from "./contacts/AddProspectModal";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
@@ -1255,7 +1256,7 @@ export default function Contacts() {
     }
   };
 
-  const saveCallDisposition = async () => {
+  const saveCallDisposition = async (opts?: { advance?: boolean }) => {
     if (!callContact || !callDisposition) return;
     setSavingDisposition(true);
     try {
@@ -1349,9 +1350,14 @@ export default function Contacts() {
       }
 
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
-      setCallContact(null);
-      // Silent reload keeps the rep's scroll position in a long list instead of
-      // snapping back to the top (see loadContacts + restoreScrollRef).
+      // Save & next: jump to the next callable prospect to keep a dialing rep
+      // in flow; otherwise close. Either way the list reloads silently so the
+      // rep's scroll position is preserved.
+      if (opts?.advance && nextCallable) {
+        void openCallSidebar(nextCallable);
+      } else {
+        setCallContact(null);
+      }
       loadContacts({ silent: true });
       // Refresh the rep-scoped tile so it reflects the just-saved call. It
       // queries activities directly so it doesn't depend on which page of
@@ -1432,6 +1438,17 @@ export default function Contacts() {
   const displayedContacts = engagedOnly
     ? contacts.filter((c) => (c.email_open_count ?? 0) > 0)
     : contacts;
+  // The next callable prospect (has a phone) after the one in the open call
+  // drawer, in the rep's current view order — powers the "Save & next" button.
+  const nextCallable: Contact | null = (() => {
+    if (!callContact) return null;
+    const idx = displayedContacts.findIndex((c) => c.id === callContact.id);
+    if (idx === -1) return null;
+    for (let i = idx + 1; i < displayedContacts.length; i++) {
+      if (displayedContacts[i].phone) return displayedContacts[i];
+    }
+    return null;
+  })();
   const linkedinActiveCount = contacts.filter((c) => c.linkedin_status && c.linkedin_status !== "none").length;
   const meetingsBookedCount = contacts.filter((c) => c.sequence_status === "meeting_booked").length;
   const hasNoSyncedEngagement =
@@ -2226,6 +2243,58 @@ export default function Contacts() {
               </div>
             </div>
 
+            {/* Quick views — one-click prospecting filters for the common
+                calling workflows; each toggles the underlying filter state. */}
+            <div className="prospect-desktop-only" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.6, marginRight: 2 }}>Quick views</span>
+              {(() => {
+                const today = localDateStr(0);
+                const yesterday = localDateStr(-1);
+                const views: { key: string; label: string; icon: typeof Clock; active: boolean; apply: () => void; clear: () => void }[] = [
+                  { key: "callbacks", label: "Callbacks due today", icon: Clock,
+                    active: nextFollowupRange.from === today && nextFollowupRange.to === today,
+                    apply: () => setNextFollowupRange({ from: today, to: today }),
+                    clear: () => setNextFollowupRange({ from: "", to: "" }) },
+                  { key: "overdue", label: "Overdue follow-ups", icon: AlertTriangle,
+                    active: nextFollowupRange.from === "" && nextFollowupRange.to === yesterday,
+                    apply: () => setNextFollowupRange({ from: "", to: yesterday }),
+                    clear: () => setNextFollowupRange({ from: "", to: "" }) },
+                  { key: "never", label: "Never called", icon: Phone,
+                    active: followupCountMin === 0 && followupCountMax === 0,
+                    apply: () => { setFollowupCountMin(0); setFollowupCountMax(0); },
+                    clear: () => { setFollowupCountMin(null); setFollowupCountMax(null); } },
+                  { key: "3plus", label: "Called 3+", icon: PhoneCall,
+                    active: followupCountMin === 3 && followupCountMax == null,
+                    apply: () => { setFollowupCountMin(3); setFollowupCountMax(null); },
+                    clear: () => { setFollowupCountMin(null); setFollowupCountMax(null); } },
+                  { key: "mine", label: "My prospects", icon: Users,
+                    active: ownerScope === "mine",
+                    apply: () => setOwnerScope("mine"),
+                    clear: () => setOwnerScope("all") },
+                ];
+                return views.map((v) => {
+                  const Icon = v.icon;
+                  return (
+                    <button
+                      key={v.key}
+                      type="button"
+                      onClick={() => (v.active ? v.clear() : v.apply())}
+                      style={{
+                        height: 32, padding: "0 12px", borderRadius: 999,
+                        border: v.active ? "1.5px solid #9ace3d" : "1px solid #dce8f4",
+                        background: v.active ? "#f3fbe3" : "#fff",
+                        color: v.active ? "#4d7c0f" : "#4a6580",
+                        fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Icon size={13} /> {v.label}
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+
             {/* Filters — hidden by default; toggled by the "Filters" button in
                 the top action row. Auto-shown when the user already has active
                 filters so they can see what's narrowing the list. */}
@@ -2254,34 +2323,31 @@ export default function Contacts() {
               }));
               return (
                 <div className="prospect-desktop-only" style={{
-                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-                  background: "#fff", borderRadius: 14,
+                  display: "flex", flexDirection: "column", alignItems: "stretch", gap: 9,
+                  background: "#fff", borderRadius: 16,
                   border: "1px solid #e8eef5",
-                  padding: "10px 14px",
-                  boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
-                  position: "sticky",
-                  top: 16,
-                  zIndex: 5,
+                  padding: "14px 18px",
+                  boxShadow: "0 2px 10px rgba(17,34,68,0.05)",
                 }}>
-                  {/* Company filter — narrow the prospecting list to one
-                      account. Populated from the full company list on page
-                      mount; for >500 accounts the list is still scannable
-                      because entries are alphabetical. */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>View</span>
+                  {/* GROUP: Prospects — scope + ownership */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Prospects</span>
+                    <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
+                  {/* View — all vs mine */}
+                  <div style={{ display: "flex", flexDirection: "column" }}>
                     <select
                       value={ownerScope}
                       onChange={(e) => setOwnerScope(e.target.value === "mine" ? "mine" : "all")}
                       style={{
-                        height: 34,
-                        padding: "0 28px 0 10px",
-                        borderRadius: 9,
-                        border: ownerScope === "mine" ? "1.5px solid #cfe89a" : "1px solid #c8d9e8",
+                        height: 42,
+                        padding: "0 28px 0 12px",
+                        borderRadius: 12,
+                        border: ownerScope === "mine" ? "1.5px solid #9ace3d" : "1px solid #d9e1ec",
                         fontSize: 13,
-                        color: "#0f2744",
+                        color: "#1d2b3c",
                         background: ownerScope === "mine" ? "#f3fbe3" : "#fff",
                         outline: "none",
-                        minWidth: 140,
+                        minWidth: 150,
                         cursor: "pointer",
                       }}
                     >
@@ -2289,9 +2355,9 @@ export default function Contacts() {
                       <option value="mine">My prospects</option>
                     </select>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Company</span>
-                    <div style={{ width: 240 }}>
+                  {/* Company */}
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: "100%" }}>
                       <SearchableCompanySelect
                       value={companyFilter}
                         companies={companyOptions}
@@ -2302,7 +2368,15 @@ export default function Contacts() {
                       />
                     </div>
                   </div>
+                    </div>{/* end Prospects row */}
+                  </div>{/* end Prospects group */}
+
+                  {/* GROUP: Engagement — sequence + outcome dots */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Engagement</span>
+                    <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
                   <MultiSelectFilter
+                    hideLabel
                     label="Sequence"
                     values={sequenceFilter}
                     onChange={setSequenceFilter}
@@ -2311,6 +2385,7 @@ export default function Contacts() {
                     minWidth={170}
                   />
                   <MultiSelectFilter
+                    hideLabel
                     label="Call disposition"
                     values={callDispositionFilter}
                     onChange={setCallDispositionFilter}
@@ -2324,22 +2399,32 @@ export default function Contacts() {
                       booked meeting. Backend translates colors via
                       app/repositories/contact.py. */}
                   <MultiSelectFilter
+                    hideLabel
                     label="Call dots"
                     values={callOutcomeColorFilter}
                     onChange={setCallOutcomeColorFilter}
                     options={CALL_OUTCOME_COLOR_OPTIONS}
-                    allLabel="All call outcomes"
+                    allLabel="All call dots"
                     minWidth={210}
                   />
                   <MultiSelectFilter
+                    hideLabel
                     label="Email dots"
                     values={emailOutcomeColorFilter}
                     onChange={setEmailOutcomeColorFilter}
                     options={EMAIL_OUTCOME_COLOR_OPTIONS}
-                    allLabel="All email outcomes"
+                    allLabel="All email dots"
                     minWidth={210}
                   />
+                    </div>{/* end Engagement row */}
+                  </div>{/* end Engagement group */}
+
+                  {/* GROUP: Calling & follow-up */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Calling</span>
+                    <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
                   <MultiSelectFilter
+                    hideLabel
                     label="Call attempts"
                     values={callAttemptsBucketFilter}
                     onChange={setCallAttemptsBucketFilter}
@@ -2351,6 +2436,7 @@ export default function Contacts() {
                       granular than the bucket filter above (e.g. "called 2–5
                       times"). Backed by call_attempt_count on the server. */}
                   <RangeFilter
+                    hideLabel
                     label="Follow-ups"
                     min={followupCountMin}
                     max={followupCountMax}
@@ -2369,6 +2455,7 @@ export default function Contacts() {
                       the callback the rep booked. Presets target the common
                       "who do I owe a follow-up" workflows. */}
                   <DateRangeFilter
+                    hideLabel
                     label="Follow-up due"
                     value={nextFollowupRange}
                     onChange={setNextFollowupRange}
@@ -2379,6 +2466,7 @@ export default function Contacts() {
                   {/* Last-call date range — filters call_last_at, when the
                       prospect was last dialed. */}
                   <DateRangeFilter
+                    hideLabel
                     label="Last call"
                     value={callLastRange}
                     onChange={setCallLastRange}
@@ -2386,10 +2474,18 @@ export default function Contacts() {
                     minWidth={190}
                     presets={lastCallPresets}
                   />
+                    </div>{/* end Calling row */}
+                  </div>{/* end Calling group */}
+
+                  {/* GROUP: Ownership & timezone */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Ownership</span>
+                    <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
                   {/* Owner filters */}
                   {teamUsers.length > 0 && (
                     <>
                       <MultiSelectFilter
+                        hideLabel
                         label="Owner"
                         values={ownerFilter}
                         onChange={setOwnerFilter}
@@ -2398,6 +2494,7 @@ export default function Contacts() {
                         minWidth={170}
                       />
                       <MultiSelectFilter
+                        hideLabel
                         label="AE"
                         values={aeFilter}
                         onChange={setAeFilter}
@@ -2406,6 +2503,7 @@ export default function Contacts() {
                         minWidth={160}
                       />
                       <MultiSelectFilter
+                        hideLabel
                         label="SDR"
                         values={sdrFilter}
                         onChange={setSdrFilter}
@@ -2416,6 +2514,7 @@ export default function Contacts() {
                     </>
                   )}
                   <MultiSelectFilter
+                    hideLabel
                     label="Timezone"
                     values={timezoneFilter}
                     onChange={setTimezoneFilter}
@@ -2423,9 +2522,12 @@ export default function Contacts() {
                     allLabel="All timezones"
                     minWidth={170}
                   />
+                    </div>{/* end Ownership row */}
+                  </div>{/* end Ownership group */}
 
-                  {/* Divider */}
-                  <div style={{ flex: 1 }} />
+                  {/* TOOLBAR — sort · columns · count · reset */}
+                  <div style={{ height: 1, background: "#eef2f7", margin: "2px 0 0" }} />
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
 
                   {/* Sort — server-side so it covers the full dataset, not
                       just the visible 50. Ties are broken by contact.id so
@@ -2526,6 +2628,8 @@ export default function Contacts() {
                     )}
                   </div>
 
+                  <div style={{ flex: 1 }} />
+
                   {/* Count */}
                   <span style={{
                     fontSize: 12, fontWeight: 600, color: "#4a6580",
@@ -2565,6 +2669,7 @@ export default function Contacts() {
                       Reset
                     </button>
                   )}
+                  </div>{/* end toolbar */}
                 </div>
               );
             })()}
@@ -2700,6 +2805,11 @@ export default function Contacts() {
               </div>
             ) : (
               <div className="crm-panel overflow-hidden contacts-table-panel prospect-desktop-only">
+                {/* Top pager — mirrors the bottom one so reps can page without
+                    scrolling to the end of the list. */}
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e8eef5", background: "#fbfdff" }}>
+                  <Pagination page={page} totalPages={Math.max(contactsPages, 1)} total={contactsTotal} pageSize={pageSize} onChange={setPage} />
+                </div>
                 <div className="overflow-x-auto">
                   <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
@@ -3043,57 +3153,8 @@ export default function Contacts() {
                     </tbody>
                   </table>
                 </div>
-                <div style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 16px",
-                  borderTop: "1px solid #e8eef5",
-                  background: "#fbfdff",
-                  flexWrap: "wrap",
-                }}>
-                  <span style={{ color: "#71839a", fontSize: 12, fontWeight: 600 }}>
-                    Page {page} of {Math.max(contactsPages, 1)}
-                  </span>
-                  <div style={{ display: "inline-flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.max(1, current - 1))}
-                      disabled={page <= 1}
-                      style={{
-                        height: 34,
-                        padding: "0 12px",
-                        borderRadius: 9,
-                        border: "1px solid #dce8f4",
-                        background: page <= 1 ? "#f7f9fc" : "#ffffff",
-                        color: page <= 1 ? "#9eb0c3" : "#4a6580",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: page <= 1 ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.min(Math.max(contactsPages, 1), current + 1))}
-                      disabled={page >= contactsPages}
-                      style={{
-                        height: 34,
-                        padding: "0 12px",
-                        borderRadius: 9,
-                        border: "1px solid #dce8f4",
-                        background: page >= contactsPages ? "#f7f9fc" : "#ffffff",
-                        color: page >= contactsPages ? "#9eb0c3" : "#4a6580",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: page >= contactsPages ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      Next
-                    </button>
-                  </div>
+                <div style={{ padding: "12px 16px", borderTop: "1px solid #e8eef5", background: "#fbfdff" }}>
+                  <Pagination page={page} totalPages={Math.max(contactsPages, 1)} total={contactsTotal} pageSize={pageSize} onChange={setPage} />
                 </div>
               </div>
             )}
@@ -3830,15 +3891,17 @@ export default function Contacts() {
             <div className="prospect-call-drawer-backdrop" style={{ flex: 1, background: "rgba(10,20,40,0.45)", backdropFilter: "blur(2px)" }} />
 
             <div className="prospect-call-drawer-panel" style={{
-              width: "min(760px, 92vw)", maxWidth: "100vw",
+              width: "min(1180px, 95vw)", maxWidth: "100vw",
               background: "#ffffff",
               borderLeft: "1px solid #d5e3ef",
               boxShadow: "-24px 0 60px rgba(14,38,66,0.18)",
               display: "flex", flexDirection: "column",
               position: "relative",
             }}>
-              {/* SCROLLABLE BODY */}
-              <div style={{ flex: 1, overflowY: "auto" }}>
+              {/* BODY — header + countdown pinned at top, then a two-column
+                  split so the brief and form sit side-by-side without scrolling
+                  the whole drawer. */}
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
 
                 {/* PRE-CALL COUNTDOWN — recording auto-starts when this hits 0.
                     The rep can Stop it within the window, or skip the wait with
@@ -3856,7 +3919,8 @@ export default function Contacts() {
                         display: "grid", placeItems: "center",
                         background: "#fff", border: "2px solid #9ace3d",
                         color: "#5fa024", fontSize: 18, fontWeight: 800,
-                        boxShadow: "0 0 0 4px #e3f4c6",
+                        boxShadow: "0 0 0 4px #e3f4c6, 0 0 18px rgba(154,206,61,0.5)",
+                        animation: "ringPulse 1.3s ease-in-out infinite",
                       }}>
                         {dialCountdown}
                       </div>
@@ -3878,47 +3942,43 @@ export default function Contacts() {
                   </div>
                 )}
 
-                {/* HERO — contact identity */}
+                {/* HERO — brand-green header, pinned at the top of the drawer. */}
                 <div style={{
-                  padding: "18px 22px 16px",
-                  background: "linear-gradient(180deg, #f7faff 0%, #ffffff 100%)",
+                  padding: "16px 22px 14px",
+                  background: "linear-gradient(180deg, #f6faf0 0%, #ffffff 100%)",
                   borderBottom: "1px solid #e8eef5",
                   position: "relative",
+                  boxShadow: "0 6px 14px rgba(15,23,42,0.04)",
                 }}>
-                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #1d4ed8, #06b6d4)" }} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: 999, background: "#16a34a", boxShadow: "0 0 0 3px #dcfce7", animation: "callpulse 1.6s ease-in-out infinite" }} />
-                      Call in progress
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #9ace3d, #6fae27)" }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: callDisposition ? "#4d7c0f" : "#5e7290", display: "inline-flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: callDisposition ? "#16a34a" : "#9ace3d", boxShadow: `0 0 0 3px ${callDisposition ? "#dcfce7" : "#e3f4c6"}`, animation: "callpulse 1.6s ease-in-out infinite" }} />
+                      {callDisposition ? "Ready to log" : "Call in progress"}
                     </span>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <span style={{ fontSize: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 999, padding: "3px 10px", fontWeight: 700 }}>
-                        Disposition required
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setCallContact(null)}
-                        aria-label="Close"
-                        style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#546679", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCallContact(null)}
+                      aria-label="Close"
+                      style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid #d5e3ef", background: "#fff", color: "#546679", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[15px] font-extrabold ${avatarColor(callContact.first_name + callContact.last_name)}`} style={{ boxShadow: "0 0 0 3px #fff, 0 4px 12px rgba(15,23,42,0.10)" }}>
+                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[15px] font-extrabold ${avatarColor(callContact.first_name + callContact.last_name)}`} style={{ boxShadow: "0 0 0 3px #fff, 0 0 0 5px #e3f4c6, 0 6px 16px rgba(154,206,61,0.28)" }}>
                       {getInitials(`${callContact.first_name} ${callContact.last_name}`)}
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1f33", letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+                      <div style={{ fontSize: 21, fontWeight: 800, color: "#0f1f33", letterSpacing: "-0.02em", lineHeight: 1.2 }}>
                         {callContact.first_name} {callContact.last_name}
                       </div>
                       {callContact.title && (
-                        <div style={{ fontSize: 12.5, color: "#4a5b73", marginTop: 2, fontWeight: 600 }}>{callContact.title}</div>
+                        <div style={{ fontSize: 14, color: "#4a5b73", marginTop: 3, fontWeight: 600 }}>{callContact.title}</div>
                       )}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
                         {callContact.company_name && (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "#f1f5f9", color: "#41526a", border: "1px solid #e2e8f0" }}>
                             <Building2 size={10} /> {callContact.company_name}
                           </span>
                         )}
@@ -3941,7 +4001,7 @@ export default function Contacts() {
                   {/* Contact reach row */}
                   <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
                     {callContact.phone && (
-                      <span style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "8px 10px", borderRadius: 10, background: "#ecfeff", color: "#0e7490", border: "1px solid #a5f3fc" }}>
+                      <span style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a" }}>
                         <Phone size={12} /> {callContact.phone}
                       </span>
                     )}
@@ -3950,7 +4010,7 @@ export default function Contacts() {
                         href={gmailComposeUrl(callContact.email)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#1d4ed8", border: "1px solid #bfdbfe", textDecoration: "none" }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#41526a", border: "1px solid #dce8f4", textDecoration: "none" }}
                         title="Open in Gmail compose"
                       >
                         <Mail size={12} /> Email
@@ -3961,7 +4021,7 @@ export default function Contacts() {
                         href={callContact.linkedin_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#0a66c2", border: "1px solid #bfdbfe", textDecoration: "none" }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#0a66c2", border: "1px solid #dce8f4", textDecoration: "none" }}
                       >
                         <Link2 size={12} /> LinkedIn
                       </a>
@@ -3969,6 +4029,10 @@ export default function Contacts() {
                   </div>
                 </div>
 
+                {/* TWO-COLUMN BODY — left: brief + recording; right: form. Each
+                    column scrolls independently so the form stays reachable. */}
+                <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}>
+                  <div style={{ overflowY: "auto", minHeight: 0, borderRight: "1px solid #eef2f7" }}>
                 {/* PRECALL INTEL */}
                 <PreCallIntelPanel
                   contact={callContact}
@@ -3990,12 +4054,14 @@ export default function Contacts() {
                     setCallNotes((existing) => existing.trim() ? existing : s.summary);
                   }}
                 />
+                  </div>{/* end left column */}
 
+                  <div style={{ overflowY: "auto", minHeight: 0 }}>
                 {/* FORM */}
-                <div style={{ padding: "18px 22px 100px" }}>
+                <div style={{ padding: "22px 26px 28px", animation: "callRise 300ms cubic-bezier(0.22, 1, 0.36, 1) both" }}>
                   {/* Call outcome — segmented cards */}
                   <div style={{ marginBottom: 18 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
                       Call outcome
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
@@ -4007,25 +4073,25 @@ export default function Contacts() {
                             type="button"
                             onClick={() => setCallStatus(o.value)}
                             style={{
-                              display: "flex", alignItems: "center", gap: 8,
-                              padding: "9px 11px",
-                              borderRadius: 10,
+                              display: "flex", alignItems: "center", gap: 9,
+                              padding: "11px 14px",
+                              borderRadius: 11,
                               border: `1.5px solid ${active ? o.color : "#e4ebf3"}`,
                               background: active ? `${o.color}11` : "#fff",
-                              color: active ? o.color : "#4a5b73",
-                              fontSize: 12.5, fontWeight: 700,
+                              color: active ? o.color : "#3c4f68",
+                              fontSize: 13.5, fontWeight: 700,
                               cursor: "pointer",
                               transition: "all 0.12s ease",
                             }}
                           >
                             <span style={{
-                              display: "inline-flex", width: 22, height: 22, borderRadius: 6,
+                              display: "inline-flex", width: 26, height: 26, borderRadius: 7,
                               alignItems: "center", justifyContent: "center",
                               background: active ? o.color : "#f1f5f9",
                               color: active ? "#fff" : "#64748b",
                               flexShrink: 0,
                             }}>
-                              <o.icon size={12} />
+                              <o.icon size={14} />
                             </span>
                             {o.label}
                           </button>
@@ -4037,7 +4103,7 @@ export default function Contacts() {
                   {/* Disposition — grouped pills */}
                   <div style={{ marginBottom: 18 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em" }}>
                         Disposition <span style={{ color: "#ef4444" }}>*</span>
                       </div>
                       {callDisposition && (
@@ -4049,10 +4115,10 @@ export default function Contacts() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {dispoGroups.map((g) => (
                         <div key={g.title}>
-                          <div style={{ fontSize: 10, fontWeight: 800, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                             {g.title}
                           </div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
                             {g.values.map((v) => {
                               const active = callDisposition === v;
                               return (
@@ -4061,15 +4127,16 @@ export default function Contacts() {
                                   type="button"
                                   onClick={() => handleCallDispositionChange(v)}
                                   style={{
-                                    padding: "5px 11px",
+                                    padding: "8px 15px",
                                     borderRadius: 999,
                                     border: `1.5px solid ${active ? g.tone.fg : g.tone.border}`,
                                     background: active ? g.tone.fg : g.tone.bg,
                                     color: active ? "#ffffff" : g.tone.fg,
-                                    fontSize: 11.5, fontWeight: 700,
+                                    fontSize: 13, fontWeight: 700,
                                     cursor: "pointer",
                                     transition: "all 0.12s ease",
-                                    boxShadow: active ? `0 2px 8px ${g.tone.fg}40` : "none",
+                                    transform: active ? "translateY(-1px)" : "none",
+                                    boxShadow: active ? `0 0 0 3px ${g.tone.fg}22, 0 5px 16px ${g.tone.fg}55` : "none",
                                   }}
                                 >
                                   {dispoLabel(v)}
@@ -4109,7 +4176,7 @@ export default function Contacts() {
 
                   {/* Notes — with quick chips */}
                   <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
                       Notes
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
@@ -4119,9 +4186,9 @@ export default function Contacts() {
                           type="button"
                           onClick={() => setCallNotes((current) => (current ? `${current}\n${chip}` : chip))}
                           style={{
-                            padding: "4px 9px", borderRadius: 999,
+                            padding: "6px 12px", borderRadius: 999,
                             border: "1px dashed #c8d6e6", background: "#f7fafc",
-                            color: "#475569", fontSize: 11, fontWeight: 600,
+                            color: "#475569", fontSize: 12.5, fontWeight: 600,
                             cursor: "pointer",
                           }}
                           title="Add to notes"
@@ -4134,11 +4201,13 @@ export default function Contacts() {
                       value={callNotes}
                       onChange={(e) => setCallNotes(e.target.value)}
                       placeholder="What came up on the call? Objections, signals, next steps..."
-                      rows={5}
-                      style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "11px 13px", fontSize: 13, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }}
+                      rows={6}
+                      style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "13px 15px", fontSize: 14.5, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }}
                     />
                   </div>
                 </div>
+                  </div>{/* end right column */}
+                </div>{/* end two-column grid */}
               </div>
 
               {/* STICKY SAVE BAR */}
@@ -4150,27 +4219,54 @@ export default function Contacts() {
                 borderTop: "1px solid #e4ebf3",
                 boxShadow: "0 -8px 24px rgba(15,23,42,0.06)",
               }}>
-                <button
-                  className="prospect-call-drawer-save"
-                  onClick={() => void saveCallDisposition()}
-                  disabled={!callDisposition || savingDisposition}
-                  style={{
-                    width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-                    background: callDisposition ? "linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)" : "#e8eef5",
-                    color: callDisposition ? "#fff" : "#9aafbe",
-                    fontSize: 14, fontWeight: 800, letterSpacing: "-0.005em",
-                    cursor: callDisposition ? "pointer" : "not-allowed",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                    opacity: savingDisposition ? 0.7 : 1,
-                    boxShadow: callDisposition ? "0 6px 16px rgba(29,78,216,0.32)" : "none",
-                    transition: "all 0.14s ease",
-                  }}
-                >
-                  {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-                  {savingDisposition ? "Saving..." : callDisposition ? `Save: ${dispoLabel(callDisposition)}` : "Save & close"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="prospect-call-drawer-save"
+                    onClick={() => void saveCallDisposition()}
+                    disabled={!callDisposition || savingDisposition}
+                    style={{
+                      flex: nextCallable && callDisposition ? "0 0 auto" : 1,
+                      padding: "13px 16px", borderRadius: 12,
+                      border: nextCallable && callDisposition ? "1px solid #cdd9e6" : "none",
+                      background: nextCallable && callDisposition ? "#fff" : (callDisposition ? "linear-gradient(135deg, #6fae27 0%, #9ace3d 100%)" : "#e8eef5"),
+                      color: nextCallable && callDisposition ? "#41526a" : (callDisposition ? "#fff" : "#9aafbe"),
+                      fontSize: 14, fontWeight: 800, letterSpacing: "-0.005em",
+                      cursor: callDisposition ? "pointer" : "not-allowed",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      opacity: savingDisposition ? 0.7 : 1,
+                      boxShadow: callDisposition && !nextCallable ? "0 6px 16px rgba(111,174,39,0.42)" : "none",
+                      transition: "all 0.14s ease", whiteSpace: "nowrap",
+                    }}
+                  >
+                    {savingDisposition ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                    {savingDisposition ? "Saving..." : (nextCallable && callDisposition ? "Save & close" : (callDisposition ? `Save: ${dispoLabel(callDisposition)}` : "Save & close"))}
+                  </button>
+                  {nextCallable && callDisposition && (
+                    <button
+                      type="button"
+                      onClick={() => void saveCallDisposition({ advance: true })}
+                      disabled={savingDisposition}
+                      title={`Next: ${nextCallable.first_name} ${nextCallable.last_name}`}
+                      style={{
+                        flex: 1, padding: "13px 0", borderRadius: 12, border: "none",
+                        background: "linear-gradient(135deg, #6fae27 0%, #9ace3d 100%)",
+                        color: "#fff", fontSize: 14, fontWeight: 800, letterSpacing: "-0.005em",
+                        cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        opacity: savingDisposition ? 0.7 : 1,
+                        boxShadow: "0 6px 16px rgba(111,174,39,0.42)", transition: "all 0.14s ease", whiteSpace: "nowrap",
+                      }}
+                    >
+                      Save &amp; next <ArrowRight size={15} />
+                    </button>
+                  )}
+                </div>
               </div>
-              <style>{`@keyframes callpulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+              <style>{`
+                @keyframes callpulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }
+                @keyframes ringPulse { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.08) } }
+                @keyframes callRise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+                @media (prefers-reduced-motion: reduce) { .prospect-call-drawer-panel *, .prospect-call-drawer-panel { animation-duration: 0.001ms !important; } }
+              `}</style>
             </div>
           </div>
         );

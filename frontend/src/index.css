@@ -100,6 +100,14 @@ button:active:not(:disabled) {
   animation: beaconShimmer 1.25s ease-in-out infinite;
 }
 
+/* Prospecting filter rows: stretch the controls to fill the full row width so
+   there's no dead space on the right. Each control grows equally; min-width:0
+   (with !important to beat the components' inline minWidth) lets them shrink
+   and wrap cleanly on narrow screens. */
+.filter-row > * { flex: 1 1 0; min-width: 0; }
+.filter-row select { width: 100%; }
+.filter-row button, .filter-row select, .filter-row input { min-width: 0 !important; }
+
 /* Reusable hover-lift for interactive cards/rows. Compositor-only transform +
    a soft shadow — opt-in via the .crm-hover-lift class on any card container. */
 .crm-hover-lift {
@@ -239,6 +247,14 @@ body {
   background: rgba(154, 206, 61, 0.12);
   border-color: rgba(154, 206, 61, 0.3);
   color: var(--beacon-green-bright);
+}
+
+/* Replace the browser's default blue focus ring with an on-brand green one. */
+.crm-sidebar-collapse-button:focus { outline: none; }
+.crm-sidebar-collapse-button:focus-visible {
+  outline: none;
+  border-color: rgba(154, 206, 61, 0.55);
+  box-shadow: 0 0 0 3px rgba(154, 206, 61, 0.28);
 }
 
 .crm-brand-mark {
@@ -415,7 +431,9 @@ body {
 }
 
 .crm-shell.sidebar-collapsed .crm-brand {
-  padding: 0 14px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0;
   justify-content: center;
 }
 
@@ -1347,9 +1365,19 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="r
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: #cfe89a;
+  border-color: #9ace3d;
   background: #fff;
-  box-shadow: 0 0 0 4px rgba(154, 206, 61, 0.10);
+  box-shadow: 0 0 0 3px rgba(154, 206, 61, 0.18);
+}
+
+/* On-brand keyboard focus ring for interactive elements — replaces the
+   browser's default blue outline. Keyboard-only (:focus-visible) so a mouse
+   click doesn't leave a ring. Low specificity via :where() so component-level
+   focus styles (e.g. the sidebar toggle) still win. Checkboxes/radios keep
+   the native outline for clarity. */
+:where(button, a, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid rgba(154, 206, 61, 0.7);
+  outline-offset: 2px;
 }
 
 .spin {

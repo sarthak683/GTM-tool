@@ -1,6 +1,7 @@
 import "./prospect-detail-refresh.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   ArrowLeft,
   Building2,
@@ -154,8 +155,8 @@ export default function AccountSourcingContactDetail() {
   if (loading) {
     return (
       <div style={pageStyle}>
-        <div style={{ ...wrapStyle, ...cardStyle, padding: 28, textAlign: "center" }}>
-          <Loader2 className="animate-spin" color={colors.primary} />
+        <div style={{ ...wrapStyle, ...cardStyle, padding: 18 }}>
+          <SkeletonList rows={5} />
         </div>
       </div>
     );

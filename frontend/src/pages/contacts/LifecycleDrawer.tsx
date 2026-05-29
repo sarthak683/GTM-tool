@@ -4,6 +4,7 @@ import type { SequenceLifecycle } from "../../lib/api";
 import { activitiesApi, callRecordingsApi } from "../../lib/api";
 import type { Activity, CallRecording } from "../../types";
 import { formatLifecycleDate, LifecycleStepRow } from "./LifecycleStepRow";
+import { SkeletonList } from "../../components/ui/Skeleton";
 
 // Pick an icon + short human label for an Activity row. Reads from
 // metadata.event_type first (Instantly webhooks fill this), then falls back
@@ -395,10 +396,11 @@ export function LifecycleDrawer({
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 220, display: "flex", justifyContent: "flex-end" }}>
-      <div style={{ flex: 1, background: "rgba(10,20,40,0.35)" }} onClick={onClose} />
-      <div style={{ width: 860, maxWidth: "100vw", background: "#fff", borderLeft: "1px solid #d5e3ef", boxShadow: "-24px 0 48px rgba(14,38,66,0.16)", display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        {/* Header */}
-        <div style={{ padding: "18px 22px 14px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
+      <div style={{ flex: 1, background: "rgba(10,20,40,0.4)", backdropFilter: "blur(2px)", animation: "beaconBackdropIn 200ms ease both" }} onClick={onClose} />
+      <div style={{ width: 860, maxWidth: "100vw", background: "#fff", borderLeft: "1px solid #d5e3ef", boxShadow: "-24px 0 48px rgba(14,38,66,0.16)", display: "flex", flexDirection: "column", overflowY: "auto", animation: "beaconSlideIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both" }}>
+        {/* Header — sticky with a green brand hairline */}
+        <div style={{ padding: "18px 22px 14px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "linear-gradient(180deg, #f6faf0 0%, #ffffff 100%)", zIndex: 1 }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #9ace3d, #6fae27)" }} />
           <div>
             <div style={{ fontSize: 14, fontWeight: 800, color: "#0f2744" }}>Sequence lifecycle</div>
             <div style={{ fontSize: 12, color: "#7a96b0" }}>
@@ -413,9 +415,7 @@ export function LifecycleDrawer({
         </div>
 
         <div style={{ padding: "16px 22px" }}>
-          {loading && (
-            <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading lifecycle…</div>
-          )}
+          {loading && <SkeletonList rows={5} />}
 
           {!loading && detail && (
             <>
@@ -520,11 +520,12 @@ export function LifecycleDrawer({
               {onOpenOutreach && (
                 <button
                   onClick={onOpenOutreach}
+                  className="crm-hover-lift"
                   style={{
-                    marginTop: 14, width: "100%", padding: "10px 0",
-                    border: "1px solid #d5e3ef", borderRadius: 10,
-                    background: "#f8fafd", color: "#1d4ed8", fontSize: 13,
-                    fontWeight: 700, cursor: "pointer",
+                    marginTop: 14, width: "100%", padding: "11px 0",
+                    border: "1px solid #cfe89a", borderRadius: 10,
+                    background: "#f3fbe3", color: "#4d7c0f", fontSize: 13,
+                    fontWeight: 800, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                   }}
                 >

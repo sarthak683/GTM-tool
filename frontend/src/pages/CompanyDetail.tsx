@@ -33,6 +33,7 @@ import {
 import { useAuth } from "../lib/AuthContext";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 const TIER_STYLE: Record<string, CSSProperties> = {
   hot: { color: "#8f2f11", background: "#ffe4d9", border: "1px solid #ffc5b3" },
@@ -272,7 +273,7 @@ export default function CompanyDetail() {
     }
   };
 
-  if (loading) return <div className="crm-panel p-14 text-center crm-muted">Loading company profile...</div>;
+  if (loading) return <div className="crm-panel p-14"><SkeletonList rows={5} /></div>;
   if (!company) return <div className="crm-panel p-14 text-center crm-muted">Company not found.</div>;
 
   const techStack = company.tech_stack as Record<string, string> | null;
@@ -463,7 +464,7 @@ export default function CompanyDetail() {
                     const persona = canonicalPersona(c.persona, c.persona_type);
                     const trackingTone = getProspectTrackingTone(c);
                     return (
-                      <div key={c.id} className="rounded-2xl border border-[#e0e8f1] bg-white p-5">
+                      <div key={c.id} className="crm-hover-lift rounded-2xl border border-[#e0e8f1] bg-white p-5">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex items-start gap-3 min-w-0">
                             <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
@@ -566,7 +567,7 @@ export default function CompanyDetail() {
               ) : (
                 <div className="grid gap-3">
                   {signals.slice(0, 6).map((s) => (
-                    <div key={s.id} className="rounded-2xl border border-[#e3eaf3] bg-[#fbfdff] p-4">
+                    <div key={s.id} className="crm-hover-lift rounded-2xl border border-[#e3eaf3] bg-[#fbfdff] p-4">
                       <div className="flex items-center gap-2 text-[12px] font-semibold text-[#6f8399] capitalize">
                         <span
                           className="h-2.5 w-2.5 rounded-full"
@@ -731,7 +732,7 @@ export default function CompanyDetail() {
         <>
           <div className="fixed inset-0 bg-black/25 z-40" onClick={() => setShowDealModal(false)} />
           <div className="fixed inset-0 z-50 grid place-items-center p-4">
-            <div className="crm-panel w-full max-w-lg p-6 space-y-4">
+            <div className="beacon-pop crm-panel w-full max-w-lg p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-[18px] font-bold">Create Deal</h3>
                 <button className="text-[#7a8ea4] hover:text-[#31465f]" onClick={() => setShowDealModal(false)}>

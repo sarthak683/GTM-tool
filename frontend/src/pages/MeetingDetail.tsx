@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { SkeletonList } from "../components/ui/Skeleton";
 import {
   ArrowLeft, ExternalLink, RefreshCw, Sparkles,
   Users, Newspaper, Shield, ChevronDown, ChevronUp,
@@ -188,7 +189,7 @@ interface WebResearch {
 // ── Demo strategy section config ─────────────────────────────────────────────
 
 const STORY_SECTIONS = [
-  { icon: Lightbulb,            color: "#9ace3d", bg: "#fff8f5", border: "#ffd5be", label: "Opening Hook" },
+  { icon: Lightbulb,            color: "#4d7c0f", bg: "#f3fbe3", border: "#cfe89a", label: "Opening Hook" },
   { icon: Search,               color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe", label: "Discovery Question" },
   { icon: PlayCircle,           color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe", label: "Story Lineup" },
   { icon: Swords,               color: "#0f766e", bg: "#f0fdfa", border: "#99f6e4", label: "Key Differentiation" },
@@ -785,7 +786,7 @@ export default function MeetingDetail() {
     }
   };
 
-  if (loading) return <div className="crm-panel p-14 text-center crm-muted">Loading meeting workspace...</div>;
+  if (loading) return <div className="crm-panel" style={{ padding: 18 }}><SkeletonList rows={6} /></div>;
   if (!meeting) return <div className="crm-panel p-14 text-center crm-muted">Meeting not found.</div>;
 
   const techStack = company?.tech_stack as Record<string, string> | null;

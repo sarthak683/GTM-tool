@@ -14,6 +14,7 @@ import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import UnifiedTimeline from "../components/UnifiedTimeline";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 export default function ContactDetail() {
   const { id } = useParams<{ id: string }>();
@@ -93,7 +94,7 @@ export default function ContactDetail() {
   };
 
   if (loading) {
-    return <div className="crm-panel p-14 text-center crm-muted">Loading contact profile...</div>;
+    return <div className="crm-panel p-14"><SkeletonList rows={5} /></div>;
   }
 
   if (!contact) {
@@ -172,7 +173,7 @@ export default function ContactDetail() {
                 {contact.phone && (
                   <button
                     onClick={() => window.__aircallDial?.(contact.phone!, `${contact.first_name} ${contact.last_name}`)}
-                    className="inline-flex items-center gap-1 hover:text-[#16a34a] transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 hover:text-[#9ace3d] transition-colors cursor-pointer"
                     title={`Call ${contact.phone}`}
                     style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
                   >
