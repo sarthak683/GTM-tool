@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
@@ -662,7 +662,7 @@ function MeetingIntelCard({
               <div style={{ padding: "9px 14px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
                 <TrendingUp size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Top Recommendation</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Lead with this</div>
                   <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{recommendations[0]}</div>
                 </div>
               </div>
@@ -932,7 +932,7 @@ function MeetingIntelCard({
           {/* All recommendations as checklist */}
           {recommendations.length > 0 && (
             <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-              <SectionHeader icon={ListChecks} label="Meeting Checklist" color="#15803d" />
+              <SectionHeader icon={ListChecks} label="Game plan for this meeting" color="#15803d" />
               <div style={{ display: "grid", gap: 6 }}>
                 {recommendations.map((r, i) => (
                   <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>
@@ -1404,10 +1404,12 @@ export default function PreMeetingAssistance() {
       const ms = pageResp.items;
 
       // Empty-set fallback: if default "my upcoming" returns zero, broaden
-      // to all reps once. Keeps the page useful for reps without owned
-      // meetings (e.g. fresh users) without fighting the filter system.
+      // to all reps once. ADMINS ONLY — reps are scoped to their own meetings
+      // (server-enforced), so broadening would show nothing new and just
+      // muddy the "my meetings" contract.
       if (
-        !autoFallbackApplied
+        isAdmin
+        && !autoFallbackApplied
         && pageResp.total === 0
         && assigneeFilter.length === 1
         && user?.id
@@ -1517,6 +1519,22 @@ export default function PreMeetingAssistance() {
     }
     return map;
   }, [deals, users]);
+
+  // Who is this meeting assigned to? Prefer the deal owner, then the account
+  // owner, then whoever owns/synced the calendar event — mirrors the backend's
+  // pre-meeting recipient logic so the badge matches who actually gets the brief.
+  const userNameById = useMemo(() => new Map(users.map((u) => [u.id, u.name])), [users]);
+  const resolveMeetingAssignee = useCallback(
+    (m: Meeting): string | undefined => {
+      const ownerId =
+        (m.deal_id ? dealMap.get(m.deal_id)?.assigned_to_id : undefined) ||
+        (m.company_id ? companyMap.get(m.company_id)?.assigned_to_id : undefined) ||
+        m.owner_user_id ||
+        undefined;
+      return ownerId ? userNameById.get(ownerId) ?? "Unknown" : undefined;
+    },
+    [dealMap, companyMap, userNameById],
+  );
 
   const visibleUsers = useMemo(
     () => (hideDeveloper ? users.filter((teamUser) => !isDeveloperUser(teamUser)) : users),
@@ -1945,7 +1963,6 @@ export default function PreMeetingAssistance() {
             {totalMeetings} meeting{totalMeetings !== 1 ? "s" : ""} · {statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "sorted by most recent" : "sorted by soonest first"}
           </div>
           {sorted.map((m) => {
-            const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
             const deal = m.deal_id ? dealMap.get(m.deal_id) : undefined;
             const lastActivity = m.deal_id ? latestActivityByDeal.get(m.deal_id) : undefined;
             return (
@@ -1956,7 +1973,7 @@ export default function PreMeetingAssistance() {
                 deal={deal}
                 lastActivity={lastActivity}
                 dealActivities={m.deal_id ? activitiesByDeal.get(m.deal_id) ?? [] : []}
-                assigneeName={isAdmin && assignee ? assignee.name : undefined}
+                assigneeName={isAdmin ? resolveMeetingAssignee(m) : undefined}
                 allCompanies={companies}
                 onRunIntel={handleRunIntel}
                 onUpdateStatus={handleUpdateStatus}

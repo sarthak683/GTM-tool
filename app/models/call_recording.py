@@ -32,6 +32,10 @@ class CallRecording(SQLModel, table=True):
     ai_confidence: Optional[float] = None
     ai_summary: Optional[str] = None
     failure_reason: Optional[str] = None
+    # Soft-delete: a deleted recording is hidden from lists but kept for audit
+    # so we can always answer "who deleted this recording and when".
+    deleted_at: Optional[datetime] = None
+    deleted_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

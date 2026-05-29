@@ -51,13 +51,31 @@ FREE_EMAIL_PROVIDERS = {
 AUTOMATED_EMAIL_LOCAL_PARTS = {
     "accountspayable",
     "accounts",
+    "alert",
+    "alerts",
+    "automated",
     "billing",
     "bounce",
+    "broadcast",
+    "campaign",
+    "community",
+    "comms",
+    "digest",
+    "donotreply",
+    "do-not-reply",
     "drive-shares-dm-noreply",
     "drive-shares-noreply",
+    "event",
+    "events",
     "invoice",
+    "mailbot",
+    "mailer",
     "mailer-daemon",
+    "marketing",
     "meetings-noreply",
+    "membership",
+    "news",
+    "newsletter",
     "notetaker",
     "notetaker-updates",
     "no-reply",
@@ -66,14 +84,41 @@ AUTOMATED_EMAIL_LOCAL_PARTS = {
     "notifications",
     "postmaster",
     "receipts",
+    "register",
+    "registration",
+    "reservations",
+    "techcomms",
+    "unsubscribe",
+    "updates",
 }
 AUTOMATED_EMAIL_LOCAL_MARKERS = (
     "noreply",
     "no-reply",
+    "donotreply",
+    "do-not-reply",
     "mailer-daemon",
     "notification",
     "notifications",
+    "newsletter",
+    "marketing",
+    "campaign",
+    "broadcast",
 )
+
+# Bulk/ESP "sending subdomain" prefixes. Marketing & transactional mail almost
+# always leaves from a dedicated sending subdomain (e.g. emails.hertz.com,
+# mail.salesforce.com, tp2.terrapinn.com) rather than the bare corporate domain
+# a real buyer types from. A FROM domain with 3+ labels whose left-most label is
+# one of these (or matches a short e<n>/t<n> pattern) is treated as bulk. This is
+# what was attaching conference blasts (Terrapinn → ABB) to live deals.
+BULK_SENDING_SUBDOMAIN_PREFIXES = {
+    "email", "emails", "mail", "mailer", "mailing", "mailgun", "sendgrid",
+    "e", "em", "send", "sending", "sender", "smtp", "mg", "sg",
+    "news", "newsletter", "marketing", "mkt", "campaign", "campaigns",
+    "reply", "replies", "bounce", "bounces", "notify", "notification",
+    "notifications", "click", "clicks", "link", "links", "list", "lists",
+    "cmail", "ccsend", "hs", "info", "events", "engage",
+}
 AUTOMATED_SUBJECT_MARKERS = (
     "accepted:",
     "automatic reply:",
@@ -121,12 +166,36 @@ def _is_internal_address(addr: str, internal_domain: str) -> bool:
     return bool(addr and internal_domain and _domain_from_email(addr) == internal_domain)
 
 
+def _is_bulk_sender_domain(addr: str) -> bool:
+    """True when the address sends from a dedicated bulk/ESP subdomain.
+
+    Real buyers email from `name@company.com`; marketing and transactional
+    platforms send from a sending subdomain (`emails.hertz.com`,
+    `mail.salesforce.com`, `tp2.terrapinn.com`). We require 3+ labels so a plain
+    `company.com` is never flagged, then check the left-most label against a set
+    of known ESP prefixes plus short `e<n>`/`t<n>`/`em<n>` patterns ESPs rotate.
+    """
+    domain = (addr or "").split("@", 1)[1].strip().lower() if "@" in (addr or "") else ""
+    labels = [p for p in domain.split(".") if p]
+    if len(labels) < 3:
+        return False
+    head = labels[0]
+    if head in BULK_SENDING_SUBDOMAIN_PREFIXES:
+        return True
+    # ESP rotation subdomains like tp2, t3, em1, e2, mg5.
+    return bool(re.fullmatch(r"(e|em|t|tp|mg|sg|p|cm|mta)\d+", head))
+
+
 def _is_automated_email(msg: EmailMessage) -> bool:
     subject = (msg.subject or "").strip().lower()
     normalized_subject = re.sub(r"^(re|fw|fwd):\s*", "", subject)
     if any(marker in normalized_subject for marker in AUTOMATED_SUBJECT_MARKERS):
         return True
     if any(re.search(rf"\b{re.escape(word)}\b", normalized_subject) for word in ADMIN_SUBJECT_WORDS):
+        return True
+    # The FROM address is the strongest bulk signal — a marketing/event blast is
+    # defined by who sent it, not who received it.
+    if _is_bulk_sender_domain(msg.from_addr):
         return True
     addresses = [msg.from_addr, *msg.to_addrs, *msg.cc_addrs]
     for addr in addresses:
@@ -166,6 +235,35 @@ def _match_company_from_text(
         if f" {normalized_name} " in haystack:
             return company_id, company_name
     return None
+
+
+def _count_distinct_company_mentions(
+    text: str,
+    company_name_candidates: list[tuple[str, UUID, str]],
+    cap: int = 3,
+) -> int:
+    """How many DISTINCT CRM company names appear in this text.
+
+    A conference/newsletter blast ("Eli Lilly, AstraZeneca & Roche take the
+    stage… ABB joins…") name-drops many CRM companies at once. When 2+ are
+    present the text is an ambiguous list, not a thread about one account, so we
+    must NOT let name/AI matching staple it to any single deal. Stops at `cap`
+    to bound work on large bodies.
+    """
+    normalized_text = _normalize_name_key(text)
+    if not normalized_text:
+        return 0
+    haystack = f" {normalized_text} "
+    seen: set[UUID] = set()
+    for normalized_name, company_id, _company_name in company_name_candidates:
+        if company_id in seen:
+            continue
+        if f" {normalized_name} " in haystack:
+            seen.add(company_id)
+            if len(seen) >= cap:
+                break
+    return len(seen)
+
 
 def _parse_message_datetime(value: str | None) -> datetime:
     if not value:
@@ -788,7 +886,19 @@ async def process_personal_emails(
                     deal_ids = [active_company_deal_ids[0]]
                     meeting_candidate_deal_id = active_company_deal_ids[0]
 
-        if not deal_ids and (msg.subject or msg.body_text):
+        # Ambiguity guard: if the message name-drops 2+ CRM companies it's a
+        # blast/list (e.g. a conference exhibitor roundup), not a 1:1 thread.
+        # Both the text-match and AI passes infer "the company this is about"
+        # from content, so a blast would wrongly attach to whichever company it
+        # happened to mention. Skip content-based attachment entirely for these.
+        is_multi_company_blast = (
+            _count_distinct_company_mentions(
+                f"{msg.subject}\n{msg.body_text}", company_name_candidates
+            )
+            >= 2
+        )
+
+        if not deal_ids and not is_multi_company_blast and (msg.subject or msg.body_text):
             company_match = _match_company_from_text(
                 f"{msg.subject}\n{msg.body_text}",
                 company_name_candidates,
@@ -807,7 +917,7 @@ async def process_personal_emails(
                     meeting_candidate_deal_id = active_company_deal_ids[0]
 
         # ── Pass 4: AI classification fallback ───────────────────────────────
-        if not deal_ids and (msg.subject or msg.body_text):
+        if not deal_ids and not is_multi_company_blast and (msg.subject or msg.body_text):
             ai_result = await _ai_classify_email(
                 subject=msg.subject,
                 body=msg.body_text,

@@ -49,7 +49,7 @@ class Contact(ContactBase, table=True):
     call_disposition: Optional[str] = None  # interested | not_interested | callback | wrong_number | no_answer
     call_notes: Optional[str] = None
     call_last_at: Optional[datetime] = None
-    linkedin_status: Optional[str] = None  # none | sent | accepted | replied
+    linkedin_status: Optional[str] = None  # none | sent | accepted | follow_up | meeting_booked | meeting_rejected
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
     # Rep-selected follow-up timestamp for "interested_follow_up_required" /

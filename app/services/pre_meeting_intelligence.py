@@ -410,38 +410,6 @@ def _build_why_now_signals(
     return deduped[:6]
 
 
-def _build_meeting_recommendations(
-    meeting_type: str,
-    attendee_intelligence: dict[str, Any],
-    why_now_signals: list[dict[str, Any]],
-    competitive_landscape: list[dict[str, Any]],
-) -> list[str]:
-    recommendations: list[str] = []
-    stakeholder_cards = attendee_intelligence.get("stakeholder_cards", [])
-    committee = attendee_intelligence.get("committee_coverage", {})
-    meeting_gaps = [item.get("label") for item in committee.get("meeting_gaps", []) if item.get("label")]
-
-    if why_now_signals:
-        recommendations.append(f"Open with the timing hook: {why_now_signals[0].get('detail')}")
-    if stakeholder_cards:
-        lead = stakeholder_cards[0]
-        recommendations.append(
-            f"Start discovery around {lead.get('name')}'s likely focus: {lead.get('likely_focus')}"
-        )
-    if meeting_gaps:
-        recommendations.append(
-            f"Committee gap for this meeting: bring in {', '.join(meeting_gaps[:2])} before advancing too far."
-        )
-    if competitive_landscape:
-        recommendations.append("Expect competitive framing to come up; land Beacon as orchestration rather than another point solution.")
-    if meeting_type == "demo":
-        recommendations.append("Keep the story concrete: show how Beacon reduces rollout coordination load, not just feature breadth.")
-    elif meeting_type == "discovery":
-        recommendations.append("Use the first half to validate rollout pain, ownership gaps, and urgency before going deep into product.")
-
-    return recommendations[:5]
-
-
 async def _collect_crm_signals(
     session: AsyncSession,
     *,
@@ -1023,11 +991,15 @@ async def run_pre_meeting_intelligence(
             crm_signals=crm_signals,
         )
 
-    meeting_recommendations = _build_meeting_recommendations(
+    # Game plan: 3-4 specific actions distilled by AI from the briefing + CRM
+    # signals (replaces the old name-in-a-template boilerplate). Empty if there's
+    # no real signal — we'd rather show nothing than generic advice.
+    meeting_recommendations = await _generate_meeting_game_plan(
+        ai,
+        executive_briefing=executive_briefing,
         meeting_type=meeting.meeting_type,
+        crm_signals=crm_signals,
         attendee_intelligence=attendee_intelligence,
-        why_now_signals=why_now_signals,
-        competitive_landscape=competitive_landscape,
     )
 
     # ── Enrich company_snapshot from ICP cache ────────────────────────────────
@@ -1838,3 +1810,99 @@ DEAL STATUS:{deal_lines or '  No deal linked.'}
     except Exception as e:
         logger.warning("Executive briefing generation failed: %s", safe_error_message(e))
         return None
+
+
+def _parse_game_plan(raw: str | None) -> list[str]:
+    """Parse the model's game-plan output into a clean list of action strings.
+    Tolerant of code fences and stray bullets; dedups and caps at 4."""
+    if not raw:
+        return []
+    import json as _json
+    text = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+    text = re.sub(r"\s*```$", "", text)
+    items: list[str] = []
+    try:
+        parsed = _json.loads(text)
+        if isinstance(parsed, list):
+            items = [str(x).strip() for x in parsed if str(x).strip()]
+    except Exception:
+        for line in text.splitlines():
+            cleaned = line.strip().lstrip("-*•").strip()
+            cleaned = re.sub(r"^\d+[\.\)]\s*", "", cleaned)
+            if cleaned:
+                items.append(cleaned)
+    seen: set[str] = set()
+    out: list[str] = []
+    for it in items:
+        key = it.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(it[:200])
+        if len(out) >= 4:
+            break
+    return out
+
+
+async def _generate_meeting_game_plan(
+    ai,
+    *,
+    executive_briefing: str | None,
+    meeting_type: str,
+    crm_signals: dict[str, Any] | None,
+    attendee_intelligence: dict[str, Any] | None,
+) -> list[str]:
+    """Distil the briefing into 3-4 SPECIFIC actions for THIS meeting.
+
+    Replaces the old templated recommendations, which slotted a (often mangled)
+    attendee name into the same canned sentences for every meeting — "Start
+    discovery around <name>'s likely focus…", "Committee gap: bring in Economic
+    Buyer…" — identical across accounts and useless. This grounds the plan in the
+    briefing + real CRM signals and returns [] rather than padding with filler.
+    """
+    if not executive_briefing or not executive_briefing.strip():
+        return []
+    crm_signals = crm_signals or {}
+    attendee_intelligence = attendee_intelligence or {}
+
+    deal_ctx = crm_signals.get("deal_context") or {}
+    meeting_number = crm_signals.get("meeting_number", 1)
+    stakeholder_cards = attendee_intelligence.get("stakeholder_cards", [])
+    people = "; ".join(
+        f"{c.get('name')} ({c.get('title') or c.get('role_label') or 'unknown role'})"
+        for c in stakeholder_cards[:5]
+        if c.get("name") and c.get("name") != "Unknown attendee"
+    ) or "not known"
+    prior = crm_signals.get("prior_meetings", [])
+    last_next_steps = ""
+    for pm in prior[:2]:
+        if pm.get("next_steps"):
+            last_next_steps += f"- {str(pm['next_steps'])[:160]}\n"
+
+    system = (
+        "You are a senior enterprise AE at Beacon.li. From the pre-meeting brief below, "
+        "write the 3-4 MOST IMPORTANT, concrete actions for THIS specific meeting — a tight game plan.\n\n"
+        "Hard rules:\n"
+        "- Every bullet MUST reference a specific detail from the brief: a person by name, the deal "
+        "stage, a prior commitment/next step, a named competitor, or a concrete signal.\n"
+        "- NO generic sales advice. Ban phrases like 'build rapport', 'validate pain', 'bring in the "
+        "economic buyer', 'land Beacon as orchestration' unless tied to a specific named gap or person.\n"
+        "- Ignore irrelevant or negative news (e.g. an executive resigning) — never suggest opening with it.\n"
+        "- Each bullet must start with a verb, be <= 22 words, and be something the rep DOES or ASKS.\n"
+        "- If the brief lacks signal for a real, specific action, return FEWER bullets. Never pad.\n"
+        "- Return ONLY a JSON array of strings (0-4 items). No prose, no keys."
+    )
+    user = (
+        f"MEETING: type={meeting_type}, meeting #{meeting_number}\n"
+        f"DEAL: stage={deal_ctx.get('stage', '?')}, health={deal_ctx.get('health', '?')}, "
+        f"days_in_stage={deal_ctx.get('days_in_stage', '?')}\n"
+        f"PEOPLE IN THE ROOM: {people}\n"
+        f"PRIOR AGREED NEXT STEPS:\n{last_next_steps or '  none recorded'}\n\n"
+        f"BRIEF:\n{executive_briefing[:4000]}"
+    )
+    try:
+        raw = await ai.complete(system, user, max_tokens=400)
+    except Exception as e:
+        logger.warning("Meeting game plan generation failed: %s", safe_error_message(e))
+        return []
+    return _parse_game_plan(raw)

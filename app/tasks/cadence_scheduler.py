@@ -40,6 +40,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,22 @@ _CHANNEL_LABELS = {
     "connector_request": ("LinkedIn connect request", "linkedin"),
     "connector_follow_up": ("LinkedIn follow-up", "linkedin"),
 }
+
+
+def _within_send_window(timezone_str: str | None, now_utc: datetime) -> bool:
+    """Timezone-aware send window: only nudge during the prospect's local
+    business hours (Mon–Fri, 08:00–18:00). Falls back to UTC when the contact
+    has no usable timezone. Replaces the old fixed global cadence — timing now
+    respects where the prospect actually is."""
+    tz_name = (timezone_str or "").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    local = now_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+    if local.weekday() >= 5:  # Saturday / Sunday
+        return False
+    return 8 <= local.hour < 18
 
 
 def _extract_plan(contact: Contact) -> list[dict[str, Any]]:
@@ -128,6 +145,16 @@ async def _has_channel_activity_since(
 async def _process_contact(session: AsyncSession, contact: Contact, now: datetime) -> int:
     seq_status = (contact.sequence_status or "").lower()
     if seq_status in _TERMINAL:
+        return 0
+
+    # Timing is now driven by the rep's per-prospect follow-up date, not a fixed
+    # global cadence. If a future follow-up is set, hold all cadence touches
+    # until that date arrives — the rep decided when to come back.
+    if contact.next_followup_at and contact.next_followup_at > now:
+        return 0
+
+    # Only nudge inside the prospect's local business hours / weekdays.
+    if not _within_send_window(contact.timezone, now):
         return 0
 
     steps = _extract_plan(contact)

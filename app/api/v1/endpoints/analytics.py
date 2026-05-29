@@ -434,6 +434,45 @@ def _meeting_rep_ids(
     return rep_ids or [None]
 
 
+async def _build_meeting_stage_gate(session, stage_settings):
+    """Return a predicate `gate(meeting_row) -> bool` keeping only early-funnel
+    meetings (deal at or before `demo_done`).
+
+    A rep's meeting metric should reflect prospecting/demo meetings, not the
+    recurring daily/weekly syncs that accumulate once an account is deep in POC
+    or already a customer. The early-stage set follows the configured stage
+    ORDER (custom/renamed stages still work), and the stage maps are built from
+    an UNFILTERED deal scan so rep/geo filters can't hide a late-stage deal.
+    """
+    ordered = [s["id"] for s in stage_settings if s.get("group") != "closed"]
+    if "demo_done" in ordered:
+        early = set(ordered[: ordered.index("demo_done") + 1])
+    else:
+        early = {"reprospect", "demo_scheduled", "demo_done"}
+    rows = (await session.execute(select(Deal.id, Deal.stage, Deal.company_id))).all()
+    deal_stage: dict[UUID, str] = {r.id: (r.stage or "") for r in rows}
+    company_stages: dict[UUID, set[str]] = {}
+    for r in rows:
+        if r.company_id is not None:
+            company_stages.setdefault(r.company_id, set()).add(r.stage or "")
+
+    def gate(row) -> bool:
+        if row.deal_id is not None:
+            stage = deal_stage.get(row.deal_id)
+            # Unknown deal (shouldn't happen) → keep rather than silently drop.
+            return stage in early if stage is not None else True
+        if row.company_id is not None:
+            stages = company_stages.get(row.company_id)
+            # No deal yet = fresh prospect (keep); deals exist but none early =
+            # a customer/late account doing syncs (drop).
+            if not stages:
+                return True
+            return any(s in early for s in stages)
+        return True
+
+    return gate
+
+
 def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
@@ -782,8 +821,15 @@ async def sales_activity_drilldown(
                 for row in (await session.execute(select(Company.id, Company.name).where(Company.id.in_(meeting_company_ids)))).all()
             }
 
+        # Same early-funnel gate as the dashboard so the drilldown list matches
+        # the headline meeting count (≤ demo_done).
+        _meeting_gate = await _build_meeting_stage_gate(
+            session, await get_configured_deal_stages(session)
+        )
         for meeting in meeting_page:
             if meeting.status == "cancelled":
+                continue
+            if not _meeting_gate(meeting):
                 continue
             source = str(meeting.external_source or "").strip().lower()
             if source not in REAL_MEETING_SOURCES:
@@ -1328,12 +1374,17 @@ async def sales_dashboard(
     # company_id, deal_id, primary owner) and prefer the tl;dv row when both
     # exist because tl;dv only fires on calls that actually happened, while
     # google_calendar entries can include rescheduled/no-show events.
+    # Only count early-funnel meetings (deal ≤ demo_done) — see helper docstring.
+    _meeting_within_sales_funnel = await _build_meeting_stage_gate(session, stage_settings)
+
     _SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
     candidate_rows = []
     for row in meetings_rows:
         if not _is_crm_linked_meeting(row):
             continue
         if row.status == "cancelled":
+            continue
+        if not _meeting_within_sales_funnel(row):
             continue
         source = str(row.external_source or "").strip().lower()
         if source not in REAL_MEETING_SOURCES:

@@ -17,6 +17,7 @@ import TranscriptPreview from "../activity/TranscriptPreview";
 import ProvenanceBar from "../ProvenanceBar";
 import UnifiedTimeline from "../UnifiedTimeline";
 import ReplyComposer, { type ReplyContext } from "../ReplyComposer";
+import DealCallLogger from "./DealCallLogger";
 
 interface Props {
   deal: Deal;
@@ -1848,6 +1849,13 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               )}
             </div>
           ) : (
+            <>
+            <DealCallLogger
+              deal={deal}
+              dealContacts={dealContacts}
+              onLogged={() => { dealsApi.getActivities(deal.id).then(setActivities).catch(() => {}); }}
+              onPatchDeal={patchDeal}
+            />
             <ActivityPanel
               activities={activities}
               comment={comment}
@@ -1861,6 +1869,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               } : undefined}
               pocEligible={deal.stage !== "poc_agreed" && deal.stage !== "poc_wip" && deal.stage !== "poc_done"}
             />
+            </>
           )}
         </div>
       </div>

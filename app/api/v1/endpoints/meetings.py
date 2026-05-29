@@ -72,10 +72,22 @@ async def list_meetings(
         count_stmt = count_stmt.outerjoin(Company, Meeting.company_id == Company.id)
         joined_company = True
 
-    # Visibility: every authenticated user sees every meeting in the
-    # workspace. Ownership (`owner_user_id` / `synced_by_user_id`) is a
-    # label only. Filter by rep explicitly via the `assignee_id` query
-    # param when the UI asks for it.
+    # Visibility: admins see every meeting in the workspace; everyone else sees
+    # only their own — meetings they own or synced, or whose linked deal/company
+    # is assigned to them. Enforced server-side so it can't be bypassed by
+    # clearing the assignee filter in the UI or hitting the API directly. (The
+    # `assignee_id` param still lets an admin slice by rep.)
+    if current_user.role != "admin":
+        ensure_deal_join()
+        ensure_company_join()
+        own_clause = or_(
+            Meeting.owner_user_id == current_user.id,
+            Meeting.synced_by_user_id == current_user.id,
+            Deal.assigned_to_id == current_user.id,
+            Company.assigned_to_id == current_user.id,
+        )
+        stmt = stmt.where(own_clause)
+        count_stmt = count_stmt.where(own_clause)
 
     if company_id:
         stmt = stmt.where(Meeting.company_id == company_id)

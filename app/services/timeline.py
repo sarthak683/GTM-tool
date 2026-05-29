@@ -20,6 +20,7 @@ from sqlalchemy import or_, select
 from app.models.activity import Activity
 from app.models.deal import DealContact
 from app.models.meeting import Meeting
+from app.models.user import User
 
 TimelineEvent = dict[str, Any]
 
@@ -139,6 +140,28 @@ def _meeting_to_event(m: Meeting) -> TimelineEvent:
     }
 
 
+async def _attach_actor_names(session, events: list[TimelineEvent]) -> list[TimelineEvent]:
+    """Resolve each event's actor_user_id to a display name so the timeline can
+    show *who* logged an activity (e.g. "Logged by Sarthak Aitha") instead of a
+    faceless "manually logged"."""
+    ids: set[UUID] = set()
+    for event in events:
+        raw = event.get("actor_user_id")
+        if raw:
+            try:
+                ids.add(UUID(str(raw)))
+            except (ValueError, TypeError):
+                pass
+    name_map: dict[str, str] = {}
+    if ids:
+        rows = (await session.execute(select(User.id, User.name).where(User.id.in_(ids)))).all()
+        name_map = {str(uid): name for uid, name in rows}
+    for event in events:
+        actor = event.get("actor_user_id")
+        event["actor_name"] = name_map.get(str(actor)) if actor else None
+    return events
+
+
 async def build_contact_timeline(
     session, contact_id: UUID, limit: int = 100
 ) -> list[TimelineEvent]:
@@ -171,7 +194,7 @@ async def build_contact_timeline(
     events: list[TimelineEvent] = [_activity_to_event(a) for a in activities]
     events.extend(_meeting_to_event(m) for m in meetings)
     events.sort(key=lambda e: e["occurred_at"] or "", reverse=True)
-    return events[:limit]
+    return await _attach_actor_names(session, events[:limit])
 
 
 async def build_deal_timeline(
@@ -194,4 +217,4 @@ async def build_deal_timeline(
     events: list[TimelineEvent] = [_activity_to_event(a) for a in activities]
     events.extend(_meeting_to_event(m) for m in meetings)
     events.sort(key=lambda e: e["occurred_at"] or "", reverse=True)
-    return events[:limit]
+    return await _attach_actor_names(session, events[:limit])

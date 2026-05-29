@@ -23,6 +23,50 @@ from app.repositories.base import BaseRepository
 from app.services.deal_flags import compute_deal_flags
 
 
+# Local-part tokens that mark a non-human / marketing / transactional sender.
+# Kept self-contained here (rather than importing the email-sync module, which
+# pulls in Celery tasks) so the engagement signal is defended at read time even
+# for emails that were attached by older code before the sync-side fix landed.
+_NOISE_EMAIL_LOCAL_PARTS = {
+    "noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon",
+    "postmaster", "bounce", "notification", "notifications", "newsletter",
+    "marketing", "campaign", "broadcast", "register", "registration",
+    "reservations", "events", "event", "updates", "news", "billing",
+    "invoice", "receipts", "accounts", "techcomms", "unsubscribe", "alerts",
+}
+_NOISE_SUBDOMAIN_PREFIXES = {
+    "email", "emails", "mail", "mailer", "mailing", "e", "em", "send",
+    "sending", "sender", "smtp", "mg", "sg", "news", "newsletter",
+    "marketing", "mkt", "campaign", "campaigns", "reply", "replies",
+    "bounce", "bounces", "notify", "notification", "notifications", "click",
+    "clicks", "link", "links", "list", "lists", "cmail", "ccsend", "events",
+}
+
+
+def _is_noise_email_from(addr: str | None) -> bool:
+    """True when an email sender is a bulk/automated/marketing source.
+
+    Mirrors the personal-email-sync bulk heuristic: the FROM local part is a
+    known non-human token, or the FROM domain is a dedicated ESP sending
+    subdomain (3+ labels, ESP-style head label). Such a sender is never a real
+    buyer 'client touch' nor a rep 'seller touch'.
+    """
+    addr = (addr or "").strip().lower()
+    if "@" not in addr:
+        return False
+    local, _, domain = addr.partition("@")
+    if local in _NOISE_EMAIL_LOCAL_PARTS:
+        return True
+    if any(m in local for m in ("noreply", "no-reply", "donotreply", "mailer-daemon", "newsletter")):
+        return True
+    labels = [p for p in domain.split(".") if p]
+    if len(labels) >= 3:
+        head = labels[0]
+        if head in _NOISE_SUBDOMAIN_PREFIXES or re.fullmatch(r"(e|em|t|tp|mg|sg|p|cm|mta)\d+", head):
+            return True
+    return False
+
+
 def _apply_flag_fields(read: DealRead, qualification: Any) -> None:
     """Populate the flag-matrix fields on a DealRead from raw qualification JSONB."""
     summary = compute_deal_flags(qualification)
@@ -89,13 +133,21 @@ class DealRepository(BaseRepository[Deal]):
     @classmethod
     def _is_seller_touch(cls, row) -> bool:
         if row.type == "email":
-            return cls._is_internal_email(row.email_from)
+            return cls._is_internal_email(row.email_from) and not _is_noise_email_from(row.email_from)
         return row.type in {"call", "meeting", "transcript", "note"} or row.source in {"aircall", "tldv", "google_calendar"}
 
     @classmethod
     def _is_client_touch(cls, row) -> bool:
         if row.type == "email":
-            return bool(row.email_from) and not cls._is_internal_email(row.email_from)
+            # A non-internal sender alone isn't enough — marketing/event/no-reply
+            # blasts (e.g. terrapinn@tp2.terrapinn.com) are non-internal too. Only
+            # count an inbound email as genuine client engagement when it's from a
+            # real human sender, not a bulk/automated source.
+            return (
+                bool(row.email_from)
+                and not cls._is_internal_email(row.email_from)
+                and not _is_noise_email_from(row.email_from)
+            )
         return bool(row.contact_id) or row.type in {"call", "meeting", "transcript"}
 
     @staticmethod

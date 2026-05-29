@@ -318,7 +318,7 @@ function Layout() {
             <Outlet />
           </div>
         </section>
-        <MobileNav />
+        <MobileNav onSearch={() => setShowGlobalSearch(true)} />
       </main>
     </div>
     </ZippyProvider>

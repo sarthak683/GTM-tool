@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Mail, PhoneCall } from "lucide-react";
+import { Mail, PhoneCall, Linkedin } from "lucide-react";
 import type { Contact } from "../../types";
 import type { LifecycleSummary } from "../../lib/api";
+import { linkedinOutcomeColor } from "../../lib/prospectWorkflow";
 
 /**
  * Outcome-colored progress cell.
@@ -190,6 +191,51 @@ function getCallChannel(contact: Contact): ChannelState {
   return { dots, terminalDot, overflowCount, heroColor, label, sub, timestamp: ts, followupDateLabel };
 }
 
+// LinkedIn lane. Reads `contact.linkedin_status` (set by the inline logger)
+// through the shared `linkedinOutcomeColor` map so the dot colors stay in sync
+// with the logger options:
+//   sent → yellow · accepted/follow_up → blue · meeting_booked → green ·
+//   meeting_rejected → red. Every motion implies an initial outreach dot.
+function getLinkedinChannel(contact: Contact): ChannelState {
+  const status = contact.linkedin_status || "";
+  const ts = contact.linkedin_last_at ? new Date(contact.linkedin_last_at) : null;
+  const color = linkedinOutcomeColor(status);
+
+  if (!color) {
+    return { dots: [], heroColor: null, label: "No LinkedIn motion", sub: "No request sent", timestamp: null };
+  }
+
+  const dots: OutcomeDot[] = [{ color: "yellow", title: "LinkedIn request sent" }];
+  let terminalDot: OutcomeDot | undefined;
+  let label: string;
+  let sub: string;
+
+  switch (status) {
+    case "accepted":
+      dots.push({ color: "blue", title: "Connection accepted" });
+      label = "Accepted"; sub = "Ready to message";
+      break;
+    case "follow_up":
+      dots.push({ color: "blue", title: "Follow-up sent" });
+      label = "Follow-up"; sub = "Conversation in flight";
+      break;
+    case "meeting_booked":
+      dots.push({ color: "blue", title: "Engaged" });
+      terminalDot = { color: "green", title: "Meeting booked" };
+      label = "Meeting booked"; sub = "From LinkedIn";
+      break;
+    case "meeting_rejected":
+      terminalDot = { color: "red", title: "Meeting rejected" };
+      label = "Meeting rejected"; sub = "Declined on LinkedIn";
+      break;
+    case "sent":
+    default:
+      label = "Request sent"; sub = "Awaiting acceptance";
+  }
+
+  return { dots, terminalDot, heroColor: color, label, sub, timestamp: ts };
+}
+
 // Sales-ops glance-value relative time. Tight on recent activity, falls
 // back to absolute date for stale items.
 function formatRecent(d: Date | null): string {
@@ -359,16 +405,18 @@ export function ProgressCell({
 }) {
   const email = getEmailChannel(contact);
   const call = getCallChannel(contact);
-  const heroColor = hottest(email.heroColor, call.heroColor);
+  const linkedin = getLinkedinChannel(contact);
+  const heroColor = hottest(hottest(email.heroColor, call.heroColor), linkedin.heroColor);
   const heroPalette = heroColor ? PALETTE[heroColor] : PALETTE.white;
   const [hover, setHover] = useState(false);
 
-  // Pick the strongest signal across both channels for the hero pill.
+  // Pick the strongest signal across all channels for the hero pill.
   const heroState = (() => {
-    if (email.heroColor && call.heroColor) {
-      return COLOR_RANK[email.heroColor] >= COLOR_RANK[call.heroColor] ? email : call;
-    }
-    return email.heroColor ? email : call;
+    const active = [email, call, linkedin].filter((c) => c.heroColor);
+    if (active.length === 0) return email;
+    return active.reduce((best, c) =>
+      COLOR_RANK[c.heroColor!] > COLOR_RANK[best.heroColor!] ? c : best,
+    );
   })();
   // Pick the most recent per-event timestamp across both channels. When
   // there's clear activity (heroColor set) but no per-event timestamp —
@@ -376,16 +424,17 @@ export function ProgressCell({
   // `email_last_opened_at` — fall back to `contact.updated_at` so the hero
   // strip doesn't lie with "No touches yet" next to a green pill.
   const lastTouch = (() => {
-    const a = email.timestamp?.getTime() ?? 0;
-    const b = call.timestamp?.getTime() ?? 0;
-    if (a === 0 && b === 0) {
-      if ((email.heroColor || call.heroColor) && contact.updated_at) {
+    const stamps = [email, call, linkedin]
+      .map((c) => c.timestamp)
+      .filter((t): t is Date => !!t);
+    if (stamps.length === 0) {
+      if ((email.heroColor || call.heroColor || linkedin.heroColor) && contact.updated_at) {
         const u = new Date(contact.updated_at);
         return Number.isNaN(u.getTime()) ? null : u;
       }
       return null;
     }
-    return a > b ? email.timestamp : call.timestamp;
+    return stamps.reduce((latest, t) => (t.getTime() > latest.getTime() ? t : latest));
   })();
 
   const hasLiveSequence =
@@ -456,6 +505,9 @@ export function ProgressCell({
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
         <ChannelRow Icon={Mail} channel="Email" state={email} />
         <ChannelRow Icon={PhoneCall} channel="Call" state={call} />
+        {/* LinkedIn lane only renders once there's a logged motion, so the
+            common email/call-only rows stay compact. */}
+        {linkedin.heroColor ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
       </div>
 
       {hasLiveSequence ? (

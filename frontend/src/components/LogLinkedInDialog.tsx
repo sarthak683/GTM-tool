@@ -1,34 +1,25 @@
 import { useState } from "react";
 import { Linkedin, Loader2, X } from "lucide-react";
-import { activitiesApi } from "../lib/api";
+import { activitiesApi, contactsApi } from "../lib/api";
+import { LINKEDIN_STATUS_OPTIONS, deriveSequenceStatusFromLinkedinStatus } from "../lib/prospectWorkflow";
 
-export type LinkedInAction =
-  | "connection_request_sent"
-  | "connection_accepted"
-  | "message_sent"
-  | "inmail_sent"
-  | "profile_viewed"
-  | "post_engaged";
-
-const ACTION_OPTIONS: { value: LinkedInAction; label: string }[] = [
-  { value: "connection_request_sent", label: "Connection request sent" },
-  { value: "connection_accepted", label: "Connection accepted" },
-  { value: "message_sent", label: "Message sent" },
-  { value: "inmail_sent", label: "InMail sent" },
-  { value: "profile_viewed", label: "Profile viewed" },
-  { value: "post_engaged", label: "Engaged with a post" },
-];
+// Use the same outcome taxonomy as the prospecting-table logger so logging from
+// the contact-detail page updates `linkedin_status` and drives the same
+// progress-bar lane (sent/accepted/follow_up/meeting_booked/meeting_rejected).
+const ACTION_OPTIONS = LINKEDIN_STATUS_OPTIONS;
 
 interface Props {
   contactId: string;
   dealId?: string;
+  /** Current sequence_status so a booked/rejected outcome advances the funnel. */
+  sequenceStatus?: string | null;
   open: boolean;
   onClose: () => void;
   onLogged?: () => void;
 }
 
-export default function LogLinkedInDialog({ contactId, dealId, open, onClose, onLogged }: Props) {
-  const [action, setAction] = useState<LinkedInAction>("message_sent");
+export default function LogLinkedInDialog({ contactId, dealId, sequenceStatus, open, onClose, onLogged }: Props) {
+  const [action, setAction] = useState<string>("sent");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +31,14 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
     setError(null);
     try {
       const labelText = ACTION_OPTIONS.find((o) => o.value === action)?.label ?? action;
+      // 1) Update the contact's LinkedIn outcome so the progress bar reflects it.
+      const derivedSeq = deriveSequenceStatusFromLinkedinStatus(action, sequenceStatus);
+      await contactsApi.update(contactId, {
+        linkedin_status: action,
+        linkedin_last_at: new Date().toISOString(),
+        ...(derivedSeq && derivedSeq !== sequenceStatus ? { sequence_status: derivedSeq } : {}),
+      } as never);
+      // 2) Write the timeline activity (with rep attribution + structured subtype).
       await activitiesApi.create({
         contact_id: contactId,
         deal_id: dealId,
@@ -47,7 +46,6 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
         medium: "linkedin",
         source: "manual",
         content: notes ? `${labelText} — ${notes}` : labelText,
-        // event_metadata carries the structured subtype so analytics/timeline can filter on it
         event_metadata: { linkedin_action: action, logged_via: "manual" },
       } as never);
       onLogged?.();
@@ -99,7 +97,7 @@ export default function LogLinkedInDialog({ contactId, dealId, open, onClose, on
         </label>
         <select
           value={action}
-          onChange={(e) => setAction(e.target.value as LinkedInAction)}
+          onChange={(e) => setAction(e.target.value)}
           style={{
             width: "100%", border: "1px solid #c8d9e8", borderRadius: 10,
             padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff",

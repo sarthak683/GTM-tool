@@ -3466,6 +3466,107 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
         await _resolve_system_task(session, entity_type="deal", entity_id=deal.id, system_key=system_task.system_key, status="dismissed")
 
 
+# A MEDDPICC field is auto-raised (with no rep task) only when the AI is highly
+# confident AND the move is a forward increase backed by fresh evidence. Anything
+# softer stays a suggestion task the rep accepts. This is the "validation + proper
+# reason" rail: never auto-lower a rep's manual score, and stamp every auto-apply
+# with its summary/evidence/source on the field and the timeline.
+MEDDPICC_AUTO_APPLY_CONFIDENCE = 0.9
+_MEDDPICC_AUTO_APPLY_REASONS = {"empty_field", "material_refinement"}
+
+
+async def _auto_apply_meddpicc_proposal(
+    session: AsyncSession, deal: Deal, proposal: TaskProposal
+) -> bool:
+    """Apply a high-confidence MEDDPICC increase straight onto the deal.
+
+    Returns True when applied — the caller then skips creating a rep task and
+    resolves any open suggestion for the same field. Conservative on purpose:
+    forward increases only, empty_field/material_refinement only, and only when
+    the model's confidence clears the auto-apply bar. (Recently rep-edited fields
+    are already excluded upstream by the emitter's dedupe window.)
+    """
+    if proposal.code != "T-MEDPICC" or proposal.confidence < MEDDPICC_AUTO_APPLY_CONFIDENCE:
+        return False
+    payload = proposal.payload or {}
+    field = str(payload.get("field") or "").strip().lower()
+    change_reason = str(payload.get("change_reason") or "").strip().lower()
+    if change_reason not in _MEDDPICC_AUTO_APPLY_REASONS:
+        return False
+    try:
+        target_score = int(payload.get("target_score"))
+    except (TypeError, ValueError):
+        return False
+    if target_score not in {1, 2, 3}:
+        return False
+
+    from app.models.deal import MEDDPICC_FIELDS, compute_meddpicc_score
+    if field not in MEDDPICC_FIELDS:
+        return False
+
+    qualification = dict(deal.qualification) if isinstance(deal.qualification, dict) else {}
+    meddpicc = dict(qualification.get("meddpicc")) if isinstance(qualification.get("meddpicc"), dict) else {}
+    previous_score = int(meddpicc.get(field, 0) or 0)
+    if target_score <= previous_score:  # forward-only; never auto-lower
+        return False
+
+    meddpicc_details = get_meddpicc_details(qualification)
+    summary = str(payload.get("summary") or "").strip()[:240] or None
+    evidence = str(payload.get("evidence") or "").strip()[:200] or None
+    raw_contact = payload.get("contact") if isinstance(payload.get("contact"), dict) else None
+    detail_contact = None
+    if raw_contact:
+        detail_contact = {
+            "name": str(raw_contact.get("name") or "").strip()[:120] or None,
+            "email": str(raw_contact.get("email") or "").strip().lower()[:254] or None,
+            "title": str(raw_contact.get("title") or "").strip()[:120] or None,
+            "persona_type": str(raw_contact.get("persona_type") or "").strip().lower() or None,
+        }
+        if not any(detail_contact.values()):
+            detail_contact = None
+    tags = [str(t).strip()[:48] for t in (payload.get("tags") or []) if isinstance(t, str) and str(t).strip()][:8]
+    entities = [str(e).strip()[:80] for e in (payload.get("entities") or []) if isinstance(e, str) and str(e).strip()][:5]
+
+    meddpicc[field] = target_score
+    meddpicc_details[field] = {
+        "summary": summary,
+        "evidence": evidence,
+        "change_reason": change_reason,
+        "updated_at": datetime.utcnow().isoformat(),
+        "target_score": target_score,
+        "evidence_activity_id": proposal.evidence_activity_id,
+        "contact": detail_contact,
+        "tags": tags,
+        "entities": entities,
+        "auto_applied": True,
+        "auto_apply_confidence": round(float(proposal.confidence), 3),
+    }
+    qualification["meddpicc"] = meddpicc
+    qualification["meddpicc_details"] = meddpicc_details
+    qualification["meddpicc_score"] = compute_meddpicc_score(qualification)
+    deal.qualification = qualification
+    deal.updated_at = datetime.utcnow()
+    session.add(deal)
+    session.add(
+        Activity(
+            deal_id=deal.id,
+            type="note",
+            source="beacon_ai_auto",
+            medium="internal",
+            content=(
+                f"MEDDPICC '{field}' auto-raised {previous_score}→{target_score} by Beacon AI "
+                f"(confidence {float(proposal.confidence):.0%}). Reason: {change_reason}. "
+                f"Summary: {summary or ''} Evidence: {evidence or ''}"
+            ),
+        )
+    )
+    logger.info(
+        "ai_task_emitter: auto-applied MEDDPICC %s %s→%s for deal %s (conf=%.2f)",
+        field, previous_score, target_score, deal.id, proposal.confidence,
+    )
+    return True
+
+
 async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) -> set[str]:
     """Emit T-STAGE/T-AMOUNT/T-CLOSE/T-MEDPICC/T-CONTACT (LLM) and T-CRITICAL (rules).
 
@@ -3524,6 +3625,19 @@ async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) ->
         proposals = []
 
     for proposal in proposals:
+        # High-confidence forward MEDDPICC increases auto-apply (with logged
+        # reason/evidence) instead of nagging the rep; everything else becomes a
+        # suggestion task. When auto-applied, clear any open suggestion for the
+        # same field — it's now done — and don't re-create one.
+        if proposal.code == "T-MEDPICC" and await _auto_apply_meddpicc_proposal(session, deal, proposal):
+            await _resolve_system_task(
+                session,
+                entity_type="deal",
+                entity_id=deal.id,
+                system_key=proposal.system_key,
+                status="completed",
+            )
+            continue
         produced_keys.add(proposal.system_key)
         action_payload = {"deal_id": str(deal.id), **proposal.payload}
         if proposal.evidence_activity_id:

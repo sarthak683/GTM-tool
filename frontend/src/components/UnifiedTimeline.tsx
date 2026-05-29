@@ -167,6 +167,11 @@ export default function UnifiedTimeline({ scope, limit, emptyMessage }: Props) {
                       {event.subtitle}
                     </p>
                   )}
+                  {event.actor_name && (
+                    <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "#7a8ea4", fontWeight: 600 }}>
+                      Logged by {event.actor_name}
+                    </p>
+                  )}
                   {(recordingUrl || meetingUrl) && (
                     <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
                       {recordingUrl && (

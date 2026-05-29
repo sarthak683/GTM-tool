@@ -2230,7 +2230,21 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            {/* Status panel — what does this browser actually support / have? */}
+            {/* On desktop the enable toggle just confuses people — the feature
+                rings your PHONE, not the desktop. So on desktop we show a
+                pointer to mobile and hide the actual toggle; the real
+                enable/disable control is mobile-only below. */}
+            <div className="desktop-only">
+              <div className="crm-panel" style={{ padding: "18px 18px" }}>
+                <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+                  📱 Call notifications ring your <strong>phone</strong>. Open Beacon on your mobile (add it to the Home Screen on iOS 16.4+ / Chrome on Android), then come to this screen there to enable them. There's nothing to turn on here on desktop.
+                </p>
+              </div>
+            </div>
+
+            {/* Status panel — what does this browser actually support / have?
+                Mobile-only: the enable toggle belongs where the feature works. */}
+            <div className="mobile-only">
             <div className="crm-panel" style={{ padding: "18px 18px", display: "grid", gap: 12 }}>
               {/* Per-device toggle row. The toggle itself is the source of
                   truth; the chips below explain what's blocking when it
@@ -2293,6 +2307,7 @@ export default function SettingsPage() {
                 <strong>iOS users:</strong> Web Push only works once you've added Beacon to your Home Screen (Share → Add to Home Screen) and opened it from there. Regular Safari tabs can't receive push.
               </p>
             </div>
+            </div>{/* end mobile-only */}
           </section>
         ) : activeTab === "zippy-prompt" ? (
           isAdmin ? (

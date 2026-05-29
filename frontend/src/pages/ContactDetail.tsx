@@ -283,6 +283,7 @@ export default function ContactDetail() {
       {id && (
         <LogLinkedInDialog
           contactId={id}
+          sequenceStatus={contact?.sequence_status}
           open={linkedInDialogOpen}
           onClose={() => setLinkedInDialogOpen(false)}
           onLogged={() => void loadContact()}

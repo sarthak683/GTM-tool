@@ -122,6 +122,35 @@ async def _get_or_create_settings(session: AsyncSession) -> WorkspaceSettings:
     return row
 
 
+async def _is_open_pipeline_meeting(
+    session: AsyncSession, meeting: Meeting, closed_stage_ids: set[str]
+) -> bool:
+    """True only when the meeting belongs to an account still in the open pipeline.
+
+    Pre-meeting intel is for live sales motions. Accounts that are already
+    customers (closed_won) run recurring daily/weekly syncs (the Darwinbox case)
+    that don't need a freshly-generated buyer brief every morning, so we skip any
+    meeting whose deal is closed — or, for a company-only meeting, any account
+    whose deals are ALL closed. A company with no deal yet is treated as an open
+    prospect (keep), as is a meeting with no CRM link at all.
+    """
+    if meeting.deal_id:
+        deal = await session.get(Deal, meeting.deal_id)
+        if deal and (deal.stage or "").strip().lower() in closed_stage_ids:
+            return False
+        return True
+    if meeting.company_id:
+        stages = (
+            await session.execute(
+                select(Deal.stage).where(Deal.company_id == meeting.company_id)
+            )
+        ).all()
+        if not stages:
+            return True  # no deal yet → fresh prospect, keep
+        return any((s.stage or "").strip().lower() not in closed_stage_ids for s in stages)
+    return True
+
+
 async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
     """
     Send pre-meeting intel to the most accountable rep we can identify.
@@ -227,7 +256,7 @@ def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
             lines.append("")
 
         if recommendations:
-            lines += ["RECOMMENDED APPROACH"]
+            lines += ["GAME PLAN FOR THIS MEETING"]
             for item in recommendations[:4]:
                 if isinstance(item, str) and item.strip():
                     lines.append(f"  • {item.strip()}")
@@ -285,6 +314,16 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
             )
         ).scalars().all()
 
+        # Open-pipeline gate: skip meetings for closed/customer accounts (e.g.
+        # closed_won doing daily syncs). Derived from the configured stage groups.
+        from app.services.deal_stages import get_configured_deal_stages
+        _stage_settings = await get_configured_deal_stages(session)
+        closed_stage_ids = {
+            str(s["id"]).strip().lower()
+            for s in _stage_settings
+            if s.get("group") == "closed"
+        }
+
         checked = len(meetings)
         generated = 0
         emailed = 0
@@ -302,6 +341,11 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
 
         for meeting in meetings:
             try:
+                # Don't spend generation/email budget on closed/customer accounts.
+                if not await _is_open_pipeline_meeting(session, meeting, closed_stage_ids):
+                    skipped += 1
+                    continue
+
                 if config["auto_generate_if_missing"] and _research_is_empty(meeting.research_data):
                     await run_pre_meeting_intelligence(meeting.id, session)
                     generated += 1

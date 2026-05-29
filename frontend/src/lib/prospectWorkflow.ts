@@ -106,13 +106,35 @@ export const CALL_BLOCKED_DISPOSITIONS = new Set([
   "contact_poor_fit",
 ]);
 
-export const LINKEDIN_STATUS_OPTIONS = [
-  { value: "sent", label: "Sent" },
-  { value: "accepted", label: "Accepted" },
-  { value: "replied", label: "Replied" },
-] as const;
+// LinkedIn outcomes a rep can log, with the progress-bar color each maps to.
+// Single source of truth — the logger picker, the timeline label, and the
+// ProgressCell LinkedIn lane all read from here.
+//   sent           → yellow (request/InMail out, no response yet)
+//   accepted       → blue   (connection accepted, conversation open)
+//   follow_up      → blue   (back-and-forth in flight)
+//   meeting_booked → green  (positive outcome)
+//   meeting_rejected → red  (hard negative)
+export type LinkedinOutcomeColor = "yellow" | "blue" | "green" | "red";
+export const LINKEDIN_STATUS_OPTIONS: ReadonlyArray<{
+  value: string;
+  label: string;
+  color: LinkedinOutcomeColor;
+}> = [
+  { value: "sent", label: "Sent", color: "yellow" },
+  { value: "accepted", label: "Accepted", color: "blue" },
+  { value: "follow_up", label: "Follow-up", color: "blue" },
+  { value: "meeting_booked", label: "Meeting booked", color: "green" },
+  { value: "meeting_rejected", label: "Meeting rejected", color: "red" },
+];
 
 const LINKEDIN_STATUS_LABELS = new Map(LINKEDIN_STATUS_OPTIONS.map((option) => [option.value, option.label]));
+const LINKEDIN_STATUS_COLORS = new Map(LINKEDIN_STATUS_OPTIONS.map((option) => [option.value, option.color]));
+
+/** Progress-bar outcome color for a logged LinkedIn status (null = no motion). */
+export function linkedinOutcomeColor(status?: string | null): LinkedinOutcomeColor | null {
+  if (!status || status === "none") return null;
+  return LINKEDIN_STATUS_COLORS.get(status) ?? "yellow";
+}
 
 export function formatCallDisposition(value?: string | null): string {
   if (!value) return "Unreviewed";
@@ -121,7 +143,7 @@ export function formatCallDisposition(value?: string | null): string {
 
 export function formatLinkedinStatus(value?: string | null): string {
   if (!value || value === "none") return "No LinkedIn motion";
-  return LINKEDIN_STATUS_LABELS.get(value as "sent" | "accepted" | "replied") ?? value.replace(/_/g, " ");
+  return LINKEDIN_STATUS_LABELS.get(value) ?? value.replace(/_/g, " ");
 }
 
 export function deriveSequenceStatusFromCallDisposition(
@@ -141,7 +163,12 @@ export function deriveSequenceStatusFromLinkedinStatus(
   currentStatus?: string | null,
 ): string | undefined {
   if (!linkedinStatus || linkedinStatus === "none") return currentStatus ?? undefined;
-  if (linkedinStatus === "replied") return currentStatus === "meeting_booked" ? currentStatus : "replied";
+  // A booked meeting is the strongest funnel signal and is never downgraded.
+  if (linkedinStatus === "meeting_booked") return "meeting_booked";
+  if (currentStatus === "meeting_booked") return currentStatus;
+  if (linkedinStatus === "meeting_rejected") return "not_interested";
+  if (linkedinStatus === "follow_up") return "replied"; // active conversation
+  // sent / accepted are early touches — don't move the funnel on their own.
   return currentStatus ?? undefined;
 }
 

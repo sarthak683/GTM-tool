@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Mic, Square, Loader2, CheckCircle2, AlertTriangle, Sparkles, History, RefreshCw, Edit3, Save, XCircle, FileText, ChevronDown, ChevronRight } from "lucide-react";
+import { Mic, Square, Loader2, CheckCircle2, AlertTriangle, Sparkles, History, RefreshCw, Edit3, Save, XCircle, FileText, ChevronDown, ChevronRight, Pause, Play, Trash2 } from "lucide-react";
 import { callRecordingsApi } from "../../lib/api";
 import type { CallRecording } from "../../types";
 
@@ -100,6 +100,14 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rmsHistoryRef = useRef<Array<{ t: number; rms: number }>>([]);
+  // Pause/resume: freeze the timer + meter while paused. pausedAccumMs is the
+  // total time spent paused so the elapsed clock and saved duration exclude it.
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const pausedAccumMsRef = useRef(0);
+  const pauseStartedAtRef = useRef<number | null>(null);
+  // Per-recording delete in flight, keyed by id (used by the past strip).
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Clean shutdown on unmount — leaving a mic stream open is the worst
   // possible UX bug.
@@ -149,6 +157,10 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
     setDbLevel(0);
     chunksRef.current = [];
     rmsHistoryRef.current = [];
+    pausedAccumMsRef.current = 0;
+    pauseStartedAtRef.current = null;
+    pausedRef.current = false;
+    setPaused(false);
     // Clear any prior recording linkage — starting a new recording
     // means the in-progress call no longer points at the old one.
     onRecordingChange?.(null);
@@ -194,8 +206,9 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
     // 200ms tick for the timer, dB meter, and rolling RMS history.
     const buf = new Float32Array(analyser.fftSize);
     tickIntervalRef.current = window.setInterval(() => {
+      if (pausedRef.current) return; // frozen while paused — no timer/meter/silence updates
       const startedAt = startedAtRef.current ?? Date.now();
-      const elapsed = Date.now() - startedAt;
+      const elapsed = Date.now() - startedAt - pausedAccumMsRef.current;
       setElapsedSec(Math.floor(elapsed / 1000));
 
       analyser.getFloatTimeDomainData(buf);
@@ -248,10 +261,18 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
     const stopped: Promise<void> = new Promise((resolve) => {
       recorder.onstop = () => resolve();
     });
+    // If we're stopping mid-pause, fold the current pause span into the accum
+    // so the saved duration excludes it.
+    if (pausedRef.current && pauseStartedAtRef.current) {
+      pausedAccumMsRef.current += Date.now() - pauseStartedAtRef.current;
+      pauseStartedAtRef.current = null;
+    }
     try { recorder.stop(); } catch { /* already stopped */ }
     await stopped;
 
-    const durationSec = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
+    const durationSec = startedAt ? Math.max(0, Math.round((Date.now() - startedAt - pausedAccumMsRef.current) / 1000)) : 0;
+    pausedRef.current = false;
+    setPaused(false);
     teardown();
 
     if (discard) {
@@ -286,6 +307,40 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed.");
       setPhase("failed");
+    }
+  };
+
+  const pauseRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+    try { recorder.pause(); } catch { return; }
+    pauseStartedAtRef.current = Date.now();
+    pausedRef.current = true;
+    setPaused(true);
+  };
+
+  const resumeRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "paused") return;
+    if (pauseStartedAtRef.current) {
+      pausedAccumMsRef.current += Date.now() - pauseStartedAtRef.current;
+      pauseStartedAtRef.current = null;
+    }
+    try { recorder.resume(); } catch { return; }
+    pausedRef.current = false;
+    setPaused(false);
+  };
+
+  const handleDeletePast = async (id: string) => {
+    if (!window.confirm("Delete this recording? It's removed from the list but kept in the audit log (who deleted it is recorded).")) return;
+    setDeletingId(id);
+    try {
+      await callRecordingsApi.delete(id);
+      setPastRecordings((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete recording.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -422,6 +477,16 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
                         · {r.ai_disposition.replace(/_/g, " ")}
                       </span>
                     ) : null}
+                    <span style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      onClick={() => void handleDeletePast(r.id)}
+                      disabled={deletingId === r.id}
+                      title="Delete recording"
+                      style={{ border: "none", background: "transparent", color: "#94a3b8", cursor: deletingId === r.id ? "wait" : "pointer", display: "inline-flex", alignItems: "center", padding: 2, flexShrink: 0 }}
+                    >
+                      {deletingId === r.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+                    </button>
                   </div>
                   {r.ai_summary ? (
                     <div style={{ color: "#1e293b", lineHeight: 1.5 }}>{r.ai_summary}</div>
@@ -524,22 +589,34 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
             background: "#fef2f2", border: "1px solid #fecaca",
           }}>
             <span style={{
-              width: 10, height: 10, borderRadius: 999, background: "#dc2626",
-              boxShadow: "0 0 0 4px #fecaca",
-              animation: "recpulse 1.2s ease-in-out infinite",
+              width: 10, height: 10, borderRadius: 999, background: paused ? "#b45309" : "#dc2626",
+              boxShadow: paused ? "0 0 0 4px #fde68a" : "0 0 0 4px #fecaca",
+              animation: paused ? "none" : "recpulse 1.2s ease-in-out infinite",
             }} />
-            <span style={{ fontSize: 13, fontWeight: 800, color: "#b91c1c" }}>Recording</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: paused ? "#b45309" : "#b91c1c" }}>{paused ? "Paused" : "Recording"}</span>
             <span style={{ fontSize: 13, fontWeight: 800, color: "#7f1d1d", fontVariantNumeric: "tabular-nums" }}>
               {elapsedLabel}
             </span>
             <div style={{ flex: 1, height: 6, borderRadius: 999, background: "#fee2e2", overflow: "hidden" }}>
               <div style={{
-                width: `${Math.round(dbLevel * 100)}%`,
+                width: `${Math.round((paused ? 0 : dbLevel) * 100)}%`,
                 height: "100%",
                 background: "linear-gradient(90deg, #fca5a5, #dc2626)",
                 transition: "width 100ms linear",
               }} />
             </div>
+            <button
+              type="button"
+              onClick={paused ? resumeRecording : pauseRecording}
+              title={paused ? "Resume recording" : "Pause recording"}
+              style={{
+                border: "1px solid #fecaca", background: "#fff", color: "#b91c1c",
+                borderRadius: 9, padding: "6px 12px", fontSize: 12, fontWeight: 800,
+                display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
+              }}
+            >
+              {paused ? <><Play size={11} /> Resume</> : <><Pause size={11} /> Pause</>}
+            </button>
             <button
               type="button"
               onClick={() => void stop()}
@@ -704,6 +781,23 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
               )}
             </div>
           ) : null}
+
+          {/* Record again — without this, a ready recording leaves no path back
+              to start(), so a second call on the same contact can't be recorded
+              and the prior transcript stays on screen. */}
+          <button
+            type="button"
+            onClick={() => void start()}
+            style={{
+              width: "100%", padding: "10px 14px",
+              border: "1px solid #cbd5e1", borderRadius: 11,
+              background: "#fff", color: "#334155",
+              fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}
+          >
+            <Mic size={13} /> Record again
+          </button>
         </div>
       ) : null}
 

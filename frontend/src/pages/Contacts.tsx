@@ -20,10 +20,8 @@ import {
   deriveSequenceStatusFromCallDisposition,
   deriveSequenceStatusFromLinkedinStatus,
   formatCallDisposition,
-  getNextAction,
 } from "../lib/prospectWorkflow";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
-import SequenceSettingsModal from "../components/outreach/SequenceSettingsModal";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import RangeFilter from "../components/filters/RangeFilter";
@@ -145,7 +143,6 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
   { key: "email", label: "Email", required: true },
   { key: "progress", label: "Progress", required: true },
   { key: "timezone", label: "Timezone" },
-  { key: "next_action", label: "Next Action" },
   { key: "ae", label: "AE" },
   { key: "sdr", label: "SDR" },
   { key: "action", label: "Action", required: true },
@@ -420,7 +417,6 @@ export default function Contacts() {
   const [loading, setLoading] = useState(true);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
-  const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
@@ -467,7 +463,6 @@ export default function Contacts() {
   const [linkedinSuggestionLoading, setLinkedinSuggestionLoading] = useState(false);
   const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
-  const [autoCreateCompaniesOnImport, setAutoCreateCompaniesOnImport] = useState(false);
   // Upload progress UI: phase = "uploading" while bytes are on the wire,
   // "processing" once they're all delivered and the server is parsing.
   // percent applies to the "uploading" phase only; "processing" is rendered
@@ -698,7 +693,7 @@ export default function Contacts() {
     try {
       const result = await contactsApi.importCsv(
         file,
-        autoCreateCompaniesOnImport,
+        true, // accounts are always auto-created on import (no enrichment queued)
         (phase, percent) => setUploadProgress({ phase, percent }),
       );
       setImportSummary(result);
@@ -1169,12 +1164,12 @@ export default function Contacts() {
   };
 
   // What "the call starts" means once the countdown elapses (or the rep taps
-  // "Start now"): kick off the in-browser recording AND ring the phone. The
-  // recording panel guards against double-starting if the rep already hit
-  // Record manually during the countdown.
-  const beginCall = (contact: Contact) => {
+  // "Start now"): kick off the in-browser recording. The dial/notification is
+  // NOT here — it fires immediately on drawer open (see openCallSidebar) so the
+  // rep can dial during the countdown. The recording panel guards against
+  // double-starting if the rep already hit Record manually during the wait.
+  const beginCall = (_contact: Contact) => {
     callRecordingRef.current?.startRecording();
-    performDial(contact);
   };
 
   // Hold the start for 10s. A closure-local counter drives the tick so the
@@ -1203,7 +1198,8 @@ export default function Contacts() {
     setDialCountdown(null);
   };
 
-  // Skip the wait and start the call (recording + dial) immediately.
+  // Skip the wait and start recording immediately (the dial/notification
+  // already fired on open).
   const dialNow = () => {
     if (!callContact) return;
     clearDialTimer();
@@ -1222,6 +1218,11 @@ export default function Contacts() {
     setCallNotes("");
     setFollowupAt("");
     setCurrentRecordingId(null);
+    // Ring the rep's phone / open the dialer NOW, on open — the whole point of
+    // the 10s countdown is to give the rep time to dial and connect before the
+    // recording auto-starts. Previously this fired only at the END of the
+    // countdown, so there was nothing to dial during the wait.
+    performDial(contact);
     startDialCountdown(contact);
   };
 
@@ -1394,7 +1395,9 @@ export default function Contacts() {
       const linkedinLabel = ({
         sent: "Sent LinkedIn connect request",
         accepted: "LinkedIn connect accepted",
-        replied: "Replied on LinkedIn",
+        follow_up: "LinkedIn follow-up",
+        meeting_booked: "Meeting booked via LinkedIn",
+        meeting_rejected: "Meeting rejected on LinkedIn",
       } as Record<string, string>)[linkedinStatus] ?? `LinkedIn: ${linkedinStatus}`;
       const contactLabel = `${linkedinContact.first_name ?? ""} ${linkedinContact.last_name ?? ""}`.trim();
       const activityContent = linkedinNotes
@@ -1777,23 +1780,6 @@ export default function Contacts() {
                   {showFilters ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 </button>
 
-                {/* Sequence Timing */}
-                <button
-                  type="button"
-                  title="Sequence timing settings"
-                  onClick={() => setShowSequenceSettings(true)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #d0dcea", background: "#f7fbff",
-                    color: "#2c4a63", fontSize: 13, fontWeight: 600,
-                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <Settings2 size={14} />
-                  Sequence Timing
-                </button>
-
                 <button
                   type="button"
                   onClick={downloadProspectTemplate}
@@ -1810,39 +1796,17 @@ export default function Contacts() {
                 </button>
 
                 <label
-                  title="When checked, any prospect whose company doesn't already exist will have an account created in Account Sourcing automatically. The new accounts are tagged for ICP review and queued for enrichment."
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 10px", borderRadius: 10,
-                    border: "1px solid #d6e0ec", background: "#f6f9fd",
-                    color: "#2c4a63", fontSize: 12, fontWeight: 600,
-                    cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer",
-                    whiteSpace: "nowrap", flexShrink: 0,
-                    opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={autoCreateCompaniesOnImport}
-                    disabled={uploadingProspects || !canMigrateProspects}
-                    onChange={(e) => setAutoCreateCompaniesOnImport(e.target.checked)}
-                    style={{ accentColor: "#175089", cursor: "pointer" }}
-                  />
-                  Auto-create accounts
-                </label>
-
-                <label
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #b8d0f0", background: "#eef5ff",
-                    color: "#175089", fontSize: 13, fontWeight: 700,
+                    border: "1px solid #cfe89a", background: "#f3fbe3",
+                    color: "#4d7c0f", fontSize: 13, fontWeight: 700,
                     cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
                     opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
                   }}
                 >
                   {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                  Migrate Prospects
+                  Upload Prospects
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -2793,7 +2757,7 @@ export default function Contacts() {
                     <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.35 }} />
                     <div style={{ fontSize: 16, fontWeight: 800, color: "#25384d", marginBottom: 8 }}>No prospects found</div>
                     <div style={{ fontSize: 13, color: "#7a8ea4", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
-                      Upload a CSV from the Migrate Prospects button above, or add prospects manually with Add Prospect.
+                      Upload a CSV from the Upload Prospects button above, or add prospects manually with Add Prospect.
                     </div>
                   </>
                 ) : (
@@ -3064,25 +3028,6 @@ export default function Contacts() {
                                         {currentLabel || "Add TZ"}
                                       </button>
                                     )}
-                                  </td>
-                                );
-                              }
-                              case "next_action": {
-                                const action = getNextAction(c);
-                                if (action.channel === "none" && action.priority === "low") {
-                                  return <td key={column.key}><span style={{ color: "#c0cdd8", fontSize: 12 }}>—</span></td>;
-                                }
-                                const toneMap = {
-                                  high: { bg: "#f3fbe3", border: "#fed7aa", color: "#c2410c" },
-                                  medium: { bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1" },
-                                  low: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
-                                };
-                                const tone = toneMap[action.priority];
-                                return (
-                                  <td key={column.key}>
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: tone.color, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 8, padding: "3px 8px", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-                                      {action.label}
-                                    </span>
                                   </td>
                                 );
                               }
@@ -3530,12 +3475,6 @@ export default function Contacts() {
           onChanged={() => loadContacts()}
         />
       ) : null}
-
-      {/* Global sequence timing settings */}
-      <SequenceSettingsModal
-        open={showSequenceSettings}
-        onClose={() => setShowSequenceSettings(false)}
-      />
 
       {uploadProgress && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
@@ -4044,6 +3983,12 @@ export default function Contacts() {
                     call, Whisper transcribes it and Claude pre-fills the
                     disposition below. The rep still confirms before save. */}
                 <CallRecordingPanel
+                  // Key by contact so switching to the next prospect (the drawer
+                  // stays mounted, only contactId changes) gives a FRESH panel.
+                  // Without this the panel kept the previous call's recording +
+                  // "ready" transcript, so the next call showed the old
+                  // transcript and had no way to start recording.
+                  key={callContact.id}
                   ref={callRecordingRef}
                   contactId={callContact.id}
                   onRecordingChange={setCurrentRecordingId}
@@ -4329,7 +4274,9 @@ export default function Contacts() {
                 <div style={{ marginTop: 8, fontSize: 12, color: "#7a96b0" }}>
                   {linkedinStatus === "sent" && "You sent a connection request or InMail."}
                   {linkedinStatus === "accepted" && "They accepted your request — ready to message."}
-                  {linkedinStatus === "replied" && "They replied to your message. Follow up!"}
+                  {linkedinStatus === "follow_up" && "Conversation in flight — you followed up."}
+                  {linkedinStatus === "meeting_booked" && "A meeting is on the calendar from this thread."}
+                  {linkedinStatus === "meeting_rejected" && "They declined a meeting — treat as a hard no."}
                 </div>
               </div>
 

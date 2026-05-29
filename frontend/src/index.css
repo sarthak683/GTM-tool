@@ -2072,8 +2072,10 @@ textarea:focus {
     min-width: 180px;
   }
 
+  /* Search moves to the bottom nav on mobile (thumb-reachable) — hide the
+     top-right topbar search so it isn't duplicated up top. */
   .crm-search-shell {
-    width: min(360px, 80vw);
+    display: none !important;
   }
 
   .crm-search {

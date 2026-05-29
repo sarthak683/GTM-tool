@@ -149,6 +149,7 @@ async def list_call_recordings(
     result = await session.execute(
         select(CallRecording)
         .where(CallRecording.contact_id == contact_id)
+        .where(CallRecording.deleted_at.is_(None))
         .order_by(CallRecording.created_at.desc())
         .limit(limit)
     )
@@ -205,6 +206,28 @@ async def update_call_recording(
     await session.commit()
     await session.refresh(recording)
     return recording
+
+
+@router.delete("/{recording_id}", status_code=204)
+async def delete_call_recording(
+    recording_id: UUID,
+    session: DBSession,
+    user: CurrentUser,
+):
+    """Soft-delete a recording: it disappears from the lists but the row is
+    retained for audit, stamped with who deleted it and when."""
+    recording = (await session.execute(
+        select(CallRecording).where(CallRecording.id == recording_id)
+    )).scalar_one_or_none()
+    if not recording:
+        raise HTTPException(404, "Recording not found.")
+    if recording.deleted_at is None:
+        now = datetime.utcnow()
+        recording.deleted_at = now
+        recording.deleted_by_id = user.id
+        recording.updated_at = now
+        await session.commit()
+    return None
 
 
 @router.post("/{recording_id}/retry", response_model=CallRecordingRead)

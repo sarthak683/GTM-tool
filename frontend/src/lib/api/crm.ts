@@ -369,6 +369,8 @@ export const callRecordingsApi = {
     }),
   retry: (id: string) =>
     request<CallRecording>(`/api/v1/calls/recordings/${id}/retry`, { method: "POST" }),
+  delete: (id: string) =>
+    request<void>(`/api/v1/calls/recordings/${id}`, { method: "DELETE" }),
 };
 
 // Bell-icon notification feed. Distinct from Tasks: signals decay once
@@ -435,6 +437,7 @@ export interface TimelineEvent {
   title: string;
   subtitle: string | null;
   actor_user_id: string | null;
+  actor_name: string | null;
   deal_id: string | null;
   contact_id: string | null;
   payload: Record<string, unknown>;

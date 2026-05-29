@@ -257,7 +257,17 @@
       "Bash(python -m py_compile app/api/v1/endpoints/analytics.py)",
       "Bash(awk 'NR>=843 && NR<=1520' components/deal/DealDetailDrawer.tsx)",
       "Bash(make backend-compile *)",
-      "Bash(make rebuild-backend-all *)"
+      "Bash(make rebuild-backend-all *)",
+      "Bash(kubectl -n gtm-prod get pods -l app=backend -o name)",
+      "Bash(python -m py_compile app/services/personal_email_sync.py app/repositories/deal.py)",
+      "Bash(awk 'NR<=3521 && /^async def |^def /{ln=NR; name=$0} END{}' app/services/tasks.py)",
+      "Bash(awk -F: '$1<=3521')",
+      "Bash(cd *)",
+      "Bash(curl -s -o /dev/null -w \"backend /health: %{http_code}\\\\n\" http://localhost:8000/health)",
+      "mcp__filesystem-repo__directory_tree",
+      "Bash(sed -n '2915,2945p' src/components/deal/DealDetailDrawer.tsx)",
+      "Bash(sed -n '17,45p' src/lib/prospectWorkflow.ts)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/health)"
     ]
   },
   "enabledMcpjsonServers": [

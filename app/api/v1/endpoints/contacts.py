@@ -851,22 +851,11 @@ async def import_contacts_csv(
             await session.delete(auto_create_batch)
             await session.commit()
 
-    # Queue ICP enrichment for the freshly-created accounts so they don't sit
-    # in Account Sourcing as bare placeholders. Uses the same single-company
-    # task the re-enrich button on AccountSourcing calls. Best-effort: if
-    # Celery is unreachable the import already succeeded, so we just log.
-    if created_rows:
-        try:
-            from app.tasks.enrichment import icp_research_single_task
-
-            for created in created_rows:
-                icp_research_single_task.delay(str(created.id))
-        except Exception:  # noqa: BLE001 — Celery brokers can fail in many ways
-            import logging
-            logging.getLogger(__name__).exception(
-                "Failed to queue ICP enrichment for %d auto-created companies",
-                len(created_rows),
-            )
+    # Accounts are auto-created (so prospects always map to an account), but we
+    # deliberately do NOT bulk-queue ICP enrichment here — that flooded the
+    # enrichment queue on every upload. The new accounts land in Account
+    # Sourcing tagged for review; enrichment is now an explicit, selective
+    # action (Run ICP Research / Enrich All / per-company re-enrich).
 
     message_parts = ["Prospects imported successfully."]
     if warning_count:
