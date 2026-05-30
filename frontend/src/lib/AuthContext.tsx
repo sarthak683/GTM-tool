@@ -5,21 +5,30 @@ import { authApi } from "./api";
 
 export type RoleView = "admin" | "ae" | "sdr";
 
-// Superadmins can preview the app as another role to understand each
-// perspective. Gated to these two by email — distinct from the `admin` role,
-// which several people hold. Identity is always the REAL user; only the
-// effective `role` is swapped while viewing-as.
+// Superadmins can (a) preview the app as another ROLE, or (b) impersonate a
+// specific PERSON to see the CRM from their exact perspective (their pipeline,
+// their scoped meetings, their tasks). Person-impersonation is read-only and
+// enforced server-side. Gated to these two by email — distinct from the `admin`
+// role, which several people hold. Kept in sync with backend SUPERADMIN_EMAILS.
 const SUPERADMIN_EMAILS = new Set(["sarthak@beacon.li", "rakesh@beacon.li"]);
 const VIEW_AS_KEY = "beacon_view_as_role";
+const TOKEN_KEY = "beacon_token";
+// While impersonating, the active token is the target user's; we stash the real
+// superadmin token here so "Exit" can restore it.
+const IMPERSONATOR_TOKEN_KEY = "beacon_impersonator_token";
 
 interface AuthState {
-  user: User | null;        // effective user — role is swapped while viewing-as
+  user: User | null;        // effective user — impersonated person, or role-view clone of self
   realUser: User | null;    // the actual signed-in user (identity, superadmin check)
   loading: boolean;
   isAdmin: boolean;         // derived from the EFFECTIVE role
-  isSuperAdmin: boolean;    // based on the real user — gates the role switcher
+  isSuperAdmin: boolean;    // based on the real user — gates the switcher
   viewAsRole: RoleView | null;
   setViewAsRole: (role: RoleView | null) => void;
+  isImpersonating: boolean;       // true while viewing as a specific person
+  impersonatedUser: User | null;  // the person being viewed (for the banner)
+  impersonate: (userId: string) => Promise<void>;
+  stopImpersonating: () => void;
   login: (token: string) => void;
   logout: () => void;
 }
@@ -32,12 +41,17 @@ const AuthContext = createContext<AuthState>({
   isSuperAdmin: false,
   viewAsRole: null,
   setViewAsRole: () => {},
+  isImpersonating: false,
+  impersonatedUser: null,
+  impersonate: async () => {},
+  stopImpersonating: () => {},
   login: () => {},
   logout: () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [realUser, setRealUser] = useState<User | null>(null);
+  const [impersonatedUser, setImpersonatedUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewAsRole, setViewAsRoleState] = useState<RoleView | null>(() => {
     const v = localStorage.getItem(VIEW_AS_KEY);
@@ -45,18 +59,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const fetchMe = useCallback(async () => {
-    // Browser refreshes only persist the token, so we rehydrate the current
-    // user from /auth/me on boot instead of storing a second copy of user data.
-    const token = localStorage.getItem("beacon_token");
+    const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
       setLoading(false);
       return;
     }
+    const impToken = localStorage.getItem(IMPERSONATOR_TOKEN_KEY);
     try {
-      setRealUser(await authApi.me());
+      if (impToken) {
+        // Impersonating: the active token resolves to the target user, while the
+        // stashed impersonator token resolves to the real superadmin.
+        const [me, real] = await Promise.all([authApi.me(), authApi.meWithToken(impToken)]);
+        setImpersonatedUser(me);
+        setRealUser(real);
+      } else {
+        setRealUser(await authApi.me());
+        setImpersonatedUser(null);
+      }
     } catch {
-      localStorage.removeItem("beacon_token");
-      setRealUser(null);
+      // Bad impersonation token → drop it and fall back to the active token.
+      localStorage.removeItem(IMPERSONATOR_TOKEN_KEY);
+      setImpersonatedUser(null);
+      try {
+        setRealUser(await authApi.me());
+      } catch {
+        localStorage.removeItem(TOKEN_KEY);
+        setRealUser(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -67,23 +96,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchMe]);
 
   const login = useCallback((token: string) => {
-    localStorage.setItem("beacon_token", token);
-    // Exchange the token for the canonical server-side user record immediately
-    // so role-based UI can render without waiting for a page reload.
+    // A fresh login always clears any lingering impersonation.
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(IMPERSONATOR_TOKEN_KEY);
+    setImpersonatedUser(null);
     authApi.me().then(setRealUser).catch(() => {
-      localStorage.removeItem("beacon_token");
+      localStorage.removeItem(TOKEN_KEY);
       setRealUser(null);
     });
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem("beacon_token");
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(IMPERSONATOR_TOKEN_KEY);
     localStorage.removeItem(VIEW_AS_KEY);
     setViewAsRoleState(null);
+    setImpersonatedUser(null);
     setRealUser(null);
   }, []);
 
   const isSuperAdmin = !!realUser && SUPERADMIN_EMAILS.has((realUser.email || "").trim().toLowerCase());
+  const isImpersonating = !!impersonatedUser;
+
+  // Switch into a specific teammate's view. Must be invoked with the real
+  // (non-impersonation) token active. A full reload guarantees every screen
+  // refetches as the target user with no stale superadmin data lingering.
+  const impersonate = useCallback(async (userId: string) => {
+    const myToken = localStorage.getItem(TOKEN_KEY);
+    const resp = await authApi.impersonate(userId);
+    if (myToken) localStorage.setItem(IMPERSONATOR_TOKEN_KEY, myToken);
+    localStorage.setItem(TOKEN_KEY, resp.token);
+    localStorage.removeItem(VIEW_AS_KEY); // role-view and impersonation are mutually exclusive
+    window.location.assign("/");
+  }, []);
+
+  const stopImpersonating = useCallback(() => {
+    const impToken = localStorage.getItem(IMPERSONATOR_TOKEN_KEY);
+    if (impToken) localStorage.setItem(TOKEN_KEY, impToken);
+    localStorage.removeItem(IMPERSONATOR_TOKEN_KEY);
+    window.location.assign("/");
+  }, []);
 
   const setViewAsRole = useCallback((role: RoleView | null) => {
     if (role) localStorage.setItem(VIEW_AS_KEY, role);
@@ -91,17 +143,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setViewAsRoleState(role);
   }, []);
 
-  // Only superadmins can be viewing-as; everyone else is always themselves.
-  const activeView = isSuperAdmin ? viewAsRole : null;
+  // Role-view only applies to superadmins who are NOT impersonating a person.
+  const activeView = isSuperAdmin && !isImpersonating ? viewAsRole : null;
 
-  // Effective user: clone the real user with the previewed role so EVERY
-  // consumer of `user.role` / `isAdmin` reflects the perspective with no
-  // changes at the call sites. Identity fields (id, email, name) are untouched.
+  // Effective user: the impersonated person if viewing one, else the real user
+  // with an optional role swap. Every consumer of `user.role` / `isAdmin`
+  // reflects the active perspective with no changes at the call sites.
   const user = useMemo<User | null>(() => {
+    if (isImpersonating && impersonatedUser) return impersonatedUser;
     if (!realUser) return null;
     if (activeView && activeView !== realUser.role) return { ...realUser, role: activeView };
     return realUser;
-  }, [realUser, activeView]);
+  }, [isImpersonating, impersonatedUser, realUser, activeView]);
 
   return (
     <AuthContext.Provider
@@ -113,6 +166,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isSuperAdmin,
         viewAsRole: activeView,
         setViewAsRole,
+        isImpersonating,
+        impersonatedUser,
+        impersonate,
+        stopImpersonating,
         login,
         logout,
       }}

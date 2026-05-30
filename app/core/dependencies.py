@@ -7,7 +7,7 @@ rate-limiting, or request-scoped tracing in one place later.
 """
 from typing import Annotated, Optional
 
-from fastapi import Depends, Header, Query
+from fastapi import Depends, Header, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -41,6 +41,7 @@ Pagination = Annotated[PaginationParams, Depends(PaginationParams)]
 
 
 async def get_current_user(
+    request: Request,
     session: DBSession,
     authorization: Optional[str] = Header(default=None),
 ) -> User:
@@ -55,6 +56,14 @@ async def get_current_user(
     payload = decode_access_token(token)
     if payload is None:
         raise UnauthorizedError("Invalid or expired token")
+
+    # Impersonation is read-only: a superadmin viewing as another user may read
+    # their data but never write/act as them. The `imp_by` claim marks such a
+    # token; block any mutating method. (Safe reads are GET/HEAD/OPTIONS.)
+    if payload.get("imp_by") and request.method not in ("GET", "HEAD", "OPTIONS"):
+        raise ForbiddenError(
+            "Read-only: you're viewing as another user. Switch back to your own account to make changes."
+        )
 
     # We still load the user from the database so auth reflects deactivation or
     # role changes that happened after the JWT was issued.

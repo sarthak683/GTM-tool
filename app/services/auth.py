@@ -44,6 +44,39 @@ def decode_access_token(token: str) -> Optional[dict]:
         return None
 
 
+# ── Superadmin + impersonation ────────────────────────────────────────────────
+
+# Distinct from the `admin` role (which several people hold). Only these two can
+# impersonate a specific teammate to see the CRM from their exact perspective.
+# Kept in sync with SUPERADMIN_EMAILS in frontend/src/lib/AuthContext.tsx.
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li"}
+
+
+def is_superadmin(user) -> bool:
+    return bool(user and (getattr(user, "email", "") or "").strip().lower() in SUPERADMIN_EMAILS)
+
+
+def create_impersonation_token(
+    target_user_id: UUID, role: str, impersonator_id: UUID, expires_minutes: int = 0
+) -> str:
+    """JWT that acts AS `target_user_id` while recording who is behind it.
+
+    The `imp_by` claim is the marker the read-only guard (get_current_user) keys
+    off to block writes — so a superadmin can *see* a teammate's data but cannot
+    act as them. Identity resolution is otherwise identical to a normal token, so
+    every endpoint scopes to the target user with no other changes.
+    """
+    ttl = expires_minutes or settings.JWT_EXPIRE_MINUTES
+    payload = {
+        "sub": str(target_user_id),
+        "role": role,
+        "imp_by": str(impersonator_id),
+        "exp": datetime.utcnow() + timedelta(minutes=ttl),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALGORITHM)
+
+
 # ── Google OAuth2 ────────────────────────────────────────────────────────────
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"

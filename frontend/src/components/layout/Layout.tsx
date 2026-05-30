@@ -8,6 +8,8 @@ import { NotificationBell } from "./NotificationBell";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { ZippyProvider } from "../zippy/ZippyContext";
 import { useAuth } from "../../lib/AuthContext";
+import { authApi } from "../../lib/api";
+import type { User as UserRecord } from "../../types";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/pipeline": { title: "Pipeline", subtitle: "Track movement across every revenue stage" },
@@ -27,9 +29,14 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
 function Layout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, realUser, logout, isAdmin, isSuperAdmin, viewAsRole, setViewAsRole } = useAuth();
-  const impersonating = isSuperAdmin && !!viewAsRole && viewAsRole !== realUser?.role;
+  const { user, realUser, logout, isAdmin, isSuperAdmin, viewAsRole, setViewAsRole,
+          isImpersonating, impersonatedUser, impersonate, stopImpersonating } = useAuth();
+  const roleViewing = isSuperAdmin && !isImpersonating && !!viewAsRole && viewAsRole !== realUser?.role;
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // People list for the "View as person" picker (superadmin only).
+  const [people, setPeople] = useState<UserRecord[]>([]);
+  const [personQuery, setPersonQuery] = useState("");
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
@@ -48,6 +55,23 @@ function Layout() {
   useEffect(() => {
     window.localStorage.setItem("crm.sidebar.collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  // Load the team list for the "View as person" picker — only when a superadmin
+  // opens the menu and isn't already impersonating, and only once.
+  useEffect(() => {
+    if (showUserMenu && isSuperAdmin && !isImpersonating && people.length === 0) {
+      authApi.listAllUsers().then(setPeople).catch(() => {});
+    }
+  }, [showUserMenu, isSuperAdmin, isImpersonating, people.length]);
+
+  const handleImpersonate = async (userId: string) => {
+    setImpersonatingId(userId);
+    try {
+      await impersonate(userId); // reloads the app on success
+    } catch {
+      setImpersonatingId(null);
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -241,11 +265,27 @@ function Layout() {
                       {isAdmin ? <Shield size={11} color="#4561d5" /> : <User size={11} color="#7b8ca2" />}
                       <span style={{ color: isAdmin ? "#4561d5" : "#7b8ca2", fontSize: "11px", textTransform: "capitalize" }}>
                         {user?.role?.replace("_", " ")}
-                        {impersonating ? " · viewing" : ""}
+                        {roleViewing ? " · viewing" : ""}
                       </span>
                     </div>
+                    {isImpersonating && (
+                      <div style={{ marginTop: 6, fontSize: "10.5px", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "5px 8px", lineHeight: 1.45 }}>
+                        Viewing as <strong>{impersonatedUser?.name}</strong> · read-only.<br />Signed in as {realUser?.name}.
+                      </div>
+                    )}
                   </div>
-                  {isSuperAdmin && (
+                  {isSuperAdmin && isImpersonating && (
+                    <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
+                      <button
+                        type="button"
+                        onClick={stopImpersonating}
+                        style={{ width: "100%", padding: "9px 0", borderRadius: 8, border: "1px solid #9ace3d", background: "#f3fbe3", color: "#4d7c0f", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}
+                      >
+                        ← Exit — back to {realUser?.name?.split(" ")[0] ?? "yourself"}
+                      </button>
+                    </div>
+                  )}
+                  {isSuperAdmin && !isImpersonating && (
                     <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "10px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b8ca2", marginBottom: "8px" }}>
                         <Eye size={11} /> View as role
@@ -273,6 +313,50 @@ function Layout() {
                       </div>
                       <div style={{ fontSize: "10.5px", color: "#94a3b8", marginTop: "6px", lineHeight: 1.5 }}>
                         Preview the app from this role's perspective. Your real access and data don't change.
+                      </div>
+
+                      {/* View as a specific person — real, read-only impersonation. */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "10px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b8ca2", margin: "12px 0 8px" }}>
+                        <User size={11} /> View as person
+                      </div>
+                      <input
+                        value={personQuery}
+                        onChange={(e) => setPersonQuery(e.target.value)}
+                        placeholder="Search teammate…"
+                        style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #dde6f0", fontSize: 12, outline: "none", marginBottom: 6 }}
+                      />
+                      <div style={{ maxHeight: 184, overflowY: "auto", display: "grid", gap: 2 }}>
+                        {people.length === 0 ? (
+                          <div style={{ fontSize: 11, color: "#94a3b8", padding: "4px 2px" }}>Loading team…</div>
+                        ) : (
+                          people
+                            .filter((p) => p.id !== realUser?.id)
+                            .filter((p) => {
+                              const q = personQuery.trim().toLowerCase();
+                              return !q || (p.name || "").toLowerCase().includes(q) || (p.email || "").toLowerCase().includes(q);
+                            })
+                            .slice(0, 30)
+                            .map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                disabled={!!impersonatingId}
+                                onClick={() => handleImpersonate(p.id)}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 9px", borderRadius: 8, border: "1px solid transparent", background: "none", cursor: impersonatingId ? "wait" : "pointer", textAlign: "left", width: "100%" }}
+                                onMouseEnter={(e) => { if (!impersonatingId) e.currentTarget.style.background = "#f3fbe3"; }}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                              >
+                                <span style={{ minWidth: 0 }}>
+                                  <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "#1c2d40", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name || p.email}</span>
+                                  <span style={{ display: "block", fontSize: 10.5, color: "#94a3b8", textTransform: "uppercase" }}>{(p.role || "").replace("_", " ")}</span>
+                                </span>
+                                <span style={{ fontSize: 10.5, color: "#4d7c0f", fontWeight: 800, flexShrink: 0 }}>{impersonatingId === p.id ? "…" : "View"}</span>
+                              </button>
+                            ))
+                        )}
+                      </div>
+                      <div style={{ fontSize: "10.5px", color: "#94a3b8", marginTop: "6px", lineHeight: 1.5 }}>
+                        See the CRM exactly as they do — their pipeline, meetings, tasks. Read-only; you can't act as them.
                       </div>
                     </div>
                   )}
@@ -304,11 +388,21 @@ function Layout() {
             </div>
           </div>
         </header>
-        {impersonating && (
+        {roleViewing && (
           <div style={{ position: "fixed", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, display: "inline-flex", alignItems: "center", gap: 10, padding: "7px 8px 7px 14px", borderRadius: 999, background: "#0b0c0e", color: "#fff", boxShadow: "0 12px 30px rgba(11,12,14,0.42)", border: "1px solid #23262b", fontSize: 12.5, fontWeight: 700 }}>
             <Eye size={13} style={{ color: "#9ace3d" }} />
             Viewing as <strong style={{ textTransform: "uppercase", color: "#9ace3d", letterSpacing: "0.04em" }}>{viewAsRole}</strong>
             <button type="button" onClick={() => setViewAsRole(null)} style={{ border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "4px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
+              Exit
+            </button>
+          </div>
+        )}
+        {isImpersonating && (
+          <div style={{ position: "fixed", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, display: "inline-flex", alignItems: "center", gap: 10, padding: "7px 8px 7px 14px", borderRadius: 999, background: "#0b0c0e", color: "#fff", boxShadow: "0 12px 30px rgba(11,12,14,0.42)", border: "1px solid #23262b", fontSize: 12.5, fontWeight: 700 }}>
+            <Eye size={13} style={{ color: "#9ace3d" }} />
+            Viewing as <strong style={{ color: "#9ace3d", letterSpacing: "0.02em" }}>{impersonatedUser?.name}</strong>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#b8c0cc", textTransform: "uppercase", letterSpacing: "0.05em" }}>· read-only</span>
+            <button type="button" onClick={stopImpersonating} style={{ border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "4px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
               Exit
             </button>
           </div>

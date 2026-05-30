@@ -660,6 +660,16 @@ export const resourcesApi = {
 
 export const authApi = {
   me: () => request<User>("/api/v1/auth/me"),
+  // Resolve /me against an explicit token (used to rehydrate the real
+  // superadmin identity while an impersonation token is the active one).
+  meWithToken: (token: string) =>
+    request<User>("/api/v1/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
+  // Superadmin-only: returns a read-only token + the target user record.
+  impersonate: (userId: string) =>
+    request<{ token: string; user: User }>("/api/v1/auth/impersonate", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
   googleLoginUrl: () => `${BASE}/api/v1/auth/google/login`,
   listAllUsers: () => request<User[]>("/api/v1/auth/users/all"),
   listUsers: () => request<User[]>("/api/v1/auth/users"),

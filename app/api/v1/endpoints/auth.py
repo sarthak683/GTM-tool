@@ -4,6 +4,7 @@ Authentication endpoints — Google OAuth2 login, token exchange, user managemen
 The first user to sign in is automatically granted the 'admin' role.
 Subsequent users default to 'sdr'.
 """
+import logging
 from typing import List, Optional
 from urllib.parse import urlencode
 from uuid import UUID
@@ -20,7 +21,9 @@ from app.models.user import User, UserRead, UserUpdate
 from app.services.auth import (
     build_google_login_url,
     create_access_token,
+    create_impersonation_token,
     exchange_google_code,
+    is_superadmin,
 )
 from app.services.permissions import require_workspace_permission
 
@@ -146,6 +149,43 @@ async def google_callback(
 async def get_me(user: CurrentUser):
     """Return the currently authenticated user's profile."""
     return user
+
+
+class ImpersonateRequest(SQLModel):
+    user_id: UUID
+
+
+class ImpersonateResponse(SQLModel):
+    token: str
+    user: UserRead
+
+
+@router.post("/impersonate", response_model=ImpersonateResponse)
+async def impersonate_user(payload: ImpersonateRequest, session: DBSession, current_user: CurrentUser):
+    """Superadmin-only: mint a READ-ONLY token that views the CRM as another
+    teammate, so a superadmin can see the app from that person's exact
+    perspective (their pipeline, their scoped meetings, their tasks). Writes are
+    blocked while the token is active (enforced in get_current_user). The token
+    records `imp_by` for audit.
+
+    Note: this requires the caller's own (non-impersonation) token — the
+    read-only guard blocks calling it while already impersonating, which also
+    prevents impersonation chaining.
+    """
+    if not is_superadmin(current_user):
+        raise ForbiddenError("Only superadmins can view as another user.")
+    target = (
+        await session.execute(select(User).where(User.id == payload.user_id))
+    ).scalar_one_or_none()
+    if not target or not target.is_active:
+        raise NotFoundError("User not found or inactive.")
+    if target.id == current_user.id:
+        raise ForbiddenError("You are already signed in as this user.")
+    token = create_impersonation_token(target.id, target.role, current_user.id)
+    logging.getLogger(__name__).info(
+        "impersonation: %s now viewing as %s (%s)", current_user.email, target.email, target.id
+    )
+    return ImpersonateResponse(token=token, user=target)
 
 
 # ── User management (admin) ─────────────────────────────────────────────────

@@ -267,7 +267,21 @@
       "mcp__filesystem-repo__directory_tree",
       "Bash(sed -n '2915,2945p' src/components/deal/DealDetailDrawer.tsx)",
       "Bash(sed -n '17,45p' src/lib/prospectWorkflow.ts)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/health)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/health)",
+      "Bash(kubectl -n gtm get pods)",
+      "Bash(curl -sS -o /dev/null -w \"frontend: %{http_code}\\\\n\" https://gtm.staging2.beacon.li/)",
+      "Bash(curl -sS -o /dev/null -w \"api login: %{http_code}\\\\n\" https://gtm.staging2.beacon.li/api/v1/auth/google/login)",
+      "mcp__playwright__browser_file_upload",
+      "mcp__playwright__browser_network_requests",
+      "Bash(git --no-pager log --oneline -6)",
+      "Bash(git --no-pager diff --stat HEAD -- frontend/src/pages/PreMeetingAssistance.tsx)",
+      "Bash(git --no-pager diff 14f30f4..HEAD -- frontend/src/pages/PreMeetingAssistance.tsx)",
+      "Bash(node -e \"console.log\\(require\\('./package.json'\\).scripts.dev\\)\")",
+      "Bash(nohup npm run dev)",
+      "Bash(break)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(pkill -f \"node.*dev\")",
+      "Bash(rm -rf .playwright-mcp /tmp/staging_token.txt /tmp/vite-dev.log)"
     ]
   },
   "enabledMcpjsonServers": [
