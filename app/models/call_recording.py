@@ -20,7 +20,11 @@ class CallRecording(SQLModel, table=True):
     __tablename__ = "call_recordings"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
-    contact_id: UUID = Field(foreign_key="contacts.id", index=True)
+    # Either contact_id or deal_id is set. AEs record from the deal detail page
+    # where most deals have no linked contact, so a recording can attach to the
+    # deal directly (contact optional).
+    contact_id: Optional[UUID] = Field(default=None, foreign_key="contacts.id", index=True)
+    deal_id: Optional[UUID] = Field(default=None, foreign_key="deals.id", index=True)
     created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
     status: str = Field(default="uploaded", index=True)
     consent_acknowledged_at: Optional[datetime] = None
@@ -42,7 +46,8 @@ class CallRecording(SQLModel, table=True):
 
 class CallRecordingRead(SQLModel):
     id: UUID
-    contact_id: UUID
+    contact_id: Optional[UUID] = None
+    deal_id: Optional[UUID] = None
     created_by_id: Optional[UUID] = None
     status: str
     consent_acknowledged_at: Optional[datetime] = None

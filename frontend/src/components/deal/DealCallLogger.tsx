@@ -99,11 +99,11 @@ export default function DealCallLogger({
   };
 
   const handleSave = async () => {
-    if (!contactId || !disposition) return;
+    if (!disposition) return;
     setSaving(true);
     try {
-      const dc = dealContacts.find((x) => x.contact_id === contactId);
-      const who = dc ? contactLabel(dc) : "contact";
+      const dc = contactId ? dealContacts.find((x) => x.contact_id === contactId) : undefined;
+      const who = dc ? contactLabel(dc) : (deal.name || "this deal");
       const dispoLabel = formatCallDisposition(disposition);
       const followIso = fromLocalDatetimeInput(followupAt);
       const content = notes.trim()
@@ -115,7 +115,7 @@ export default function DealCallLogger({
         source: "manual",
         medium: "call",
         deal_id: deal.id,
-        contact_id: contactId,
+        ...(contactId ? { contact_id: contactId } : {}),
         call_outcome: callStatus || undefined,
         content,
         event_metadata: {
@@ -171,117 +171,108 @@ export default function DealCallLogger({
 
       {open ? (
         <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
-          {dealContacts.length === 0 ? (
-            <div style={{
-              padding: "10px 12px", borderRadius: 9, fontSize: 12.5, lineHeight: 1.5,
-              background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412",
-            }}>
-              Link a contact to this deal first — a recording is attached to the
-              person you're calling.
-            </div>
-          ) : (
-            <>
-              {dealContacts.length > 1 ? (
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                    Who are you calling?
-                  </label>
-                  <select
-                    value={contactId}
-                    onChange={(e) => setContactId(e.target.value)}
-                    style={{ ...inputStyle, marginTop: 5 }}
-                  >
-                    {dealContacts.map((dc) => (
-                      <option key={dc.contact_id} value={dc.contact_id}>
-                        {contactLabel(dc)}{dc.title ? ` · ${dc.title}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
-              {/* Recording + AI disposition — keyed by contact so switching the
-                  callee gives a fresh recorder (same fix as the prospect panel). */}
-              {contactId ? (
-                <CallRecordingPanel
-                  key={contactId}
-                  contactId={contactId}
-                  onRecordingChange={setRecordingId}
-                  onSuggestion={handleSuggestion}
-                />
-              ) : null}
-
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Disposition
-                </label>
-                <select
-                  value={disposition}
-                  onChange={(e) => applyDisposition(e.target.value)}
-                  style={{ ...inputStyle, marginTop: 5 }}
-                >
-                  <option value="">Select what happened…</option>
-                  {CALL_DISPOSITION_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Notes
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                  placeholder="What was said, objections, commitments…"
-                  style={{ ...inputStyle, marginTop: 5, resize: "vertical" }}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Next step
-                </label>
-                <input
-                  type="text"
-                  value={nextStep}
-                  onChange={(e) => setNextStep(e.target.value)}
-                  placeholder="What happens next on this deal"
-                  style={{ ...inputStyle, marginTop: 5 }}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Follow-up date
-                </label>
-                <input
-                  type="datetime-local"
-                  value={followupAt}
-                  onChange={(e) => setFollowupAt(e.target.value)}
-                  style={{ ...inputStyle, marginTop: 5 }}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={saving || !contactId || !disposition}
-                style={{
-                  width: "100%", padding: "11px 14px", borderRadius: 10, border: "none",
-                  background: (!contactId || !disposition) ? "#c7d4e2" : "#1f6feb",
-                  color: "#fff", fontSize: 13.5, fontWeight: 800,
-                  cursor: (saving || !contactId || !disposition) ? "not-allowed" : "pointer",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
-                }}
+          {/* Who did you call? Optional — most deals have no linked contact,
+              so the recording attaches to the deal directly when none is set. */}
+          {dealContacts.length > 0 && (
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Who did you call? <span style={{ fontWeight: 600, color: "#94a3b8", textTransform: "none" }}>(optional)</span>
+              </label>
+              <select
+                value={contactId}
+                onChange={(e) => setContactId(e.target.value)}
+                style={{ ...inputStyle, marginTop: 5 }}
               >
-                {saving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={14} />}
-                {saving ? "Saving…" : "Save call → update activity, next step & follow-up"}
-              </button>
-            </>
+                <option value="">— No specific contact —</option>
+                {dealContacts.map((dc) => (
+                  <option key={dc.contact_id} value={dc.contact_id}>
+                    {contactLabel(dc)}{dc.title ? ` · ${dc.title}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
+
+          {/* Recording + AI disposition. Attaches to the chosen contact, or to
+              the deal directly when none. Keyed by contact/deal so switching the
+              callee gives a fresh recorder. */}
+          <CallRecordingPanel
+            key={contactId || deal.id}
+            contactId={contactId || undefined}
+            dealId={deal.id}
+            onRecordingChange={setRecordingId}
+            onSuggestion={handleSuggestion}
+          />
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Disposition
+            </label>
+            <select
+              value={disposition}
+              onChange={(e) => applyDisposition(e.target.value)}
+              style={{ ...inputStyle, marginTop: 5 }}
+            >
+              <option value="">Select what happened…</option>
+              {CALL_DISPOSITION_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Notes
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="What was said, objections, commitments…"
+              style={{ ...inputStyle, marginTop: 5, resize: "vertical" }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Next step
+            </label>
+            <input
+              type="text"
+              value={nextStep}
+              onChange={(e) => setNextStep(e.target.value)}
+              placeholder="What happens next on this deal"
+              style={{ ...inputStyle, marginTop: 5 }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Follow-up date
+            </label>
+            <input
+              type="datetime-local"
+              value={followupAt}
+              onChange={(e) => setFollowupAt(e.target.value)}
+              style={{ ...inputStyle, marginTop: 5 }}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving || !disposition}
+            style={{
+              width: "100%", padding: "11px 14px", borderRadius: 10, border: "none",
+              background: !disposition ? "#c7d4e2" : "#1f6feb",
+              color: "#fff", fontSize: 13.5, fontWeight: 800,
+              cursor: (saving || !disposition) ? "not-allowed" : "pointer",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}
+          >
+            {saving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={14} />}
+            {saving ? "Saving…" : "Save call → update activity, next step & follow-up"}
+          </button>
         </div>
       ) : null}
     </div>

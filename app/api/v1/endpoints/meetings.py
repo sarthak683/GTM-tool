@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import Text as sa_Text, func, or_, select
+from sqlalchemy import Text as sa_Text, and_, func, or_, select
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.user import User
 from app.repositories.meeting import MeetingRepository
+from app.services.deal_stages import get_configured_deal_stages
 from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.meeting_automation import _collect_recipient_ids
 from app.services.permissions import require_workspace_permission
@@ -50,6 +51,7 @@ async def list_meetings(
     synced_after: Optional[datetime] = Query(default=None, description="Only return meetings whose synced_at is on/after this ISO timestamp. Used by the 'Recently synced' shortcut."),
     include_internal: bool = Query(default=False, description="If false (default), hide meetings where every attendee is from an internal domain. Set true to include them."),
     internal_scope: str = Query(default="exclude", description="Internal meeting visibility: exclude, include, or only."),
+    exclude_closed_pipeline: bool = Query(default=False, description="If true, hide meetings whose deal (or company's only deals) are in a closed stage — used by the upcoming/prep view so customer/closed accounts (e.g. daily syncs) don't clutter it."),
 ):
     stmt = select(Meeting)
     count_stmt = select(func.count()).select_from(Meeting)
@@ -139,6 +141,39 @@ async def list_meetings(
     elif link_state_set == {"linked"}:
         stmt = stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
         count_stmt = count_stmt.where(Meeting.company_id.is_not(None), Meeting.deal_id.is_not(None))
+
+    # Open-pipeline filter (prep view): hide meetings on closed/customer accounts
+    # so e.g. a closed_won customer's daily syncs don't clutter the prep list.
+    # Mirrors _is_open_pipeline_meeting: keep deal-linked-open, company-only with
+    # no deals or an open deal, and CRM-unlinked; drop closed deals + companies
+    # whose deals are all closed.
+    if exclude_closed_pipeline:
+        ensure_deal_join()
+        stage_settings = await get_configured_deal_stages(session)
+        closed_ids = [str(s["id"]).strip().lower() for s in stage_settings if s.get("group") == "closed"]
+        if closed_ids:
+            companies_with_any_deal = select(Deal.company_id).where(Deal.company_id.is_not(None))
+            companies_with_open_deal = select(Deal.company_id).where(
+                Deal.company_id.is_not(None), Deal.stage.notin_(closed_ids)
+            )
+            open_pipeline_clause = or_(
+                # Deal-linked and the deal is still open.
+                and_(Meeting.deal_id.is_not(None), Deal.stage.notin_(closed_ids)),
+                # Company-only: keep if the account has no deals or at least one open deal.
+                and_(
+                    Meeting.deal_id.is_(None),
+                    Meeting.company_id.is_not(None),
+                    or_(
+                        Meeting.company_id.in_(companies_with_open_deal),
+                        Meeting.company_id.notin_(companies_with_any_deal),
+                    ),
+                ),
+                # No CRM link at all — leave as-is.
+                and_(Meeting.deal_id.is_(None), Meeting.company_id.is_(None)),
+            )
+            stmt = stmt.where(open_pipeline_clause)
+            count_stmt = count_stmt.where(open_pipeline_clause)
+
     if has_intel is True:
         stmt = stmt.where(Meeting.research_data.is_not(None))
         count_stmt = count_stmt.where(Meeting.research_data.is_not(None))

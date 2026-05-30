@@ -54,7 +54,11 @@ export interface CallRecordingPanelHandle {
 }
 
 export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
-  contactId: string;
+  // The recording attaches to a contact (prospect drawer) OR a deal (AE deal
+  // recorder). At least one must be provided; contactId wins for scoping when
+  // both are present.
+  contactId?: string;
+  dealId?: string;
   onSuggestion?: (s: AISuggestion) => void;
   // Fires whenever the active recording's id changes (created, cleared,
   // or replaced by a fresh recording). The parent uses this to attach
@@ -64,6 +68,7 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
   onRecordingChange?: (recordingId: string | null) => void;
 }>(function CallRecordingPanel({
   contactId,
+  dealId,
   onSuggestion,
   onRecordingChange,
 }, ref) {
@@ -120,12 +125,14 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
   // recording reaches a terminal state so the new one shows up in the
   // strip without needing a manual reload.
   const refreshPast = useCallback(() => {
-    if (!contactId) return;
-    callRecordingsApi
-      .listForContact(contactId, 10)
-      .then((rows) => setPastRecordings(rows))
-      .catch(() => setPastRecordings([]));
-  }, [contactId]);
+    const p = contactId
+      ? callRecordingsApi.listForContact(contactId, 10)
+      : dealId
+        ? callRecordingsApi.listForDeal(dealId, 10)
+        : null;
+    if (!p) return;
+    p.then((rows) => setPastRecordings(rows)).catch(() => setPastRecordings([]));
+  }, [contactId, dealId]);
 
   useEffect(() => { refreshPast(); }, [refreshPast]);
   useEffect(() => {
@@ -297,6 +304,7 @@ export const CallRecordingPanel = forwardRef<CallRecordingPanelHandle, {
       const created = await callRecordingsApi.upload({
         audio: audioBlob,
         contactId,
+        dealId,
         consentAcknowledgedAt: new Date().toISOString(),
         durationSeconds: durationSec,
       });

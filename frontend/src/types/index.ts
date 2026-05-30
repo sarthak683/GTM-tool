@@ -352,7 +352,8 @@ export type CallRecordingStatus =
 
 export interface CallRecording {
   id: string;
-  contact_id: string;
+  contact_id?: string;
+  deal_id?: string;
   created_by_id?: string;
   status: CallRecordingStatus;
   consent_acknowledged_at?: string;

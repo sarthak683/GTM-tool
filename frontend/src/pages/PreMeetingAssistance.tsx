@@ -1382,6 +1382,11 @@ export default function PreMeetingAssistance() {
         return [];
       })));
 
+      // Prep view = upcoming/overdue scheduled meetings (not the past/completed
+      // history). Only there do we hide closed/customer-account meetings so
+      // e.g. a closed_won customer's daily syncs don't clutter the prep list.
+      const isPrepView = !statusFilter.some((s) => s === "past" || s === "completed");
+
       const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
         meetingsApi.listPaginated({
           skip: (page - 1) * 25,
@@ -1395,11 +1400,12 @@ export default function PreMeetingAssistance() {
           order: statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "desc" : "asc",
           q: debouncedSearch || undefined,
           internalScope: showInternal ? "only" : "exclude",
+          excludeClosedPipeline: isPrepView,
         }),
         meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
       ]);
       const ms = pageResp.items;
 

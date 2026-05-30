@@ -281,7 +281,10 @@
       "Bash(break)",
       "Bash(pkill -f \"vite\")",
       "Bash(pkill -f \"node.*dev\")",
-      "Bash(rm -rf .playwright-mcp /tmp/staging_token.txt /tmp/vite-dev.log)"
+      "Bash(rm -rf .playwright-mcp /tmp/staging_token.txt /tmp/vite-dev.log)",
+      "Bash(security find-generic-password *)",
+      "Bash(git -c user.name=wreckster1507 -c user.email=pranavsai2910@gmail.com commit -q -m 'feat\\(meetings\\): hide closed-account meetings from prep view; contact-optional deal call recording *)",
+      "Bash(git --no-pager log --oneline -1)"
     ]
   },
   "enabledMcpjsonServers": [

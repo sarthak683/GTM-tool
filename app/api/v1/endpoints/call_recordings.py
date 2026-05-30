@@ -48,7 +48,8 @@ async def upload_call_recording(
     session: DBSession,
     user: CurrentUser,
     audio: UploadFile = File(...),
-    contact_id: UUID = Form(...),
+    contact_id: Optional[UUID] = Form(default=None),
+    deal_id: Optional[UUID] = Form(default=None),
     consent_acknowledged_at: Optional[datetime] = Form(default=None),
     duration_seconds: Optional[int] = Form(default=None),
 ):
@@ -58,6 +59,11 @@ async def upload_call_recording(
     of the Celery task (~10-30s). The task is responsible for deleting it
     in both the success and failure paths.
     """
+    # A recording must attach to a contact OR a deal. The deal detail recorder
+    # passes deal_id (contact optional); the prospect drawer passes contact_id.
+    if contact_id is None and deal_id is None:
+        raise HTTPException(400, "A recording must be linked to a contact or a deal.")
+
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(400, "Empty audio payload.")
@@ -104,6 +110,7 @@ async def upload_call_recording(
 
     recording = CallRecording(
         contact_id=contact_id,
+        deal_id=deal_id,
         created_by_id=user.id,
         status="uploaded",
         consent_acknowledged_at=consent_ts,
@@ -141,18 +148,22 @@ async def upload_call_recording(
 async def list_call_recordings(
     session: DBSession,
     _user: CurrentUser,
-    contact_id: UUID = Query(..., description="Required — recordings are always scoped to a contact."),
+    contact_id: Optional[UUID] = Query(default=None, description="Scope to a contact's recordings."),
+    deal_id: Optional[UUID] = Query(default=None, description="Scope to a deal's recordings (AE deal recorder)."),
     limit: int = Query(default=50, le=200),
 ):
-    """List a contact's recordings, newest first. Used by the call drawer
-    and lifecycle drawer to surface prior transcripts for context."""
-    result = await session.execute(
-        select(CallRecording)
-        .where(CallRecording.contact_id == contact_id)
-        .where(CallRecording.deleted_at.is_(None))
-        .order_by(CallRecording.created_at.desc())
-        .limit(limit)
-    )
+    """List recordings for a contact OR a deal, newest first. Used by the call
+    drawer (contact) and the deal detail recorder (deal) to surface prior
+    transcripts for context."""
+    if contact_id is None and deal_id is None:
+        raise HTTPException(400, "Provide contact_id or deal_id.")
+    stmt = select(CallRecording).where(CallRecording.deleted_at.is_(None))
+    if contact_id is not None:
+        stmt = stmt.where(CallRecording.contact_id == contact_id)
+    if deal_id is not None:
+        stmt = stmt.where(CallRecording.deal_id == deal_id)
+    stmt = stmt.order_by(CallRecording.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 

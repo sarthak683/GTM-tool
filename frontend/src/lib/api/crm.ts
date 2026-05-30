@@ -330,7 +330,8 @@ export const crmImportsApi = {
 export const callRecordingsApi = {
   upload: async (params: {
     audio: Blob;
-    contactId: string;
+    contactId?: string;          // contact OR deal must be provided
+    dealId?: string;
     consentAcknowledgedAt: string; // ISO timestamp
     durationSeconds?: number;
   }): Promise<CallRecording> => {
@@ -341,7 +342,8 @@ export const callRecordingsApi = {
       type: params.audio.type || "audio/webm",
     });
     form.append("audio", file);
-    form.append("contact_id", params.contactId);
+    if (params.contactId) form.append("contact_id", params.contactId);
+    if (params.dealId) form.append("deal_id", params.dealId);
     form.append("consent_acknowledged_at", params.consentAcknowledgedAt);
     if (params.durationSeconds != null) {
       form.append("duration_seconds", String(params.durationSeconds));
@@ -362,6 +364,8 @@ export const callRecordingsApi = {
   get: (id: string) => request<CallRecording>(`/api/v1/calls/recordings/${id}`),
   listForContact: (contactId: string, limit = 50) =>
     request<CallRecording[]>(`/api/v1/calls/recordings/?contact_id=${contactId}&limit=${limit}`),
+  listForDeal: (dealId: string, limit = 50) =>
+    request<CallRecording[]>(`/api/v1/calls/recordings/?deal_id=${dealId}&limit=${limit}`),
   patch: (id: string, payload: { transcript?: string; ai_disposition?: string; ai_summary?: string }) =>
     request<CallRecording>(`/api/v1/calls/recordings/${id}`, {
       method: "PATCH",
@@ -486,6 +490,7 @@ export const meetingsApi = {
     syncedAfter?: string;
     includeInternal?: boolean;
     internalScope?: "exclude" | "include" | "only";
+    excludeClosedPipeline?: boolean;
   }) => {
     const search = new URLSearchParams({
       skip: String(params.skip ?? 0),
@@ -505,6 +510,7 @@ export const meetingsApi = {
     if (params.syncedAfter) search.set("synced_after", params.syncedAfter);
     if (params.includeInternal) search.set("include_internal", "true");
     if (params.internalScope) search.set("internal_scope", params.internalScope);
+    if (params.excludeClosedPipeline) search.set("exclude_closed_pipeline", "true");
     return requestPaginated<Meeting>(`/api/v1/meetings/?${search.toString()}`);
   },
   get: (id: string) => request<Meeting>(`/api/v1/meetings/${id}`),

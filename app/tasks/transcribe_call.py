@@ -121,7 +121,9 @@ async def _run(recording_id: UUID) -> dict:
             recording.updated_at = datetime.utcnow()
             await session.commit()
 
-            # Fetch contact context for a better classification prompt
+            # Fetch contact context for a better classification prompt. Deal
+            # recordings may have no contact — the classifier just runs with
+            # less context in that case.
             contact_name = contact_title = company_name = None
             try:
                 from app.models.contact import Contact
@@ -129,7 +131,7 @@ async def _run(recording_id: UUID) -> dict:
 
                 contact = (await session.execute(
                     select(Contact).where(Contact.id == recording.contact_id)
-                )).scalar_one_or_none()
+                )).scalar_one_or_none() if recording.contact_id else None
                 if contact:
                     contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or None
                     contact_title = contact.title
