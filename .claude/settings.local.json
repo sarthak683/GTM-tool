@@ -284,7 +284,9 @@
       "Bash(rm -rf .playwright-mcp /tmp/staging_token.txt /tmp/vite-dev.log)",
       "Bash(security find-generic-password *)",
       "Bash(git -c user.name=wreckster1507 -c user.email=pranavsai2910@gmail.com commit -q -m 'feat\\(meetings\\): hide closed-account meetings from prep view; contact-optional deal call recording *)",
-      "Bash(git --no-pager log --oneline -1)"
+      "Bash(git --no-pager log --oneline -1)",
+      "Bash(awk 'NR>=249 && NR<=1320 && \\(/^  return \\\\\\(/ || /^function /||/^const [A-Z][A-Za-z]+ = /||/^}/\\){print NR\": \"$0}' src/pages/PreMeetingAssistance.tsx)",
+      "Bash(git -c user.name=wreckster1507 -c user.email=pranavsai2910@gmail.com commit -q -m 'feat\\(meetings\\): minimal list cards — full prep moves to the detail page *)"
     ]
   },
   "enabledMcpjsonServers": [

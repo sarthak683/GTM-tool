@@ -246,20 +246,25 @@ function detectTitleCompanyMismatch(
 // "POC Kickoff Disucssion – Beacon<>Fabtech" yielded the meeting-name half
 // instead of "Fabtech"). The shared util mirrors the Python tldv title parser.
 
+// Minimal list card. The full prep (executive briefing, stakeholders, game
+// plan, competitive, sources, actions) lives on the meeting detail page at
+// /meetings/:id — this card is just a clickable summary so the list stays
+// scannable. Same name + props as before so the parent render is unchanged;
+// the now-unused props are accepted for API compatibility.
 function MeetingIntelCard({
   meeting,
   company,
-  deal,
-  lastActivity,
-  dealActivities,
   assigneeName,
-  allCompanies,
-  onRunIntel,
-  onUpdateStatus,
-  onUnlink,
-  runningIntel,
-  updatingStatus,
-  unlinking,
+  deal: _deal,
+  lastActivity: _lastActivity,
+  dealActivities: _dealActivities,
+  allCompanies: _allCompanies,
+  onRunIntel: _onRunIntel,
+  onUpdateStatus: _onUpdateStatus,
+  onUnlink: _onUnlink,
+  runningIntel: _runningIntel,
+  updatingStatus: _updatingStatus,
+  unlinking: _unlinking,
 }: {
   meeting: Meeting;
   company?: Company;
@@ -275,861 +280,94 @@ function MeetingIntelCard({
   updatingStatus: string | null;
   unlinking: string | null;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const hours = hoursUntil(meeting.scheduled_at);
   const hasResearch = !!meeting.research_data;
   const hasIntelSent = !!(meeting as any).intel_email_sent_at;
-  const isRunning = runningIntel === meeting.id;
-  const isUnlinking = unlinking === meeting.id;
-  const hasCompanyLink = !!meeting.company_id;
   const needsReview = !meeting.company_id || !meeting.deal_id;
-  const suggestedCompanyName = useMemo(() => suggestCompanyNameFromMeetingTitle(meeting.title), [meeting.title]);
-  const createAccountHref = `/account-sourcing?new=company&name=${encodeURIComponent(suggestedCompanyName)}&returnTo=${encodeURIComponent(`/pre-meeting-assistance#${meeting.id}`)}`;
-  const titleMismatchCompany = detectTitleCompanyMismatch(
-    meeting.title,
-    meeting.company_id || undefined,
-    allCompanies
-  );
-
-  // Classify each meeting across the full timeline:
-  //   - "in_progress": started but not yet ended (within 90 min of scheduled_at)
-  //   - "overdue":     scheduled_at has passed but status is still "scheduled"
-  //                    (calendar / tl;dv didn't flip it to completed, or the
-  //                    rep never logged an outcome)
-  //   - "imminent":    within 2 hours
-  //   - "soon":        within 12 hours
-  //   - "upcoming":    further out
-  //   - "completed":   already marked completed
-  //   - "cancelled":   explicitly cancelled
-  const hoursPast = hours !== null ? -hours : null; // positive = past
   const isCompleted = meeting.status === "completed";
   const isCancelled = meeting.status === "cancelled";
-  const urgency: "completed" | "cancelled" | "in_progress" | "overdue" | "imminent" | "soon" | "upcoming" =
-    isCancelled ? "cancelled"
-    : isCompleted ? "completed"
-    : hours === null ? "upcoming"
-    : hours < 0 && hoursPast !== null && hoursPast * 60 <= 90 ? "in_progress"  // within 90 min after start
-    : hours < 0 ? "overdue"
-    : hours <= 2 ? "imminent"
-    : hours <= 12 ? "soon"
-    : "upcoming";
-
-  const pastLabel = hoursPast !== null
-    ? hoursPast >= 48 ? `${Math.round(hoursPast / 24)}d overdue`
-      : hoursPast >= 1 ? `${hoursPast}h overdue`
-      : "Just ended"
-    : "Overdue";
-
-  const urgencyStyle = {
-    imminent: { bg: "#fff2ec", color: colors.orange, border: "#ffd3be", label: "< 2 hrs" },
-    soon: { bg: colors.amberSoft, color: colors.amber, border: "#ffe3b3", label: hours !== null ? `${hours}h away` : "" },
-    upcoming: { bg: "#f4f7ff", color: "#4b60cf", border: "#d7dffb", label: hours !== null ? `${hours}h away` : "Upcoming" },
-    in_progress: { bg: "#fff5d9", color: "#9a6b00", border: "#f6dd9b", label: "In progress" },
-    overdue: { bg: "#fdecec", color: "#b42336", border: "#f5c2c2", label: pastLabel },
-    completed: { bg: "#ecf8f0", color: "#15803d", border: "#c7e8d3", label: "Completed" },
-    cancelled: { bg: "#f1f5f9", color: "#64748b", border: "#e2e8f0", label: "Cancelled" },
-  }[urgency];
-
-  // ── Parse research_data ──────────────────────────────────────────────────
-  const rd = (meeting.research_data ?? {}) as Record<string, any>;
-  const execBriefing: string = rd.executive_briefing ?? "";
-  const whyNow: Array<{ title: string; detail: string }> = rd.why_now_signals ?? [];
-  const recommendations: string[] = rd.meeting_recommendations ?? [];
-  const attendeeIntel = rd.attendee_intelligence ?? {};
-  const crmSignals = rd.crm_signals ?? {};
-  const meetingAttendees = normalizeMeetingAttendees(meeting.attendees);
-  const stakeholders = normalizeStakeholderCards(attendeeIntel, meetingAttendees);
-  const coverage: number | null = attendeeIntel.committee_coverage?.coverage_score ?? null;
-  const competitive: Array<{ name?: string; competitor?: string; summary?: string }> = rd.competitive_landscape ?? [];
-  const intentSignals = rd.intent_signals ?? {};
-  const hiringRoles: string[] = intentSignals.hiring ?? [];
-  const websiteAnalysis = rd.website_analysis ?? {};
-  const techStack: string[] = websiteAnalysis.tech_stack ?? rd.company_snapshot?.tech_stack ?? [];
-  const pricingModel: string = websiteAnalysis.pricing_model ?? "";
-  const hunterCo = rd.hunter_company ?? {};
-  const companySnapshot = rd.company_snapshot ?? {};
-  const companyProfile = rd.company_profile ?? {};
-  const companyBackground = rd.company_background ?? {};
-  const newsItems: Array<{ title?: string; url?: string; published?: string }> = rd.recent_news ?? rd.news ?? [];
-  const battlecards: Array<{ competitor?: string; win_reasons?: string[]; objection_handling?: string }> = rd.battlecards ?? [];
-  const priorMeetings: Array<Record<string, any>> = Array.isArray(crmSignals.prior_meetings) ? crmSignals.prior_meetings : [];
-
-  const attendeeContactIds = new Set(stakeholders.map((stakeholder) => stakeholder.contactId).filter(Boolean));
-  const sortedDealActivities = [...dealActivities].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  const attendeeActivities = sortedDealActivities.filter((activity) => activity.contact_id && attendeeContactIds.has(activity.contact_id));
-  const relevantActivities = attendeeActivities.length > 0 ? attendeeActivities : sortedDealActivities;
-  const activityCounts = relevantActivities.reduce(
-    (acc, activity) => {
-      const channel = activityChannel(activity);
-      if (channel === "email") acc.emails += 1;
-      else if (channel === "call") acc.calls += 1;
-      else if (channel === "linkedin") acc.linkedin += 1;
-      else if (channel === "meeting") acc.meetings += 1;
-      return acc;
-    },
-    { emails: 0, calls: 0, linkedin: 0, meetings: priorMeetings.length || 0 },
-  );
-  activityCounts.meetings = Math.max(activityCounts.meetings, priorMeetings.length);
-
-  const dominantChannel = ([
-    { key: "emails", label: "email", value: activityCounts.emails },
-    { key: "calls", label: "call", value: activityCounts.calls },
-    { key: "linkedin", label: "LinkedIn", value: activityCounts.linkedin },
-    { key: "meetings", label: "meeting", value: activityCounts.meetings },
-  ].sort((a, b) => b.value - a.value)[0]);
-
-  const likelyDecisionMaker =
-    stakeholders.find((stakeholder) => stakeholder.role === "economic_buyer" && stakeholder.status === "attending")
-    || stakeholders.find((stakeholder) => stakeholder.role === "economic_buyer")
-    || stakeholders.find((stakeholder) => stakeholder.role === "champion" && stakeholder.status === "attending")
-    || stakeholders.find((stakeholder) => stakeholder.role === "champion")
-    || stakeholders[0];
-  const championContact =
-    stakeholders.find((stakeholder) => stakeholder.role === "champion" && stakeholder.status === "attending")
-    || stakeholders.find((stakeholder) => stakeholder.role === "champion");
-  const companySummary =
-    companyBackground.description
-    || companyBackground.extract
-    || whyNow[0]?.detail
-    || execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]
-    || "";
-  const companyLinks = [
-    company?.id ? { label: "Company record", href: `/companies/${company.id}`, internal: true } : null,
-    domainUrl(company?.domain || companyProfile.domain) ? { label: "Website", href: domainUrl(company?.domain || companyProfile.domain)!, internal: false } : null,
-    newsItems.find((item) => item.url)?.url ? { label: "Latest news", href: newsItems.find((item) => item.url)!.url!, internal: false } : null,
-  ].filter((item): item is { label: string; href: string; internal: boolean } => Boolean(item));
-  const activityScopeLabel = attendeeActivities.length > 0 ? "Activity with invited prospects" : "Deal-wide activity";
-
-  // Risks
-  const risks: string[] = [];
-  if (hiringRoles.length) risks.push(`Hiring ${hiringRoles.length} role${hiringRoles.length > 1 ? "s" : ""}`);
-  if (competitive.length) risks.push("Competitor activity");
-
-  // Brief teaser (first non-empty line)
-  const briefTeaser = execBriefing
-    ? execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").split("\n").filter(Boolean)[0]?.slice(0, 220)
-    : null;
-
-  // Sections that only show when expanded
-  const hasFullBriefing = execBriefing.length > (briefTeaser?.length ?? 0) + 5;
-
-  const roleColors: Record<string, { bg: string; color: string; border: string }> = {
-    economic_buyer: { bg: "#fff4e6", color: "#b45309", border: "#fde68a" },
-    champion: { bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" },
-    technical_evaluator: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
-    implementation_owner: { bg: "#faf5ff", color: "#7e22ce", border: "#e9d5ff" },
-    unknown: { bg: "#f8fafc", color: "#64748b", border: "#e2e8f0" },
-  };
-
-  // Left-border accent by urgency so cards visually prioritize themselves
-  // in a long list. Imminent = coral; in-progress/overdue = amber; soon = blue;
-  // otherwise neutral.
-  const accent =
-    urgency === "imminent" ? "var(--accent)"
-    : urgency === "in_progress" ? "#b56d00"
-    : urgency === "overdue" ? "#c0392b"
-    : urgency === "soon" ? "#4261d6"
-    : "transparent";
+  const hoursPast = hours !== null ? -hours : null;
+  const awayLabel =
+    isCancelled ? "Cancelled"
+    : isCompleted ? "Completed"
+    : hours === null ? "Upcoming"
+    : hours < 0 ? (hoursPast! >= 48 ? `${Math.round(hoursPast! / 24)}d overdue` : hoursPast! >= 1 ? `${hoursPast}h overdue` : "Just ended")
+    : hours <= 2 ? "< 2 hrs"
+    : `${hours}h away`;
+  const awayTone =
+    isCancelled ? { bg: "#f1f5f9", color: "#64748b", border: "#e2e8f0" }
+    : isCompleted ? { bg: "#ecf8f0", color: "#15803d", border: "#c7e8d3" }
+    : hours !== null && hours < 0 ? { bg: "#fdecec", color: "#b42336", border: "#f5c2c2" }
+    : hours !== null && hours <= 2 ? { bg: "#fff2ec", color: colors.orange, border: "#ffd3be" }
+    : { bg: "#f4f7ff", color: "#4b60cf", border: "#d7dffb" };
+  const accent = needsReview
+    ? colors.orange
+    : hours !== null && hours < 0 && !isCompleted && !isCancelled
+      ? "#b42336"
+      : "transparent";
 
   return (
-    <div id={meeting.id}
+    <Link
+      id={meeting.id}
+      to={`/meetings/${meeting.id}`}
       style={{
+        display: "block",
+        textDecoration: "none",
         background: "#fff",
-        border: `1px solid ${urgency === "imminent" ? "#ffd3be" : colors.border}`,
+        border: `1px solid ${colors.border}`,
         borderLeft: accent === "transparent" ? `1px solid ${colors.border}` : `4px solid ${accent}`,
-        borderRadius: 16,
-        overflow: "hidden",
+        borderRadius: 14,
+        padding: "14px 18px",
+        transition: "box-shadow 140ms ease",
       }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 18px -10px rgba(15,39,68,0.28)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
     >
-      {/* ── Top section (always visible) ─────────────────────────── */}
-      <div style={{ padding: "18px 20px", display: "grid", gap: 12 }}>
-
-        {/* Header row */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <Link
-              to={`/meetings/${meeting.id}`}
-              style={{ fontSize: 15, fontWeight: 800, color: colors.text, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              {meeting.title}
-              <ExternalLink size={13} style={{ color: colors.faint, flexShrink: 0 }} />
-            </Link>
-            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              {company && (
-                <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>{company.name}</span>
-              )}
-              {needsReview && (
-                <span
-                  title="Beacon could not confidently link this meeting to a company and deal. Use Re-link before relying on the prep."
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 800,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    padding: "3px 8px",
-                    borderRadius: 999,
-                    background: "#fff6ec",
-                    color: colors.orange,
-                    border: "1px solid #ffd3be",
-                  }}
-                >
-                  Needs review
-                </span>
-              )}
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "capitalize", padding: "2px 8px", borderRadius: 999, background: "#f0f4fb", color: colors.sub, border: `1px solid ${colors.border}` }}>
-                {meeting.meeting_type.replace(/_/g, " ")}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: colors.text, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{meeting.title}</span>
+            <ExternalLink size={12} style={{ color: colors.faint, flexShrink: 0 }} />
+          </div>
+          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {company && <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>{company.name}</span>}
+            {needsReview && (
+              <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", padding: "2px 7px", borderRadius: 999, background: "#fff6ec", color: colors.orange, border: "1px solid #ffd3be" }}>
+                Needs review
               </span>
-              {assigneeName && (
-                <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <User size={11} />
-                  {assigneeName}
-                </span>
-              )}
-            </div>
+            )}
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "capitalize", padding: "2px 8px", borderRadius: 999, background: "#f0f4fb", color: colors.sub, border: `1px solid ${colors.border}` }}>
+              {meeting.meeting_type.replace(/_/g, " ")}
+            </span>
+            {assigneeName && (
+              <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <User size={11} />{assigneeName}
+              </span>
+            )}
           </div>
-
-          <div style={{ flexShrink: 0, padding: "5px 10px", borderRadius: 999, background: urgencyStyle.bg, color: urgencyStyle.color, border: `1px solid ${urgencyStyle.border}`, fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <Clock3 size={11} />
-            {urgencyStyle.label}
+          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 12 }}>
+            <CalendarDays size={12} />
+            <span>{formatOptionalDate(meeting.scheduled_at)}</span>
           </div>
         </div>
 
-        {/* Scheduled time */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 12 }}>
-          <CalendarDays size={13} />
-          <span>{formatOptionalDate(meeting.scheduled_at)}</span>
-          {meeting.scheduled_at && !isValidDateValue(meeting.scheduled_at) && (
-            <span style={{ color: colors.orange, fontWeight: 700 }}>Fix date before prep</span>
-          )}
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <span style={{ padding: "4px 9px", borderRadius: 999, background: awayTone.bg, color: awayTone.color, border: `1px solid ${awayTone.border}`, fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Clock3 size={11} />{awayLabel}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: hasResearch ? colors.green : colors.amber }}>
+              {hasResearch ? <CheckCircle2 size={12} /> : <BrainCircuit size={12} />}{hasResearch ? "Intel ready" : "No intel"}
+            </span>
+            {hasIntelSent && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: colors.primary }}>
+                <MailCheck size={12} /> Sent
+              </span>
+            )}
+          </div>
         </div>
-
-        {needsReview && (
-          <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f1", border: "1px solid #ffe0bd", display: "flex", alignItems: "flex-start", gap: 10 }}>
-            <AlertTriangle size={13} style={{ color: colors.orange, marginTop: 1, flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.5 }}>
-                {!meeting.company_id
-                  ? "No account is linked to this meeting. Link an existing account, or create the account from Account Sourcing before generating prep."
-                  : "The account is linked, but the opportunity is missing. Open the meeting and link the right deal before relying on the prep."}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                <Link
-                  to={`/meetings/${meeting.id}`}
-                  style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #ffd3be", background: "#fff", color: "#7a3f1f", fontSize: 11, fontWeight: 800, textDecoration: "none" }}
-                >
-                  Link existing
-                </Link>
-                {!meeting.company_id && (
-                  <Link
-                    to={createAccountHref}
-                    style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #ffd3be", background: "#fff", color: "#7a3f1f", fontSize: 11, fontWeight: 800, textDecoration: "none" }}
-                  >
-                    Add in Account Sourcing
-                  </Link>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {titleMismatchCompany && (
-          <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff2ec", border: "1px solid #ffc8a8", display: "flex", alignItems: "flex-start", gap: 10 }}>
-            <AlertTriangle size={14} style={{ color: "#c2410c", marginTop: 1, flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#7c2d12" }}>
-                Possible company mismatch
-              </div>
-              <div style={{ fontSize: 12, color: "#7a3f1f", lineHeight: 1.5, marginTop: 2 }}>
-                Title mentions <span style={{ fontWeight: 700 }}>{titleMismatchCompany.name}</span>, but this meeting is linked to <span style={{ fontWeight: 700 }}>{company?.name || "another company"}</span>. An attendee from the wrong account likely caused the auto-link. Open the meeting and use <span style={{ fontWeight: 700 }}>Re-link</span>, or unlink now.
-              </div>
-              <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
-                <button
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onUnlink(meeting.id); }}
-                  disabled={isUnlinking}
-                  style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 11, fontWeight: 700, cursor: isUnlinking ? "wait" : "pointer" }}
-                >
-                  {isUnlinking ? "Unlinking…" : "Unlink company & deal"}
-                </button>
-                <Link
-                  to={`/meetings/${meeting.id}`}
-                  style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #ffc8a8", background: "#fff", color: "#7c2d12", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
-                >
-                  Open meeting
-                </Link>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Status badges */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {hasResearch ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.greenSoft, color: colors.green, border: "1px solid #cfe8d7", fontSize: 12, fontWeight: 700 }}>
-              <CheckCircle2 size={13} /> Intel ready
-            </span>
-          ) : (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.amberSoft, color: colors.amber, border: `1px solid #ffe3b3`, fontSize: 12, fontWeight: 700 }}>
-              <BrainCircuit size={13} /> No intel yet
-            </span>
-          )}
-          {hasIntelSent && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 700 }}>
-              <MailCheck size={13} /> Brief sent
-            </span>
-          )}
-          {meeting.meeting_score != null && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 700 }}>
-              Score {meeting.meeting_score}/100
-            </span>
-          )}
-          {coverage !== null && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: coverage >= 75 ? colors.greenSoft : colors.amberSoft, color: coverage >= 75 ? colors.green : colors.amber, border: `1px solid ${coverage >= 75 ? "#cfe8d7" : "#ffe3b3"}`, fontSize: 12, fontWeight: 700 }}>
-              <Target size={11} /> {coverage}% coverage
-            </span>
-          )}
-          {risks.map((r, i) => (
-            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 999, background: "#fff5f0", color: colors.orange, border: "1px solid #ffd3be", fontSize: 12, fontWeight: 700 }}>
-              <AlertTriangle size={11} /> {r}
-            </span>
-          ))}
-        </div>
-
-        {/* ── Deal context strip ─────────────────────────────────── */}
-        {deal && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "10px 14px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e8edf5" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
-              <Briefcase size={12} style={{ color: colors.faint }} />
-              <span style={{ color: colors.sub, fontWeight: 600 }}>{deal.stage.replace(/_/g, " ")}</span>
-            </div>
-            {deal.value != null && (
-              <>
-                <span style={{ color: colors.border }}>·</span>
-                <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600 }}>
-                  ${deal.value.toLocaleString()}
-                </span>
-              </>
-            )}
-            <span style={{ color: colors.border }}>·</span>
-            <span style={{ fontSize: 12, color: deal.days_in_stage > 30 ? colors.amber : colors.faint }}>
-              {deal.days_in_stage}d in stage
-            </span>
-            {deal.health && (
-              <>
-                <span style={{ color: colors.border }}>·</span>
-                <span style={{ fontSize: 12, color: deal.health === "at_risk" ? colors.red : deal.health === "needs_attention" ? colors.amber : colors.green, fontWeight: 700, textTransform: "capitalize" }}>
-                  {deal.health.replace(/_/g, " ")}
-                </span>
-              </>
-            )}
-            {lastActivity && (
-              <>
-                <span style={{ color: colors.border }}>·</span>
-                <span style={{ fontSize: 12, color: colors.faint, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <ActivityIcon size={11} />
-                  Last touch: {timeAgo(lastActivity.created_at)}
-                  {lastActivity.ai_summary ? ` — ${lastActivity.ai_summary.slice(0, 60)}${lastActivity.ai_summary.length > 60 ? "…" : ""}` : lastActivity.email_subject ? ` — ${lastActivity.email_subject.slice(0, 50)}` : ""}
-                </span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Deal next step */}
-        {deal?.next_step && (
-          <div style={{ padding: "8px 14px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
-            <CheckCircle2 size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Agreed Next Step</div>
-              <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{deal.next_step}</div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Intel preview (briefing teaser + top action) ────────── */}
-        {hasResearch && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {briefTeaser && (
-              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
-                <SectionHeader icon={Sparkles} label="Executive Briefing" color="#b05a2a" />
-                <p style={{ fontSize: 12.5, color: "#3d5268", lineHeight: 1.55, margin: 0 }}>
-                  {briefTeaser}{hasFullBriefing && !expanded ? "…" : ""}
-                </p>
-              </div>
-            )}
-
-            {/* Top recommendation */}
-            {recommendations[0] && (
-              <div style={{ padding: "9px 14px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <TrendingUp size={13} style={{ color: "#15803d", marginTop: 2, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Lead with this</div>
-                  <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>{recommendations[0]}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Stakeholder preview (collapsed — names only) */}
-            {!expanded && stakeholders.length > 0 && (
-              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f5f0ff", border: "1px solid #e0d3ff" }}>
-                <SectionHeader icon={Users} label={`Stakeholders (${stakeholders.length})`} color="#5a1fa5" />
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {stakeholders.map((s, i) => {
-                    const role = s.role ?? "unknown";
-                    const rc = roleColors[role] ?? roleColors.unknown;
-                    return (
-                      <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 11, fontWeight: 700 }}>
-                        {s.name}{s.title ? ` · ${s.title}` : ""}{s.status === "recommended" ? " · not on invite" : ""}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Expand / Collapse button ─────────────────────────────── */}
-        {hasResearch && (
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: colors.primary, background: "none", border: "none", cursor: "pointer", padding: 0, alignSelf: "flex-start" }}
-          >
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            {expanded ? "Collapse brief" : "Show full prep brief"}
-          </button>
-        )}
       </div>
-
-      {/* ── Expanded full prep brief ──────────────────────────────────────── */}
-      {expanded && hasResearch && (
-        <div style={{ borderTop: `1px solid ${colors.border}`, padding: "18px 20px", display: "grid", gap: 16, background: "#fafbfd" }}>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 10 }}>
-              <SectionHeader icon={Building2} label="Account Brief" color={colors.sub} />
-              <div style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.65 }}>
-                {companySummary || "Beacon gathered account research, but the concise company narrative is still thin. Use the sources below for the fuller context."}
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {(companySnapshot.industry || companyProfile.industry) && <Pill label={String(companySnapshot.industry || companyProfile.industry)} color="#24567e" bg="#f3f8ff" border="#d5e5ff" />}
-                {(hunterCo.employees || companySnapshot.employee_count) && <Pill label={`${hunterCo.employees ?? companySnapshot.employee_count} employees`} color="#1f3144" bg="#f8fafc" border="#e2e8f0" />}
-                {pricingModel && <Pill label={pricingModel} color="#7c3f00" bg="#fff4df" border="#ffe3b3" />}
-              </div>
-              {companyLinks.length > 0 && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {companyLinks.map((link) =>
-                    link.internal ? (
-                      <Link
-                        key={link.label}
-                        to={link.href}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}
-                      >
-                        {link.label} <ExternalLink size={11} />
-                      </Link>
-                    ) : (
-                      <a
-                        key={link.label}
-                        href={link.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}
-                      >
-                        {link.label} <ExternalLink size={11} />
-                      </a>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 10 }}>
-              <SectionHeader icon={Users} label="Who To Hear Out" color="#5a1fa5" />
-              {likelyDecisionMaker ? (
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f5", border: "1px solid #ffd5be" }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#b05a2a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Likely decision maker</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{likelyDecisionMaker.name}</span>
-                      {likelyDecisionMaker.title && <span style={{ fontSize: 12, color: colors.sub }}>{likelyDecisionMaker.title}</span>}
-                      <Pill
-                        label={`${likelyDecisionMaker.roleLabel}${likelyDecisionMaker.status === "recommended" ? " · not on invite" : ""}`}
-                        color="#b05a2a"
-                        bg="#fff4e8"
-                        border="#ffd5be"
-                      />
-                    </div>
-                    {likelyDecisionMaker.likelyFocus && (
-                      <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.55, marginTop: 6 }}>
-                        Hear them out on: {likelyDecisionMaker.likelyFocus}
-                      </div>
-                    )}
-                    <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {likelyDecisionMaker.contactId && (
-                        <Link to={`/contacts/${likelyDecisionMaker.contactId}`} style={{ fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none" }}>
-                          Prospect record
-                        </Link>
-                      )}
-                      {likelyDecisionMaker.linkedinUrl && (
-                        <a href={likelyDecisionMaker.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: colors.primary, fontWeight: 700, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          LinkedIn <ExternalLink size={11} />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-
-                  {championContact && championContact.name !== likelyDecisionMaker.name && (
-                    <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Likely champion</div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{championContact.name}{championContact.title ? ` · ${championContact.title}` : ""}</div>
-                      {championContact.likelyFocus && <div style={{ fontSize: 12, color: "#1e4032", lineHeight: 1.55, marginTop: 6 }}>Likely angle: {championContact.likelyFocus}</div>}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: colors.faint, lineHeight: 1.55 }}>
-                  No clear buying-committee view yet. Run intel again after attendee links or contact mapping improves.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff", border: "1px solid #e8edf5", display: "grid", gap: 12 }}>
-            <SectionHeader icon={ActivityIcon} label={activityScopeLabel} color={colors.sub} />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Pill label={`${activityCounts.emails} emails`} color="#2f8d5d" bg="#eefbf2" border="#cfe8d7" />
-              <Pill label={`${activityCounts.calls} calls`} color="#445fd0" bg="#eef3ff" border="#d5e5ff" />
-              <Pill label={`${activityCounts.linkedin} LinkedIn`} color="#0a66c2" bg="#eef4ff" border="#d7e2fb" />
-              <Pill label={`${activityCounts.meetings} meetings`} color="#b05a2a" bg="#fff4e8" border="#ffd5be" />
-            </div>
-            <div style={{ fontSize: 12, color: colors.sub, lineHeight: 1.6 }}>
-              {dominantChannel && dominantChannel.value > 0
-                ? `Most of the motion so far has happened through ${dominantChannel.label}. Use the timeline below to see what topics actually moved the conversation.`
-                : "Beacon does not yet have enough logged channel activity to show a conviction path for this deal."}
-            </div>
-
-            {relevantActivities.length > 0 && (
-              <div style={{ display: "grid", gap: 8 }}>
-                {relevantActivities.slice(0, 8).map((activity) => {
-                  const channel = activityChannel(activity);
-                  const actor = activity.user_name || activity.aircall_user_name || activity.email_from || "Beacon";
-                  return (
-                    <div key={activity.id} style={{ padding: "10px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e8edf5" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <Pill label={activityChannelLabel(channel)} color="#3856c8" bg="#eef4ff" border="#d7e2fb" />
-                          <span style={{ fontSize: 11, color: colors.faint }}>{actor}</span>
-                        </div>
-                        <span style={{ fontSize: 11, color: colors.faint }}>{timeAgo(activity.created_at)}</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.55 }}>
-                        {activitySnippet(activity)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {priorMeetings.length > 0 && (
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em" }}>Prior meeting takeaways</div>
-                {priorMeetings.slice(0, 2).map((prior, index) => (
-                  <div key={`${prior.title || "prior"}-${index}`} style={{ padding: "10px 12px", borderRadius: 10, background: "#fff8f5", border: "1px solid #ffd5be" }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: colors.text }}>{prior.title || "Previous meeting"}</div>
-                    {prior.ai_summary && <div style={{ fontSize: 12, color: "#7a5531", lineHeight: 1.55, marginTop: 4 }}>{prior.ai_summary}</div>}
-                    {prior.next_steps && <div style={{ fontSize: 11, color: colors.sub, marginTop: 4 }}>Next step then: {prior.next_steps}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Full executive briefing */}
-          {execBriefing && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff8f5", border: "1px solid #ffd5be" }}>
-              <SectionHeader icon={Sparkles} label="Full Executive Briefing" color="#b05a2a" />
-              <div style={{ fontSize: 13, color: "#3d5268", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-                {execBriefing.replace(/\*\*/g, "").replace(/##\s*/g, "").replace(/^#+\s*/gm, "")}
-              </div>
-            </div>
-          )}
-
-          {/* Why-now signals — all of them */}
-          {whyNow.length > 0 && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
-              <SectionHeader icon={Zap} label={`Why Now — ${whyNow.length} Signal${whyNow.length > 1 ? "s" : ""}`} color="#24567e" />
-              <div style={{ display: "grid", gap: 10 }}>
-                {whyNow.map((s, i) => (
-                  <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #93c5fd" }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#1e3a5f", marginBottom: 2 }}>{s.title}</div>
-                    <div style={{ fontSize: 12, color: "#4a6580", lineHeight: 1.5 }}>{s.detail}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Stakeholder cards — full detail */}
-          {stakeholders.length > 0 && (
-            <div>
-              <SectionHeader icon={Users} label={`Stakeholder Prep (${stakeholders.length})`} color="#5a1fa5" />
-              <div style={{ display: "grid", gap: 10 }}>
-                {stakeholders.map((s, i) => {
-                  const role = s.role ?? "unknown";
-                  const rc = roleColors[role] ?? roleColors.unknown;
-                  return (
-                    <div key={i} style={{ padding: "12px 14px", borderRadius: 12, background: "#fff", border: `1px solid ${rc.border}` }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 13, fontWeight: 800, color: colors.text }}>{s.name}</span>
-                        {s.title && <span style={{ fontSize: 12, color: colors.sub }}>{s.title}</span>}
-                        <span style={{ padding: "2px 8px", borderRadius: 999, background: rc.bg, color: rc.color, border: `1px solid ${rc.border}`, fontSize: 10, fontWeight: 700, textTransform: "capitalize" }}>
-                          {s.roleLabel}{s.status === "recommended" ? " · not on invite" : ""}
-                        </span>
-                        {s.contactId && (
-                          <Link to={`/contacts/${s.contactId}`} style={{ fontSize: 11, color: colors.primary, textDecoration: "none" }}>
-                            Prospect record
-                          </Link>
-                        )}
-                        {s.linkedinUrl && (
-                          <a href={s.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                            LinkedIn <ExternalLink size={10} />
-                          </a>
-                        )}
-                      </div>
-                      {s.likelyFocus && (
-                        <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Likely Focus</div>
-                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.likelyFocus}</div>
-                        </div>
-                      )}
-                      {s.talkTrack && (
-                        <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Talk Track</div>
-                          <div style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5, padding: "8px 10px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e8edf5" }}>{s.talkTrack}</div>
-                        </div>
-                      )}
-                      {s.questions && s.questions.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Discovery Questions</div>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            {s.questions.map((q, qi) => (
-                              <div key={qi} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: "#3d5268", lineHeight: 1.45 }}>
-                                <span style={{ fontWeight: 800, color: colors.primary, flexShrink: 0 }}>{qi + 1}.</span>
-                                <span>{q}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* All recommendations as checklist */}
-          {recommendations.length > 0 && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-              <SectionHeader icon={ListChecks} label="Game plan for this meeting" color="#15803d" />
-              <div style={{ display: "grid", gap: 6 }}>
-                {recommendations.map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "#1e4032", lineHeight: 1.45 }}>
-                    <span style={{ fontWeight: 800, color: "#15803d", flexShrink: 0 }}>✓</span>
-                    <span>{r}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Competitive landscape */}
-          {competitive.length > 0 && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#fff5f5", border: "1px solid #fecaca" }}>
-              <SectionHeader icon={Swords} label="Competitive Landscape" color={colors.red} />
-              <div style={{ display: "grid", gap: 8 }}>
-                {competitive.map((c, i) => {
-                  const name = c.name ?? c.competitor ?? "Unknown";
-                  const bc = battlecards.find((b) => b.competitor?.toLowerCase() === name.toLowerCase());
-                  return (
-                    <div key={i} style={{ paddingLeft: 10, borderLeft: "3px solid #fca5a5" }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: colors.red, marginBottom: 2 }}>{name}</div>
-                      {c.summary && <div style={{ fontSize: 12, color: "#7f1d1d", lineHeight: 1.45, marginBottom: bc?.win_reasons?.length ? 4 : 0 }}>{c.summary}</div>}
-                      {bc?.win_reasons && bc.win_reasons.length > 0 && (
-                        <div style={{ fontSize: 11, color: colors.green, fontWeight: 600 }}>
-                          Win reason: {bc.win_reasons[0]}
-                        </div>
-                      )}
-                      {bc?.objection_handling && (
-                        <div style={{ fontSize: 11, color: colors.sub, marginTop: 2 }}>
-                          Handle: {bc.objection_handling}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Intent signals */}
-          {(hiringRoles.length > 0 || intentSignals.funding || intentSignals.growth) && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: colors.amberSoft, border: "1px solid #ffe3b3" }}>
-              <SectionHeader icon={AlertCircle} label="Intent Signals" color={colors.amber} />
-              <div style={{ display: "grid", gap: 8 }}>
-                {hiringRoles.length > 0 && (
-                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d" }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 3 }}>Active Hiring ({hiringRoles.length} roles)</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {hiringRoles.slice(0, 6).map((r: string, i: number) => (
-                        <span key={i} style={{ padding: "2px 8px", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", fontSize: 11 }}>{r}</span>
-                      ))}
-                      {hiringRoles.length > 6 && <span style={{ fontSize: 11, color: colors.amber }}>+{hiringRoles.length - 6} more</span>}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#7c6a3a", marginTop: 4 }}>They're feeling the pain Beacon solves — use this as a buying signal opener.</div>
-                  </div>
-                )}
-                {intentSignals.funding && (
-                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d", fontSize: 12, color: "#78350f" }}>
-                    <span style={{ fontWeight: 700 }}>Funding: </span>{intentSignals.funding}
-                  </div>
-                )}
-                {intentSignals.growth && (
-                  <div style={{ paddingLeft: 10, borderLeft: "3px solid #fcd34d", fontSize: 12, color: "#78350f" }}>
-                    <span style={{ fontWeight: 700 }}>Growth signal: </span>{intentSignals.growth}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Recent news */}
-          {newsItems.length > 0 && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f3f8ff", border: "1px solid #d5e5ff" }}>
-              <SectionHeader icon={MessageSquare} label="Recent News — Open With This" color="#24567e" />
-              <div style={{ display: "grid", gap: 6 }}>
-                {newsItems.slice(0, 4).map((n, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <span style={{ color: "#93c5fd", fontWeight: 800, flexShrink: 0, fontSize: 12 }}>→</span>
-                    <div>
-                      {n.url ? (
-                        <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: colors.primary, fontWeight: 600, textDecoration: "none" }}>
-                          {n.title ?? n.url}
-                        </a>
-                      ) : (
-                        <span style={{ fontSize: 12, color: "#1e3a5f", fontWeight: 600 }}>{n.title}</span>
-                      )}
-                      {n.published && <span style={{ fontSize: 11, color: colors.faint, marginLeft: 6 }}>{n.published}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Company snapshot + tech stack */}
-          {(techStack.length > 0 || pricingModel || hunterCo.employees || companySnapshot.icp_score != null) && (
-            <div style={{ padding: "14px 16px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e8edf5" }}>
-              <SectionHeader icon={Building2} label="Company Profile" color={colors.sub} />
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                {companySnapshot.icp_score != null && (
-                  <div>
-                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>ICP Score</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: companySnapshot.icp_score >= 70 ? colors.green : colors.amber }}>{companySnapshot.icp_score}</div>
-                  </div>
-                )}
-                {(hunterCo.employees || companySnapshot.employee_count) && (
-                  <div>
-                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Employees</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{hunterCo.employees ?? companySnapshot.employee_count}</div>
-                  </div>
-                )}
-                {(hunterCo.industry || companySnapshot.industry) && (
-                  <div>
-                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Industry</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{hunterCo.industry ?? companySnapshot.industry}</div>
-                  </div>
-                )}
-                {pricingModel && (
-                  <div>
-                    <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Pricing Model</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{pricingModel}</div>
-                  </div>
-                )}
-              </div>
-              {techStack.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 10, color: colors.faint, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Tech Stack</div>
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    {techStack.map((t: string, i: number) => (
-                      <span key={i} style={{ padding: "2px 8px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe", fontSize: 11, fontWeight: 600 }}>{t}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Action buttons ───────────────────────────────────────────────── */}
-      <div style={{ padding: "12px 20px", borderTop: `1px solid ${colors.border}`, display: "flex", gap: 8, flexWrap: "wrap", background: expanded ? "#fafbfd" : "#fff" }}>
-        <button
-          type="button"
-          disabled={isRunning || !hasCompanyLink}
-          onClick={() => onRunIntel(meeting.id)}
-          title={!hasCompanyLink ? "Link or add an account before generating meeting intel." : undefined}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: isRunning || !hasCompanyLink ? "#f5f8fe" : "#fff", color: isRunning || !hasCompanyLink ? colors.faint : colors.primary, fontSize: 12, fontWeight: 700, cursor: isRunning ? "wait" : !hasCompanyLink ? "not-allowed" : "pointer" }}
-        >
-          {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-          {isRunning ? "Generating..." : hasResearch ? "Regenerate intel" : "Run intel now"}
-        </button>
-
-        {!hasCompanyLink && (
-          <Link
-            to={createAccountHref}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px solid #ffd3be", background: "#fff8f1", color: "#7a3f1f", fontSize: 12, fontWeight: 700, textDecoration: "none" }}
-          >
-            <Building2 size={13} />
-            Add account
-          </Link>
-        )}
-
-        <Link
-          to={`/meetings/${meeting.id}`}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, fontSize: 12, fontWeight: 700, textDecoration: "none" }}
-        >
-          <ExternalLink size={13} />
-          Open meeting
-        </Link>
-
-        {/* Show status-update actions when the meeting is past-but-unreviewed.
-            Reps can't rely on tl;dv firing every time, so we give them a manual
-            way to close out "overdue" meetings and clear the red badge. */}
-        {(urgency === "overdue" || urgency === "in_progress") && (
-          <>
-            <button
-              type="button"
-              disabled={updatingStatus === meeting.id}
-              onClick={() => onUpdateStatus(meeting.id, "completed")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "1px solid #c7e8d3", background: "#ecf8f0", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: updatingStatus === meeting.id ? "wait" : "pointer" }}
-            >
-              <CheckCircle2 size={13} />
-              Mark as done
-            </button>
-            <button
-              type="button"
-              disabled={updatingStatus === meeting.id}
-              onClick={() => onUpdateStatus(meeting.id, "cancelled")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: updatingStatus === meeting.id ? "wait" : "pointer" }}
-            >
-              Mark as cancelled
-            </button>
-          </>
-        )}
-      </div>
-    </div>
+    </Link>
   );
 }
 
