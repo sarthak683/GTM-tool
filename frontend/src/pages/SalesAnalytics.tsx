@@ -458,12 +458,16 @@ function ActivityDrilldownModal({
   loading,
   error,
   onClose,
+  onLoadMore,
+  loadingMore,
 }: {
   title: string;
   data: SalesActivityDrilldown | null;
   loading: boolean;
   error: string;
   onClose: () => void;
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -539,7 +543,7 @@ function ActivityDrilldownModal({
           ) : (
             <>
               <div style={{ padding: "12px 22px", background: "#fafbfd", borderBottom: "1px solid #ebeff5", fontSize: 12, color: "#62748a", fontWeight: 700 }}>
-                Showing {data.rows.length} latest rows{data.has_more ? " · more available" : ""}
+                Showing {data.rows.length} row{data.rows.length === 1 ? "" : "s"}{data.has_more ? " · more available below" : ""}
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
@@ -575,6 +579,24 @@ function ActivityDrilldownModal({
                   ))}
                 </tbody>
               </table>
+              {data.has_more && onLoadMore && (
+                <div style={{ padding: "16px 22px", display: "flex", justifyContent: "center" }}>
+                  <button
+                    type="button"
+                    onClick={onLoadMore}
+                    disabled={loadingMore}
+                    style={{
+                      padding: "10px 20px", borderRadius: 10,
+                      background: loadingMore ? "#eef1f6" : "#4561d5",
+                      color: loadingMore ? "#8a9cb2" : "#fff",
+                      border: "none", fontSize: 13, fontWeight: 800,
+                      cursor: loadingMore ? "default" : "pointer",
+                    }}
+                  >
+                    {loadingMore ? "Loading…" : "Load more"}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1743,6 +1765,9 @@ export default function SalesAnalytics() {
   const [activityDrilldownTitle, setActivityDrilldownTitle] = useState("");
   const [activityDrilldownLoading, setActivityDrilldownLoading] = useState(false);
   const [activityDrilldownError, setActivityDrilldownError] = useState("");
+  // Remembered query so "Load more" can fetch the next page at the right offset.
+  const [activityDrilldownQuery, setActivityDrilldownQuery] = useState<{ metric: SalesActivityMetric; userId: string | null | undefined } | null>(null);
+  const [activityDrilldownLoadingMore, setActivityDrilldownLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [boardDeals, setBoardDeals] = useState<Deal[] | null>(null);
@@ -1853,6 +1878,7 @@ export default function SalesAnalytics() {
     setActivityDrilldown(null);
     setActivityDrilldownError("");
     setActivityDrilldownTitle(`${row.rep_name} · ${labelByMetric[metric]}`);
+    setActivityDrilldownQuery({ metric, userId: row.user_id });
     setActivityDrilldownLoading(true);
     analyticsApi
       .salesActivityDrilldown(
@@ -1868,6 +1894,30 @@ export default function SalesAnalytics() {
       .then(setActivityDrilldown)
       .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load source rows"))
       .finally(() => setActivityDrilldownLoading(false));
+  };
+
+  // Fetch the next page and append, so reps can page through all rows (e.g. all
+  // 400 emails) without loading them in one heavy request.
+  const handleLoadMoreActivity = () => {
+    if (!activityDrilldown || !activityDrilldownQuery || activityDrilldownLoadingMore) return;
+    const nextOffset = activityDrilldown.rows.length;
+    setActivityDrilldownLoadingMore(true);
+    analyticsApi
+      .salesActivityDrilldown(
+        activityDrilldownQuery.metric,
+        windowDays,
+        activityDrilldownQuery.userId,
+        geographyFilter,
+        fromDate || undefined,
+        toDate || undefined,
+        50,
+        nextOffset,
+      )
+      .then((page) =>
+        setActivityDrilldown((prev) => (prev ? { ...page, rows: [...prev.rows, ...page.rows] } : page)),
+      )
+      .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load more rows"))
+      .finally(() => setActivityDrilldownLoadingMore(false));
   };
 
   const metricCards: Array<{
@@ -2511,10 +2561,14 @@ export default function SalesAnalytics() {
           data={activityDrilldown}
           loading={activityDrilldownLoading}
           error={activityDrilldownError}
+          onLoadMore={handleLoadMoreActivity}
+          loadingMore={activityDrilldownLoadingMore}
           onClose={() => {
             setActivityDrilldown(null);
             setActivityDrilldownError("");
             setActivityDrilldownLoading(false);
+            setActivityDrilldownQuery(null);
+            setActivityDrilldownLoadingMore(false);
           }}
         />
       )}

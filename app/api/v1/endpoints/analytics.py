@@ -61,6 +61,20 @@ PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation"
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
 REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 
+# Roles that count as a sales rep in activity analytics. Admins (and any other
+# role) are NOT reps — their emails/calls/meetings must not inflate rep metrics
+# or appear as a rep row. User.role is one of: admin | ae | sdr.
+REP_ROLES = {"ae", "sdr"}
+
+
+def _is_rep(rep_id, rep_user_ids) -> bool:
+    """True if this attributed id should count as rep activity.
+
+    None (Unassigned) is preserved as-is — it's a separate existing bucket, not
+    a non-rep person. Any concrete id must belong to an ae/sdr user.
+    """
+    return rep_id is None or rep_id in rep_user_ids
+
 # tl;dv and Google Calendar both ingest the SAME real-world meeting as separate
 # Meeting rows (different external_source). When both exist we must count it
 # once. We prefer tl;dv (only fires on calls that actually happened) over
@@ -700,10 +714,12 @@ async def sales_activity_drilldown(
     window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
 
-    user_rows = (await session.execute(select(User.id, User.name, User.email))).all()
+    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
+    rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
     deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id)
     if filter_geographies:
@@ -815,6 +831,8 @@ async def sales_activity_drilldown(
             if not activity.contact_id and not activity.deal_id:
                 continue
             row_rep_id = _activity_rep_id(activity, deal_owner=deal_owner, contact_owner=contact_owner)
+            if not _is_rep(row_rep_id, rep_user_ids):
+                continue
             if rep_id and row_rep_id != rep_id:
                 continue
             rep_email = user_emails.get(row_rep_id) if row_rep_id else None
@@ -848,6 +866,7 @@ async def sales_activity_drilldown(
                 )
             )
 
+    meeting_has_more = False
     if metric in {"meetings", "total"}:
         meeting_stmt = select(Meeting).where(
             Meeting.is_internal.is_(False),
@@ -857,25 +876,25 @@ async def sales_activity_drilldown(
                 Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
             ),
         )
-        if rep_id:
-            meeting_stmt = meeting_stmt.where(
-                or_(
-                    Meeting.owner_user_id == rep_id,
-                    Meeting.synced_by_user_id == rep_id,
-                    Meeting.deal_id.in_(scoped_deal_ids or {UUID(int=0)}),
-                )
-            )
-        elif filter_geographies:
+        # Geography scoping only when no rep is selected — matches the prior
+        # behaviour. Rep attribution itself is NOT done in SQL here: a meeting
+        # can belong to a rep purely via attendee email (not owner/synced_by/
+        # deal owner), and the dashboard count attributes those via
+        # _meeting_rep_ids. Filtering by owner/synced_by/deal in SQL silently
+        # dropped attendee-only meetings, so the count said "1" while the
+        # drilldown showed nothing. We fetch the window and attribute in Python
+        # with the SAME _meeting_rep_ids the count uses, then paginate here.
+        # Meeting volume is small (hundreds), so this stays cheap.
+        if filter_geographies and not rep_id:
             meeting_stmt = meeting_stmt.where(Meeting.deal_id.in_(scoped_deal_ids or {UUID(int=0)}))
-        meeting_rows = (
+        all_meeting_rows = (
             await session.execute(
-                meeting_stmt.order_by(Meeting.scheduled_at.desc(), Meeting.created_at.desc()).offset(offset).limit(limit + 1)
+                meeting_stmt.order_by(Meeting.scheduled_at.desc(), Meeting.created_at.desc())
             )
         ).scalars().all()
 
-        meeting_page = meeting_rows[:limit]
-        meeting_deal_ids = {meeting.deal_id for meeting in meeting_page if meeting.deal_id}
-        meeting_company_ids = {meeting.company_id for meeting in meeting_page if meeting.company_id}
+        meeting_deal_ids = {m.deal_id for m in all_meeting_rows if m.deal_id}
+        meeting_company_ids = {m.company_id for m in all_meeting_rows if m.company_id}
         deal_owner = {row.id: row.assigned_to_id for row in scoped_deal_rows}
         deal_names = {row.id: row.name for row in scoped_deal_rows}
         deal_company_ids = {row.id: row.company_id for row in scoped_deal_rows}
@@ -903,37 +922,47 @@ async def sales_activity_drilldown(
         _meeting_gate = await _build_meeting_stage_gate(
             session, await get_configured_deal_stages(session)
         )
-        # Collapse cross-source duplicates (tl;dv + Google Calendar of the same
-        # real meeting) so the validation list matches the deduped headline
-        # count — otherwise the drilldown shows two rows for one meeting.
+        # Collapse cross-source duplicates (tl;dv + Google Calendar) then
+        # attribute exactly like the count — so the drilldown can never disagree
+        # with the dashboard number.
         _gated_meetings = [
             m
-            for m in meeting_page
+            for m in all_meeting_rows
             if m.status != "cancelled"
             and _meeting_gate(m)
             and str(m.external_source or "").strip().lower() in REAL_MEETING_SOURCES
         ]
         _deduped_meetings = _dedupe_meetings_across_sources(_gated_meetings)
+        _meeting_entries = []
         for meeting in _deduped_meetings:
-            meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
             for row_rep_id in _meeting_rep_ids(meeting, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
+                if not _is_rep(row_rep_id, rep_user_ids):
+                    continue
                 if rep_id and row_rep_id != rep_id:
                     continue
-                company_id = meeting.company_id or deal_company_ids.get(meeting.deal_id)
-                rows.append(
-                    SalesActivityDrilldownRow(
-                        id=meeting.id,
-                        kind="meeting",
-                        activity_type="meeting",
-                        occurred_at=meeting_time,
-                        rep_user_id=row_rep_id,
-                        rep_name=_label_for_rep(row_rep_id, users)[2],
-                        source=meeting.external_source,
-                        subject=meeting.title,
-                        company_name=company_names.get(company_id),
-                        deal_name=deal_names.get(meeting.deal_id),
-                    )
+                _meeting_entries.append((meeting, row_rep_id))
+        _meeting_entries.sort(
+            key=lambda entry: _meeting_reporting_timestamp(entry[0], window_end=window_end),
+            reverse=True,
+        )
+        meeting_has_more = len(_meeting_entries) > offset + limit
+        for meeting, row_rep_id in _meeting_entries[offset:offset + limit]:
+            meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
+            company_id = meeting.company_id or deal_company_ids.get(meeting.deal_id)
+            rows.append(
+                SalesActivityDrilldownRow(
+                    id=meeting.id,
+                    kind="meeting",
+                    activity_type="meeting",
+                    occurred_at=meeting_time,
+                    rep_user_id=row_rep_id,
+                    rep_name=_label_for_rep(row_rep_id, users)[2],
+                    source=meeting.external_source,
+                    subject=meeting.title,
+                    company_name=company_names.get(company_id),
+                    deal_name=deal_names.get(meeting.deal_id),
                 )
+            )
 
     rows.sort(key=lambda row: row.occurred_at, reverse=True)
     selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
@@ -941,7 +970,7 @@ async def sales_activity_drilldown(
     if metric != "meetings":
         has_more = has_more or len(locals().get("activities", [])) > limit
     if metric in {"meetings", "total"}:
-        has_more = has_more or len(locals().get("meeting_rows", [])) > limit
+        has_more = has_more or meeting_has_more
     return SalesActivityDrilldownRead(
         generated_at=_utcnow(),
         metric=metric,
@@ -1052,9 +1081,12 @@ async def sales_dashboard(
     contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
     week_starts = _rolling_week_starts(window_start, window_end)
-    user_rows = (await session.execute(select(User.id, User.name, User.email))).all()
+    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
     users = {row.id: row.name for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # Only ae/sdr users are reps; admin activity must not inflate rep metrics
+    # or create an admin rep row (the "Rakesh 419 emails" leak).
+    rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
     activity_rows = (
         await session.execute(
@@ -1256,6 +1288,10 @@ async def sales_dashboard(
         owner_stage["weighted_amount"] += weighted_amount
 
     for rep_key, owner_bucket in pipeline_by_owner.items():
+        # Don't seed a rep-activity row for a non-rep (admin) deal owner — they
+        # aren't a sales rep, so they must not appear in the rep leaderboard.
+        if owner_bucket["user_id"] is not None and owner_bucket["user_id"] not in rep_user_ids:
+            continue
         rep_activity[rep_key] = {
             "key": rep_key,
             "user_id": owner_bucket["user_id"],
@@ -1300,6 +1336,8 @@ async def sales_dashboard(
             deal_owner=deal_owner,
             contact_owner=contact_owner,
         )
+        if not _is_rep(row_rep_id, rep_user_ids):
+            continue
         if filter_rep_ids and row_rep_id not in filter_rep_ids:
             continue
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
@@ -1386,6 +1424,9 @@ async def sales_dashboard(
             )
 
     def bump_meeting(row_rep_id: UUID | None, meeting_timestamp: datetime) -> None:
+        # Admin/non-rep attendees don't earn a rep meeting credit.
+        if not _is_rep(row_rep_id, rep_user_ids):
+            return
         rep_key, rep_user_id, rep_name = _label_for_rep(row_rep_id, users)
         meeting_bucket = rep_activity.setdefault(
             rep_key,
