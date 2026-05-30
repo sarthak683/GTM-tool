@@ -146,27 +146,43 @@ export default function DealCallLogger({
 
   return (
     <div style={{
-      border: "1px solid #e3ebf4", borderRadius: 12, background: "#fbfdff",
-      marginBottom: 14, overflow: "hidden",
+      border: `1px solid ${open ? "#cfe0fb" : "#bcd4f7"}`,
+      borderRadius: 12,
+      background: open ? "#fbfdff" : "linear-gradient(180deg,#f2f7ff 0%,#eaf2ff 100%)",
+      marginBottom: 16, overflow: "hidden",
     }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         style={{
-          width: "100%", display: "flex", alignItems: "center", gap: 8,
-          padding: "11px 14px", border: "none", background: "transparent",
-          cursor: "pointer", fontSize: 13, fontWeight: 800, color: "#0f2744",
+          width: "100%", display: "flex", alignItems: "center", gap: 11,
+          padding: "12px 14px", border: "none", background: "transparent",
+          cursor: "pointer", textAlign: "left",
         }}
       >
-        <Phone size={14} style={{ color: "#1f6feb" }} />
-        Log a call
+        <span style={{
+          width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: "#1f6feb", color: "#fff",
+        }}>
+          <Phone size={16} />
+        </span>
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: "#0f2744" }}>Log a call</span>
+          <span style={{ display: "block", fontSize: 11.5, color: "#5b7a9c" }}>
+            Record or log this call — updates activity, next step &amp; follow-up
+          </span>
+        </span>
         {saved ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#15803d", fontSize: 12, fontWeight: 700 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#15803d", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
             <CheckCircle2 size={12} /> Saved
           </span>
+        ) : !open ? (
+          <span style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 8, background: "#1f6feb", color: "#fff", fontSize: 12, fontWeight: 800 }}>
+            Start
+          </span>
         ) : null}
-        <span style={{ flex: 1 }} />
-        {open ? <ChevronDown size={16} color="#7a96b0" /> : <ChevronRight size={16} color="#7a96b0" />}
+        {open ? <ChevronDown size={16} color="#7a96b0" style={{ flexShrink: 0 }} /> : null}
       </button>
 
       {open ? (
