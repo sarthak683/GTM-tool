@@ -85,7 +85,12 @@ def _meeting_entity_key(row):
     """
     if row.company_id is not None:
         return ("company", row.company_id)
-    return ("deal", row.deal_id)
+    if row.deal_id is not None:
+        return ("deal", row.deal_id)
+    # No company/deal anchor — never cluster these with each other (they share
+    # no entity). Callers already exclude such meetings, but key on the row's
+    # own id so an unanchored row can only ever be its own singleton group.
+    return ("meeting", row.id)
 
 
 def _dedupe_meetings_across_sources(rows) -> list:
