@@ -149,7 +149,11 @@ export default function DealCallLogger({
       border: `1px solid ${open ? "#cfe0fb" : "#bcd4f7"}`,
       borderRadius: 12,
       background: open ? "#fbfdff" : "linear-gradient(180deg,#f2f7ff 0%,#eaf2ff 100%)",
-      marginBottom: 16, overflow: "hidden",
+      overflow: "hidden",
+      // Sits in the deal drawer's flex-column body; without flexShrink:0 the
+      // flex layout compresses this wrapper to 0 height and overflow:hidden
+      // clips the button, making the recorder invisible.
+      flexShrink: 0,
     }}>
       <button
         type="button"
