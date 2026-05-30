@@ -41,6 +41,13 @@ def _safe_int(value) -> int:
         return 0
 
 
+# instantly_status values that mean a send has NOT happened yet. Mirrors the
+# frontend ProgressCell PRE_SEND_INSTANTLY set so the inline progress bar
+# (driven by contact fields) and the lifecycle drawer (driven by email_sent
+# activity rows) agree on "was an email sent?".
+_PRE_SEND_INSTANTLY = {"", "ready", "missing_email", "none"}
+
+
 async def _existing_synced_event_count(session, contact_id: UUID, event_type: str) -> int:
     result = await session.execute(
         select(Activity.id).where(
@@ -134,6 +141,12 @@ async def _backfill_synced_sent_event(
             created_at=anchor,
         )
     )
+    # Keep the contact's denormalized send marker in step with the new activity
+    # so the inline progress bar shows "sent" too. Only advance from a pre-send
+    # state — never clobber a more specific status (bounced/replied/…).
+    if (contact.instantly_status or "").lower() in _PRE_SEND_INSTANTLY:
+        contact.instantly_status = "pushed"
+        session.add(contact)
     return 1
 
 

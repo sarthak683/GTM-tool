@@ -61,6 +61,78 @@ PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation"
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
 REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 
+# tl;dv and Google Calendar both ingest the SAME real-world meeting as separate
+# Meeting rows (different external_source). When both exist we must count it
+# once. We prefer tl;dv (only fires on calls that actually happened) over
+# google_calendar (can include rescheduled/no-show events) over manual.
+_MEETING_SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
+
+# Cross-source clock skew: tl;dv stamps `happenedAt` (real start) while Google
+# Calendar stamps the scheduled time, so the "same" meeting can differ by a
+# minute or two (e.g. 4:30 vs 4:31). Match within this window rather than on an
+# exact-minute key, which silently double-counted skewed pairs.
+_MEETING_DEDUP_TOLERANCE_SECONDS = 5 * 60
+
+
+def _meeting_entity_key(row):
+    """Entity a meeting belongs to, for cross-source grouping.
+
+    Prefer company_id; fall back to deal_id. Deliberately does NOT use owner —
+    tl;dv resolves a rep owner while the Google Calendar row of the SAME meeting
+    often has owner=None, so keying on owner splits true duplicates. Nor deal_id
+    when a company exists: one source may map the deal and the other only the
+    company. Company + time-proximity is the reliable shared signal.
+    """
+    if row.company_id is not None:
+        return ("company", row.company_id)
+    return ("deal", row.deal_id)
+
+
+def _dedupe_meetings_across_sources(rows) -> list:
+    """Collapse cross-source duplicates of the same real meeting to one row.
+
+    Groups by entity (company, falling back to deal) and, within each group,
+    clusters rows whose scheduled_at falls within the tolerance window — so a
+    tl;dv row and a Google Calendar row a minute apart count once even when
+    their owners differ. The tl;dv row wins via `_MEETING_SOURCE_PRIORITY`.
+    Returns one row per real meeting; order is not guaranteed (callers sort).
+    """
+    groups: dict[tuple, list] = defaultdict(list)
+    for row in rows:
+        groups[_meeting_entity_key(row)].append(row)
+
+    kept: list = []
+    for group in groups.values():
+        # Sort by time (None last) so within-tolerance rows sit adjacent.
+        group.sort(key=lambda r: (r.scheduled_at is None, r.scheduled_at or datetime.min))
+        clusters: list[dict] = []
+        for row in group:
+            t = row.scheduled_at
+            placed = False
+            for cluster in clusters:
+                anchor = cluster["anchor"]
+                if t is not None and anchor is not None:
+                    if abs((t - anchor).total_seconds()) <= _MEETING_DEDUP_TOLERANCE_SECONDS:
+                        cluster["rows"].append(row)
+                        placed = True
+                        break
+                elif t is None and anchor is None:
+                    cluster["rows"].append(row)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append({"anchor": t, "rows": [row]})
+        for cluster in clusters:
+            kept.append(
+                min(
+                    cluster["rows"],
+                    key=lambda r: _MEETING_SOURCE_PRIORITY.get(
+                        str(r.external_source or "").strip().lower(), 99
+                    ),
+                )
+            )
+    return kept
+
 
 class MilestoneDealRow(BaseModel):
     milestone_key: str
@@ -826,14 +898,18 @@ async def sales_activity_drilldown(
         _meeting_gate = await _build_meeting_stage_gate(
             session, await get_configured_deal_stages(session)
         )
-        for meeting in meeting_page:
-            if meeting.status == "cancelled":
-                continue
-            if not _meeting_gate(meeting):
-                continue
-            source = str(meeting.external_source or "").strip().lower()
-            if source not in REAL_MEETING_SOURCES:
-                continue
+        # Collapse cross-source duplicates (tl;dv + Google Calendar of the same
+        # real meeting) so the validation list matches the deduped headline
+        # count — otherwise the drilldown shows two rows for one meeting.
+        _gated_meetings = [
+            m
+            for m in meeting_page
+            if m.status != "cancelled"
+            and _meeting_gate(m)
+            and str(m.external_source or "").strip().lower() in REAL_MEETING_SOURCES
+        ]
+        _deduped_meetings = _dedupe_meetings_across_sources(_gated_meetings)
+        for meeting in _deduped_meetings:
             meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
             for row_rep_id in _meeting_rep_ids(meeting, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
                 if rep_id and row_rep_id != rep_id:
@@ -1368,16 +1444,14 @@ async def sales_dashboard(
 
     # tl;dv and Google Calendar both ingest the same real-world meeting from
     # different sources, producing two Meeting rows with different
-    # external_source values but the same scheduled_at + customer. Without
-    # dedup, recorded calls double-count (the "157 meetings" inflation Rakesh
-    # saw in prod). We collapse on (scheduled_at floored to the minute,
-    # company_id, deal_id, primary owner) and prefer the tl;dv row when both
-    # exist because tl;dv only fires on calls that actually happened, while
-    # google_calendar entries can include rescheduled/no-show events.
+    # external_source values but (near-)identical scheduled_at + customer.
+    # Without dedup, recorded calls double-count (the "157 meetings" inflation
+    # Rakesh saw in prod). _dedupe_meetings_across_sources collapses them on
+    # (company, deal, owner) within a time-tolerance window — so even a 1-minute
+    # skew between sources counts once — preferring the tl;dv row.
     # Only count early-funnel meetings (deal ≤ demo_done) — see helper docstring.
     _meeting_within_sales_funnel = await _build_meeting_stage_gate(session, stage_settings)
 
-    _SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
     candidate_rows = []
     for row in meetings_rows:
         if not _is_crm_linked_meeting(row):
@@ -1389,19 +1463,11 @@ async def sales_dashboard(
         source = str(row.external_source or "").strip().lower()
         if source not in REAL_MEETING_SOURCES:
             continue
-        candidate_rows.append((source, row))
+        candidate_rows.append(row)
 
-    seen: dict[tuple, tuple[int, object]] = {}
-    for source, row in candidate_rows:
-        primary_owner = row.owner_user_id or deal_owner.get(row.deal_id)
-        bucket_minute = row.scheduled_at.replace(second=0, microsecond=0) if row.scheduled_at else None
-        dedup_key = (bucket_minute, row.company_id, row.deal_id, primary_owner)
-        priority = _SOURCE_PRIORITY.get(source, 99)
-        existing = seen.get(dedup_key)
-        if existing is None or priority < existing[0]:
-            seen[dedup_key] = (priority, row)
+    deduped_meetings = _dedupe_meetings_across_sources(candidate_rows)
 
-    for _priority, row in seen.values():
+    for row in deduped_meetings:
         meeting_timestamp = _meeting_reporting_timestamp(row, window_end=window_end)
         for row_rep_id in _meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
             if filter_rep_ids and row_rep_id not in filter_rep_ids:
@@ -1580,9 +1646,9 @@ async def sales_dashboard(
 
     leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
     meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
-    # Reuse the deduped set from rep-activity counting above so the funnel's
+    # Reuse the deduped list from rep-activity counting above so the funnel's
     # Meeting count agrees with per-rep totals (no tldv+gcal double-count).
-    meetings_count = len(seen)
+    meetings_count = len(deduped_meetings)
     proposal_count = sum(
         1
         for row in deal_rows
