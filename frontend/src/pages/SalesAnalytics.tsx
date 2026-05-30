@@ -452,6 +452,10 @@ function HighlightDealsModal({
   );
 }
 
+// Rows fetched per drilldown page. The backend caps limit at 100; 50 keeps each
+// "Load more" request light while paging through large sets (e.g. 400 emails).
+const DRILLDOWN_PAGE_SIZE = 50;
+
 function ActivityDrilldownModal({
   title,
   data,
@@ -1766,7 +1770,11 @@ export default function SalesAnalytics() {
   const [activityDrilldownLoading, setActivityDrilldownLoading] = useState(false);
   const [activityDrilldownError, setActivityDrilldownError] = useState("");
   // Remembered query so "Load more" can fetch the next page at the right offset.
-  const [activityDrilldownQuery, setActivityDrilldownQuery] = useState<{ metric: SalesActivityMetric; userId: string | null | undefined } | null>(null);
+  // nextOffset is the RAW row offset for the next page. The backend paginates
+  // by raw rows then filters some out (role/attribution), so displayed rows can
+  // be fewer than the page size — advancing by rows.length would re-fetch and
+  // duplicate. Always advance by the page size instead.
+  const [activityDrilldownQuery, setActivityDrilldownQuery] = useState<{ metric: SalesActivityMetric; userId: string | null | undefined; nextOffset: number } | null>(null);
   const [activityDrilldownLoadingMore, setActivityDrilldownLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1878,7 +1886,7 @@ export default function SalesAnalytics() {
     setActivityDrilldown(null);
     setActivityDrilldownError("");
     setActivityDrilldownTitle(`${row.rep_name} · ${labelByMetric[metric]}`);
-    setActivityDrilldownQuery({ metric, userId: row.user_id });
+    setActivityDrilldownQuery({ metric, userId: row.user_id, nextOffset: DRILLDOWN_PAGE_SIZE });
     setActivityDrilldownLoading(true);
     analyticsApi
       .salesActivityDrilldown(
@@ -1888,7 +1896,7 @@ export default function SalesAnalytics() {
         geographyFilter,
         fromDate || undefined,
         toDate || undefined,
-        50,
+        DRILLDOWN_PAGE_SIZE,
         0,
       )
       .then(setActivityDrilldown)
@@ -1900,22 +1908,24 @@ export default function SalesAnalytics() {
   // 400 emails) without loading them in one heavy request.
   const handleLoadMoreActivity = () => {
     if (!activityDrilldown || !activityDrilldownQuery || activityDrilldownLoadingMore) return;
-    const nextOffset = activityDrilldown.rows.length;
+    const query = activityDrilldownQuery;
     setActivityDrilldownLoadingMore(true);
     analyticsApi
       .salesActivityDrilldown(
-        activityDrilldownQuery.metric,
+        query.metric,
         windowDays,
-        activityDrilldownQuery.userId,
+        query.userId,
         geographyFilter,
         fromDate || undefined,
         toDate || undefined,
-        50,
-        nextOffset,
+        DRILLDOWN_PAGE_SIZE,
+        query.nextOffset,
       )
-      .then((page) =>
-        setActivityDrilldown((prev) => (prev ? { ...page, rows: [...prev.rows, ...page.rows] } : page)),
-      )
+      .then((page) => {
+        setActivityDrilldown((prev) => (prev ? { ...page, rows: [...prev.rows, ...page.rows] } : page));
+        // Advance by the page size (raw rows consumed), not displayed count.
+        setActivityDrilldownQuery((q) => (q ? { ...q, nextOffset: q.nextOffset + DRILLDOWN_PAGE_SIZE } : q));
+      })
       .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load more rows"))
       .finally(() => setActivityDrilldownLoadingMore(false));
   };
