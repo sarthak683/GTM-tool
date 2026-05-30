@@ -53,6 +53,90 @@ async def _existing_synced_event_count(session, contact_id: UUID, event_type: st
     return len(result.scalars().all())
 
 
+async def _backfill_synced_sent_event(
+    session,
+    *,
+    contact: Contact,
+    campaign_id: str,
+    campaign_name: str | None,
+    lead: dict,
+) -> int:
+    """Record a single ``email_sent`` activity when Instantly shows the lead was
+    contacted but no send row exists yet.
+
+    Instantly's lead polling endpoint exposes no send COUNT — only proof that a
+    send happened (``status_summary.lastStep`` and ``timestamp_last_contact``)
+    plus engagement counters. So we record ONE honest "sent" marker per
+    contacted lead; the real-time webhook path (``email_sent`` events) records
+    true per-send counts going forward. We never claim a send for a lead that
+    only has a manually-set status and no Instantly contact evidence — that is
+    exactly the phantom the progress bar used to over-claim.
+    """
+    if not contact.id or not contact.email:
+        return 0
+
+    status_summary = lead.get("status_summary") or {}
+    last_step = status_summary.get("lastStep") if isinstance(status_summary, dict) else None
+    contacted = (
+        bool(last_step)
+        or bool(lead.get("timestamp_last_contact"))
+        or _safe_int(lead.get("email_open_count")) > 0
+        or _safe_int(lead.get("email_click_count")) > 0
+        or _safe_int(lead.get("email_reply_count")) > 0
+    )
+    if not contacted:
+        return 0
+
+    # Counts webhook ("email_sent" event) AND prior synthetic rows — both are
+    # source="instantly" — so we never double-count an already-recorded send.
+    if await _existing_synced_event_count(session, contact.id, "email_sent") > 0:
+        return 0
+
+    email = contact.email.lower().strip()
+    sender = last_step.get("from") if isinstance(last_step, dict) else None
+    anchor = (
+        _parse_instantly_datetime(last_step.get("timestamp_executed") if isinstance(last_step, dict) else None)
+        or _parse_instantly_datetime(lead.get("timestamp_last_contact"))
+        or datetime.utcnow()
+    )
+    external_id = f"{campaign_id}:{email}:email_sent:1"
+    duplicate = (
+        await session.execute(
+            select(Activity.id).where(
+                Activity.external_source == "instantly_sync",
+                Activity.external_source_id == external_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        return 0
+
+    session.add(
+        Activity(
+            type="email",
+            source="instantly",
+            medium="email",
+            content=f"Email sent (synced from Instantly): {email}",
+            contact_id=contact.id,
+            external_source="instantly_sync",
+            external_source_id=external_id,
+            event_metadata={
+                "event_type": "email_sent",
+                "synthetic_from_sync": True,
+                "campaign_id": campaign_id,
+                "campaign_name": campaign_name,
+                "lead_email": email,
+                "synced_at": datetime.utcnow().isoformat(),
+                "source_timestamp": anchor.isoformat(),
+            },
+            email_from=sender,
+            email_to=email,
+            created_at=anchor,
+        )
+    )
+    return 1
+
+
 async def _backfill_synced_email_events(
     session,
     *,
@@ -183,7 +267,13 @@ async def _async_sync_active_campaigns() -> dict:
         result = await session.execute(
             select(OutreachSequence).where(
                 OutreachSequence.instantly_campaign_id.isnot(None),
-                OutreachSequence.instantly_campaign_status.in_(["active", "paused", None]),
+                # Include completed/error campaigns too: they've already sent
+                # emails, so their leads need the email_sent/reply backfill even
+                # though no further webhooks will fire. The per-lead work is
+                # idempotent, so re-checking a finished campaign is cheap.
+                OutreachSequence.instantly_campaign_status.in_(
+                    ["active", "paused", "completed", "error", None]
+                ),
             )
         )
         sequences = result.scalars().all()
@@ -260,6 +350,29 @@ async def _async_sync_active_campaigns() -> dict:
                                     contact.email_click_count = lead["email_click_count"]
 
                                 events_created = 0
+                                # One "sent" marker per contacted lead so
+                                # "Emails sent" is accurate for poll-only
+                                # prospects whose webhook never fired.
+                                events_created += await _backfill_synced_sent_event(
+                                    session,
+                                    contact=contact,
+                                    campaign_id=campaign_id,
+                                    campaign_name=getattr(seq, "campaign_name", None),
+                                    lead=lead,
+                                )
+                                # Replies are exact (email_reply_count), so the
+                                # count-based helper recovers the right number.
+                                events_created += await _backfill_synced_email_events(
+                                    session,
+                                    contact=contact,
+                                    campaign_id=campaign_id,
+                                    campaign_name=getattr(seq, "campaign_name", None),
+                                    lead=lead,
+                                    event_type="reply_received",
+                                    count_field="email_reply_count",
+                                    timestamp_field="timestamp_last_touch",
+                                    content_label="Reply received (synced from Instantly)",
+                                )
                                 events_created += await _backfill_synced_email_events(
                                     session,
                                     contact=contact,

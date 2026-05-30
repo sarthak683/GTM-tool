@@ -81,17 +81,31 @@ const CALL_SOFT_NEG = new Set(["connected_not_interested", "contact_poor_fit", "
 const CALL_FOLLOWUP = new Set(["interested_follow_up_required", "call_back_later_rescheduled"]);
 const CALL_BOOKED = new Set(["demo_scheduled_booked", "meeting_confirmed"]);
 
+// instantly_status values that mean a send has NOT happened yet — the lead is
+// queued/unverified, not contacted. Anything else (pushed, bounced, replied,
+// paused, …) confirms the lead actually entered the campaign.
+const PRE_SEND_INSTANTLY = new Set(["", "ready", "missing_email", "none"]);
+
 function getEmailChannel(contact: Contact): ChannelState {
   const seq = contact.sequence_status || "";
   const opens = contact.email_open_count ?? 0;
+  const clicks = contact.email_click_count ?? 0;
+  const lastAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
+  // A send is only "real" with evidence: tracked opens/clicks, or an
+  // instantly_status past the pre-send states. This stops the lane claiming a
+  // phantom "sent" for contacts whose sequence_status was set manually or by
+  // import with no email actually behind it (drives the drawer/ProgressCell
+  // agreement — see "Emails sent 0" reconciliation).
+  const inst = (contact.instantly_status || "").toLowerCase();
+  const reallySent = opens > 0 || clicks > 0 || (inst !== "" && !PRE_SEND_INSTANTLY.has(inst));
+  if (!reallySent) {
+    return { dots: [], heroColor: null, label: "Not sent", sub: "Email pending", timestamp: null };
+  }
+
   const replied = seq === "replied";
   const booked = seq === "meeting_booked";
   const negative = seq === "not_interested";
-  // Sequence-status values that imply at least one email was sent. Plus a
-  // fallback: any recorded open means a send happened (Instantly-only
-  // signal in case sequence_status hasn't been updated yet).
-  const sent = ["queued_instantly", "sent", "replied", "meeting_booked", "not_interested"].includes(seq) || opens > 0;
-  const lastAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
+  const sent = reallySent;
 
   const dots: OutcomeDot[] = [];
   if (sent) dots.push({ color: "yellow", title: "Email sent" });
