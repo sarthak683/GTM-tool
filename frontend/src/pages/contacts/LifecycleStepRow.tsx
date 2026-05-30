@@ -63,15 +63,14 @@ function metadataRows(meta: Record<string, unknown> | null | undefined): Array<[
  * than rendering "Unknown by Unknown". */
 function actorLabel(ev: LifecycleEvent | null | undefined): string | null {
   if (!ev) return null;
+  const s = (ev.source || "").toLowerCase();
+  // Manual touches: name the person who logged it when we know them.
+  if (s === "manual") return ev.created_by_name ? `Manually logged by ${ev.created_by_name}` : "Manually logged";
   if (ev.created_by_name) return ev.created_by_name;
   if (ev.aircall_user_name) return `${ev.aircall_user_name} (Aircall)`;
   if (ev.email_from) return ev.email_from;
-  if (ev.source) {
-    const s = ev.source.toLowerCase();
-    if (s === "instantly") return "Instantly";
-    if (s === "manual") return "Manually logged";
-    return ev.source.replace(/_/g, " ");
-  }
+  if (s === "instantly") return "Instantly";
+  if (ev.source) return ev.source.replace(/_/g, " ");
   return null;
 }
 

@@ -96,7 +96,26 @@ async def list_activities(
         limit=pagination.limit,
         order_by=Activity.created_at.desc(),
     )
-    return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
+    # Resolve the logger's display name so the UI can show "Manually logged by
+    # <person>" instead of a faceless "Manually logged". One batched lookup.
+    # SQLModel table rows reject undeclared attrs, so hydrate ActivityRead
+    # objects (which declare user_name) and set the name there.
+    creator_ids = {it.created_by_id for it in items if getattr(it, "created_by_id", None)}
+    names: dict = {}
+    if creator_ids:
+        from app.models.user import User
+        name_rows = (
+            await session.execute(select(User.id, User.name).where(User.id.in_(creator_ids)))
+        ).all()
+        names = {uid: nm for uid, nm in name_rows}
+    reads = []
+    for it in items:
+        read = ActivityRead.model_validate(it, from_attributes=True)
+        nm = names.get(getattr(it, "created_by_id", None))
+        if nm:
+            read.user_name = nm
+        reads.append(read)
+    return PaginatedResponse.build(reads, total, pagination.skip, pagination.limit)
 
 
 @router.get("/me/calls-today")

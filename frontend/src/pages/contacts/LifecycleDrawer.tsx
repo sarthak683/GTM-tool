@@ -78,15 +78,14 @@ function metadataRows(meta: Record<string, unknown> | undefined): Array<[string,
 }
 
 function actorLabel(a: Activity): string | null {
+  const s = (a.source || "").toLowerCase();
+  // Manual touches: name the person who logged it when we know them.
+  if (s === "manual") return a.user_name ? `Manually logged by ${a.user_name}` : "Manually logged";
   if (a.user_name) return a.user_name;
   if (a.aircall_user_name) return `${a.aircall_user_name} (Aircall)`;
   if (a.email_from) return a.email_from;
-  if (a.source) {
-    const s = a.source.toLowerCase();
-    if (s === "instantly") return "Instantly";
-    if (s === "manual") return "Manually logged";
-    return a.source.replace(/_/g, " ");
-  }
+  if (s === "instantly") return "Instantly";
+  if (a.source) return a.source.replace(/_/g, " ");
   return null;
 }
 
@@ -385,6 +384,9 @@ export function LifecycleDrawer({
   const emailReplies = activities.filter((a) => activityEventType(a) === "reply_received");
   const emailSends = activities.filter((a) => activityEventType(a) === "email_sent");
   const calls = activities.filter((a) => (a.type || "").toLowerCase() === "call");
+  const linkedins = activities.filter(
+    (a) => (a.type || "").toLowerCase() === "linkedin" || (a.medium || "").toLowerCase() === "linkedin",
+  );
   const latestOpen = emailOpens[0]?.created_at || null;
   const statCard = (label: string, value: string | number, sub?: string | null) => (
     <div style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #dbe7f3", background: "#f8fbff", minWidth: 0 }}>
@@ -442,10 +444,11 @@ export function LifecycleDrawer({
               </div>
 
               {!activitiesLoading && activities.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))", gap: 10, marginBottom: 16 }}>
                   {statCard("Email opens", emailOpens.length, latestOpen ? `Last ${formatLifecycleDate(latestOpen)}` : "No opens yet")}
                   {statCard("Emails sent", emailSends.length, emailReplies.length ? `${emailReplies.length} replies` : "No replies yet")}
                   {statCard("Calls", calls.length, calls[0]?.created_at ? `Last ${formatLifecycleDate(calls[0].created_at)}` : "No calls yet")}
+                  {statCard("LinkedIn", linkedins.length, linkedins[0]?.created_at ? `Last ${formatLifecycleDate(linkedins[0].created_at)}` : "No touches yet")}
                   {statCard("Total activity", activities.length, "All tracked events")}
                 </div>
               )}
