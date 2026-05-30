@@ -874,6 +874,15 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
           {activeTab === "overview" ? (
             <>
 
+          {/* Log a call — front and center on Overview so the AE flow is one
+              click: open deal → Log a call → record (or type) → Save. */}
+          <DealCallLogger
+            deal={deal}
+            dealContacts={dealContacts}
+            onLogged={() => { dealsApi.getActivities(deal.id).then(setActivities).catch(() => {}); }}
+            onPatchDeal={patchDeal}
+          />
+
           <SectionLabel>Deal Details</SectionLabel>
           <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
           {/* ── Fields section ──────────────────────────────────────── */}
@@ -1849,13 +1858,6 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               )}
             </div>
           ) : (
-            <>
-            <DealCallLogger
-              deal={deal}
-              dealContacts={dealContacts}
-              onLogged={() => { dealsApi.getActivities(deal.id).then(setActivities).catch(() => {}); }}
-              onPatchDeal={patchDeal}
-            />
             <ActivityPanel
               activities={activities}
               comment={comment}
@@ -1869,7 +1871,6 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               } : undefined}
               pocEligible={deal.stage !== "poc_agreed" && deal.stage !== "poc_wip" && deal.stage !== "poc_done"}
             />
-            </>
           )}
         </div>
       </div>
