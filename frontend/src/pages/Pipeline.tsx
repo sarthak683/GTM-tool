@@ -1718,10 +1718,12 @@ export default function Pipeline() {
     const stalledParam = searchParams.get("stalled");
     const overdueParam = searchParams.get("overdue");
     const missingCloseDateParam = searchParams.get("missing_close_date");
+    const needsAttentionParam = searchParams.get("needs_attention");
     const closeMonthParam = searchParams.get("close_month") ?? "";
     setStageFilters(requestedStages);
     setAssigneeFilters(requestedAssignees);
     setStalledOnly(stalledParam === "1" || stalledParam === "true");
+    setNeedsAttentionOnly(needsAttentionParam === "1" || needsAttentionParam === "true");
     setOverdueOnly(overdueParam === "1" || overdueParam === "true");
     setMissingCloseDateOnly(missingCloseDateParam === "1" || missingCloseDateParam === "true");
     setCloseMonthFilter(closeMonthParam);
@@ -2145,6 +2147,7 @@ export default function Pipeline() {
       next.delete("stalled");
       next.delete("overdue");
       next.delete("missing_close_date");
+      next.delete("needs_attention");
       next.delete("close_month");
       return next;
     }, { replace: true });
@@ -2169,6 +2172,16 @@ export default function Pipeline() {
       } else {
         next.delete("stalled");
       }
+      return next;
+    }, { replace: true });
+  };
+
+  const handleNeedsAttentionOnlyChange = (checked: boolean) => {
+    setNeedsAttentionOnly(checked);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (checked) next.set("needs_attention", "1");
+      else next.delete("needs_attention");
       return next;
     }, { replace: true });
   };
@@ -2631,7 +2644,7 @@ export default function Pipeline() {
                   <input
                     type="checkbox"
                     checked={needsAttentionOnly}
-                    onChange={(e) => setNeedsAttentionOnly(e.target.checked)}
+                    onChange={(e) => handleNeedsAttentionOnlyChange(e.target.checked)}
                     style={{ accentColor: "#7c3aed", width: 14, height: 14 }}
                   />
                   <span style={{ fontSize: 12, fontWeight: 600, color: needsAttentionOnly ? "#6d28d9" : "#2d4258" }}>Needs attention (no next step / overdue / stale / no contact)</span>

@@ -350,7 +350,7 @@ function DealAtAGlance({ deal, onPatch }: { deal: Deal; onPatch: (data: Partial<
               ) : null}
               <button
                 type="button"
-                onClick={() => onPatch({ next_step: undefined, next_step_due_at: undefined } as Partial<Deal>)}
+                onClick={() => onPatch({ next_step: null, next_step_due_at: null } as unknown as Partial<Deal>)}
                 title="Mark this next step done"
                 style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#15803d", background: "#ecfdf3", border: "1px solid #bbf7d0", borderRadius: 8, padding: "7px 12px", minHeight: 34, cursor: "pointer" }}
               >
@@ -368,10 +368,15 @@ function DealAtAGlance({ deal, onPatch }: { deal: Deal; onPatch: (data: Partial<
             />
           )}
         </div>
-        {/* Trust signal: confirm the reminder will actually fire (deal_reminders task). */}
-        {deal.next_step && due ? (
+        {/* Trust signal — only promise a reminder when one will actually fire:
+            deal_reminders skips unassigned deals, so gate on assignment. */}
+        {deal.next_step && due && deal.assigned_to_id ? (
           <div style={{ fontSize: 10.5, color: "#7a8ea4" }}>
             Beacon will remind {deal.assigned_rep_name || "the owner"} on {due.text}
+          </div>
+        ) : deal.next_step && due ? (
+          <div style={{ fontSize: 10.5, color: "#b08400" }}>
+            Assign an owner to get a reminder on {due.text}
           </div>
         ) : null}
       </div>
@@ -413,6 +418,11 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
       else await tasksApi.update(task.id, { status: "dismissed" });
       load();
       onChanged(); // accept can move the stage / patch the deal → refresh drawer
+    } catch {
+      // A non-owner viewing someone else's deal gets a 403. Swallow it (don't
+      // crash the page) and reload so the card reflects true server state
+      // rather than being optimistically removed.
+      load();
     } finally {
       setBusyId(null);
     }
@@ -1152,7 +1162,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <FieldRow label="Assigned" icon={<UserCircle2 size={13} />}>
               <select
                 value={deal.assigned_to_id ?? ""}
-                onChange={(e) => patchDeal({ assigned_to_id: e.target.value || undefined } as Partial<Deal>)}
+                onChange={(e) => patchDeal({ assigned_to_id: e.target.value || null } as Partial<Deal>)}
                 style={{ ...fieldInputStyle }}
               >
                 <option value="">Unassigned</option>
@@ -1187,7 +1197,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               <input
                 type="date"
                 defaultValue={deal.close_date_est ?? ""}
-                onChange={(e) => patchDeal({ close_date_est: e.target.value || undefined } as Partial<Deal>)}
+                onChange={(e) => patchDeal({ close_date_est: e.target.value || null } as Partial<Deal>)}
                 style={{ ...fieldInputStyle }}
               />
             </FieldRow>
@@ -1209,7 +1219,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <FieldRow label="Geography" icon={<Globe size={13} />}>
               <select
                 value={deal.geography ?? ""}
-                onChange={(e) => patchDeal({ geography: e.target.value || undefined } as Partial<Deal>)}
+                onChange={(e) => patchDeal({ geography: e.target.value || null } as Partial<Deal>)}
                 style={{ ...fieldInputStyle }}
               >
                 <option value="">Unassigned</option>
@@ -1223,7 +1233,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <FieldRow label="Source" icon={<Zap size={13} />}>
               <select
                 value={deal.source ?? ""}
-                onChange={(e) => patchDeal({ source: e.target.value || undefined } as Partial<Deal>)}
+                onChange={(e) => patchDeal({ source: e.target.value || null } as Partial<Deal>)}
                 style={{ ...fieldInputStyle }}
               >
                 <option value="">Select source</option>
@@ -1290,7 +1300,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <input
               type="text"
               defaultValue={deal.next_step ?? ""}
-              onBlur={(e) => patchDeal({ next_step: e.target.value || undefined } as Partial<Deal>)}
+              onBlur={(e) => patchDeal({ next_step: e.target.value || null } as Partial<Deal>)}
               placeholder="e.g. Send pricing proposal by Friday"
               style={{
                 width: "100%", height: 38, borderRadius: 10,
@@ -1304,7 +1314,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <input
                   type="datetime-local"
                   value={toLocalDatetimeInput(deal.next_step_due_at)}
-                  onChange={(e) => patchDeal({ next_step_due_at: fromLocalDatetimeInput(e.target.value) } as Partial<Deal>)}
+                  onChange={(e) => patchDeal({ next_step_due_at: fromLocalDatetimeInput(e.target.value) ?? null } as unknown as Partial<Deal>)}
                   title="When the next step is due — Beacon reminds the owner when it passes"
                   style={{ height: 34, borderRadius: 9, border: "1px solid #dbe6f2", padding: "0 10px", fontSize: 12.5, color: "#2d4258", outline: "none" }}
                 />
@@ -1319,7 +1329,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 );
               })()}
               {deal.next_step_due_at && (
-                <button type="button" onClick={() => patchDeal({ next_step_due_at: undefined } as Partial<Deal>)} style={{ fontSize: 11, fontWeight: 700, color: "#7a96b0", background: "none", border: "none", cursor: "pointer" }}>
+                <button type="button" onClick={() => patchDeal({ next_step_due_at: null } as unknown as Partial<Deal>)} style={{ fontSize: 11, fontWeight: 700, color: "#7a96b0", background: "none", border: "none", cursor: "pointer" }}>
                   Clear
                 </button>
               )}
@@ -1419,7 +1429,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <div style={{ fontSize: 12, fontWeight: 600, color: "#5e738b", marginBottom: 8 }}>Description</div>
             <textarea
               defaultValue={deal.description ?? ""}
-              onBlur={(e) => patchDeal({ description: e.target.value || undefined } as Partial<Deal>)}
+              onBlur={(e) => patchDeal({ description: e.target.value || null } as Partial<Deal>)}
               placeholder="Add notes about this deal..."
               style={{
                 width: "100%", minHeight: 80, borderRadius: 12, border: "1px solid #dbe6f2",
