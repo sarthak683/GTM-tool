@@ -147,6 +147,15 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
         source="deal_created",
         changed_at=deal.stage_entered_at,
     )
+    # Attach the account's existing contacts so a new deal opens with its people
+    # already linked (link-only; meeting/email signals don't exist yet on a
+    # brand-new deal, and the daily reconcile fills those in).
+    if deal.company_id:
+        try:
+            from app.services.deal_linker import reconcile_deal_stakeholders
+            await reconcile_deal_stakeholders(session, deal, create_from_signals=False)
+        except Exception:
+            logger.exception("deal create: stakeholder link failed for %s", deal.id)
     await session.commit()
 
     return await DealRepository(session).get_with_joins(deal.id) or deal
@@ -254,6 +263,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     update_data = payload.model_dump(exclude_unset=True)
     stage_changed = False
     previous_stage = deal.stage
+    previous_company_id = deal.company_id
 
     if "description" in update_data:
         update_data["description"] = _normalize_optional_text(update_data.get("description"))
@@ -301,6 +311,15 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     update_data["updated_at"] = datetime.utcnow()
     updated = await repo.update(deal, update_data)
 
+    # Re-link the account's contacts when the deal is pointed at a (new) company.
+    company_changed = updated.company_id is not None and updated.company_id != previous_company_id
+    if company_changed:
+        try:
+            from app.services.deal_linker import reconcile_deal_stakeholders
+            await reconcile_deal_stakeholders(session, updated, create_from_signals=False)
+        except Exception:
+            logger.exception("deal update: stakeholder link failed for %s", deal_id)
+
     if stage_changed:
         session.add(
             Activity(
@@ -336,7 +355,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         )
         session.add(activity)
 
-    if stage_changed or changes:
+    if stage_changed or changes or company_changed:
         await session.commit()
 
     return await repo.get_with_joins(deal_id) or updated
