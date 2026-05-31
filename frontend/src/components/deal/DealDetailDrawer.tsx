@@ -7,10 +7,10 @@ import {
   Shield, BarChart2, ClipboardList, Presentation,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
-import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi } from "../../lib/api";
+import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
-import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, User } from "../../types";
+import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
@@ -302,6 +302,131 @@ function EngagementPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * At-a-glance status strip for the deal Overview — surfaces the facts an AE
+ * needs first (amount, close date, stage age, health, and the Next Step with an
+ * overdue/due chip) so they don't have to scroll into the form or hop tabs.
+ * Read-only summary; editing stays in the Deal Details form below.
+ */
+function DealAtAGlance({ deal }: { deal: Deal }) {
+  const healthColor =
+    deal.health === "green" ? "#15803d" : deal.health === "yellow" ? "#c2410c" : deal.health === "red" ? "#be123c" : "#64748b";
+  const due = dueLabel(deal.next_step_due_at);
+  const stat = (label: string, value: string, color?: string) => (
+    <div style={{ minWidth: 78, flex: "1 1 78px" }}>
+      <div style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 800, color: color || "#16273d", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+    </div>
+  );
+  return (
+    <div style={{ border: "1px solid #e3ebf4", borderRadius: 14, background: "#fff", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0, boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {stat("Amount", deal.value != null ? formatCurrency(deal.value) : "—")}
+        {stat("Close date", deal.close_date_est ? formatDate(deal.close_date_est) : "—")}
+        {stat("Stage age", deal.days_in_stage != null ? `${deal.days_in_stage}d` : "—")}
+        {stat("Health", deal.health ? deal.health[0].toUpperCase() + deal.health.slice(1) : "—", healthColor)}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid #eef2f7", paddingTop: 9, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Next step</span>
+        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: deal.next_step ? 700 : 500, color: deal.next_step ? "#16273d" : "#94a3b8", fontStyle: deal.next_step ? "normal" : "italic" }}>
+          {deal.next_step || "No next step set"}
+        </span>
+        {due ? (
+          <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: due.overdue ? "#be123c" : "#1d4ed8", background: due.overdue ? "#fff1f2" : "#eff6ff", border: `1px solid ${due.overdue ? "#fecdd3" : "#bfdbfe"}` }}>
+            {due.overdue ? "Overdue" : "Due"} · {due.text}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Beacon suggests" — surfaces the top open AI next-actions (T-STAGE / T-MEDPICC
+ * / T-CONTACT …) on the deal Overview so the AE can act in one click instead of
+ * digging into the Tasks tab. Reuses the same task feed + accept/dismiss actions
+ * as TaskCenterModal (task_type=system, task_track=sales_ai). Renders nothing
+ * when there are no open suggestions.
+ */
+function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: () => void }) {
+  const [items, setItems] = useState<TaskItem[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = () => {
+    tasksApi
+      .list("deal", dealId, false, "auto")
+      .then((tasks) =>
+        setItems(
+          tasks
+            .filter((t) => t.task_type === "system" && t.task_track === "sales_ai" && t.status === "open")
+            .slice(0, 3),
+        ),
+      )
+      .catch(() => setItems([]));
+  };
+  useEffect(load, [dealId]);
+
+  if (items.length === 0) return null;
+
+  const act = async (task: TaskItem, kind: "accept" | "dismiss") => {
+    setBusyId(task.id);
+    try {
+      if (kind === "accept") await tasksApi.accept(task.id);
+      else await tasksApi.update(task.id, { status: "dismissed" });
+      load();
+      onChanged(); // accept can move the stage / patch the deal → refresh drawer
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div style={{ border: "1px solid #e7defb", borderRadius: 14, background: "linear-gradient(180deg,#faf8ff 0%,#ffffff 70%)", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <Sparkles size={14} color="#7c3aed" />
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.06em" }}>Beacon suggests</span>
+      </div>
+      {items.map((task) => {
+        const busy = busyId === task.id;
+        const applyLabel = task.recommended_action ? "Let Beacon do it" : "Mark reviewed";
+        const priorityLabel = String((task.action_payload as Record<string, unknown> | undefined)?.priority_label || "").trim();
+        return (
+          <div key={task.id} style={{ border: "1px solid #ece6fb", borderRadius: 11, background: "#fff", padding: "10px 12px", display: "grid", gap: 7 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <span style={{ minWidth: 0, flex: 1, fontSize: 13, fontWeight: 800, color: "#1f2d3d", lineHeight: 1.35 }}>{task.title}</span>
+              {priorityLabel ? (
+                <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, color: "#6d28d9", background: "#f3ecff", border: "1px solid #e3d6fb", borderRadius: 999, padding: "2px 7px" }}>{priorityLabel}</span>
+              ) : null}
+            </div>
+            {task.description ? (
+              <div style={{ fontSize: 11.5, color: "#5a6b80", lineHeight: 1.45 }}>{task.description}</div>
+            ) : null}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => void act(task, "accept")}
+                disabled={busy}
+                style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 8, border: "none", background: busy ? "#c7b8ee" : "#7c3aed", color: "#fff", fontSize: 12, fontWeight: 800, cursor: busy ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={12} />}
+                {applyLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => void act(task, "dismiss")}
+                disabled={busy}
+                style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 8, border: "1px solid #dde5ef", background: "#fff", color: "#5a6b80", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer" }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -865,6 +990,19 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 22, background: "#f5f8fc" }}>
           {activeTab === "overview" ? (
             <>
+
+          {/* At-a-glance status so the AE reads the deal in one look. */}
+          <DealAtAGlance deal={deal} />
+
+          {/* Beacon's AI next-actions, surfaced inline so the AE acts without
+              digging into the Tasks tab. */}
+          <BeaconSuggestions
+            dealId={deal.id}
+            onChanged={() => {
+              void dealsApi.get(deal.id).then(onDealUpdated).catch(() => {});
+              dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+            }}
+          />
 
           {/* Log a call — front and center on Overview so the AE flow is one
               click: open deal → Log a call → record (or type) → Save. */}

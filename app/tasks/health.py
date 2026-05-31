@@ -40,6 +40,38 @@ def recalculate_all_deal_health() -> dict:
     return {"status": "completed", "deals_updated": count}
 
 
+async def _reconcile_deal_contacts(session, deal) -> int:
+    """Auto-link a company's existing CRM contacts onto a deal that has NONE.
+
+    89% of open deals had no linked contact in prod, which starves MEDDPICC
+    auto-fill and client-engagement attribution. When a deal has a company but
+    zero linked contacts, attach up to a handful of that company's contacts so
+    the AE opens the deal with its people already there. Never touches a deal a
+    rep has curated (≥1 contact already linked).
+    """
+    from app.models.contact import Contact
+    from app.models.deal import DealContact
+
+    if not deal.company_id:
+        return 0
+    existing = (
+        await session.execute(select(DealContact.contact_id).where(DealContact.deal_id == deal.id))
+    ).first()
+    if existing is not None:
+        return 0  # rep-curated or already reconciled — leave alone
+    contact_ids = (
+        await session.execute(
+            select(Contact.id)
+            .where(Contact.company_id == deal.company_id)
+            .order_by(Contact.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    for cid in contact_ids:
+        session.add(DealContact(deal_id=deal.id, contact_id=cid, role="auto_linked"))
+    return len(contact_ids)
+
+
 async def _async_recalculate() -> int:
     from app.database import task_session
     from app.models.activity import Activity
@@ -47,6 +79,7 @@ async def _async_recalculate() -> int:
     from app.services.deal_health import compute_health
 
     updated = 0
+    contacts_linked = 0
     async with task_session() as session:
         result = await session.execute(
             select(Deal).where(Deal.stage.notin_(_CLOSED_STAGES))
@@ -71,9 +104,13 @@ async def _async_recalculate() -> int:
             session.add(deal)
             updated += 1
 
+            # Backfill people onto contact-less deals so the AE workflow + MEDDPICC
+            # have something to work with.
+            contacts_linked += await _reconcile_deal_contacts(session, deal)
+
         await session.commit()
 
-    logger.info(f"Health recalculated for {updated} deals")
+    logger.info("Health recalculated for %d deals; auto-linked %d company contacts", updated, contacts_linked)
     return updated
 
 
