@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -39,6 +39,19 @@ def _normalize_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _default_next_step_due() -> datetime:
+    """3 business days out at 09:00 (naive UTC). Reps weren't setting due dates,
+    so the reminder path stayed dark; defaulting one when a next step is set
+    gives deal_reminders a concrete target the AE can still edit."""
+    d = datetime.utcnow()
+    added = 0
+    while added < 3:
+        d += timedelta(days=1)
+        if d.weekday() < 5:  # Mon–Fri
+            added += 1
+    return d.replace(hour=9, minute=0, second=0, microsecond=0)
 
 
 def _summarize_text_change(label: str, value: str | None) -> str:
@@ -246,6 +259,15 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         update_data["description"] = _normalize_optional_text(update_data.get("description"))
     if "next_step" in update_data:
         update_data["next_step"] = _normalize_optional_text(update_data.get("next_step"))
+        # Default a due date when a rep sets a next step without one, so Beacon
+        # reminds them. Skip if the same request sets/clears the due explicitly,
+        # or the deal already has one (don't override).
+        if (
+            update_data["next_step"]
+            and "next_step_due_at" not in update_data
+            and deal.next_step_due_at is None
+        ):
+            update_data["next_step_due_at"] = _default_next_step_due()
 
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:

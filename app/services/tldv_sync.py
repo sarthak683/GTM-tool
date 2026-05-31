@@ -1031,6 +1031,14 @@ async def sync_tldv_meeting(
         await refresh_system_tasks_for_entity(session, "contact", contact_id)
     if deal and deal.id:
         await refresh_system_tasks_for_entity(session, "deal", deal.id)
+        # A fresh transcript is the richest MEDDPICC evidence. Reps dismiss the
+        # incremental suggestions, so fill an empty deal's qualification straight
+        # from the conversation here (no-ops if it already has MEDDPICC signal).
+        try:
+            from app.services.meddpicc_assist import auto_fill_empty_meddpicc
+            await auto_fill_empty_meddpicc(session, deal)
+        except Exception:
+            logger.exception("tldv_sync: MEDDPICC auto-fill failed for deal %s", deal.id)
     await session.commit()
 
     return {

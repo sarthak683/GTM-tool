@@ -3472,6 +3472,10 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
 # reason" rail: never auto-lower a rep's manual score, and stamp every auto-apply
 # with its summary/evidence/source on the field and the timeline.
 MEDDPICC_AUTO_APPLY_CONFIDENCE = 0.9
+# Filling an EMPTY dimension can't clobber a rep value, so it applies at a lower
+# bar than refining an existing one — reps were dismissing suggestions, leaving
+# MEDDPICC empty, so we let confident empty-field fills land automatically.
+MEDDPICC_EMPTY_FIELD_CONFIDENCE = 0.75
 _MEDDPICC_AUTO_APPLY_REASONS = {"empty_field", "material_refinement"}
 
 
@@ -3486,12 +3490,17 @@ async def _auto_apply_meddpicc_proposal(
     the model's confidence clears the auto-apply bar. (Recently rep-edited fields
     are already excluded upstream by the emitter's dedupe window.)
     """
-    if proposal.code != "T-MEDPICC" or proposal.confidence < MEDDPICC_AUTO_APPLY_CONFIDENCE:
+    if proposal.code != "T-MEDPICC":
         return False
     payload = proposal.payload or {}
     field = str(payload.get("field") or "").strip().lower()
     change_reason = str(payload.get("change_reason") or "").strip().lower()
     if change_reason not in _MEDDPICC_AUTO_APPLY_REASONS:
+        return False
+    min_confidence = (
+        MEDDPICC_EMPTY_FIELD_CONFIDENCE if change_reason == "empty_field" else MEDDPICC_AUTO_APPLY_CONFIDENCE
+    )
+    if proposal.confidence < min_confidence:
         return False
     try:
         target_score = int(payload.get("target_score"))

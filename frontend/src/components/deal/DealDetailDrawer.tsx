@@ -506,6 +506,10 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const [amountInput, setAmountInput] = useState(formatEditableCurrency(deal.value));
   const [amountFocused, setAmountFocused] = useState(false);
   const [showStageMenu, setShowStageMenu] = useState(false);
+  // Win/loss capture: moving to a closed stage opens a reason prompt before the move.
+  const [closeStagePrompt, setCloseStagePrompt] = useState<string | null>(null);
+  const [closeReasonDraft, setCloseReasonDraft] = useState("");
+  const [closingDeal, setClosingDeal] = useState(false);
 
   // Link contact
   const [showLinkContact, setShowLinkContact] = useState(false);
@@ -656,9 +660,41 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const handleMoveStage = async (newStage: string) => {
     setShowStageMenu(false);
     if (newStage === deal.stage) return;
+    // Capture a win/loss reason at the decisive moment instead of nagging 48h later.
+    if (stages.find((s) => s.id === newStage)?.group === "closed") {
+      setCloseReasonDraft("");
+      setCloseStagePrompt(newStage);
+      return;
+    }
     const updated = await dealsApi.moveStage(deal.id, newStage);
     onDealUpdated(updated);
     dealsApi.getActivities(deal.id).then(setActivities);
+  };
+
+  const confirmCloseMove = async () => {
+    if (!closeStagePrompt) return;
+    setClosingDeal(true);
+    try {
+      const reason = closeReasonDraft.trim();
+      const outcome = closeStagePrompt === "closed_won" ? "won"
+        : /lost|churn|not_a_fit/.test(closeStagePrompt) ? "lost" : "other";
+      if (reason) {
+        await patchDeal({
+          qualification: {
+            ...(deal.qualification || {}),
+            close_reason: reason,
+            close_outcome: outcome,
+            closed_reason_at: new Date().toISOString().slice(0, -1),
+          },
+        } as Partial<Deal>);
+      }
+      const updated = await dealsApi.moveStage(deal.id, closeStagePrompt);
+      onDealUpdated(updated);
+      dealsApi.getActivities(deal.id).then(setActivities);
+      setCloseStagePrompt(null);
+    } finally {
+      setClosingDeal(false);
+    }
   };
 
   const handleNameSave = async () => {
@@ -791,6 +827,36 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
   return (
     <>
+      {/* Win/loss reason capture — shown when moving to a closed stage. */}
+      {closeStagePrompt && (
+        <div
+          onClick={() => { if (!closingDeal) setCloseStagePrompt(null); }}
+          style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "94vw", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,39,68,0.28)" }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#0f2744" }}>
+              Close · {stages.find((s) => s.id === closeStagePrompt)?.label ?? closeStagePrompt}
+            </div>
+            <div style={{ fontSize: 12.5, color: "#62748a", margin: "6px 0 12px", lineHeight: 1.5 }}>
+              Capture why this deal is closing — it powers win/loss analysis. (Optional, but valuable.)
+            </div>
+            <textarea
+              value={closeReasonDraft}
+              onChange={(e) => setCloseReasonDraft(e.target.value)}
+              autoFocus
+              rows={4}
+              placeholder="e.g. Lost to incumbent on price; champion left; chose us for security & TCO…"
+              style={{ width: "100%", border: "1px solid #d5e0ec", borderRadius: 10, padding: "9px 11px", fontSize: 13, color: "#0f2744", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+              <button type="button" onClick={() => setCloseStagePrompt(null)} disabled={closingDeal} style={{ padding: "9px 15px", borderRadius: 10, border: "1px solid #d5e0ec", background: "#fff", color: "#3f5065", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+              <button type="button" onClick={() => void confirmCloseMove()} disabled={closingDeal} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: "#1f6feb", color: "#fff", fontSize: 13, fontWeight: 800, cursor: closingDeal ? "default" : "pointer" }}>
+                {closingDeal ? "Closing…" : "Confirm close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Backdrop */}
       <div
         style={{

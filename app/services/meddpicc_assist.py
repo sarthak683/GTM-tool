@@ -383,3 +383,58 @@ async def generate_meddpicc_assist(session: AsyncSession, deal: Deal) -> dict[st
         },
     }
 
+
+def _meddpicc_has_signal(qualification: Any) -> bool:
+    current = (qualification or {}).get("meddpicc") if isinstance(qualification, dict) else None
+    if not isinstance(current, dict):
+        return False
+    return any(isinstance(current.get(f), (int, float)) and current.get(f, 0) > 0 for f in MEDDPICC_FIELDS)
+
+
+async def auto_fill_empty_meddpicc(session: AsyncSession, deal: Deal) -> int:
+    """Populate MEDDPICC for a deal that has NONE, straight from its transcript/
+    activity evidence — reps were dismissing the incremental suggestions, so
+    MEDDPICC stayed empty even on transcript-rich deals.
+
+    Only acts when the deal currently has zero MEDDPICC signal AND has ≥1 linked
+    contact (so the AI has people to ground the qualification). Fills only empty
+    dimensions — never overwrites a rep-set value — and no-ops if generation
+    yields nothing. Returns the count of dimensions filled.
+    """
+    if _meddpicc_has_signal(deal.qualification):
+        return 0  # rep/auto-apply already owns it — don't touch
+    has_contact = (
+        await session.execute(select(DealContact.contact_id).where(DealContact.deal_id == deal.id))
+    ).first()
+    if has_contact is None:
+        return 0
+
+    assist = await generate_meddpicc_assist(session, deal)
+    generated = assist.get("meddpicc") or {}
+    qual = dict(deal.qualification or {})
+    merged = dict(qual.get("meddpicc") or {})
+    filled = 0
+    for field in MEDDPICC_FIELDS:
+        level = generated.get(field)
+        already = isinstance(merged.get(field), (int, float)) and merged.get(field, 0) > 0
+        if isinstance(level, (int, float)) and level > 0 and not already:
+            merged[field] = level
+            filled += 1
+    if not filled:
+        return 0
+
+    qual["meddpicc"] = merged
+    qual["meddpicc_ai"] = assist.get("meddpicc_ai")
+    deal.qualification = qual
+    deal.updated_at = datetime.utcnow()
+    session.add(deal)
+    session.add(
+        Activity(
+            deal_id=deal.id,
+            type="qualification_update",
+            source="beacon_ai",
+            content=f"Beacon auto-filled MEDDPICC from deal evidence ({filled} dimension{'s' if filled != 1 else ''}).",
+        )
+    )
+    return filled
+
