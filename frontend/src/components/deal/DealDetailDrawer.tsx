@@ -312,7 +312,8 @@ function EngagementPanel({
  * overdue/due chip) so they don't have to scroll into the form or hop tabs.
  * Read-only summary; editing stays in the Deal Details form below.
  */
-function DealAtAGlance({ deal }: { deal: Deal }) {
+function DealAtAGlance({ deal, onPatch }: { deal: Deal; onPatch: (data: Partial<Deal>) => void }) {
+  const [draft, setDraft] = useState("");
   const healthColor =
     deal.health === "green" ? "#15803d" : deal.health === "yellow" ? "#c2410c" : deal.health === "red" ? "#be123c" : "#64748b";
   const due = dueLabel(deal.next_step_due_at);
@@ -322,6 +323,12 @@ function DealAtAGlance({ deal }: { deal: Deal }) {
       <div style={{ fontSize: 14, fontWeight: 800, color: color || "#16273d", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
     </div>
   );
+  const addNextStep = () => {
+    const text = draft.trim();
+    if (!text) return;
+    onPatch({ next_step: text } as Partial<Deal>);
+    setDraft("");
+  };
   return (
     <div style={{ border: "1px solid #e3ebf4", borderRadius: 14, background: "#fff", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0, boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -330,15 +337,42 @@ function DealAtAGlance({ deal }: { deal: Deal }) {
         {stat("Stage age", deal.days_in_stage != null ? `${deal.days_in_stage}d` : "—")}
         {stat("Health", deal.health ? deal.health[0].toUpperCase() + deal.health.slice(1) : "—", healthColor)}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid #eef2f7", paddingTop: 9, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Next step</span>
-        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: deal.next_step ? 700 : 500, color: deal.next_step ? "#16273d" : "#94a3b8", fontStyle: deal.next_step ? "normal" : "italic" }}>
-          {deal.next_step || "No next step set"}
-        </span>
-        {due ? (
-          <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: due.overdue ? "#be123c" : "#1d4ed8", background: due.overdue ? "#fff1f2" : "#eff6ff", border: `1px solid ${due.overdue ? "#fecdd3" : "#bfdbfe"}` }}>
-            {due.overdue ? "Overdue" : "Due"} · {due.text}
-          </span>
+      <div style={{ borderTop: "1px solid #eef2f7", paddingTop: 9, display: "grid", gap: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Next step</span>
+          {deal.next_step ? (
+            <>
+              <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 700, color: "#16273d" }}>{deal.next_step}</span>
+              {due ? (
+                <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: due.overdue ? "#be123c" : "#1d4ed8", background: due.overdue ? "#fff1f2" : "#eff6ff", border: `1px solid ${due.overdue ? "#fecdd3" : "#bfdbfe"}` }}>
+                  {due.overdue ? "Overdue" : "Due"} · {due.text}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onPatch({ next_step: undefined, next_step_due_at: undefined } as Partial<Deal>)}
+                title="Mark this next step done"
+                style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#15803d", background: "#ecfdf3", border: "1px solid #bbf7d0", borderRadius: 8, padding: "7px 12px", minHeight: 34, cursor: "pointer" }}
+              >
+                ✓ Done
+              </button>
+            </>
+          ) : (
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addNextStep(); }}
+              onBlur={addNextStep}
+              placeholder="Add a next step…"
+              style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: "#16273d", border: "1px solid #d5e0ec", borderRadius: 8, padding: "8px 10px", minHeight: 36, outline: "none", fontFamily: "inherit" }}
+            />
+          )}
+        </div>
+        {/* Trust signal: confirm the reminder will actually fire (deal_reminders task). */}
+        {deal.next_step && due ? (
+          <div style={{ fontSize: 10.5, color: "#7a8ea4" }}>
+            Beacon will remind {deal.assigned_rep_name || "the owner"} on {due.text}
+          </div>
         ) : null}
       </div>
     </div>
@@ -410,7 +444,7 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
                 type="button"
                 onClick={() => void act(task, "accept")}
                 disabled={busy}
-                style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 8, border: "none", background: busy ? "#c7b8ee" : "#7c3aed", color: "#fff", fontSize: 12, fontWeight: 800, cursor: busy ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                style={{ flexShrink: 0, padding: "9px 14px", minHeight: 38, borderRadius: 9, border: "none", background: busy ? "#c7b8ee" : "#7c3aed", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
               >
                 {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={12} />}
                 {applyLabel}
@@ -419,7 +453,7 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
                 type="button"
                 onClick={() => void act(task, "dismiss")}
                 disabled={busy}
-                style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 8, border: "1px solid #dde5ef", background: "#fff", color: "#5a6b80", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer" }}
+                style={{ flexShrink: 0, padding: "9px 14px", minHeight: 38, borderRadius: 9, border: "1px solid #dde5ef", background: "#fff", color: "#5a6b80", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer" }}
               >
                 Dismiss
               </button>
@@ -992,7 +1026,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <>
 
           {/* At-a-glance status so the AE reads the deal in one look. */}
-          <DealAtAGlance deal={deal} />
+          <DealAtAGlance deal={deal} onPatch={patchDeal} />
 
           {/* Beacon's AI next-actions, surfaced inline so the AE acts without
               digging into the Tasks tab. */}

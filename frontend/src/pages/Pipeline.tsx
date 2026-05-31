@@ -1573,6 +1573,9 @@ export default function Pipeline() {
   const [stalledOnly, setStalledOnly] = useState(false);
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [missingCloseDateOnly, setMissingCloseDateOnly] = useState(false);
+  // Composite AE triage filter: a deal "needs attention" when it has no next
+  // step, an overdue next step, no linked contact, or no human touch in 14d+.
+  const [needsAttentionOnly, setNeedsAttentionOnly] = useState(false);
   const [closeMonthFilter, setCloseMonthFilter] = useState("");
   const [healthFilters, setHealthFilters] = useState<string[]>([]);
   const [closeDateFilters, setCloseDateFilters] = useState<string[]>([]);
@@ -1826,10 +1829,25 @@ export default function Pipeline() {
           return (contactFilters.includes("has") && count > 0) || (contactFilters.includes("missing") && count === 0);
         });
       }
+      if (needsAttentionOnly) {
+        items = items.filter((deal) => {
+          if (closedStageIds.has(deal.stage)) return false;
+          if (!(deal.next_step || "").trim()) return true; // no next step
+          if ((deal.contact_count ?? deal.stakeholder_count ?? 0) === 0) return true; // no contact
+          if (deal.next_step_due_at) {
+            const d = new Date(deal.next_step_due_at.endsWith("Z") ? deal.next_step_due_at : `${deal.next_step_due_at}Z`);
+            if (!Number.isNaN(d.getTime()) && d.getTime() < Date.now()) return true; // overdue next step
+          }
+          const lastTouch = deal.last_activity_at || deal.seller_engagement_at || deal.client_engagement_at;
+          if (!lastTouch) return true; // never touched
+          const t = new Date(lastTouch.endsWith("Z") ? lastTouch : `${lastTouch}Z`);
+          return !Number.isNaN(t.getTime()) && (Date.now() - t.getTime()) / 86_400_000 >= 14; // stale 14d+
+        });
+      }
       next[stage.id] = items;
     }
     return next;
-  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, nextStepFilters, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
+  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1951,7 +1969,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || Boolean(closeMonthFilter);
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
@@ -2118,6 +2136,7 @@ export default function Pipeline() {
     setStalledOnly(false);
     setOverdueOnly(false);
     setMissingCloseDateOnly(false);
+    setNeedsAttentionOnly(false);
     setCloseMonthFilter("");
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
@@ -2605,6 +2624,20 @@ export default function Pipeline() {
             {tab === "deal" && <MultiSelectFilter values={nextStepFilters} onChange={setNextStepFilters} label="Next Step" allLabel="Any Next Step" options={nextStepOptions} />}
             {tab === "deal" && <MultiSelectFilter values={activityFilters} onChange={setActivityFilters} label="Activity" allLabel="Any Activity" options={activityOptions} />}
             {tab === "deal" && <MultiSelectFilter values={contactFilters} onChange={setContactFilters} label="Contacts" allLabel="Any Contacts" options={contactOptions} />}
+            {tab === "deal" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>AE Triage</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: needsAttentionOnly ? "1.5px solid #c4b5fd" : "1px solid #e2eaf2", background: needsAttentionOnly ? "#f5f3ff" : "#f8fafc" }}>
+                  <input
+                    type="checkbox"
+                    checked={needsAttentionOnly}
+                    onChange={(e) => setNeedsAttentionOnly(e.target.checked)}
+                    style={{ accentColor: "#7c3aed", width: 14, height: 14 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: needsAttentionOnly ? "#6d28d9" : "#2d4258" }}>Needs attention (no next step / overdue / stale / no contact)</span>
+                </label>
+              </div>
+            )}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deal Aging</label>
