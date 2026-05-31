@@ -190,8 +190,8 @@ export interface Deal {
   meddpicc_score?: number;
   seller_engagement_at?: string;
   client_engagement_at?: string;
-  seller_engagement_signal?: { type: string; source: string; label: string; reason?: string };
-  client_engagement_signal?: { type: string; source: string; label: string; reason?: string };
+  seller_engagement_signal?: { type: string; source: string; label: string; reason?: string; source_label?: string; detail?: string };
+  client_engagement_signal?: { type: string; source: string; label: string; reason?: string; source_label?: string; detail?: string };
   seller_engagement_reason?: string;
   client_engagement_reason?: string;
   commit_to_deal?: boolean;

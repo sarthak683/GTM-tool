@@ -23,6 +23,7 @@ from app.models.settings import WorkspaceSettings
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
 from app.services.gmail_oauth import GMAIL_SEND_SCOPE
+from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy, run_pre_meeting_intelligence
 
 
@@ -149,6 +150,63 @@ async def _is_open_pipeline_meeting(
             return True  # no deal yet → fresh prospect, keep
         return any((s.stage or "").strip().lower() not in closed_stage_ids for s in stages)
     return True
+
+
+# Title patterns for meetings that are NOT live sales motions — recurring
+# internal/customer cadences, 1:1s, all-hands, and recruiting interviews — which
+# should never get a buyer-facing pre-meeting brief. Tuned to the over-generation
+# seen in prod (Darwinbox Daily Cadence, Beacon Daily Connect, "Discussion for
+# SDR ...", weekly syncs). Deliberately matches sync-type words rather than bare
+# "daily"/"weekly" so a prospect named e.g. "Daily Pay" isn't excluded.
+_NON_SALES_TITLE_RE = re.compile(
+    r"""(?ix)
+    \b(
+        cadence | huddle | scrum | stand[\s-]?up | retro(spective)? |
+        (daily|weekly|bi[\s-]?weekly|monthly)\s+(sync|connect|cadence|standup|update|catch[\s-]?up|check[\s-]?in) |
+        sync[\s-]?up | catch[\s-]?up | check[\s-]?in |
+        1[:\-]1 | one[\s-]on[\s-]one | all[\s-]hands |
+        team\s+(sync|meeting|standup|huddle) |
+        # recruiting / interviews
+        interview | hiring | candidate | screening | discussion\s+for\s+sdr |
+        sdr\s+(us|india|emea|apac|interview|hiring) | round\s+[12]
+    )\b
+    | [\s\-|]r[12]\b   # "... - R1" / "| R2" interview rounds
+    """,
+)
+
+
+def _is_non_sales_title(title: str | None) -> bool:
+    """True for recurring cadence / 1:1 / all-hands / recruiting meeting titles."""
+    return bool(title and _NON_SALES_TITLE_RE.search(title))
+
+
+async def _should_generate_intel(
+    session: AsyncSession,
+    meeting: Meeting,
+    closed_stage_ids: set[str],
+    internal_domains: set[str],
+) -> tuple[bool, str]:
+    """Single eligibility gate for pre-meeting intel. Returns (eligible, reason).
+
+    Intel is for live, buyer-facing sales meetings on open accounts. We skip:
+      • internal-only meetings (no external attendee),
+      • recurring cadences / 1:1s / all-hands / recruiting interviews (by title),
+      • meetings on closed/customer accounts (existing open-pipeline gate).
+    """
+    if meeting.is_internal:
+        return False, "internal"
+    if _is_non_sales_title(meeting.title):
+        return False, "non_sales_title"
+    # Catch all-internal calendar meetings the sync didn't flag (is_internal is
+    # only reliably set on tl;dv rows). Empty/garbled attendees → don't block.
+    try:
+        if meeting.attendees and is_internal_only(meeting.attendees, internal_domains):
+            return False, "all_internal_attendees"
+    except Exception:  # never let attendee-shape edge cases skip a real meeting
+        pass
+    if not await _is_open_pipeline_meeting(session, meeting, closed_stage_ids):
+        return False, "closed_pipeline"
+    return True, "ok"
 
 
 async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
@@ -323,6 +381,7 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
             for s in _stage_settings
             if s.get("group") == "closed"
         }
+        internal_domains = await get_internal_domains(session)
 
         checked = len(meetings)
         generated = 0
@@ -341,8 +400,17 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
 
         for meeting in meetings:
             try:
-                # Don't spend generation/email budget on closed/customer accounts.
-                if not await _is_open_pipeline_meeting(session, meeting, closed_stage_ids):
+                # Only spend generation/email budget on live, buyer-facing sales
+                # meetings — skip internal-only, recurring cadences/1:1s/all-hands,
+                # recruiting interviews, and closed/customer accounts.
+                eligible, skip_reason = await _should_generate_intel(
+                    session, meeting, closed_stage_ids, internal_domains
+                )
+                if not eligible:
+                    logger.info(
+                        "pre_meeting_intel: skip meeting %s (%s) — %s",
+                        meeting.id, (meeting.title or "")[:60], skip_reason,
+                    )
                     skipped += 1
                     continue
 

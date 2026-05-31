@@ -140,13 +140,20 @@ function fileSafeSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "pipeline";
 }
 
+// Engagement timestamps are naive-UTC (no trailing Z). Parsing them with a bare
+// `new Date()` makes JS read them as LOCAL time, shifting "Active/Watch/Stale"
+// and "Xh ago" by the user's UTC offset (5.5h for IST). Force UTC.
+function utcMs(timestamp: string): number {
+  return new Date(timestamp.endsWith("Z") ? timestamp : `${timestamp}Z`).getTime();
+}
+
 function relativeTime(timestamp?: string): string {
   if (!timestamp) return "";
-  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageMs = Date.now() - utcMs(timestamp);
   const ageHours = ageMs / (1000 * 60 * 60);
   if (ageHours < 1) return "just now";
   if (ageHours < 24) return `${Math.max(1, Math.floor(ageHours))}h ago`;
-  const ageDays = (Date.now() - new Date(timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays < 1) return "today";
   if (ageDays < 2) return "yesterday";
   return `${Math.floor(ageDays)}d ago`;
@@ -156,7 +163,7 @@ function engagementTone(timestamp?: string) {
   if (!timestamp) {
     return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef", accent: "#cbd5e1" };
   }
-  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageMs = Date.now() - utcMs(timestamp);
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays <= 3) {
     return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0", accent: "#22c55e" };
@@ -165,21 +172,6 @@ function engagementTone(timestamp?: string) {
     return { label: "Watch", background: "#fff7ed", color: "#c2410c", border: "#fed7aa", accent: "#f59e0b" };
   }
   return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
-}
-
-function engagementStatusJustification(label: string, timestamp?: string, side: "rep" | "client" = "rep") {
-  if (!timestamp) {
-    return side === "rep"
-      ? "No seller-side activity has been captured for this deal yet."
-      : "No buyer-side activity has been captured for this deal yet.";
-  }
-  if (label === "Active") {
-    return "Marked active because the latest relevant signal is very recent.";
-  }
-  if (label === "Watch") {
-    return "Marked watch because the latest relevant signal is recent, but momentum may need attention.";
-  }
-  return "Marked stale because the latest relevant signal is older and momentum may be slowing down.";
 }
 
 type EngagementSignal = NonNullable<Deal["seller_engagement_signal"]>;
@@ -254,7 +246,6 @@ function EngagementBadge({
   const line = compactReason ? `${compactReason}${timestamp ? ` · ${relativeTime(timestamp)}` : ""}` : (timestamp ? relativeTime(timestamp) : summary.detail);
   const secondary = signal?.label && signal.label !== compactReason ? signal.label : summary.detail;
   const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
-  const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
 
   const POPOVER_WIDTH = 220;
   const handleEnter = () => {
@@ -352,11 +343,13 @@ function EngagementBadge({
             </div>
           )}
           <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
-            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}
+            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}{signal?.source_label ? ` · via ${signal.source_label}` : ""}
           </div>
-          <div style={{ fontSize: 11, color: "#6f7f95", lineHeight: 1.45 }}>
-            <span style={{ fontWeight: 700 }}>Why {tone.label.toLowerCase()}:</span> {statusWhy}
-          </div>
+          {signal?.detail ? (
+            <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
+              <span style={{ fontWeight: 700 }}>What happened:</span> {signal.detail}
+            </div>
+          ) : null}
           <div style={{ fontSize: 10, color: "#8ca0b3", lineHeight: 1.4 }}>
             {ENGAGEMENT_SIGNAL_LEGEND}
           </div>
@@ -2829,7 +2822,7 @@ export default function Pipeline() {
       )}
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
-      {selectedDeal && <DealDetailDrawer deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => {
+      {selectedDeal && <DealDetailDrawer key={selectedDeal.id} deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => {
         setSelectedDeal(null);
         setSearchParams((current) => {
           const next = new URLSearchParams(current);

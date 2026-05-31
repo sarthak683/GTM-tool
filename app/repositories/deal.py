@@ -148,10 +148,54 @@ class DealRepository(BaseRepository[Deal]):
                 and not cls._is_internal_email(row.email_from)
                 and not _is_noise_email_from(row.email_from)
             )
+        # A rep-logged manual call is the seller's OUTBOUND action (it already
+        # counts as a seller touch) — not the buyer engaging. Don't let it light
+        # up the "Client" engagement card as if the buyer initiated contact.
+        # Meetings/transcripts (buyer was present) and Aircall records still count.
+        if row.type == "call" and (row.source or "").strip().lower() == "manual":
+            return False
         return bool(row.contact_id) or row.type in {"call", "meeting", "transcript"}
 
+    # Friendly source names for the engagement tooltip — so reps see "via
+    # tl;dv" / "via Aircall" instead of raw enum values.
+    _FRIENDLY_SOURCE = {
+        "tldv": "tl;dv",
+        "aircall": "Aircall",
+        "google_calendar": "Google Calendar",
+        "gmail": "Gmail",
+        "personal_email_sync": "Gmail",
+        "instantly": "Instantly",
+        "manual": "manual log",
+        "instantly_sync": "Instantly",
+    }
+
     @staticmethod
-    def _signal_label(row) -> dict:
+    def _clean_snippet(value: str | None, *, limit: int = 160) -> str:
+        """Collapse whitespace and truncate to a tooltip-sized, case-preserved
+        snippet of what actually happened."""
+        if not value:
+            return ""
+        text = " ".join(str(value).split())
+        if len(text) > limit:
+            text = text[: limit - 1].rstrip() + "…"
+        return text
+
+    @classmethod
+    def _signal_detail(cls, row) -> str:
+        """A short human snippet of what happened — AI summary first (richest,
+        e.g. a call/meeting recap), then free-text content, then email subject."""
+        for value in (
+            getattr(row, "ai_summary", None),
+            getattr(row, "content", None),
+            getattr(row, "email_subject", None),
+        ):
+            snippet = cls._clean_snippet(value)
+            if snippet:
+                return snippet
+        return ""
+
+    @classmethod
+    def _signal_label(cls, row) -> dict:
         """Return a human-readable signal object for an activity row."""
         activity_type = row.type or "activity"
         source = row.source or ""
@@ -179,7 +223,15 @@ class DealRepository(BaseRepository[Deal]):
         else:
             label = activity_type.replace("_", " ").capitalize()
 
-        return {"type": activity_type, "source": source, "label": label}
+        return {
+            "type": activity_type,
+            "source": source,
+            "label": label,
+            # Friendly source + the actual content snippet, so the tooltip can
+            # show what really happened instead of a tautological "it's recent".
+            "source_label": cls._FRIENDLY_SOURCE.get(str(source).strip().lower(), ""),
+            "detail": cls._signal_detail(row),
+        }
 
     @staticmethod
     def _normalize_signal_text(value: str | None) -> str:

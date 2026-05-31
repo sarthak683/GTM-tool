@@ -67,11 +67,17 @@ function formatMeddpiccChangeReason(value?: string) {
   return value ? value.replace(/_/g, " ") : "";
 }
 
+// Engagement timestamps are naive-UTC (no trailing Z); a bare `new Date()` reads
+// them as LOCAL, shifting Active/Watch/Stale + "Xh ago" by the UTC offset. Force UTC.
+function utcMs(timestamp: string): number {
+  return new Date(timestamp.endsWith("Z") ? timestamp : `${timestamp}Z`).getTime();
+}
+
 function engagementTone(timestamp?: string) {
   if (!timestamp) {
     return { label: "No signal", background: "#f8fafc", color: "#7a8ca1", border: "#d9e3ef", accent: "#cbd5e1" };
   }
-  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageMs = Date.now() - utcMs(timestamp);
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays <= 3) {
     return { label: "Active", background: "#ecfdf3", color: "#15803d", border: "#bbf7d0", accent: "#22c55e" };
@@ -82,28 +88,13 @@ function engagementTone(timestamp?: string) {
   return { label: "Stale", background: "#fff1f2", color: "#be123c", border: "#fecdd3", accent: "#f43f5e" };
 }
 
-function engagementStatusJustification(label: string, timestamp?: string, side: "rep" | "client" = "rep") {
-  if (!timestamp) {
-    return side === "rep"
-      ? "No seller-side activity has been captured for this deal yet."
-      : "No buyer-side activity has been captured for this deal yet.";
-  }
-  if (label === "Active") {
-    return "Marked active because the latest relevant signal is very recent.";
-  }
-  if (label === "Watch") {
-    return "Marked watch because the latest relevant signal is recent, but momentum may need attention.";
-  }
-  return "Marked stale because the latest relevant signal is older and momentum may be slowing down.";
-}
-
 function relativeTime(timestamp?: string): string {
   if (!timestamp) return "";
-  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageMs = Date.now() - utcMs(timestamp);
   const ageHours = ageMs / (1000 * 60 * 60);
   if (ageHours < 1) return "just now";
   if (ageHours < 24) return `${Math.max(1, Math.floor(ageHours))}h ago`;
-  const ageDays = (Date.now() - new Date(timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
   if (ageDays < 1) return "today";
   if (ageDays < 2) return "yesterday";
   return `${Math.floor(ageDays)}d ago`;
@@ -195,7 +186,6 @@ function EngagementPanel({
   const primaryReason = (reason || signal?.reason || summary.title).trim();
   const secondaryLine = signal?.label && signal.label !== primaryReason ? signal.label : undefined;
   const basis = signal?.label || (side === "rep" ? "No seller-side source yet" : "No buyer-side source yet");
-  const statusWhy = engagementStatusJustification(tone.label, timestamp, side);
   const tooltipText = [primaryReason, secondaryLine, timestamp ? `Last touch ${relativeTime(timestamp)}` : ""].filter(Boolean).join("\n");
 
   return (
@@ -298,11 +288,13 @@ function EngagementPanel({
             </div>
           )}
           <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
-            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}
+            <span style={{ fontWeight: 700 }}>Based on:</span> {basis}{signal?.source_label ? ` · via ${signal.source_label}` : ""}
           </div>
-          <div style={{ fontSize: 11, color: "#6f7f95", lineHeight: 1.45 }}>
-            <span style={{ fontWeight: 700 }}>Why {tone.label.toLowerCase()}:</span> {statusWhy}
-          </div>
+          {signal?.detail ? (
+            <div style={{ fontSize: 11, color: "#33485f", lineHeight: 1.45 }}>
+              <span style={{ fontWeight: 700 }}>What happened:</span> {signal.detail}
+            </div>
+          ) : null}
           {timestamp && (
             <div style={{ fontSize: 10, color: "#8ca0b3" }}>
               Last touch {relativeTime(timestamp)}
@@ -879,7 +871,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
           <DealCallLogger
             deal={deal}
             dealContacts={dealContacts}
-            onLogged={() => { dealsApi.getActivities(deal.id).then(setActivities).catch(() => {}); }}
+            onLogged={() => {
+              dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+              // Also refetch the deal so the rep/client engagement cards recompute
+              // their signal + "last touch" from the just-logged call.
+              void dealsApi.get(deal.id).then(onDealUpdated).catch(() => {});
+            }}
             onPatchDeal={patchDeal}
           />
 
@@ -1077,9 +1074,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     const prev = localPriorityTag;
                     const next = (e.target.value || null) as "P0" | "P1" | "P2" | null;
                     setLocalPriorityTag(next);
-                    console.log("[priority] patching company_id=", deal.company_id, "next=", next);
                     companiesApi.patch(deal.company_id!, { priority_tag: next } as Partial<Company>)
-                      .then((updated) => { console.log("[priority] patch ok, tag=", updated.priority_tag); onCompanyUpdated?.(updated); })
+                      .then((updated) => { onCompanyUpdated?.(updated); })
                       .catch((err) => { console.error("[priority] patch failed:", err?.message ?? err); setLocalPriorityTag(prev); });
                   }}
                   style={{
