@@ -64,10 +64,16 @@ def _candidate_ok(email: str, internal_domains: set[str]) -> bool:
 
 
 def _name_from(name: str, email: str) -> tuple[str, str]:
+    """Best-effort (first, last). `contacts.last_name` is NOT NULL, so last is
+    always a string ("" when there's only one token)."""
     parts = (name or "").split()
     if parts:
         return parts[0], " ".join(parts[1:])
-    return email.split("@", 1)[0].replace(".", " ").replace("_", " ").title(), ""
+    # Derive from the email local part, splitting on . / _ (e.g. raghav.shastri).
+    bits = [b for b in re.split(r"[._]+", email.split("@", 1)[0]) if b]
+    if len(bits) >= 2:
+        return bits[0].title(), " ".join(b.title() for b in bits[1:])
+    return (bits[0].title() if bits else "Contact"), ""
 
 
 async def reconcile_deal_stakeholders(
@@ -152,8 +158,8 @@ async def reconcile_deal_stakeholders(
             continue
         first, last = _name_from(meta["name"], email)
         contact = Contact(
-            first_name=first,
-            last_name=last or None,
+            first_name=first or "Contact",
+            last_name=last,  # NOT NULL column — "" is valid, None is not
             email=email,
             title=meta["title"] or None,
             company_id=deal.company_id,
