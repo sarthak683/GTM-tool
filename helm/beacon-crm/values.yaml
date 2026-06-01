@@ -11,13 +11,15 @@ backend:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 8000
+  # Right-sized to observed prod usage (~5m CPU, ~290Mi). CPU request is the
+  # node-cost lever; mem limit keeps ~2x headroom to avoid OOM.
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 320Mi
     limits:
       cpu: "1"
-      memory: 1Gi
+      memory: 640Mi
   env:
     ENVIRONMENT: production
     JWT_EXPIRE_MINUTES: "1440"
@@ -33,13 +35,15 @@ worker:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Right-sized to observed prod usage (~44m CPU, ~190Mi); generous mem limit
+  # for heavy tasks (transcription, enrichment, report generation).
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 256Mi
     limits:
       cpu: "1"
-      memory: 1Gi
+      memory: 640Mi
 
 # -- Celery Beat (scheduler)
 beat:
@@ -48,13 +52,14 @@ beat:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Scheduler only — negligible usage (~0m CPU, ~84Mi).
   resources:
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 50m
+      memory: 128Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 250m
+      memory: 256Mi
 
 # -- Frontend (React + Nginx)
 frontend:
@@ -64,13 +69,14 @@ frontend:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 80
+  # Nginx serving static assets — tiny (~1m CPU, ~6Mi).
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 25m
+      memory: 64Mi
     limits:
-      cpu: 500m
-      memory: 256Mi
+      cpu: 200m
+      memory: 128Mi
 
 # -- PostgreSQL
 postgres:
