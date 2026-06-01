@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
-import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder } from "../lib/api";
+import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder, JobHealthRow } from "../lib/api";
 import { DriveFolderPicker } from "../components/DriveFolderPicker";
 import { KnowledgeSourcePanel } from "../components/zippy/KnowledgeSourcePanel";
 import { useAuth } from "../lib/AuthContext";
@@ -44,7 +44,7 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications" | "system-health";
 
 // Curated IANA timezones for the pre-meeting daily-send picker. The backend
 // validates against the full zoneinfo database, so any value here is accepted;
@@ -99,6 +99,9 @@ export default function SettingsPage() {
   const { isAdmin } = useAuth();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
+  const [jobHealth, setJobHealth] = useState<JobHealthRow[] | null>(null);
+  const [jobHealthLoading, setJobHealthLoading] = useState(false);
+  const [jobHealthError, setJobHealthError] = useState<string | null>(null);
   // Web Push state for the Notifications tab. Drives the opt-in toggle so the
   // rep can register their *current* browser (typically their mobile PWA) to
   // receive "tap to call" notifications when their desktop clicks Call.
@@ -1056,6 +1059,22 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
+  const loadJobHealth = () => {
+    setJobHealthLoading(true);
+    setJobHealthError(null);
+    settingsApi
+      .getJobHealth()
+      .then((res) => setJobHealth(res.jobs))
+      .catch((e) => setJobHealthError(e instanceof Error ? e.message : "Failed to load job health"))
+      .finally(() => setJobHealthLoading(false));
+  };
+
+  // Load scheduled-job health whenever the admin opens the System Health tab.
+  useEffect(() => {
+    if (activeTab === "system-health" && isAdmin) loadJobHealth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
   // Refresh push subscription state whenever the Notifications tab is
   // opened — covers the case where the user revoked permission in
   // browser settings between visits.
@@ -1135,6 +1154,7 @@ export default function SettingsPage() {
               {tabButton("notifications", "Notifications", <PhoneCall size={15} />)}
               {tabButton("zippy", "Zippy", <Bot size={15} />)}
               {isAdmin && tabButton("zippy-prompt", "System Prompt", <Shield size={15} />)}
+              {isAdmin && tabButton("system-health", "System Health", <RefreshCw size={15} />)}
             </div>
           </aside>
 
@@ -2571,6 +2591,76 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+          </div>
+        ) : activeTab === "system-health" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#eef5ff", color: "#175089", borderColor: "#d8e6fb" }}>
+                  <RefreshCw size={14} />
+                  System Health
+                </div>
+                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Scheduled jobs</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Last run and status for every scheduled background job. A red or amber badge means a job failed or hasn't run on time — catch a silent scheduler problem here before it affects reports, syncs, or reminders.
+                </p>
+              </div>
+              <button className="crm-button soft" type="button" onClick={loadJobHealth} disabled={jobHealthLoading}>
+                <RefreshCw size={15} className={jobHealthLoading ? "animate-spin" : undefined} />
+                Refresh
+              </button>
+            </div>
+            {jobHealthError ? (
+              <div style={{ border: "1px solid #f3c7cd", background: "#fdecec", color: "#b42336", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>{jobHealthError}</div>
+            ) : jobHealthLoading && !jobHealth ? (
+              <div className="crm-muted" style={{ padding: 16, fontSize: 13 }}>Loading job health…</div>
+            ) : !jobHealth || jobHealth.length === 0 ? (
+              <div className="crm-muted" style={{ padding: 16, fontSize: 13 }}>No scheduled-job data recorded yet. Jobs appear here after their next run.</div>
+            ) : (
+              <div style={{ overflowX: "auto", border: "1px solid #e7eaf5", borderRadius: 14, background: "#fff" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "#6b7794", background: "#f6f8fc" }}>
+                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Job</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Schedule</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Last run</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Status</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Runs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobHealth.map((j) => {
+                      const tone =
+                        j.staleness === "failing" ? { bg: "#fdecec", fg: "#b42336", label: "Failing" }
+                        : j.staleness === "stale" ? { bg: "#fff5e6", fg: "#a8650a", label: "Stale" }
+                        : j.staleness === "ok" ? { bg: "#eafbf0", fg: "#1f8f5f", label: "OK" }
+                        : { bg: "#eef1f6", fg: "#6b7794", label: "No data" };
+                      const lastRun = j.last_run_at
+                        ? new Date(j.last_run_at.endsWith("Z") ? j.last_run_at : `${j.last_run_at}Z`).toLocaleString()
+                        : "—";
+                      return (
+                        <tr key={j.beat_name} style={{ borderTop: "1px solid #eef1f6" }}>
+                          <td style={{ padding: "10px 14px" }}>
+                            <div style={{ fontWeight: 700, color: "#25384d" }}>{j.beat_name}</div>
+                            <div style={{ fontSize: 11, color: "#9fb0c0" }}>{j.task}</div>
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{j.schedule}</td>
+                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{lastRun}</td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <span style={{ background: tone.bg, color: tone.fg, padding: "3px 9px", borderRadius: 999, fontWeight: 700, fontSize: 11.5 }}>{tone.label}</span>
+                            {j.last_error ? <div style={{ fontSize: 11, color: "#b42336", marginTop: 4, maxWidth: 320, lineHeight: 1.4 }}>{j.last_error}</div> : null}
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "#5b6b7d" }}>
+                            {j.runs_total}
+                            {j.failures_total > 0 ? <span style={{ color: "#b42336", fontWeight: 600 }}> · {j.failures_total} failed</span> : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 18 }}>

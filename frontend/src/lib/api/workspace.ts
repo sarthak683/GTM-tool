@@ -838,7 +838,27 @@ export const executionTrackerApi = {
     }),
 };
 
+export interface JobHealthRow {
+  beat_name: string;
+  task: string;
+  schedule: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_duration_ms: number | null;
+  runs_total: number;
+  failures_total: number;
+  staleness: "ok" | "stale" | "failing" | "unknown";
+}
+export interface JobHealthResponse {
+  jobs: JobHealthRow[];
+  as_of: string;
+}
+
 export const settingsApi = {
+  // Admin-only: scheduled-job health for the System Health panel.
+  getJobHealth: () => request<JobHealthResponse>("/api/v1/admin/job-health"),
   getOutreach: () =>
     request<{ step_delays: number[]; steps_count: number; steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }> }>("/api/v1/settings/outreach"),
   updateOutreach: (steps: Array<{ step_number: number; day: number; channel: "email" | "call" | "linkedin" }>) =>
