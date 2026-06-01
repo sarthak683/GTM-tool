@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.models.activity import Activity
+from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
@@ -117,9 +118,22 @@ async def reconcile_deal_stakeholders(
     if not create_from_signals:
         return {"linked": linked, "created": created}
 
+    # Only mint a stakeholder when their email domain MATCHES the deal's account
+    # domain — meeting/email threads include third parties (advisors, partners,
+    # other vendors) we must NOT attribute to this company. Skip entirely when
+    # the account has no real domain (placeholder ".unknown"); those deals get
+    # stakeholders via domain backfill + paid enrichment instead.
+    company = await session.get(Company, deal.company_id)
+    company_domain = (getattr(company, "domain", "") or "").strip().lower()
+    if not company_domain or company_domain.endswith(".unknown"):
+        return {"linked": linked, "created": created}
+
     internal_domains = await get_internal_domains(session)
 
-    # Gather external stakeholder emails from the deal's own meetings + emails.
+    def _is_company_stakeholder(email: str) -> bool:
+        return _candidate_ok(email, internal_domains) and email.rsplit("@", 1)[1] == company_domain
+
+    # Gather stakeholder emails from the deal's own meetings + emails (domain-matched).
     candidates: dict[str, dict] = {}  # email -> {name, title}
     meetings = (
         await session.execute(select(Meeting).where(Meeting.deal_id == deal.id))
@@ -129,7 +143,7 @@ async def reconcile_deal_stakeholders(
             if not isinstance(attendee, dict):
                 continue
             email = _clean_email(attendee.get("email"))
-            if _candidate_ok(email, internal_domains):
+            if _is_company_stakeholder(email):
                 candidates.setdefault(email, {"name": (attendee.get("name") or "").strip(), "title": (attendee.get("title") or "").strip()})
 
     email_acts = (
@@ -140,7 +154,7 @@ async def reconcile_deal_stakeholders(
     for act in email_acts:
         for raw in [act.email_from, *(_split_addrs(act.email_to))]:
             email = _clean_email(raw)
-            if _candidate_ok(email, internal_domains):
+            if _is_company_stakeholder(email):
                 candidates.setdefault(email, {"name": "", "title": ""})
 
     for email, meta in candidates.items():
