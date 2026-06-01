@@ -214,17 +214,70 @@ def _detect_header_row(sheet_rows: list[list[str]]) -> tuple[int, list[str]]:
     return best_index, best_headers
 
 
+def _forward_fill_company(rows: list[dict[str, str]]) -> None:
+    """Carry Company Name + Domain down 'grouped' uploads, in place.
+
+    Many real prospect lists — including the Beacon upload template — are
+    grouped: the Company Name + Domain are filled only on the first contact of
+    each company, and the following contacts in that group leave those cells
+    blank. Without this, those follow-on rows have neither a company name nor a
+    domain and get dropped by the parser's keep-filter, so only one contact per
+    company survives.
+
+    A row with a non-empty company name starts a new group: its name (and the
+    domain on the same row) become the running values. A row with a blank
+    company name that still carries a person inherits the running name, and
+    inherits the running domain only when its own domain cell is also blank —
+    so a contact never borrows a domain that belongs to a different company.
+    Blank separator rows (no company, no contact) are left untouched.
+    """
+    last_name = ""
+    last_domain = ""
+    for row in rows:
+        name_key = next((a for a in _ALIASES["name"] if a in row), None)
+        if name_key is None:
+            continue
+        domain_key = next((a for a in _ALIASES["domain"] if a in row), None)
+        current_name = (row.get(name_key) or "").strip()
+        current_domain = (row.get(domain_key) or "").strip() if domain_key else ""
+        has_contact = any(
+            row.get(a)
+            for a in (
+                _ALIASES["contact_first_name"]
+                + _ALIASES["contact_last_name"]
+                + _ALIASES["contact_name"]
+                + _ALIASES["contact_email"]
+            )
+        )
+        if current_name:
+            last_name = current_name
+            last_domain = current_domain
+        elif has_contact and last_name:
+            row[name_key] = last_name
+            if domain_key is not None and not current_domain:
+                row[domain_key] = last_domain
+
+
 def parse_csv(content: bytes) -> list[dict[str, str]]:
-    """Parse CSV bytes into normalized dicts. Skip rows without name or domain."""
+    """Parse CSV bytes into normalized dicts. Skip rows without name or domain.
+
+    Company Name + Domain are forward-filled down grouped uploads first (see
+    _forward_fill_company), so contacts listed under a company whose name only
+    appears on the group's first row are kept and linked rather than dropped.
+    """
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-    rows = []
-    for row in reader:
-        cleaned = {
+    cleaned_rows = [
+        {
             _normalize_header(k): (v or "").strip()
             for k, v in row.items()
             if k and k.strip()
         }
+        for row in reader
+    ]
+    _forward_fill_company(cleaned_rows)
+    rows = []
+    for cleaned in cleaned_rows:
         has_name = any(cleaned.get(a) for a in _ALIASES["name"])
         has_domain = any(cleaned.get(a) for a in _ALIASES["domain"])
         if has_name or has_domain:
@@ -340,11 +393,16 @@ def parse_xlsx(content: bytes) -> list[dict[str, str]]:
             if not headers:
                 continue
 
+            sheet_cleaned: list[dict[str, str]] = []
             for values in sheet_rows[header_index + 1 :]:
                 if not any((value or "").strip() for value in values):
                     continue
+                sheet_cleaned.append(_normalize_row(headers, values))
 
-                cleaned = _normalize_row(headers, values)
+            # Forward-fill grouped Company Name + Domain per sheet before the
+            # keep-filter, mirroring parse_csv (see _forward_fill_company).
+            _forward_fill_company(sheet_cleaned)
+            for cleaned in sheet_cleaned:
                 has_name = any(cleaned.get(alias) for alias in _ALIASES["name"])
                 has_domain = any(cleaned.get(alias) for alias in _ALIASES["domain"])
                 if has_name or has_domain:
