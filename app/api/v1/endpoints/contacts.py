@@ -423,9 +423,42 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
 
 @router.delete("/bulk", status_code=204)
 async def bulk_delete_contacts(session: DBSession, _admin: AdminUser):
-    """Delete all contacts. Admin only."""
+    """Delete ALL contacts. Admin only.
+
+    For deleting a *selected* set of prospects, use POST /contacts/bulk-delete.
+    """
     repo = ContactRepository(session)
     await repo.delete_all()
+
+
+class BulkDeleteRequest(SQLModel):
+    ids: list[UUID]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_selected_contacts(
+    payload: BulkDeleteRequest,
+    session: DBSession,
+    _user: CurrentUser,
+):
+    """Hard-delete a specific set of prospects and their dependents.
+
+    Available to any signed-in user (matches the single-delete endpoint). Linked
+    deals and activity history survive; outreach sequences, deal-stakeholder
+    links, reminders, angel mappings, and call recordings for these prospects are
+    removed. Returns how many of the requested prospects actually existed.
+    """
+    ids = [cid for cid in payload.ids if cid]
+    if not ids:
+        raise HTTPException(status_code=422, detail="Select at least one prospect to delete.")
+    if len(set(ids)) > 2000:
+        raise HTTPException(
+            status_code=422,
+            detail="Too many prospects in one request (max 2000). Delete in smaller batches.",
+        )
+    repo = ContactRepository(session)
+    deleted = await repo.delete_many(ids)
+    return {"deleted": deleted, "requested": len(set(ids))}
 
 
 @router.delete("/{contact_id}", status_code=204)

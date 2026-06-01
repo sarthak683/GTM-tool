@@ -420,6 +420,7 @@ export default function Contacts() {
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
   const [bulkClaimingSdr, setBulkClaimingSdr] = useState(false);
+  const [deletingContacts, setDeletingContacts] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
   // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
   // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
@@ -511,6 +512,8 @@ export default function Contacts() {
     return Array.from(byCompany.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [contacts]);
   const allVisibleSelected = contacts.length > 0 && contacts.every((contact) => selectedContactIds.has(contact.id));
+  // Any signed-in user may select + delete prospects (single or bulk).
+  const canSelectProspects = !!user;
 
   const columnMenuItems = useMemo(() => {
     const ordered = tableColumns
@@ -1095,6 +1098,38 @@ export default function Contacts() {
       toast.error(error instanceof Error ? error.message : "Failed to claim selected prospects.", "Claim failed");
     } finally {
       setBulkClaimingSdr(false);
+    }
+  };
+
+  const deleteContactsByIds = async (ids: string[]) => {
+    const targets = Array.from(new Set(ids.filter(Boolean)));
+    if (targets.length === 0 || deletingContacts) return;
+    const n = targets.length;
+    const warning =
+      n === 1
+        ? "Permanently delete this prospect? Their outreach sequences, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone."
+        : `Permanently delete ${n} prospects? Their outreach sequences, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone.`;
+    if (!window.confirm(warning)) return;
+    setDeletingContacts(true);
+    try {
+      if (n === 1) {
+        await contactsApi.delete(targets[0]);
+      } else {
+        await contactsApi.bulkDeleteByIds(targets);
+      }
+      setSelectedContactIds((current) => {
+        if (current.size === 0) return current;
+        const next = new Set(current);
+        for (const id of targets) next.delete(id);
+        return next;
+      });
+      setOpenActionsId(null);
+      toast.success(`Deleted ${n} prospect${n === 1 ? "" : "s"}.`, "Prospects deleted");
+      await loadContacts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete prospects.", "Delete failed");
+    } finally {
+      setDeletingContacts(false);
     }
   };
 
@@ -2013,11 +2048,11 @@ export default function Contacts() {
                       );
                     })}
                   </div>
-                  {user?.role === "sdr" && (
+                  {(user?.role === "sdr" || selectedContactIds.size > 0) && (
                     <div style={{ marginTop: 10, border: "1px solid #dce8f4", background: "#ffffff", borderRadius: 14, padding: 10, display: "grid", gap: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                         <span style={{ color: "#35546f", fontSize: 12, fontWeight: 800 }}>
-                          {selectedContactIds.size} selected for SDR claim
+                          {selectedContactIds.size} selected
                         </span>
                         <button
                           type="button"
@@ -2027,29 +2062,39 @@ export default function Contacts() {
                           {allVisibleSelected ? "Clear" : "Select page"}
                         </button>
                       </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            if (e.target.value) selectVisibleCompanyContacts(e.target.value);
-                            e.currentTarget.value = "";
-                          }}
-                          style={{ minWidth: 0, flex: 1, height: 34, border: "1px solid #c8d9e8", borderRadius: 10, color: "#35546f", fontSize: 12, fontWeight: 750, padding: "0 8px", background: "#fff" }}
-                        >
-                          <option value="">Select company on page</option>
-                          {visibleCompanySelectionOptions.map((company) => (
-                            <option key={company.id} value={company.id}>{company.name} ({company.count})</option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => void bulkClaimSelectedSdr()}
-                          disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
-                          style={{ height: 34, border: "none", borderRadius: 10, background: selectedContactIds.size ? "#175089" : "#d9e4ef", color: "#fff", padding: "0 12px", fontSize: 12, fontWeight: 850 }}
-                        >
-                          {bulkClaimingSdr ? "Claiming..." : "Claim SDR"}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void deleteContactsByIds(Array.from(selectedContactIds))}
+                        disabled={selectedContactIds.size === 0 || deletingContacts}
+                        style={{ height: 34, border: "1px solid #f0c2c2", borderRadius: 10, background: selectedContactIds.size ? "#fff1f1" : "#f6f8fb", color: selectedContactIds.size ? "#b3261e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                      >
+                        <Trash2 size={13} /> {deletingContacts ? "Deleting..." : "Delete selected"}
+                      </button>
+                      {user?.role === "sdr" && (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              if (e.target.value) selectVisibleCompanyContacts(e.target.value);
+                              e.currentTarget.value = "";
+                            }}
+                            style={{ minWidth: 0, flex: 1, height: 34, border: "1px solid #c8d9e8", borderRadius: 10, color: "#35546f", fontSize: 12, fontWeight: 750, padding: "0 8px", background: "#fff" }}
+                          >
+                            <option value="">Select company on page</option>
+                            {visibleCompanySelectionOptions.map((company) => (
+                              <option key={company.id} value={company.id}>{company.name} ({company.count})</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void bulkClaimSelectedSdr()}
+                            disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
+                            style={{ height: 34, border: "none", borderRadius: 10, background: selectedContactIds.size ? "#175089" : "#d9e4ef", color: "#fff", padding: "0 12px", fontSize: 12, fontWeight: 850 }}
+                          >
+                            {bulkClaimingSdr ? "Claiming..." : "Claim SDR"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2078,7 +2123,7 @@ export default function Contacts() {
                           <div key={c.id} className="prospect-mobile-card">
                             <div style={{ padding: 14, display: "grid", gap: 12 }}>
                               <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
-                                {user?.role === "sdr" && (
+                                {canSelectProspects && (
                                   <input
                                     type="checkbox"
                                     checked={selectedContactIds.has(c.id)}
@@ -2646,7 +2691,7 @@ export default function Contacts() {
             })()}
 
 
-            {user?.role === "sdr" && contacts.length > 0 && (
+            {contacts.length > 0 && (user?.role === "sdr" || selectedContactIds.size > 0) && (
               <div
                 className="prospect-desktop-only"
                 style={{
@@ -2726,24 +2771,49 @@ export default function Contacts() {
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void bulkClaimSelectedSdr()}
-                  disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
-                  style={{
-                    height: 36,
-                    border: "none",
-                    background: selectedContactIds.size ? "#175089" : "#d9e4ef",
-                    color: "#ffffff",
-                    borderRadius: 11,
-                    padding: "0 14px",
-                    fontSize: 13,
-                    fontWeight: 850,
-                    cursor: selectedContactIds.size && !bulkClaimingSdr ? "pointer" : "not-allowed",
-                  }}
-                >
-                  {bulkClaimingSdr ? "Claiming..." : "Claim selected as SDR"}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => void deleteContactsByIds(Array.from(selectedContactIds))}
+                    disabled={selectedContactIds.size === 0 || deletingContacts}
+                    style={{
+                      height: 36,
+                      border: "1px solid #f0c2c2",
+                      background: selectedContactIds.size ? "#fff1f1" : "#f6f8fb",
+                      color: selectedContactIds.size ? "#b3261e" : "#9aa8b7",
+                      borderRadius: 11,
+                      padding: "0 14px",
+                      fontSize: 13,
+                      fontWeight: 850,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: selectedContactIds.size && !deletingContacts ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    <Trash2 size={14} /> {deletingContacts ? "Deleting..." : "Delete selected"}
+                  </button>
+                  {user?.role === "sdr" && (
+                    <button
+                      type="button"
+                      onClick={() => void bulkClaimSelectedSdr()}
+                      disabled={selectedContactIds.size === 0 || bulkClaimingSdr}
+                      style={{
+                        height: 36,
+                        border: "none",
+                        background: selectedContactIds.size ? "#175089" : "#d9e4ef",
+                        color: "#ffffff",
+                        borderRadius: 11,
+                        padding: "0 14px",
+                        fontSize: 13,
+                        fontWeight: 850,
+                        cursor: selectedContactIds.size && !bulkClaimingSdr ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      {bulkClaimingSdr ? "Claiming..." : "Claim selected as SDR"}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2785,7 +2855,7 @@ export default function Contacts() {
                   <table className="crm-table" style={{ minWidth: 1080 }}>
                     <thead>
                       <tr>
-                        {user?.role === "sdr" && (
+                        {canSelectProspects && (
                           <th style={{ position: "sticky", top: 0, zIndex: 2, background: "#f7faff", width: 44 }}>
                             <input
                               type="checkbox"
@@ -2804,7 +2874,7 @@ export default function Contacts() {
                     <tbody>
                       {displayedContacts.map((c) => (
                         <tr key={c.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${c.id}`)}>
-                          {user?.role === "sdr" && (
+                          {canSelectProspects && (
                             <td onClick={(e) => e.stopPropagation()} style={{ width: 44 }}>
                               <input
                                 type="checkbox"
@@ -3090,6 +3160,9 @@ export default function Contacts() {
                                           </button>
                                           <button type="button" disabled={!c.company_id} onClick={() => { setOpenActionsId(null); void handleConvertContactToDeal(c); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}>
                                             <Target className="h-3.5 w-3.5" />Convert to deal
+                                          </button>
+                                          <button type="button" disabled={deletingContacts} onClick={() => { void deleteContactsByIds([c.id]); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, color: "#b3261e" }}>
+                                            <Trash2 className="h-3.5 w-3.5" />Delete prospect
                                           </button>
                                         </div>
                                       ) : null}

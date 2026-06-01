@@ -630,23 +630,77 @@ class ContactRepository(BaseRepository[Contact]):
         await self.session.commit()
 
     async def delete_with_cascade(self, contact_id: UUID) -> None:
-        """Delete contact + dependent outreach_sequences and activities."""
-        for seq in (
-            await self.session.execute(
-                select(OutreachSequence).where(OutreachSequence.contact_id == contact_id)
-            )
-        ).scalars().all():
-            await self.session.delete(seq)
+        """Hard-delete one contact and ALL of its FK dependents.
 
-        for act in (
-            await self.session.execute(
-                select(Activity).where(Activity.contact_id == contact_id)
-            )
-        ).scalars().all():
-            await self.session.delete(act)
+        Delegates to delete_many so single- and bulk-delete share one correct
+        cleanup order. The previous implementation only removed outreach
+        sequences + activities, so deleting a prospect that was a deal
+        stakeholder / had a reminder / had an angel mapping raised IntegrityError.
+        """
+        await self.delete_many([contact_id])
 
-        contact = await self.get(contact_id)
-        if contact:
-            await self.session.delete(contact)
+    async def delete_many(self, contact_ids: list[UUID]) -> int:
+        """Hard-delete the given contacts and their FK dependents.
+
+        Returns the count of contacts that actually existed and were removed.
+        Dependent order mirrors the admin purge endpoint: activity links are
+        nulled (history is kept), then outreach steps/sequences, deal-stakeholder
+        links, reminders, and angel mappings are deleted, then the contacts
+        themselves. call_recordings are removed automatically by their
+        ON DELETE CASCADE foreign key (migration 072). Processed in chunks so a
+        very large selection stays within driver parameter limits.
+        """
+        from sqlalchemy import delete as sa_delete
+
+        from app.models.angel import AngelMapping
+        from app.models.deal import DealContact
+        from app.models.outreach import OutreachStep
+        from app.models.reminder import Reminder
+
+        # De-duplicate, preserve order, drop falsy ids defensively.
+        unique_ids = list(dict.fromkeys(cid for cid in contact_ids if cid))
+        if not unique_ids:
+            return 0
+
+        deleted_total = 0
+        chunk_size = 500
+        for start in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[start:start + chunk_size]
+
+            existing = (
+                await self.session.execute(
+                    select(func.count(Contact.id)).where(Contact.id.in_(chunk))
+                )
+            ).scalar_one()
+
+            # Keep activity history — just detach it from the deleted prospects.
+            await self.session.execute(
+                Activity.__table__.update()
+                .values(contact_id=None)
+                .where(Activity.contact_id.in_(chunk))
+            )
+            seq_ids_subq = select(OutreachSequence.id).where(
+                OutreachSequence.contact_id.in_(chunk)
+            )
+            await self.session.execute(
+                sa_delete(OutreachStep).where(OutreachStep.sequence_id.in_(seq_ids_subq))
+            )
+            await self.session.execute(
+                sa_delete(OutreachSequence).where(OutreachSequence.contact_id.in_(chunk))
+            )
+            await self.session.execute(
+                sa_delete(DealContact).where(DealContact.contact_id.in_(chunk))
+            )
+            await self.session.execute(
+                sa_delete(Reminder).where(Reminder.contact_id.in_(chunk))
+            )
+            await self.session.execute(
+                sa_delete(AngelMapping).where(AngelMapping.contact_id.in_(chunk))
+            )
+            await self.session.execute(
+                sa_delete(Contact).where(Contact.id.in_(chunk))
+            )
+            deleted_total += int(existing or 0)
 
         await self.session.commit()
+        return deleted_total
