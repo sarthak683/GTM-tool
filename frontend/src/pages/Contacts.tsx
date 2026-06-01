@@ -386,11 +386,10 @@ export default function Contacts() {
     to: searchParams.get("clb") ?? "",
   }));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
-  // Client-side toggle wired to the "Emails opened" KPI tile. When true, the
-  // prospect table is narrowed to contacts whose email_open_count > 0 so the
-  // user can see *who* opened. Filter applies to the already-loaded page, which
-  // matches what the tile itself counts (see emailsOpenedCount below).
-  const [engagedOnly, setEngagedOnly] = useState<boolean>(false);
+  // Client-side filter wired to the engagement KPI tiles. Clicking a tile
+  // narrows the already-loaded prospect page to the matching population —
+  // the same scope the tiles count. null = show everyone.
+  const [cardFilter, setCardFilter] = useState<"calls_today" | "emails" | "linkedin" | "meetings" | null>(null);
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
@@ -1440,11 +1439,21 @@ export default function Contacts() {
     }
   };
 
-  const callsLoggedCount = contacts.filter((c) => c.call_status && c.call_status !== "none").length;
   const emailsOpenedCount = contacts.filter((c) => (c.email_open_count ?? 0) > 0).length;
-  const displayedContacts = engagedOnly
-    ? contacts.filter((c) => (c.email_open_count ?? 0) > 0)
-    : contacts;
+  // Predicate per KPI tile — kept in sync with each tile's own count so the
+  // number on the card matches the rows shown when it's clicked.
+  const _today = new Date();
+  const cardPredicates = {
+    calls_today: (c: Contact) => {
+      if (!c.call_last_at) return false;
+      const d = new Date(c.call_last_at);
+      return d.getFullYear() === _today.getFullYear() && d.getMonth() === _today.getMonth() && d.getDate() === _today.getDate();
+    },
+    emails: (c: Contact) => (c.email_open_count ?? 0) > 0,
+    linkedin: (c: Contact) => !!c.linkedin_status && c.linkedin_status !== "none",
+    meetings: (c: Contact) => c.sequence_status === "meeting_booked",
+  } as const;
+  const displayedContacts = cardFilter ? contacts.filter(cardPredicates[cardFilter]) : contacts;
   // The next callable prospect (has a phone) after the one in the open call
   // drawer, in the rep's current view order — powers the "Save & next" button.
   const nextCallable: Contact | null = (() => {
@@ -1458,13 +1467,6 @@ export default function Contacts() {
   })();
   const linkedinActiveCount = contacts.filter((c) => c.linkedin_status && c.linkedin_status !== "none").length;
   const meetingsBookedCount = contacts.filter((c) => c.sequence_status === "meeting_booked").length;
-  const hasNoSyncedEngagement =
-    tab === "contacts" &&
-    contactsTotal > 0 &&
-    callsLoggedCount === 0 &&
-    emailsOpenedCount === 0 &&
-    linkedinActiveCount === 0 &&
-    meetingsBookedCount === 0;
 
   return (
     <>
@@ -1584,27 +1586,33 @@ export default function Contacts() {
 
           {/* Row 1 — tab cards */}
           {/* SDR Activity Cards — unified, modern, info-filled */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
             {([
-              { label: "Total prospects", value: contactsTotal, icon: Users, color: "#1d4ed8", sub: contactsTotal > 0 ? "Active pipeline" : "No prospects yet" },
-              { label: "Calls today", value: myCallsTodayCount, icon: PhoneCall, color: "#0891b2", sub: myCallsTodayCount > 0 ? "Logged today" : "No calls yet" },
-              { label: "Emails opened", value: emailsOpenedCount, icon: Mail, color: "#16a34a", sub: emailsOpenedCount > 0 ? "Engaged readers" : "Awaiting opens" },
-              { label: "LinkedIn touches", value: linkedinActiveCount, icon: Link2, color: "#7c3aed", sub: linkedinActiveCount > 0 ? "Active threads" : "No threads yet" },
-              { label: "Meetings booked", value: meetingsBookedCount, icon: Clock, color: "#d97706", sub: meetingsBookedCount > 0 ? "Pipeline added" : "None yet" },
-            ] as const).map(({ label, value, icon: Icon, color, sub }) => {
-              const isEmailsTile = label === "Emails opened";
-              const isInteractive = isEmailsTile && value > 0;
-              const isActive = isEmailsTile && engagedOnly;
+              { label: "Total prospects", value: contactsTotal, icon: Users, color: "#1d4ed8", sub: contactsTotal > 0 ? "Active pipeline" : "No prospects yet", filterKey: null },
+              { label: "Calls today", value: myCallsTodayCount, icon: PhoneCall, color: "#0891b2", sub: myCallsTodayCount > 0 ? "Logged today" : "No calls yet", filterKey: "calls_today" },
+              { label: "Emails opened", value: emailsOpenedCount, icon: Mail, color: "#16a34a", sub: emailsOpenedCount > 0 ? "Engaged readers" : "Awaiting opens", filterKey: "emails" },
+              { label: "LinkedIn touches", value: linkedinActiveCount, icon: Link2, color: "#7c3aed", sub: linkedinActiveCount > 0 ? "Active threads" : "No threads yet", filterKey: "linkedin" },
+              { label: "Meetings booked", value: meetingsBookedCount, icon: Clock, color: "#d97706", sub: meetingsBookedCount > 0 ? "Pipeline added" : "None yet", filterKey: "meetings" },
+            ] as const).map(({ label, value, icon: Icon, color, sub, filterKey }) => {
+              // Total-prospects tile resets the filter; the four engagement tiles
+              // toggle their own client-side filter on the loaded page.
+              const isResetCard = filterKey === null;
+              const isInteractive = isResetCard ? cardFilter !== null : value > 0;
+              const isActive = !isResetCard && cardFilter === filterKey;
+              const activate = () => {
+                if (isResetCard) { setCardFilter(null); return; }
+                setCardFilter((prev) => (prev === filterKey ? null : filterKey));
+              };
               return (
               <div
                 key={label}
                 className="prospect-kpi-card"
                 role={isInteractive ? "button" : undefined}
                 tabIndex={isInteractive ? 0 : undefined}
-                aria-pressed={isInteractive ? isActive : undefined}
-                title={isInteractive ? (isActive ? "Show all prospects" : "Show only prospects who opened an email") : undefined}
-                onClick={isInteractive ? () => setEngagedOnly((v) => !v) : undefined}
-                onKeyDown={isInteractive ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setEngagedOnly((v) => !v); } } : undefined}
+                aria-pressed={isInteractive && !isResetCard ? isActive : undefined}
+                title={isInteractive ? (isResetCard || isActive ? "Show all prospects" : `Show only ${label.toLowerCase()}`) : undefined}
+                onClick={isInteractive ? activate : undefined}
+                onKeyDown={isInteractive ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); } } : undefined}
                 style={{
                   position: "relative",
                   display: "flex", flexDirection: "column", gap: 10,
@@ -1658,11 +1666,6 @@ export default function Contacts() {
               </div>
               );
             })}
-            {hasNoSyncedEngagement && (
-              <div style={{ gridColumn: "1 / -1", border: "1px solid #f5ddaa", background: "#fff8e8", color: "#6f5a2d", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.55 }}>
-                Engagement metrics are waiting for synced or logged activity. {aircallEnabled ? "Calls, email opens, LinkedIn touches, and booked meetings will populate as reps log activity or integrations sync." : "AirCall is currently off, so call counts will stay empty until it is enabled or calls are logged manually."}
-              </div>
-            )}
           </div>
 
           {/* Row 2 — contextual action bar */}
@@ -2059,10 +2062,10 @@ export default function Contacts() {
                   ) : displayedContacts.length === 0 ? (
                     <div className="prospect-mobile-card" style={{ padding: 22, textAlign: "center" }}>
                       <Users size={30} style={{ margin: "0 auto 10px", color: "#9fb0c2" }} />
-                      <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d" }}>{engagedOnly ? "No engaged readers yet" : "No prospects found"}</div>
-                      <div style={{ fontSize: 12.5, color: "#7a8ea4", marginTop: 5 }}>{engagedOnly ? "No one in this page has opened an email yet." : "Try another name, company, or call outcome."}</div>
-                      {engagedOnly && (
-                        <button type="button" onClick={() => setEngagedOnly(false)} style={{ marginTop: 10, border: "1px solid #dce8f4", background: "#fff", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d" }}>{cardFilter ? "No matching prospects in this view" : "No prospects found"}</div>
+                      <div style={{ fontSize: 12.5, color: "#7a8ea4", marginTop: 5 }}>{cardFilter ? "None of the loaded prospects match this tile yet." : "Try another name, company, or call outcome."}</div>
+                      {cardFilter && (
+                        <button type="button" onClick={() => setCardFilter(null)} style={{ marginTop: 10, border: "1px solid #dce8f4", background: "#fff", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
                       )}
                     </div>
                   ) : (
@@ -2749,12 +2752,12 @@ export default function Contacts() {
               <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
             ) : displayedContacts.length === 0 ? (
               <div className="crm-panel p-14 text-center text-[#6f8297] prospect-desktop-only">
-                {engagedOnly ? (
+                {cardFilter ? (
                   <>
-                    <Mail size={36} style={{ margin: "0 auto 12px", opacity: 0.3, color: "#16a34a" }} />
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d", marginBottom: 6 }}>No engaged readers in this view</div>
-                    <div style={{ fontSize: 13, color: "#7a8ea4", marginBottom: 12 }}>None of the loaded prospects have opened an email yet.</div>
-                    <button type="button" onClick={() => setEngagedOnly(false)} style={{ border: "1px solid #dce8f4", background: "#fff", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
+                    <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.3, color: "#4b6b8f" }} />
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d", marginBottom: 6 }}>No matching prospects in this view</div>
+                    <div style={{ fontSize: 13, color: "#7a8ea4", marginBottom: 12 }}>None of the loaded prospects match this tile yet.</div>
+                    <button type="button" onClick={() => setCardFilter(null)} style={{ border: "1px solid #dce8f4", background: "#fff", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
                   </>
                 ) : contactsTotal === 0 ? (
                   <>
