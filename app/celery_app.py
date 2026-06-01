@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.tasks.pre_meeting_brief",
         "app.tasks.transcribe_call",
         "app.tasks.deal_reminders",
+        "app.tasks.prospect_reminders",
     ],
 )
 
@@ -92,6 +93,11 @@ celery_app.conf.update(
         # notification dedup_key keeps each due date to a single reminder.
         "send-due-next-step-reminders": {
             "task": "app.tasks.deal_reminders.send_due_next_step_reminders",
+            "schedule": 900,
+        },
+        # SDR equivalent: nudge the owning rep when a prospect follow-up is due.
+        "send-due-prospect-followup-reminders": {
+            "task": "app.tasks.prospect_reminders.send_due_prospect_followup_reminders",
             "schedule": 900,
         },
     },

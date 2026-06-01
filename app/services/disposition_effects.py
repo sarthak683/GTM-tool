@@ -126,12 +126,22 @@ def derive_status_from_linkedin(
     linkedin_status: Optional[str],
     current_status: Optional[str],
 ) -> Optional[str]:
-    """LinkedIn 'replied' is the only state that meaningfully advances the
-    sequence (connect-request sent / accepted is too ambiguous to flip
-    sequence_status on its own)."""
-    if linkedin_status != "replied":
+    """Mirror the client mapping (deriveSequenceStatusFromLinkedinStatus) so a
+    LinkedIn outcome advances the funnel server-side too — even when an API
+    caller or older client doesn't also send sequence_status. Connect-request
+    sent/accepted are early touches and don't move the funnel on their own."""
+    if not linkedin_status or linkedin_status == "none":
         return None
-    target = "replied"
+    if linkedin_status == "meeting_booked":
+        target = "meeting_booked"
+    elif current_status == "meeting_booked":
+        return None  # never downgrade a booked meeting
+    elif linkedin_status == "meeting_rejected":
+        target = "not_interested"
+    elif linkedin_status in ("follow_up", "replied"):
+        target = "replied"  # active conversation
+    else:
+        return None  # sent / accepted
     return target if _should_advance(current_status, target) else None
 
 
@@ -267,6 +277,18 @@ async def apply_linkedin_status_effects(
         contact.sequence_status = new_status
         contact.updated_at = datetime.utcnow()
         session.add(contact)
+
+    # A meeting booked (or hard-rejected) over LinkedIn must stop the Instantly
+    # sequence too — otherwise the prospect keeps getting cadence emails after
+    # the meeting is set, the same awkwardness the call path already guards.
+    if linkedin_status in {"meeting_booked", "meeting_rejected"}:
+        paused = await _maybe_pause_instantly_campaign(
+            session, contact, reason=f"linkedin={linkedin_status}"
+        )
+        if paused:
+            changes["instantly"] = "paused"
+            contact.instantly_status = "paused"
+            session.add(contact)
 
     if refresh_tasks:
         from app.services.tasks import refresh_system_tasks_for_entity

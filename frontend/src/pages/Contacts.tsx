@@ -560,7 +560,10 @@ export default function Contacts() {
     const normalized = nextTimezone.trim();
     setSavingTimezoneId(contact.id);
     try {
-      const updated = await contactsApi.update(contact.id, { timezone: normalized || undefined });
+      // Send null (not undefined) to actually clear — undefined is dropped by
+      // JSON.stringify and ignored by the backend (exclude_unset), and an absent
+      // timezone also triggers server-side re-inference.
+      const updated = await contactsApi.update(contact.id, { timezone: normalized || null } as never);
       setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, timezone: updated.timezone } : item));
       toast.success("Timezone updated.", "Prospect saved");
     } catch (error) {
@@ -1288,7 +1291,7 @@ export default function Contacts() {
       await contactsApi.update(callContact.id, {
         call_status: callStatus,
         call_disposition: callDisposition,
-        call_notes: callNotes || undefined,
+        call_notes: (callNotes || null) as never, // null clears; undefined is a silent no-op
         call_last_at: nowIso,
         ...(followupIso ? { next_followup_at: followupIso } : {}),
         ...(derivedSeqStatus && derivedSeqStatus !== callContact.sequence_status
@@ -1382,7 +1385,8 @@ export default function Contacts() {
       await contactsApi.update(linkedinContact.id, {
         linkedin_status: linkedinStatus,
         linkedin_last_at: new Date().toISOString(),
-        ...(linkedinNotes ? { call_notes: linkedinNotes } : {}),
+        // NOTE: the LinkedIn note is captured on the linkedin Activity below —
+        // do NOT write it to call_notes (that clobbers real call notes).
         ...(derivedSeqStatus && derivedSeqStatus !== linkedinContact.sequence_status
           ? { sequence_status: derivedSeqStatus }
           : {}),
