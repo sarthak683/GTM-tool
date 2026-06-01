@@ -53,8 +53,13 @@ DEFAULT_SALES_REPORT_SETTINGS = {
     "cutoff_timezone": "Asia/Kolkata",
     "cutoff_hour": 6,
     "report_label_timezone": "America/Chicago",
-    "send_days": ["mon", "tue", "wed", "thu", "fri"],
-    "weekly_report_day": "fri",
+    # Saturday IS a send day: the pod reports US/Chicago activity from an IST
+    # clock, so Friday's US workday only completes Saturday morning IST. The
+    # Saturday send delivers Friday's daily + the weekly. skip_weekends still
+    # suppresses reports whose *period* is a weekend (handled per report-period,
+    # not per send-day).
+    "send_days": ["mon", "tue", "wed", "thu", "fri", "sat"],
+    "weekly_report_day": "sat",
     "skip_weekends": True,
     "nonprod_scheduled_enabled": False,
     "nonprod_recipients": ["sarthak@beacon.li"],

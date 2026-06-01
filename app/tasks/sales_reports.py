@@ -60,7 +60,6 @@ async def _async_send_us_pod_call_report(
         current_report_local_date,
         default_report_date,
         is_production_environment,
-        is_weekend_report_day,
         load_sales_report_settings,
         normalize_sales_report_settings,
         scheduled_report_type,
@@ -135,13 +134,11 @@ async def _async_send_us_pod_call_report(
             ):
                 return {"status": "skipped", "reason": "already_sent", "send_key": send_key}
 
-            if report_settings["skip_weekends"] and is_weekend_report_day(report_settings=report_settings):
-                return {
-                    "status": "skipped",
-                    "reason": "weekend",
-                    "local_date": current_report_local_date(report_settings=report_settings).isoformat(),
-                    "report_type": resolved_report_type,
-                }
+            # NOTE: we deliberately do NOT skip based on the *send* day being a
+            # weekend. The pod sends from IST but reports US/Chicago activity, so
+            # Friday's US data is delivered on Saturday (IST). The real weekend
+            # guard is per *report period* (below): a report whose covered day is
+            # Sat/Sun US is the one that should be suppressed.
             report_period_date = default_report_date(report_settings=report_settings)
             if report_settings["skip_weekends"] and report_period_date.weekday() >= 5:
                 return {
