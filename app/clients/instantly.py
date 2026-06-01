@@ -247,6 +247,25 @@ class InstantlyClient:
             return {"id": campaign_id, "status": 2}
         return await self._request("POST", f"/campaigns/{campaign_id}/pause", json={})
 
+    async def update_campaign(self, campaign_id: str, **fields: Any) -> dict | None:
+        """Patch top-level campaign config via PATCH /campaigns/{id}.
+
+        Instantly v2 accepts config flags (e.g. ``open_tracking``,
+        ``link_tracking``, ``daily_limit``) as top-level fields on the campaign
+        object — confirmed against the live API: a top-level
+        ``{"open_tracking": True}`` PATCH flips the value and persists on read.
+        Pass only the fields you intend to change.
+        """
+        if not fields:
+            return None
+        if self.is_mock:
+            logger.warning("InstantlyClient mock — update campaign %s %s", campaign_id, fields)
+            return {"id": campaign_id, **fields}
+        result = await self._request("PATCH", f"/campaigns/{campaign_id}", json=fields)
+        if result:
+            logger.info("InstantlyClient: updated campaign %s fields=%s", campaign_id, list(fields))
+        return result
+
     # ── Leads ─────────────────────────────────────────────────────────────────
 
     async def add_lead(

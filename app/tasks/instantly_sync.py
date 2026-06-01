@@ -41,6 +41,48 @@ def _safe_int(value) -> int:
         return 0
 
 
+# Instantly campaign status codes (from the v2 campaign object) for campaigns
+# that can still send mail. Draft(0) campaigns we create already have open
+# tracking on, and completed(3) ones won't send again — so only these need a
+# tracking fix-up.
+_SENDING_CAMPAIGN_STATUSES = {1, 2, 4}  # active, paused, running-subsequences
+
+
+async def _ensure_campaign_open_tracking(client: InstantlyClient, campaign_id: str) -> bool:
+    """Guarantee an actively-sending campaign reports email opens.
+
+    Campaigns created in the Instantly web UI inherit the workspace default,
+    which for this workspace is open-tracking *off* — so opens never register
+    and ``email_open_count`` stays 0 no matter how many prospects open. Our own
+    ``create_campaign`` enables it, but UI-made campaigns that get linked to a
+    sequence via sync don't. We flip it on here so every campaign we actively
+    track reports opens.
+
+    Idempotent and self-contained: reads the campaign, no-ops unless it's a
+    sending-capable campaign with ``open_tracking`` explicitly False, and
+    swallows API errors (a transient failure just retries next sync cycle).
+    Returns True only when it issued an enable-PATCH.
+    """
+    try:
+        camp = await client.get_campaign(campaign_id)
+    except Exception:
+        logger.warning("open_tracking reconcile: get_campaign failed for %s", campaign_id, exc_info=True)
+        return False
+    if not isinstance(camp, dict):
+        return False
+    if camp.get("status") not in _SENDING_CAMPAIGN_STATUSES:
+        return False
+    if camp.get("open_tracking") is not False:
+        return False  # already on (True) or unknown (None) — leave it
+    try:
+        await client.update_campaign(campaign_id, open_tracking=True)
+        logger.info("instantly_sync: enabled open_tracking on campaign %s", campaign_id)
+        return True
+    except Exception:
+        logger.warning("open_tracking reconcile: PATCH failed for %s", campaign_id, exc_info=True)
+        return False
+
+
 # instantly_status values that mean a send has NOT happened yet. Mirrors the
 # frontend ProgressCell PRE_SEND_INSTANTLY set so the inline progress bar
 # (driven by contact fields) and the lifecycle drawer (driven by email_sent
@@ -300,10 +342,23 @@ async def _async_sync_active_campaigns() -> dict:
 
         synced = 0
         errors = 0
+        tracking_enabled = 0
+        # One reconcile check per unique campaign (many sequences share a
+        # campaign) so we don't re-GET the same campaign for every lead.
+        reconciled_open_tracking: set[str] = set()
 
         for seq in sequences:
             try:
                 campaign_id = seq.instantly_campaign_id
+
+                # Safety-net: UI-created campaigns linked to our sequences are
+                # born with open tracking off. Flip it on once per campaign so
+                # opens start registering — independent of the lead-stat sync.
+                if campaign_id and campaign_id not in reconciled_open_tracking:
+                    reconciled_open_tracking.add(campaign_id)
+                    if await _ensure_campaign_open_tracking(client, campaign_id):
+                        tracking_enabled += 1
+
                 analytics_list = await client.get_campaign_analytics(campaign_id=campaign_id)
                 if not analytics_list:
                     continue
@@ -429,4 +484,10 @@ async def _async_sync_active_campaigns() -> dict:
 
         await session.commit()
 
-    return {"status": "ok", "synced": synced, "errors": errors, "campaigns_checked": len(sequences)}
+    return {
+        "status": "ok",
+        "synced": synced,
+        "errors": errors,
+        "campaigns_checked": len(sequences),
+        "open_tracking_enabled": tracking_enabled,
+    }
