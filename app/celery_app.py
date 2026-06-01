@@ -102,3 +102,9 @@ celery_app.conf.update(
         },
     },
 )
+
+# Connect the job-health signal handlers (import side-effect registers them).
+# Records every beat-scheduled task's last run/status into job_health for the
+# admin System Health panel. Imported here so any worker/beat process that
+# loads the Celery app also wires up tracking.
+from app.tasks import job_health_signals  # noqa: E402,F401

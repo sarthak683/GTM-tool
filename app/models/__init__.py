@@ -26,6 +26,7 @@ from app.models.angel import (
 from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
 from app.models.call_recording import CallRecording, CallRecordingRead
 from app.models.notification import Notification, NotificationRead, NOTIFICATION_TYPES
+from app.models.job_health import JobHealth
 from app.models.task import (
     Task, TaskCreate, TaskRead, TaskUpdate,
     TaskComment, TaskCommentCreate, TaskCommentRead,

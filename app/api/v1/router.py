@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     account_sourcing,
     activities,
+    admin_health,
     analytics,
     aircall,
     email_sync,
@@ -53,6 +54,7 @@ from app.api.v1.endpoints import (
 router = APIRouter()
 
 router.include_router(auth.router)
+router.include_router(admin_health.router)
 router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
