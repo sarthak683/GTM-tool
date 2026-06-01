@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.contact import Contact
 from app.services.notifications import create_notification
 
@@ -28,7 +28,8 @@ _TERMINAL_STATUSES = {"not_interested", "meeting_booked", "bounced", "unsubscrib
 
 
 async def send_due_prospect_followup_reminders() -> dict[str, int]:
-    async with AsyncSessionLocal() as session:
+    # Loop-safe across Celery's per-task event loops (see deal_reminders).
+    async with task_session() as session:
         now = datetime.utcnow()
         window_start = now - timedelta(days=LOOKBACK_DAYS)
 

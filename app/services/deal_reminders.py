@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.deal import Deal
 from app.services.deal_stages import get_configured_deal_stages
 from app.services.notifications import create_notification
@@ -26,7 +26,10 @@ LOOKBACK_DAYS = 14
 
 
 async def send_due_next_step_reminders() -> dict[str, int]:
-    async with AsyncSessionLocal() as session:
+    # task_session() (NullPool, one-shot engine) is loop-safe across Celery's
+    # per-task event loops; the shared AsyncSessionLocal pool reuses a
+    # connection bound to a dead loop -> "Future attached to a different loop".
+    async with task_session() as session:
         now = datetime.utcnow()
         window_start = now - timedelta(days=LOOKBACK_DAYS)
 
