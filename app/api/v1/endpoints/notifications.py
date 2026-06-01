@@ -220,6 +220,8 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
         "priority": "normal",
         "company_id": contact.company_id,
         "assigned_to_id": contact.assigned_to_id or user.id,
+        # Preserve SDR-sourced pipeline credit through conversion.
+        "sdr_id": contact.sdr_id,
         "source": "meeting_booked_notification",
         "description": payload.get("reply_summary") or None,
         "next_step": payload.get("next_step") or "Confirm meeting and prepare agenda",

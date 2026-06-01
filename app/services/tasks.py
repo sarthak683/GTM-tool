@@ -3778,6 +3778,8 @@ async def apply_task_action(
                 "stage": str(payload.get("stage") or "demo_done"),
                 "company_id": contact.company_id,
                 "assigned_to_id": contact.assigned_to_id,
+                # Preserve SDR-sourced pipeline credit through conversion.
+                "sdr_id": contact.sdr_id,
                 "tags": ["converted_from_task"],
                 "next_step": "Review meeting context and advance the opportunity",
                 "stage_entered_at": datetime.utcnow(),

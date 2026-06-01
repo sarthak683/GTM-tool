@@ -1237,9 +1237,10 @@ def merge_company_from_upload(company: Company, fields: dict[str, Any]) -> Compa
         "assigned_rep",
         "assigned_rep_email",
         "assigned_rep_name",
-        "sdr_id",
-        "sdr_email",
-        "sdr_name",
+        # NOTE: sdr_id / sdr_email / sdr_name are deliberately NOT here. SDR
+        # assignment must flow through the role-validated assignment endpoints
+        # (_validate_assignment_user), never an unvalidated CSV column — that
+        # path was how AE ids historically leaked into sdr_id.
     ]
     for key in source_of_truth_fields:
         incoming = fields.get(key)

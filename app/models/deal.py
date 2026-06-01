@@ -74,7 +74,10 @@ class Deal(DealBase, table=True):
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
-    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)  # AE
+    # Originating SDR, stamped from the contact at conversion so SDR-sourced
+    # pipeline credit survives. Mirrors Contact.sdr_id (no hard FK, just an index).
+    sdr_id: Optional[UUID] = Field(default=None, index=True)
     email_cc_alias: Optional[str] = Field(default=None, index=True)
     external_source: Optional[str] = Field(default=None, index=True)
     external_source_id: Optional[str] = Field(default=None, index=True)
@@ -106,6 +109,7 @@ class DealCreate(SQLModel):
     priority: str = "normal"
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None
+    sdr_id: Optional[UUID] = None
     value: Optional[Decimal] = None
     close_date_est: Optional[date] = None
     department: Optional[str] = None
@@ -125,6 +129,7 @@ class DealRead(DealBase):
     id: UUID
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None
+    sdr_id: Optional[UUID] = None
     email_cc_alias: Optional[str] = None
     value: Optional[Decimal] = None
     qualification: Optional[Any] = None
