@@ -83,12 +83,12 @@ export default function Login() {
             transition: "all 0.2s",
           }}
           onMouseEnter={(e) => {
-            (e.target as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
-            (e.target as HTMLElement).style.borderColor = "rgba(154, 206, 61, 0.45)";
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)";
+            e.currentTarget.style.borderColor = "rgba(154, 206, 61, 0.45)";
           }}
           onMouseLeave={(e) => {
-            (e.target as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";
-            (e.target as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.1)";
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+            e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
           }}
         >
           <svg width="18" height="18" viewBox="0 0 48 48">

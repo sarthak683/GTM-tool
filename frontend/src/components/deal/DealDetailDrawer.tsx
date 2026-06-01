@@ -727,22 +727,27 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
   // ── Contact linking ───────────────────────────────────────────────────────
 
-  const searchContacts = async (q: string) => {
+  const contactSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchContacts = (q: string) => {
     setContactSearch(q);
+    if (contactSearchTimer.current) clearTimeout(contactSearchTimer.current);
     if (q.length < 2) { setContactResults([]); return; }
-    try {
-      // If deal has a company, only show contacts from that company
-      const all = await contactsApi.list(0, 200, deal.company_id ?? undefined);
-      const lq = q.toLowerCase();
-      setContactResults(
-        all
-          .filter((c) =>
-            `${c.first_name} ${c.last_name} ${c.email ?? ""} ${c.title ?? ""}`.toLowerCase().includes(lq) &&
-            !dealContacts.some((dc) => dc.contact_id === c.id)
-          )
-          .slice(0, 15)
-      );
-    } catch { setContactResults([]); }
+    // Debounce so a fast typist doesn't fire a 200-row fetch per keystroke.
+    contactSearchTimer.current = setTimeout(async () => {
+      try {
+        // If deal has a company, only show contacts from that company
+        const all = await contactsApi.list(0, 200, deal.company_id ?? undefined);
+        const lq = q.toLowerCase();
+        setContactResults(
+          all
+            .filter((c) =>
+              `${c.first_name} ${c.last_name} ${c.email ?? ""} ${c.title ?? ""}`.toLowerCase().includes(lq) &&
+              !dealContacts.some((dc) => dc.contact_id === c.id)
+            )
+            .slice(0, 15)
+        );
+      } catch { setContactResults([]); }
+    }, 300);
   };
 
   const handleLinkContact = async (contactId: string) => {
@@ -1060,7 +1065,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
         </div>
 
         <div style={{ padding: "0 28px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
-          <div style={{ display: "flex", gap: 8, padding: "12px 0 14px" }}>
+          {/* nowrap + horizontal scroll so the 6 tabs don't clip on narrow phones */}
+          <div style={{ display: "flex", gap: 8, padding: "12px 0 14px", overflowX: "auto", flexWrap: "nowrap", scrollbarWidth: "none" }}>
             {[
               { id: "overview", label: "Overview" },
               { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
