@@ -1,9 +1,10 @@
-import { memo, useEffect, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Briefcase, CalendarDays, CheckSquare, ChevronDown, Eye, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
-import GlobalSearchModal from "./GlobalSearchModal";
+// Lazy — the search modal (debounced multi-entity search) only mounts on first open.
+const GlobalSearchModal = lazy(() => import("./GlobalSearchModal"));
 import { NotificationBell } from "./NotificationBell";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { ZippyProvider } from "../zippy/ZippyContext";
@@ -92,7 +93,11 @@ function Layout() {
   return (
     <ZippyProvider>
     <div className={`crm-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
+      {showGlobalSearch && (
+        <Suspense fallback={null}>
+          <GlobalSearchModal open={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} />
+        </Suspense>
+      )}
       <ZippyLauncher />
       <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <main className="crm-main">

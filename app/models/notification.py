@@ -32,7 +32,7 @@ class Notification(SQLModel, table=True):
     action_payload: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     # Per-(user, dedup_key) uniqueness guards against webhook re-delivery
     # and re-classification spawning duplicate bell rows.
-    dedup_key: Optional[str] = None
+    dedup_key: Optional[str] = Field(default=None, index=True)
     read_at: Optional[datetime] = None
     dismissed_at: Optional[datetime] = None
     accepted_at: Optional[datetime] = None

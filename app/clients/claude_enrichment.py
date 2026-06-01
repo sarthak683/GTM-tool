@@ -142,7 +142,10 @@ async def summarize_company(
         response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=2000,
-            system=system,
+            # Cache the static system prompt: account-sourcing processes companies
+            # in batches, so the identical prefix is reused within the 5-min cache
+            # window. Below the model's cache threshold it's a silent no-op.
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_data}],
         )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
@@ -172,7 +175,9 @@ async def classify_contact_persona(
 
     try:
         response = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
+            # One-word persona classification — Haiku is ~20x cheaper than Sonnet
+            # and accurate enough here; _rule_based_persona backstops any miss.
+            model=settings.CLAUDE_MODEL_SIMPLE,
             max_tokens=50,
             system=(
                 "Classify this B2B contact into exactly one role for a SaaS implementation sale. "

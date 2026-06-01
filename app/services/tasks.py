@@ -480,12 +480,24 @@ async def _upsert_system_task(
     return task
 
 
-async def backfill_open_task_assignments(session: AsyncSession) -> None:
-    open_tasks = (
-        await session.execute(
-            select(Task).where(Task.status == "open")
-        )
-    ).scalars().all()
+async def backfill_open_task_assignments(
+    session: AsyncSession,
+    *,
+    entity_type: str | None = None,
+    entity_id: UUID | None = None,
+) -> None:
+    """Re-resolve assignees for open tasks.
+
+    When ``entity_type``/``entity_id`` are given, only that entity's open tasks
+    are scanned — correct *and* cheap for the hot per-write paths (creating an
+    activity on contact X can only change task assignments for contact X). With
+    no scope it falls back to a full workspace sweep, kept for the task list /
+    count self-heal callers.
+    """
+    stmt = select(Task).where(Task.status == "open")
+    if entity_type is not None and entity_id is not None:
+        stmt = stmt.where(Task.entity_type == entity_type, Task.entity_id == entity_id)
+    open_tasks = (await session.execute(stmt)).scalars().all()
 
     for task in open_tasks:
         if task.task_type == "system":

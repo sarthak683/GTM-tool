@@ -697,7 +697,10 @@ async def _run_icp_analysis(
         response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=5500,
-            system=_ICP_SYSTEM_PROMPT,
+            # Cache the large static ICP framework prompt — batch ICP research
+            # reuses the identical prefix within the 5-min window, cutting input
+            # tokens on every call after the first.
+            system=[{"type": "text", "text": _ICP_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_data}],
         )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]

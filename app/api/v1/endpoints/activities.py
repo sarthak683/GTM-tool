@@ -26,11 +26,14 @@ REPORT_CUTOFF_HOUR = 6
 async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact_id: UUID | None) -> None:
     async with AsyncSessionLocal() as session:
         try:
+            # Scope the assignee backfill to the just-touched entity — this fires
+            # on every activity create, and only this entity's tasks can change.
             if contact_id:
                 await refresh_system_tasks_for_entity(session, "contact", contact_id)
+                await backfill_open_task_assignments(session, entity_type="contact", entity_id=contact_id)
             if deal_id:
                 await refresh_system_tasks_for_entity(session, "deal", deal_id)
-            await backfill_open_task_assignments(session)
+                await backfill_open_task_assignments(session, entity_type="deal", entity_id=deal_id)
             await session.commit()
         except Exception as exc:  # pragma: no cover - background safety net
             logger.warning("activity-triggered task refresh failed for deal=%s contact=%s: %s", deal_id, contact_id, exc)

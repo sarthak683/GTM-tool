@@ -231,7 +231,7 @@ async def _refresh_entity_tasks_background(entity_type: str, entity_id: UUID) ->
     async with AsyncSessionLocal() as session:
         try:
             await refresh_system_tasks_for_entity(session, entity_type, entity_id)
-            await backfill_open_task_assignments(session)
+            await backfill_open_task_assignments(session, entity_type=entity_type, entity_id=entity_id)
             await session.commit()
         except Exception as exc:  # pragma: no cover - background safety net
             logger.warning("background task refresh failed for %s %s: %s", entity_type, entity_id, exc)

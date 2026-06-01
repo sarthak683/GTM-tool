@@ -3,8 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigationType 
 import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Layout from "./components/layout/Layout";
-import AircallPhonePanel from "./components/AircallPhone";
 import { ToastProvider } from "./lib/ToastContext";
+
+// Lazy — the aircall-everywhere SDK is heavy and only ~a few reps enable the
+// dialer. Keeping it out of the main bundle speeds up boot for everyone else.
+const AircallPhonePanel = lazy(() => import("./components/AircallPhone"));
 
 const Login = lazy(() => import("./pages/Login"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
@@ -73,7 +76,11 @@ function AircallToggleListener() {
   }, []);
 
   if (!enabled) return null;
-  return <AircallPhonePanel />;
+  return (
+    <Suspense fallback={null}>
+      <AircallPhonePanel />
+    </Suspense>
+  );
 }
 
 export default function App() {

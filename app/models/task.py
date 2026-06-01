@@ -17,7 +17,7 @@ TASK_TRACKS = {"sales_ai", "critical", "hygiene", "manual"}
 
 class TaskBase(SQLModel):
     entity_type: str
-    entity_id: UUID
+    entity_id: UUID = Field(index=True)
     task_type: str = "manual"
     title: str
     description: Optional[str] = None
