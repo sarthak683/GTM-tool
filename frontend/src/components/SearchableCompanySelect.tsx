@@ -27,6 +27,8 @@ export default function SearchableCompanySelect({
   const [catalog, setCatalog] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [remoteResults, setRemoteResults] = useState<Company[]>([]);
+  const [searching, setSearching] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -99,14 +101,67 @@ export default function SearchableCompanySelect({
     };
   }, [catalogLoaded, companies, open]);
 
+  // Server-side search. The loaded catalog is only the first page of companies
+  // (top-N by ICP), so client-only filtering can't find accounts past that cap
+  // — which is why typing an existing account like "Haily HR" returned nothing.
+  // When the user types, query the backend (CRM + sourcing) so any matching
+  // account surfaces regardless of the catalog cap.
+  useEffect(() => {
+    if (!open) return;
+    const needle = query.trim();
+    if (needle.length < 2) {
+      setRemoteResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const handle = window.setTimeout(async () => {
+      try {
+        const [crm, sourcing] = await Promise.all([
+          companiesApi.search(needle, 50).catch(() => [] as Company[]),
+          accountSourcingApi
+            .listCompaniesPaginated({ q: needle, limit: 50 })
+            .then((page) => page.items)
+            .catch(() => [] as Company[]),
+        ]);
+        if (cancelled) return;
+        const merged = new Map<string, Company>();
+        for (const company of [...crm, ...sourcing]) {
+          if (company?.id) merged.set(company.id, company);
+        }
+        setRemoteResults(Array.from(merged.values()));
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [query, open]);
+
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    let next = catalog.filter((company) => !needle || company.name.toLowerCase().includes(needle));
+    let next: Company[];
+    if (needle.length >= 2) {
+      // Active search: union of server matches + any already-loaded catalog
+      // matches (the latter render instantly while the server call is in flight).
+      const merged = new Map<string, Company>();
+      for (const company of remoteResults) merged.set(company.id, company);
+      for (const company of catalog) {
+        if (company.name.toLowerCase().includes(needle)) merged.set(company.id, company);
+      }
+      next = Array.from(merged.values());
+    } else {
+      // Browse mode (empty/short query): show the loaded catalog.
+      next = catalog;
+    }
     if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
       next = [selectedCompany, ...next];
     }
     return next.slice(0, 50);
-  }, [catalog, query, selectedCompany]);
+  }, [catalog, query, selectedCompany, remoteResults]);
 
   const selectCompany = (companyId?: string) => {
     const company = [...catalog, ...companies].find((entry) => entry.id === companyId);
@@ -228,7 +283,7 @@ export default function SearchableCompanySelect({
               </button>
             )}
 
-            {loading ? (
+            {(loading || searching) && results.length === 0 ? (
               <div style={{ padding: "12px 14px", fontSize: 13, color: "#7a96b0", display: "flex", alignItems: "center", gap: 8 }}>
                 <Loader2 size={14} className="animate-spin" />
                 Searching companies...

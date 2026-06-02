@@ -16,6 +16,10 @@ import { BASE, getAuthHeaders, request, requestList, requestPaginated } from "./
 export const companiesApi = {
   list: (skip = 0, limit = 1000) =>
     requestList<Company>(`/api/v1/companies/?skip=${skip}&limit=${limit}`),
+  // Server-side name/domain search so selectors find any account, not just the
+  // first page the client loaded.
+  search: (q: string, limit = 50) =>
+    requestList<Company>(`/api/v1/companies/?q=${encodeURIComponent(q)}&limit=${limit}`),
   listPaginated: (skip = 0, limit = 50) =>
     requestPaginated<Company>(`/api/v1/companies/?skip=${skip}&limit=${limit}`),
   get: (id: string) => request<Company>(`/api/v1/companies/${id}`),

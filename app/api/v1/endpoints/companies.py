@@ -77,11 +77,17 @@ async def list_companies(
     _user: CurrentUser,
     pagination: Pagination,
     icp_tier: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Filter by company name or domain (case-insensitive substring)."),
 ):
     repo = CompanyRepository(session)
     filters = [_visible_company_selector_filter()]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
+    if q and q.strip():
+        # Server-side search so selectors find any matching account, not just
+        # the top-N-by-ICP slice the client happened to load.
+        like = f"%{q.strip()}%"
+        filters.append(or_(Company.name.ilike(like), Company.domain.ilike(like)))
     items, total = await repo.list_paginated(
         *filters,
         skip=pagination.skip,
