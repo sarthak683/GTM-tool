@@ -175,9 +175,29 @@ _NON_SALES_TITLE_RE = re.compile(
 )
 
 
+_SALES_INTENT_RE = re.compile(
+    r"""(?ix)
+    \b(
+        introduction | intro | discovery | demo | poc | pov |
+        kick[\s-]?off | proposal | pricing | negotiation | eval(uation)? |
+        onboarding | deep[\s-]?dive | walkthrough | presentation | pilot |
+        business\s+case
+    )\b
+    """,
+)
+
+
 def _is_non_sales_title(title: str | None) -> bool:
-    """True for recurring cadence / 1:1 / all-hands / recruiting meeting titles."""
-    return bool(title and _NON_SALES_TITLE_RE.search(title))
+    """True for recurring cadence / 1:1 / all-hands / recruiting meeting titles.
+
+    A clear sales-intent keyword (intro / demo / POC / kickoff / …) overrides,
+    so a genuine meeting such as "Acme — Introduction (Catch up with Igor)" is
+    NOT treated as non-sales just because it also contains a cadence word.
+    Kept in sync with meetings.py's prep-view filter.
+    """
+    if not title:
+        return False
+    return bool(_NON_SALES_TITLE_RE.search(title)) and not _SALES_INTENT_RE.search(title)
 
 
 async def _should_generate_intel(

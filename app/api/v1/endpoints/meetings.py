@@ -33,6 +33,31 @@ class MeetingPrepMonitor(BaseModel):
     unlinked: list[MeetingRead]
 
 
+# Recurring operational-cadence titles (daily standups, account daily/weekly
+# syncs, 1:1s, catch-ups, all-hands). The prep view uses this to keep these off
+# the pre-meeting list — they are not buyer-facing sales meetings and were ~86%
+# of upcoming meetings in prod. Mirrors the cadence terms in
+# meeting_automation._NON_SALES_TITLE_RE (the pre-meeting intel gate), so the
+# page matches what intel actually generates briefs for. Postgres regex (~*).
+_RECURRING_CADENCE_TITLE_SQL = (
+    r"(cadence|huddle|scrum|stand[ -]?up|retro|sync[ -]?up|catch[ -]?up|"
+    r"check[ -]?in|daily (sync|connect|cadence|update|standup|catch up|check in)|"
+    r"weekly (sync|connect|cadence|update)|bi[ -]?weekly (sync|cadence)|"
+    r"monthly (sync|cadence)|1:1|one[ -]on[ -]one|all[ -]hands|"
+    r"team (sync|standup|huddle))"
+)
+
+# A title carrying a clear sales-intent keyword is always a real meeting, even
+# if it also contains a cadence word (e.g. "Acme — Introduction (Catch up with
+# Igor)" or "Acme: Demo syncup"). This override prevents the cadence filter from
+# hiding genuine intros/demos/POCs. Kept in sync with meeting_automation.
+_SALES_INTENT_TITLE_SQL = (
+    r"(introduction|intro\M|discovery|demo|poc|pov|kick[ -]?off|kickoff|"
+    r"proposal|pricing|negotiation|evaluation|eval\M|onboarding|deep[ -]?dive|"
+    r"walkthrough|presentation|pilot|business case)"
+)
+
+
 @router.get("/", response_model=PaginatedResponse[MeetingRead])
 async def list_meetings(
     session: DBSession,
@@ -51,7 +76,7 @@ async def list_meetings(
     synced_after: Optional[datetime] = Query(default=None, description="Only return meetings whose synced_at is on/after this ISO timestamp. Used by the 'Recently synced' shortcut."),
     include_internal: bool = Query(default=False, description="If false (default), hide meetings where every attendee is from an internal domain. Set true to include them."),
     internal_scope: str = Query(default="exclude", description="Internal meeting visibility: exclude, include, or only."),
-    exclude_closed_pipeline: bool = Query(default=False, description="If true, hide meetings whose deal (or company's only deals) are in a closed stage — used by the upcoming/prep view so customer/closed accounts (e.g. daily syncs) don't clutter it."),
+    exclude_closed_pipeline: bool = Query(default=False, description="If true (the upcoming/prep view), hide clutter that isn't a buyer-facing sales meeting: meetings on closed/customer accounts AND recurring operational cadences (daily standups, account daily/weekly syncs, 1:1s, catch-ups). Mirrors the pre-meeting intel eligibility gate."),
 ):
     stmt = select(Meeting)
     count_stmt = select(func.count()).select_from(Meeting)
@@ -173,6 +198,20 @@ async def list_meetings(
             )
             stmt = stmt.where(open_pipeline_clause)
             count_stmt = count_stmt.where(open_pipeline_clause)
+
+        # Prep view also drops recurring operational cadences (daily standups,
+        # account daily/weekly syncs, 1:1s, catch-ups). These are not sales prep
+        # moments and were flooding the list (~86% of upcoming in prod). NULL
+        # titles are kept (can't classify → don't hide a possibly-real meeting).
+        # Keep a meeting if: no title, OR it isn't a cadence, OR it has clear
+        # sales intent (intro/demo/POC/kickoff) even if it also says "catch up".
+        cadence_clause = or_(
+            Meeting.title.is_(None),
+            Meeting.title.op("!~*")(_RECURRING_CADENCE_TITLE_SQL),
+            Meeting.title.op("~*")(_SALES_INTENT_TITLE_SQL),
+        )
+        stmt = stmt.where(cadence_clause)
+        count_stmt = count_stmt.where(cadence_clause)
 
     if has_intel is True:
         stmt = stmt.where(Meeting.research_data.is_not(None))
