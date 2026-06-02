@@ -44,7 +44,9 @@ _RECURRING_CADENCE_TITLE_SQL = (
     r"check[ -]?in|daily (sync|connect|cadence|update|standup|catch up|check in)|"
     r"weekly (sync|connect|cadence|update)|bi[ -]?weekly (sync|cadence)|"
     r"monthly (sync|cadence)|1:1|one[ -]on[ -]one|all[ -]hands|"
-    r"team (sync|standup|huddle))"
+    r"team (sync|standup|huddle)|"
+    # recruiting / interviews (mirrors meeting_automation._NON_SALES_TITLE_RE)
+    r"interview|hiring|candidate|screening|recruit|sdr\M)"
 )
 
 # A title carrying a clear sales-intent keyword is always a real meeting, even
