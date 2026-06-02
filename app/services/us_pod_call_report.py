@@ -16,6 +16,7 @@ from app.config import settings
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
 from app.models.user import User
 
@@ -351,6 +352,26 @@ def _outcome_bucket(activity: Activity) -> str:
     return "unknown"
 
 
+def _is_meeting_booked_call(activity: Activity) -> bool:
+    """True when a logged call's disposition indicates a booked meeting/demo.
+
+    Activities have no structured disposition column — for manual CRM calls the
+    rep's chosen disposition is the leading label of the activity content (the
+    same signal _bucket_from_manual_disposition_text relies on). The two
+    booked-outcome labels are "demo scheduled/booked" and "meeting confirmed"
+    (mirrors call_disposition_ai's demo_scheduled_booked / meeting_confirmed).
+    The call_outcome check is defensive in case a future path stores the
+    structured value there.
+    """
+    text = _normalize(activity.content)
+    if _normalize(activity.source) == "manual" and text.startswith(
+        ("demo scheduled/booked", "meeting confirmed")
+    ):
+        return True
+    outcome = _normalize(activity.call_outcome).replace("-", "_")
+    return outcome in {"demo_scheduled_booked", "meeting_confirmed"}
+
+
 async def _resolve_reps(session: AsyncSession) -> list[ResolvedRep]:
     users = (
         await session.execute(select(User).where(User.is_active == True))  # noqa: E712
@@ -534,6 +555,7 @@ async def _build_us_pod_call_report_for_period(
                 "callback": 0,
                 "failed": 0,
                 "unknown_outcome": 0,
+                "meetings_booked_calls": 0,
                 "duration_seconds": 0,
                 "unique_contacts": set(),
                 "unique_deals": set(),
@@ -579,6 +601,33 @@ async def _build_us_pod_call_report_for_period(
         elif bucket == "unknown":
             metrics["unknown_outcome"] += 1
 
+        if _is_meeting_booked_call(activity):
+            metrics["meetings_booked_calls"] += 1
+
+    # Calendar-sourced meetings booked in the period, credited to the meeting
+    # owner. Counts any channel (call/email/LinkedIn/inbound) that produced a
+    # Meeting row, excluding internal meetings and cancellations. "Booked date"
+    # is the row's created_at (when Beacon recorded it), so calendar/tl;dv-synced
+    # meetings reflect sync time — see the counting-logic note in the report.
+    period_start_utc, _ = _utc_bounds_for_report_day(period_start, config)
+    _, period_end_utc = _utc_bounds_for_report_day(period_end, config)
+    meetings_booked_calendar: dict[UUID, int] = {}
+    if rep_ids:
+        meeting_rows = (
+            await session.execute(
+                select(Meeting.owner_user_id, func.count(Meeting.id))
+                .where(
+                    Meeting.owner_user_id.in_(rep_ids),
+                    Meeting.created_at >= period_start_utc,
+                    Meeting.created_at < period_end_utc,
+                    Meeting.is_internal.is_(False),
+                    func.lower(func.coalesce(Meeting.status, "")) != "cancelled",
+                )
+                .group_by(Meeting.owner_user_id)
+            )
+        ).all()
+        meetings_booked_calendar = {row[0]: int(row[1] or 0) for row in meeting_rows}
+
     rows: list[dict[str, Any]] = []
     for rep in reps:
         metrics = target_metrics.get(rep.user_id) if rep.user_id else None
@@ -622,6 +671,8 @@ async def _build_us_pod_call_report_for_period(
                 "callback": int(metrics["callback"]) if metrics else 0,
                 "failed": int(metrics["failed"]) if metrics else 0,
                 "unknown_outcome": int(metrics["unknown_outcome"]) if metrics else 0,
+                "meetings_booked_calls": int(metrics["meetings_booked_calls"]) if metrics else 0,
+                "meetings_booked_calendar": meetings_booked_calendar.get(rep.user_id, 0) if rep.user_id else 0,
                 "duration_minutes": round((metrics["duration_seconds"] if metrics else 0) / 60, 1),
                 "unique_contacts": len(metrics["unique_contacts"]) if metrics else 0,
                 "unique_deals": len(metrics["unique_deals"]) if metrics else 0,
@@ -668,8 +719,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
         _report_title(report),
         f"Reporting timezone: {report['timezone']}",
         "",
-        "Rep                 Calls  Connected  VM  No answer  Callback  Failed  Unknown  5d avg  Talk min  Contacts  Deals  Flags",
-        "------------------  -----  ---------  --  ---------  --------  ------  -------  ------  --------  --------  -----  -----",
+        "Rep                 Calls  Connected  Mtg(call)  Mtg(cal)  VM  No answer  Callback  Failed  Unknown  5d avg  Talk min  Contacts  Deals  Flags",
+        "------------------  -----  ---------  ---------  --------  --  ---------  --------  ------  -------  ------  --------  --------  -----  -----",
     ]
     for row in report["rows"]:
         flags = ", ".join(row["flags"]) if row["flags"] else "-"
@@ -677,6 +728,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
             f"{row['rep_name'][:18]:18}  "
             f"{row['calls']:>5}  "
             f"{row['connected_calls']:>9}  "
+            f"{row['meetings_booked_calls']:>9}  "
+            f"{row['meetings_booked_calendar']:>8}  "
             f"{row['voicemail']:>2}  "
             f"{row['not_answered']:>9}  "
             f"{row['callback']:>8}  "
@@ -696,6 +749,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "- Includes activities where type or medium is call.",
             "- Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.",
             "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
+            "- Mtg(call): calls logged with disposition 'demo scheduled/booked' or 'meeting confirmed'.",
+            "- Mtg(cal): meetings booked that day from the calendar (Meeting owner), any channel, excluding internal and cancelled; dated by sync time.",
             f"- Uses {report['timezone']} so the report matches the configured US pod business day.",
         ]
     )
@@ -711,7 +766,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
     survive that environment because alignment is structural, not visual.
     """
     headers = [
-        "Rep", "Calls", "Connected", "VM", "No answer", "Callback",
+        "Rep", "Calls", "Connected", "Mtg booked (calls)", "Mtg booked (cal)",
+        "VM", "No answer", "Callback",
         "Failed", "Unknown", "5d avg", "Talk min", "Contacts", "Deals", "Flags",
     ]
     th_style = (
@@ -729,6 +785,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
             (row["rep_name"], td_style_text),
             (row["calls"], td_style_num),
             (row["connected_calls"], td_style_num),
+            (row["meetings_booked_calls"], td_style_num),
+            (row["meetings_booked_calendar"], td_style_num),
             (row["voicemail"], td_style_num),
             (row["not_answered"], td_style_num),
             (row["callback"], td_style_num),
@@ -758,6 +816,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
       <li>Includes activities where type or medium is <code>call</code>.</li>
       <li>Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.</li>
       <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
+      <li><strong>Mtg booked (calls)</strong>: calls logged with disposition &ldquo;demo scheduled/booked&rdquo; or &ldquo;meeting confirmed&rdquo;.</li>
+      <li><strong>Mtg booked (cal)</strong>: meetings booked that day from the calendar (Meeting owner), any channel, excluding internal and cancelled; dated by sync time.</li>
       <li>Uses {html.escape(report['timezone'])} so the report matches the configured US pod business day.</li>
     </ul>
     """.strip()
