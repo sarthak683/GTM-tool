@@ -1453,9 +1453,14 @@ export default function Contacts() {
       }
 
       toast.success(`LinkedIn touch logged for ${linkedinContact.first_name}.`, "LinkedIn logged");
+      // Preserve scroll: capture where the rep is, then reload silently so the
+      // list stays mounted (a non-silent reload flips `loading` and bounces the
+      // page to the top — the bug reps reported after logging a LinkedIn touch).
+      const scroller = document.querySelector<HTMLElement>(".crm-content");
+      restoreScrollRef.current = scroller ? scroller.scrollTop : null;
       setLinkedinContact(null);
       setLinkedinNotes("");
-      loadContacts();
+      loadContacts({ silent: true });
     } catch {
       toast.error("Failed to log LinkedIn touch.", "Error");
     } finally {
