@@ -1727,18 +1727,28 @@ async def _generate_executive_briefing(
         "Write a FOCUSED pre-meeting intelligence brief using ONLY the information provided. "
         "Omit any section where you have no signal. Be specific, direct, and actionable. "
         "Every bullet should answer 'so what?' for the rep.\n\n"
+        "HARD RULES:\n"
+        "- Never assert that the company LACKS a tool, platform, or process (no 'no X detected', "
+        "'they have no Y', 'likely manual'). You cannot verify absence. If a capability gap matters, "
+        "raise it as a question to confirm live — never as a stated fact.\n"
+        "- Only discuss people who are ATTENDING this meeting. Do NOT mention, infer, or invent "
+        "anyone who is not in the meeting — no 'not in the room', 'also critical', or economic-buyer "
+        "guesses.\n\n"
         "Use exactly these sections (skip a section only if you have zero signal for it):\n\n"
         "## Account Snapshot\n"
         "Who they are, what domain they play in, their scale, and the core problem Beacon solves for them (1-2 sentences).\n\n"
         "## Problem Statement & Fit\n"
-        "What pain does this company have that Beacon directly solves? Reference their tech stack, DAP status, and industry specifics.\n\n"
+        "What pain does this company have that Beacon directly solves? Reference their industry, scale, "
+        "and product/implementation complexity — only facts you can verify; never claim they lack a tool.\n\n"
         "## Why Now\n"
         "Bullet the strongest timing signals — funding, hiring surges, product launches, recent news, deal urgency.\n\n"
         "## What We Know From Past Conversations\n"
         "Synthesise what was said in prior meetings, email threads, and calls. What did they care about? What was agreed? "
         "What was left unresolved? (Skip if no prior touchpoints.)\n\n"
         "## Their People\n"
-        "For each key stakeholder: name, role, what they likely care about, and how to tailor your message to them.\n\n"
+        "ONLY the people attending this meeting (see 'STAKEHOLDERS IN THIS MEETING'). For each attendee: "
+        "name, role, what they likely care about, and how to tailor your message. Do NOT add a 'not in "
+        "the room' or 'also critical' subsection, and do not invent attendees.\n\n"
         "## Deal Momentum & Engagement\n"
         "Call pickup rate, email response patterns, Instantly engagement. Are they warm or cold? Any signs of multi-threading?\n\n"
         "## Competitive Framing\n"
@@ -1756,7 +1766,7 @@ async def _generate_executive_briefing(
 ACCOUNT: {name} ({domain})
 Industry: {industry} | Vertical: {vertical} | Employees: {employees} | Funding: {funding}
 ICP Score: {icp_score} | ICP Tier: {icp_tier}
-Has DAP today: {'Yes — ' + dap_tool if has_dap and dap_tool else 'No DAP detected'}
+{f'Adoption tooling in use: {dap_tool}' if (has_dap and dap_tool) else ''}
 Tech Stack: {tech_stack_str}
 Meeting #{meeting_number} | Type: {meeting_type}
 
@@ -1780,13 +1790,8 @@ WHY NOW:
 COMPETITIVE LANDSCAPE:
 {comp_lines}
 
-STAKEHOLDERS IN THIS MEETING:
+STAKEHOLDERS IN THIS MEETING (the ONLY people to profile under "Their People"):
 {stakeholder_lines}
-
-ALL KNOWN CONTACTS AT THIS ACCOUNT:
-{all_contacts_lines}
-
-COMMITTEE GAP (roles missing from meeting): {missing_roles}
 
 PRIOR MEETINGS:
 {prior_meeting_lines}

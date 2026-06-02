@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 from datetime import datetime, timedelta
@@ -259,11 +260,58 @@ async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> lis
     return recipient_ids
 
 
-def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
+def _markdown_to_html(md: str) -> str:
+    """Minimal markdown -> HTML for the executive briefing: headings, bold/italic,
+    bullets, paragraphs. Not a full parser — just the subset the brief uses."""
+    out: list[str] = []
+    in_list = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    def inline(text: str) -> str:
+        text = html.escape(text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)", r"<em>\1</em>", text)
+        return text
+
+    for raw in (md or "").split("\n"):
+        stripped = raw.strip()
+        if not stripped:
+            close_list()
+            continue
+        if stripped.startswith("### "):
+            close_list()
+            out.append(f'<h4 style="margin:14px 0 4px;font-size:13px;color:#1f2a37;">{inline(stripped[4:])}</h4>')
+        elif stripped.startswith("## "):
+            close_list()
+            out.append(
+                '<h3 style="margin:18px 0 6px;font-size:14px;color:#175089;font-weight:800;'
+                f'border-bottom:1px solid #e8eef5;padding-bottom:4px;">{inline(stripped[3:])}</h3>'
+            )
+        elif stripped.startswith("# "):
+            close_list()
+            out.append(f'<h3 style="margin:18px 0 6px;font-size:15px;color:#0f1f33;">{inline(stripped[2:])}</h3>')
+        elif stripped[:2] in ("- ", "* "):
+            if not in_list:
+                out.append('<ul style="margin:4px 0;padding-left:20px;">')
+                in_list = True
+            out.append(f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{inline(stripped[2:])}</li>')
+        else:
+            close_list()
+            out.append(f'<p style="margin:6px 0;font-size:13px;color:#33414f;line-height:1.55;">{inline(stripped)}</p>')
+    close_list()
+    return "\n".join(out)
+
+
+def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str, str]:
     """
-    Build a focused pre-meeting intel email.
-    Sends the full executive briefing as the body so the rep has everything
-    they need without having to open the CRM.
+    Build a focused pre-meeting intel email. Returns (subject, text_body, html_body).
+    Sends the full executive briefing so the rep has everything they need without
+    opening the CRM; the HTML body renders it as a clean, sectioned brief.
     """
     research = meeting.research_data if isinstance(meeting.research_data, dict) else {}
     executive_briefing = str(research.get("executive_briefing") or meeting.pre_brief or "").strip()
@@ -346,8 +394,71 @@ def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str]:
         "",
         "Beacon generated this from account data, prior meetings, email threads, and call history.",
     ]
+    text_body = "\n".join(lines).strip()
 
-    return subject, "\n".join(lines).strip()
+    # ── HTML body (proper UI) ──────────────────────────────────────────────────
+    tier = str(company_profile.get("icp_tier") or "").lower()
+    tier_color = {"hot": "#c0392b", "warm": "#b9770e", "cold": "#5b6b7d"}.get(tier, "#175089")
+    type_label = (meeting.meeting_type or "Meeting").upper()
+
+    acct_html = ""
+    if company_profile:
+        acct_html = f"""
+        <div style="border:1px solid #e3ebf3;border-radius:12px;padding:14px 16px;margin:0 0 16px;background:#f8fbff;">
+          <div style="font-size:15px;font-weight:800;color:#0f1f33;">{html.escape(str(company_profile.get('name','') or ''))}
+            <span style="font-weight:600;color:#6f8297;font-size:13px;">&nbsp;{html.escape(str(company_profile.get('domain','') or ''))}</span></div>
+          <div style="font-size:12.5px;color:#5b6b7d;margin-top:4px;">{html.escape(str(company_profile.get('industry','') or ''))} · {html.escape(str(company_profile.get('employee_count','?')))} employees · {html.escape(str(company_profile.get('funding_stage','') or ''))}</div>
+          <span style="display:inline-block;margin-top:8px;background:{tier_color};color:#fff;font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;text-transform:uppercase;">ICP {html.escape(str(company_profile.get('icp_tier','?')))} · {html.escape(str(company_profile.get('icp_score','?')))}</span>
+        </div>"""
+
+    if executive_briefing:
+        brief_html = _markdown_to_html(executive_briefing)
+    else:
+        chunks: list[str] = []
+        if why_now_signals:
+            items = "".join(
+                f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{html.escape(str((i or {}).get("detail") or ""))}</li>'
+                for i in why_now_signals[:3] if (i or {}).get("detail")
+            )
+            if items:
+                chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Why now</h3><ul style="margin:4px 0;padding-left:20px;">' + items + "</ul>")
+        if attendee_cards:
+            ppl = ""
+            for card in attendee_cards[:4]:
+                nm = html.escape(str(card.get("name") or "Stakeholder"))
+                ttl = html.escape(str(card.get("title") or card.get("role_label") or ""))
+                focus = html.escape(str(card.get("likely_focus") or ""))
+                ttl_html = f" — {ttl}" if ttl else ""
+                focus_html = f'<br><span style="color:#6f8297;">{focus}</span>' if focus else ""
+                ppl += f'<li style="margin:5px 0;font-size:13px;color:#33414f;line-height:1.5;"><strong>{nm}</strong>{ttl_html}{focus_html}</li>'
+            chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Who is in the meeting</h3><ul style="margin:4px 0;padding-left:20px;">' + ppl + "</ul>")
+        if recommendations:
+            recs = "".join(
+                f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{html.escape(str(r))}</li>'
+                for r in recommendations[:4] if isinstance(r, str) and r.strip()
+            )
+            if recs:
+                chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Game plan</h3><ul style="margin:4px 0;padding-left:20px;">' + recs + "</ul>")
+        brief_html = "".join(chunks) or '<p style="font-size:13px;color:#6f8297;">Intel brief not generated yet.</p>'
+
+    html_body = f"""
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:680px;margin:0 auto;color:#1f2a37;">
+      <div style="background:#0f1f33;color:#fff;padding:16px 18px;border-radius:12px 12px 0 0;">
+        <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#9fb4cc;font-weight:700;">Pre-meeting intel · Meeting #{meeting_number} · {html.escape(type_label)}</div>
+        <div style="font-size:18px;font-weight:800;margin-top:4px;">{html.escape(meeting.title or 'Meeting')}</div>
+        <div style="font-size:12.5px;color:#c7d6e6;margin-top:3px;">{html.escape(scheduled_label)}</div>
+      </div>
+      <div style="border:1px solid #e3ebf3;border-top:none;border-radius:0 0 12px 12px;padding:18px;background:#fff;">
+        {acct_html}
+        {brief_html}
+        <div style="margin-top:18px;text-align:center;">
+          <a href="{html.escape(meeting_link)}" style="display:inline-block;background:#175089;color:#fff;text-decoration:none;font-weight:800;font-size:13px;padding:10px 22px;border-radius:10px;">Open full prep page →</a>
+        </div>
+        <p style="margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;">Beacon generated this from account data, prior meetings, email threads, and call history.</p>
+      </div>
+    </div>""".strip()
+
+    return subject, text_body, html_body
 
 
 async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, int]:
@@ -463,7 +574,7 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                     skipped += 1
                     continue
 
-                subject, body = _build_meeting_intel_email(meeting)
+                subject, text_body, html_body = _build_meeting_intel_email(meeting)
                 gmail_token_data = (
                     settings_row.report_sender_token_data
                     if settings_row.report_sender_email
@@ -487,7 +598,8 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                             from_email=personal_email,
                             to=recipient.email,
                             subject=subject,
-                            body=body,
+                            body=text_body,
+                            html_body=html_body,
                             from_name=recipient.name or "Beacon Meeting Intel",
                         )
                         # Persist any refreshed token back to the rep's connection
@@ -509,14 +621,15 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                             from_email=settings_row.report_sender_email,
                             to=recipient.email,
                             subject=subject,
-                            body=body,
+                            body=text_body,
+                            html_body=html_body,
                             from_name="Beacon Meeting Intel",
                         )
                     else:
                         result = await send_email(
                             recipient.email,
                             subject,
-                            body,
+                            text_body,
                             from_name="Beacon Meeting Intel",
                         )
                     if result.get("status") == "sent":
