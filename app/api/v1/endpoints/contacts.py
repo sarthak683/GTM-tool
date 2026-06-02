@@ -33,6 +33,42 @@ from app.services.prospect_hygiene import is_valid_prospect_candidate
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
 
+def _authorize_contact_edit(contact, user) -> None:
+    """Ownership gate for editing a prospect (SDR/AE model).
+
+    Admins edit anything. A rep may edit a prospect they own (AE via
+    assigned_to_id, SDR via sdr_id). If the slot for the rep's role is empty,
+    editing CLAIMS it to them (auto-claim) and proceeds. Otherwise the prospect
+    is owned by someone else and the rep can only view it -> 403.
+    """
+    role = (user.role or "").lower()
+    if role == "admin":
+        return
+    if contact.assigned_to_id == user.id or contact.sdr_id == user.id:
+        return
+    if role == "sdr":
+        if contact.sdr_id is None:
+            contact.sdr_id = user.id
+            return
+    elif contact.assigned_to_id is None:
+        contact.assigned_to_id = user.id
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="You can only edit prospects assigned to you. Claim an unassigned one, or ask an admin to reassign this prospect.",
+    )
+
+
+def _can_delete_contact(contact, user) -> bool:
+    """Delete permission: admin, the current owner, or an unassigned (claimable) slot."""
+    role = (user.role or "").lower()
+    if role == "admin":
+        return True
+    if contact.assigned_to_id == user.id or contact.sdr_id == user.id:
+        return True
+    return contact.sdr_id is None if role == "sdr" else contact.assigned_to_id is None
+
+
 class ProspectImportMissingCompany(SQLModel):
     name: str
     domain: Optional[str] = None
@@ -359,6 +395,22 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
         )
 
     saved = await ContactRepository(session).save(contact)
+    # Bell alert so admins + the assigned owner know a prospect was added.
+    try:
+        from app.services.notifications import notify_records_added
+
+        name = f"{saved.first_name or ''} {saved.last_name or ''}".strip() or (saved.email or "a prospect")
+        actor = getattr(_user, "name", None) or _user.email
+        await notify_records_added(
+            session,
+            kind="prospects",
+            count=1,
+            actor_name=actor,
+            owner_user_id=saved.sdr_id or saved.assigned_to_id,
+            detail=f"{actor} added prospect {name}.",
+        )
+    except Exception:
+        pass  # informational only — never block the add on a notification failure
     return await to_contact_read(session, saved)
 
 
@@ -372,6 +424,8 @@ async def get_contact(contact_id: UUID, session: DBSession):
 async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
+    # Reps may only edit prospects they own; editing an unassigned one claims it.
+    _authorize_contact_edit(contact, _user)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
@@ -457,14 +511,29 @@ async def bulk_delete_selected_contacts(
             detail="Too many prospects in one request (max 2000). Delete in smaller batches.",
         )
     repo = ContactRepository(session)
-    deleted = await repo.delete_many(ids)
-    return {"deleted": deleted, "requested": len(set(ids))}
+    requested = len(set(ids))
+    skipped_not_owned = 0
+    if (_user.role or "").lower() != "admin":
+        # Reps can only bulk-delete prospects they own or that are unassigned.
+        rows = (
+            await session.execute(select(Contact).where(Contact.id.in_(ids)))
+        ).scalars().all()
+        allowed = [c.id for c in rows if _can_delete_contact(c, _user)]
+        skipped_not_owned = requested - len(allowed)
+        ids = allowed
+    deleted = await repo.delete_many(ids) if ids else 0
+    return {"deleted": deleted, "requested": requested, "skipped_not_owned": skipped_not_owned}
 
 
 @router.delete("/{contact_id}", status_code=204)
 async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
-    await repo.get_or_raise(contact_id)
+    contact = await repo.get_or_raise(contact_id)
+    if not _can_delete_contact(contact, _user):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete prospects assigned to you or unassigned ones. Ask an admin to remove prospects owned by other reps.",
+        )
     await repo.delete_with_cascade(contact_id)
 
 
@@ -901,6 +970,25 @@ async def import_contacts_csv(
         )
     if missing_rows:
         message_parts.append("Some prospects were imported without a company match. Add those accounts in Account Sourcing, then map the prospects to the company.")
+
+    # One summary bell alert for the import (admins + the importer).
+    try:
+        if created_count > 0:
+            from app.services.notifications import notify_records_added
+
+            actor = getattr(current_user, "name", None) or current_user.email
+            accounts_note = f" and {len(created_rows)} new accounts" if created_rows else ""
+            await notify_records_added(
+                session,
+                kind="prospects",
+                count=created_count,
+                actor_name=actor,
+                owner_user_id=current_user.id,
+                detail=f"{actor} imported {created_count} prospects{accounts_note} from {file.filename or 'a file'}.",
+                dedup_key=f"import:{current_user.id}:{file.filename or 'file'}:{created_count}",
+            )
+    except Exception:
+        pass  # informational only
 
     return ProspectImportResponse(
         imported_rows=len(rows),

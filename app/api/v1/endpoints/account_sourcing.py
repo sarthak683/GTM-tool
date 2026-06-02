@@ -1375,6 +1375,22 @@ async def create_manual_company(
     await session.commit()
     await session.refresh(company)
 
+    # Bell alert so admins + the assigned owner know an account was added.
+    try:
+        from app.services.notifications import notify_records_added
+
+        actor = current_user.name or current_user.email
+        await notify_records_added(
+            session,
+            kind="accounts",
+            count=1,
+            actor_name=actor,
+            owner_user_id=company.assigned_to_id or company.sdr_id,
+            detail=f"{actor} added account {company.name}.",
+        )
+    except Exception:
+        pass  # informational only
+
     from app.services.company_auto_mapping import backfill_orphans_for_company
     await backfill_orphans_for_company(session, company)
     await session.commit()

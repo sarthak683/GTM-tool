@@ -18,6 +18,9 @@ NOTIFICATION_TYPES = (
     # prospect explicitly wants to meet. Accept = create a Deal in the
     # pipeline; payload carries the suggested fields.
     "meeting_booked_suggest_deal",
+    # Informational: prospects and/or accounts were added (manual add or
+    # import). Fanned out to admins + the assigned owner. No Accept action.
+    "records_added",
 )
 
 

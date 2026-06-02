@@ -90,6 +90,72 @@ def _default_followup_utc() -> datetime:
     return (now + timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
 
 
+async def _maybe_suggest_deal_from_disposition(
+    session: AsyncSession, contact: Contact, disposition: str
+) -> bool:
+    """When a rep marks a meeting booked, raise a 'create a deal?' bell alert
+    for the prospect owner. Accepting it auto-creates the deal (handled in the
+    notifications endpoint, type=meeting_booked_suggest_deal).
+
+    Skipped when the account already has a deal (no duplicate pipeline) or the
+    prospect has no owner to notify. De-duped per contact so repeated saves of
+    the same disposition don't spam the bell.
+    """
+    if disposition not in _MEETING_BOOKED_DISPOSITIONS:
+        return False
+
+    from app.models.deal import Deal, DealContact
+
+    has_deal = False
+    if contact.company_id:
+        has_deal = (await session.execute(
+            select(Deal.id).where(Deal.company_id == contact.company_id).limit(1)
+        )).first() is not None
+    if not has_deal:
+        has_deal = (await session.execute(
+            select(DealContact.deal_id).where(DealContact.contact_id == contact.id).limit(1)
+        )).first() is not None
+    if has_deal:
+        return False
+
+    recipient_id = contact.sdr_id or contact.assigned_to_id
+    if not recipient_id:
+        return False
+
+    contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or (contact.email or "Prospect")
+    company_name = None
+    if contact.company_id:
+        from app.models.company import Company
+
+        co = (await session.execute(
+            select(Company).where(Company.id == contact.company_id)
+        )).scalar_one_or_none()
+        if co:
+            company_name = co.name
+
+    from app.services.notifications import create_notification
+
+    await create_notification(
+        session,
+        user_id=recipient_id,
+        type="meeting_booked_suggest_deal",
+        title=f"Meeting booked with {contact_name}",
+        body=(
+            f"You marked a meeting booked{f' at {company_name}' if company_name else ''}. "
+            "Create a deal in the pipeline?"
+        ),
+        action_payload={
+            "contact_id": str(contact.id),
+            "contact_name": contact_name,
+            "company_id": str(contact.company_id) if contact.company_id else None,
+            "company_name": company_name,
+            "source": "call_disposition",
+        },
+        dedup_key=f"suggest_deal:{contact.id}",
+    )
+    return True
+
+
 def _should_advance(current: Optional[str], target: str) -> bool:
     """Decide whether to move from `current` to `target`.
 
@@ -247,6 +313,11 @@ async def apply_call_disposition_effects(
             changes["instantly"] = "paused"
             contact.instantly_status = "paused"
             session.add(contact)
+
+    # Meeting booked on the phone → suggest creating a deal (bell alert; accept
+    # auto-creates the deal). Deduped + skipped when a deal already exists.
+    if await _maybe_suggest_deal_from_disposition(session, contact, disposition):
+        changes["deal_suggestion"] = "created"
 
     if refresh_tasks:
         # Delayed import to avoid a circular dependency with app.services.tasks

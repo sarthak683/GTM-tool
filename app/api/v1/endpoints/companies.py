@@ -83,16 +83,27 @@ async def list_companies(
     filters = [_visible_company_selector_filter()]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
+    order_by = Company.icp_score.desc()
     if q and q.strip():
         # Server-side search so selectors find any matching account, not just
-        # the top-N-by-ICP slice the client happened to load.
-        like = f"%{q.strip()}%"
-        filters.append(or_(Company.name.ilike(like), Company.domain.ilike(like)))
+        # the top-N-by-ICP slice the client happened to load. Substring OR
+        # trigram fuzzy match (pg_trgm) so a typo like "Haily HR" still finds
+        # "Hailey HR". Results ordered by closeness of the name match.
+        qval = q.strip()
+        like = f"%{qval}%"
+        filters.append(
+            or_(
+                Company.name.ilike(like),
+                Company.domain.ilike(like),
+                func.similarity(Company.name, qval) > 0.3,
+            )
+        )
+        order_by = func.similarity(Company.name, qval).desc()
     items, total = await repo.list_paginated(
         *filters,
         skip=pagination.skip,
         limit=pagination.limit,
-        order_by=Company.icp_score.desc(),
+        order_by=order_by,
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 

@@ -90,3 +90,51 @@ async def create_notification(
             logger.exception("Push delivery failed for notification %s", notification.id)
 
     return notification
+
+
+async def notify_records_added(
+    session: AsyncSession,
+    *,
+    kind: str,
+    count: int,
+    actor_name: Optional[str] = None,
+    owner_user_id: Optional[UUID] = None,
+    detail: Optional[str] = None,
+    dedup_key: Optional[str] = None,
+) -> int:
+    """Fan an informational 'records added' alert to admins + the assigned owner.
+
+    `kind` is "prospects" or "accounts". Recipients (all admins plus the owner)
+    are de-duplicated so overlap doesn't create double bell rows. When
+    `dedup_key` is given it's namespaced per-recipient so a re-run is idempotent.
+    Returns the number of bell rows created.
+    """
+    if count <= 0:
+        return 0
+    from app.models.user import User
+
+    recipient_ids: set[UUID] = set(
+        (await session.execute(select(User.id).where(User.role == "admin"))).scalars().all()
+    )
+    if owner_user_id:
+        recipient_ids.add(owner_user_id)
+    if not recipient_ids:
+        return 0
+
+    who = actor_name or "Someone"
+    title = f"{count} {kind} added"
+    body = detail or f"{who} added {count} {kind}."
+    created = 0
+    for rid in recipient_ids:
+        await create_notification(
+            session,
+            user_id=rid,
+            type="records_added",
+            title=title,
+            body=body,
+            action_payload={"kind": kind, "count": count, "actor": who, "detail": detail},
+            dedup_key=f"{dedup_key}:{rid}" if dedup_key else None,
+            push=False,  # informational — don't push-spam; the bell is enough
+        )
+        created += 1
+    return created
