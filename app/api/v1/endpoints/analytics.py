@@ -1409,18 +1409,19 @@ async def sales_dashboard(
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
                 week_counts["linkedin_reachouts"] += 1
+        # Touches = calls + emails + LinkedIn only. A meeting is the OUTCOME of
+        # those touches, not a touch itself, so it is excluded from the touch
+        # total (meetings stay reported via the separate `meetings` metric).
         activity_bucket["total"] = (
             activity_bucket["calls"]
             + activity_bucket["emails"]
             + activity_bucket["linkedin_reachouts"]
-            + activity_bucket["meetings"]
         )
         if week_counts is not None:
             week_counts["total"] = (
                 week_counts["calls"]
                 + week_counts["emails"]
                 + week_counts["linkedin_reachouts"]
-                + week_counts["meetings"]
             )
 
     def bump_meeting(row_rep_id: UUID | None, meeting_timestamp: datetime) -> None:
@@ -1473,11 +1474,12 @@ async def sales_dashboard(
         )
         week_counts = weekly_bucket["weeks"].get(_week_key(_start_of_week(meeting_timestamp)))
         meeting_bucket["meetings"] += 1
+        # Meetings do not add to the touch total (see activity bump). A meeting
+        # bump leaves `total` unchanged — it only increments the meetings metric.
         meeting_bucket["total"] = (
             meeting_bucket["calls"]
             + meeting_bucket["emails"]
             + meeting_bucket["linkedin_reachouts"]
-            + meeting_bucket["meetings"]
         )
         if week_counts is not None:
             week_counts["meetings"] += 1
@@ -1485,7 +1487,6 @@ async def sales_dashboard(
                 week_counts["calls"]
                 + week_counts["emails"]
                 + week_counts["linkedin_reachouts"]
-                + week_counts["meetings"]
             )
 
     # tl;dv and Google Calendar both ingest the same real-world meeting from
