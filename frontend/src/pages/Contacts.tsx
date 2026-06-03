@@ -677,8 +677,8 @@ export default function Contacts() {
 
   const downloadProspectTemplate = () => {
     const template = [
-      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Phone"],
-      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+15135330040"],
+      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone"],
+      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199"],
     ]
       .map((row) => row.join(","))
       .join("\n");
