@@ -693,8 +693,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
         _report_title(report),
         f"Reporting timezone: {report['timezone']}",
         "",
-        "Rep                 Calls  Connected  Mtg booked  VM  No answer  Callback  Failed  Unknown  5d avg  Talk min  Contacts  Deals  Flags",
-        "------------------  -----  ---------  ----------  --  ---------  --------  ------  -------  ------  --------  --------  -----  -----",
+        "Rep                 Calls  Connected  Mtg booked  No answer  Callback  Rejected  5d avg  Talk min  Contacts  Flags",
+        "------------------  -----  ---------  ----------  ---------  --------  --------  ------  --------  --------  -----",
     ]
     for row in report["rows"]:
         flags = ", ".join(row["flags"]) if row["flags"] else "-"
@@ -703,15 +703,12 @@ def _render_report_text(report: dict[str, Any]) -> str:
             f"{row['calls']:>5}  "
             f"{row['connected_calls']:>9}  "
             f"{row['meetings_booked_calls']:>10}  "
-            f"{row['voicemail']:>2}  "
             f"{row['not_answered']:>9}  "
             f"{row['callback']:>8}  "
-            f"{row['failed']:>6}  "
-            f"{row['unknown_outcome']:>7}  "
+            f"{row['failed']:>8}  "
             f"{row['avg_calls_last_7_days']:>6}  "
             f"{row['duration_minutes']:>8}  "
             f"{row['unique_contacts']:>8}  "
-            f"{row['unique_deals']:>5}  "
             f"{flags}"
         )
 
@@ -723,6 +720,8 @@ def _render_report_text(report: dict[str, Any]) -> str:
             "- Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.",
             "- Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.",
             "- Mtg booked: calls logged with disposition 'demo scheduled/booked' or 'meeting confirmed'.",
+            "- Rejected: calls that did not connect (carrier/line failure or declined).",
+            "- Flags: per-rep exceptions to act on — '0 calls logged', 'below 50% of working-day average', or 'many calls missing outcome'. Blank (-) means no issues that day.",
             f"- Uses {report['timezone']} so the report matches the configured US pod business day.",
         ]
     )
@@ -739,8 +738,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
     """
     headers = [
         "Rep", "Calls", "Connected", "Mtg booked",
-        "VM", "No answer", "Callback",
-        "Failed", "Unknown", "5d avg", "Talk min", "Contacts", "Deals", "Flags",
+        "No answer", "Callback", "Rejected",
+        "5d avg", "Talk min", "Contacts", "Flags",
     ]
     th_style = (
         "padding:6px 10px;border-bottom:1px solid #d4dbe4;background:#f4f7fb;"
@@ -758,15 +757,12 @@ def _render_report_html(report: dict[str, Any]) -> str:
             (row["calls"], td_style_num),
             (row["connected_calls"], td_style_num),
             (row["meetings_booked_calls"], td_style_num),
-            (row["voicemail"], td_style_num),
             (row["not_answered"], td_style_num),
             (row["callback"], td_style_num),
             (row["failed"], td_style_num),
-            (row["unknown_outcome"], td_style_num),
             (row["avg_calls_last_7_days"], td_style_num),
             (row["duration_minutes"], td_style_num),
             (row["unique_contacts"], td_style_num),
-            (row["unique_deals"], td_style_num),
             (flags, td_style_text + "color:#7a8ca1;font-size:12px;"),
         ]
         rows_html.append(
@@ -788,6 +784,8 @@ def _render_report_html(report: dict[str, Any]) -> str:
       <li>Credits manual CRM calls to the user who logged the activity, matching Sales Analytics.</li>
       <li>Credits Aircall calls by Aircall user name when available, then deal/contact owner fallback.</li>
       <li><strong>Mtg booked</strong>: calls logged with disposition &ldquo;demo scheduled/booked&rdquo; or &ldquo;meeting confirmed&rdquo;.</li>
+      <li><strong>Rejected</strong>: calls that did not connect (carrier/line failure or declined).</li>
+      <li><strong>Flags</strong>: per-rep exceptions to act on &mdash; &ldquo;0 calls logged&rdquo;, &ldquo;below 50% of working-day average&rdquo;, or &ldquo;many calls missing outcome&rdquo;. A dash (&mdash;) means no issues that day.</li>
       <li>Uses {html.escape(report['timezone'])} so the report matches the configured US pod business day.</li>
     </ul>
     """.strip()

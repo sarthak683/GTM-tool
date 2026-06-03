@@ -336,7 +336,12 @@ def _sheet_entries(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
         rel_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         target = rel_map.get(rel_id or "")
         if target:
-            entries.append((sheet.attrib.get("name", ""), f"xl/{target.lstrip('/')}"))
+            # Rel targets come in two flavors: relative to xl/ ("worksheets/sheet1.xml",
+            # most exports) or absolute from the archive root ("/xl/worksheets/sheet1.xml",
+            # written by openpyxl / Excel "Save As"). Prefixing "xl/" blindly doubles the
+            # latter into "xl/xl/…" and the sheet read fails, so branch on the leading slash.
+            path = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
+            entries.append((sheet.attrib.get("name", ""), path))
     return entries
 
 
