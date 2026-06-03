@@ -170,23 +170,25 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
     if not contact:
         raise HTTPException(404, "Contact has been deleted; can't create deal.")
 
-    # Refuse to create a duplicate deal if this contact is already a
-    # primary stakeholder on an active deal. The rep should manage the
-    # existing deal, not spin a new one.
-    existing = (await session.execute(
-        select(Deal.id)
-        .join(DealContact, DealContact.deal_id == Deal.id)
-        .where(
-            DealContact.contact_id == contact_id,
-            Deal.stage.notin_(["won", "lost", "closed_won", "closed_lost"]),
-        )
-        .limit(1)
-    )).first()
-    if existing:
-        raise HTTPException(
-            409,
-            "An active deal already exists for this contact. Dismiss this notification.",
-        )
+    # If a deal already exists for this contact — the alert was raised in
+    # "review" mode (deal_id baked into the payload), or one has since been
+    # created — there's nothing to materialize. Send the rep to the existing
+    # deal instead of erroring; the bell's accept action navigates to whatever
+    # deal_id we return.
+    target_deal_id = payload.get("deal_id")
+    if not target_deal_id:
+        existing = (await session.execute(
+            select(Deal.id)
+            .join(DealContact, DealContact.deal_id == Deal.id)
+            .where(
+                DealContact.contact_id == contact_id,
+                Deal.stage.notin_(["won", "lost", "closed_won", "closed_lost"]),
+            )
+            .limit(1)
+        )).first()
+        target_deal_id = str(existing[0]) if existing else None
+    if target_deal_id:
+        return {"deal_id": str(target_deal_id)}
 
     # Compose the deal name from contact + company so the pipeline card
     # is readable at a glance: "Acme · Jane Doe".

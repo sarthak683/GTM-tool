@@ -15,6 +15,10 @@ from app.models.meeting import Meeting
 from app.repositories.activity import ActivityRepository
 from app.schemas.common import PaginatedResponse
 from app.database import AsyncSessionLocal
+from app.services.disposition_effects import (
+    apply_call_disposition_effects,
+    is_meeting_booked_disposition,
+)
 from app.services.tasks import backfill_open_task_assignments, refresh_system_tasks_for_entity
 
 router = APIRouter(prefix="/activities", tags=["activities"])
@@ -167,6 +171,28 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
     if not data.get("source"):
         data["source"] = "manual"
     activity = await ActivityRepository(session).create(data)
+
+    # The deal-page call logger records the disposition in event_metadata rather
+    # than PATCHing the contact's call_disposition field, so booking a demo there
+    # used to be a backend no-op — no status advance, no "meeting booked" bell
+    # alert. Run the same meeting-booked side-effects the prospect-page PATCH
+    # triggers. Guard: if the contact's call_disposition already equals this
+    # disposition, the prospect-page PATCH path applied the effects for this same
+    # call moments ago, so skip to avoid duplicate work (the alert is deduped
+    # regardless). refresh_tasks=False because the background task below already
+    # reconciles system tasks for this contact.
+    meta = data.get("event_metadata") if isinstance(data.get("event_metadata"), dict) else None
+    disp = meta.get("call_disposition") if meta else None
+    if activity.contact_id and is_meeting_booked_disposition(disp):
+        from app.models.contact import Contact
+
+        contact = await session.get(Contact, activity.contact_id)
+        if contact and contact.call_disposition != disp:
+            await apply_call_disposition_effects(
+                session, contact, disposition=disp, refresh_tasks=False
+            )
+            await session.commit()
+
     if activity.deal_id or activity.contact_id:
         background_tasks.add_task(_refresh_tasks_after_activity_background, activity.deal_id, activity.contact_id)
     return activity

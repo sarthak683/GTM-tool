@@ -304,6 +304,12 @@ function NotificationRow({
   const unread = !n.read_at;
   const accepted = !!n.accepted_at;
   const canAccept = n.type === "meeting_booked_suggest_deal" && !accepted;
+  // "review" mode means a deal already exists — accept opens it rather than
+  // creating a new one, so label the button accordingly.
+  const acceptLabel =
+    (n.action_payload as { mode?: string } | undefined)?.mode === "review"
+      ? "Open deal"
+      : "Create deal";
 
   return (
     <div style={{
@@ -357,7 +363,7 @@ function NotificationRow({
             }}
           >
             {busy ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={11} />}
-            Create deal
+            {acceptLabel}
           </button>
         ) : null}
         {!n.dismissed_at ? (

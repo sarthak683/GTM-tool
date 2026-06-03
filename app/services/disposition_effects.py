@@ -75,6 +75,13 @@ _MEETING_BOOKED_DISPOSITIONS = {
     "meeting_confirmed",
 }
 
+
+def is_meeting_booked_disposition(disposition: Optional[str]) -> bool:
+    """True when this disposition means a meeting/demo was booked. Public so the
+    activities endpoint can gate disposition side-effects on deal-page call logs
+    without importing the private set."""
+    return disposition in _MEETING_BOOKED_DISPOSITIONS
+
 # Dispositions for which the rep is expected to attach a follow-up datetime
 # (next_followup_at). When the disposition is anything else we clear the
 # stored follow-up so a stale date doesn't keep showing on the prospect row.
@@ -93,30 +100,34 @@ def _default_followup_utc() -> datetime:
 async def _maybe_suggest_deal_from_disposition(
     session: AsyncSession, contact: Contact, disposition: str
 ) -> bool:
-    """When a rep marks a meeting booked, raise a 'create a deal?' bell alert
-    for the prospect owner. Accepting it auto-creates the deal (handled in the
-    notifications endpoint, type=meeting_booked_suggest_deal).
+    """When a rep marks a meeting booked, raise a bell alert for the prospect
+    owner (handled in the notifications endpoint, type=meeting_booked_suggest_deal).
 
-    Skipped when the account already has a deal (no duplicate pipeline) or the
-    prospect has no owner to notify. De-duped per contact so repeated saves of
-    the same disposition don't spam the bell.
+    The call-to-action adapts to pipeline state:
+      - No deal on the account yet -> "Create a deal?" (accept auto-creates one).
+      - A deal already exists -> "Review the deal" (accept opens it). Reps book
+        most demos on accounts that already have a deal, and they still want the
+        heads-up, so we no longer swallow the alert in that case.
+
+    Skipped only when the prospect has no owner to notify. De-duped per contact
+    so repeated saves of the same disposition don't spam the bell.
     """
     if disposition not in _MEETING_BOOKED_DISPOSITIONS:
         return False
 
     from app.models.deal import Deal, DealContact
 
-    has_deal = False
+    existing_deal_id = None
     if contact.company_id:
-        has_deal = (await session.execute(
+        row = (await session.execute(
             select(Deal.id).where(Deal.company_id == contact.company_id).limit(1)
-        )).first() is not None
-    if not has_deal:
-        has_deal = (await session.execute(
+        )).first()
+        existing_deal_id = row[0] if row else None
+    if existing_deal_id is None:
+        row = (await session.execute(
             select(DealContact.deal_id).where(DealContact.contact_id == contact.id).limit(1)
-        )).first() is not None
-    if has_deal:
-        return False
+        )).first()
+        existing_deal_id = row[0] if row else None
 
     recipient_id = contact.sdr_id or contact.assigned_to_id
     if not recipient_id:
@@ -133,6 +144,14 @@ async def _maybe_suggest_deal_from_disposition(
         if co:
             company_name = co.name
 
+    at_company = f" at {company_name}" if company_name else ""
+    if existing_deal_id is not None:
+        body = f"You marked a meeting booked{at_company}. Review the deal in the pipeline."
+        mode = "review"
+    else:
+        body = f"You marked a meeting booked{at_company}. Create a deal in the pipeline?"
+        mode = "create"
+
     from app.services.notifications import create_notification
 
     await create_notification(
@@ -140,16 +159,15 @@ async def _maybe_suggest_deal_from_disposition(
         user_id=recipient_id,
         type="meeting_booked_suggest_deal",
         title=f"Meeting booked with {contact_name}",
-        body=(
-            f"You marked a meeting booked{f' at {company_name}' if company_name else ''}. "
-            "Create a deal in the pipeline?"
-        ),
+        body=body,
         action_payload={
             "contact_id": str(contact.id),
             "contact_name": contact_name,
             "company_id": str(contact.company_id) if contact.company_id else None,
             "company_name": company_name,
             "source": "call_disposition",
+            "mode": mode,
+            "deal_id": str(existing_deal_id) if existing_deal_id is not None else None,
         },
         dedup_key=f"suggest_deal:{contact.id}",
     )
