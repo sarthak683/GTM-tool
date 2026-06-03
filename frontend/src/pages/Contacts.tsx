@@ -2973,18 +2973,6 @@ export default function Contacts() {
                                       ) : (
                                         <span className="text-[#96a7ba]">-</span>
                                       )}
-                                      {c.outreach_lane && (
-                                        <span title={`Outreach lane: ${c.outreach_lane}`} style={{
-                                          alignSelf: "flex-start",
-                                          fontSize: 10, fontWeight: 700,
-                                          padding: "2px 7px", borderRadius: 999,
-                                          background: "#fef3c7", color: "#92400e",
-                                          border: "1px solid #fde68a", lineHeight: 1.3,
-                                          whiteSpace: "nowrap",
-                                        }}>
-                                          {c.outreach_lane}
-                                        </span>
-                                      )}
                                     </div>
                                   </td>
                                 );
