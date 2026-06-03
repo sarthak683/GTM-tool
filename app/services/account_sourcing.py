@@ -200,6 +200,34 @@ def _find(row: dict, field: str) -> str:
     return ""
 
 
+def _find_any_phone(row: dict) -> str:
+    """Last-resort phone lookup: any column whose normalized header contains
+    'phone'. A workbook with two "Phone" columns (direct + mobile — common in
+    Apollo / Sales Nav exports) is de-collided by the parser to 'phone' and
+    'phone 2'; 'phone 2' matches no fixed alias, so without this fallback a
+    contact whose number sits only in the second column loses it on import."""
+    for key, val in row.items():
+        if "phone" in key and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _normalize_phone(value: Optional[str]) -> Optional[str]:
+    """Strip a leading non-dialable prefix and drop non-numbers.
+
+    Source sheets fuse a type tag into the number itself ("m+1 248-890-8149" =
+    mobile, "d+1 …" = direct line). When that string is handed to a `tel:` URI
+    the OS dialer T9-maps the leading letter to a digit (m->6, d->3), so the
+    call goes to the wrong number. Keep a leading '+' and the digits; null out
+    anything with fewer than 7 digits (e.g. "Not available (Apollo)")."""
+    if not value:
+        return None
+    cleaned = re.sub(r"^[^0-9+]+", "", str(value).strip())
+    if len(re.sub(r"[^0-9]", "", cleaned)) < 7:
+        return None
+    return cleaned
+
+
 def _clean_domain(raw: str) -> str:
     raw = raw.strip().lower()
     if not raw:
@@ -1071,13 +1099,15 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
     linkedin_url = _find(row, "linkedin_url") or None
-    # Prefer "Direct / Mobile (Personal)" if present; else generic contact phone;
-    # else HQ direct line as a fallback.
-    phone = (
+    # Prefer "Direct / Mobile (Personal)"; else generic contact phone; else HQ
+    # direct line; else any column with 'phone' in its header (catches a 2nd
+    # de-collided "Phone" column). Normalize to strip fused type-prefixes like
+    # "m+1…"/"d+1…" that otherwise T9-corrupt the OS dialer.
+    phone = _normalize_phone(
         _find(row, "direct_mobile")
         or _find(row, "contact_phone")
         or _find(row, "hq_direct_line")
-        or None
+        or _find_any_phone(row)
     )
 
     if not first and not last and contact_name:
