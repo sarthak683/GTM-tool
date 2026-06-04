@@ -14,6 +14,7 @@ from sqlmodel import select
 from app.clients.gmail_sender import send_gmail_email
 from app.config import settings
 from app.models.activity import Activity
+from app.models.call_recording import CallRecording
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.settings import WorkspaceSettings
@@ -516,6 +517,9 @@ async def _build_us_pod_call_report_for_period(
     query_start_date = min(start_date, period_start)
     start_utc, _ = _utc_bounds_for_report_day(query_start_date, config)
     _, end_utc = _utc_bounds_for_report_day(target_date, config)
+    # Period (report-day) window, used to sum talk time from call recordings.
+    period_start_utc, _ = _utc_bounds_for_report_day(period_start, config)
+    _, period_end_utc = _utc_bounds_for_report_day(period_end, config)
 
     reps = await _resolve_reps(session)
     rep_ids = {rep.user_id for rep in reps if rep.user_id}
@@ -603,6 +607,29 @@ async def _build_us_pod_call_report_for_period(
         if _is_meeting_booked_call(activity):
             metrics["meetings_booked_calls"] += 1
 
+    # Talk time = duration of the call recordings reps attach to manual calls
+    # (CallRecording.audio_duration_seconds), summed per recorder over the report
+    # period. activity.call_duration is only set by the Aircall sync, which this
+    # team doesn't use, so it's always null — the recording is the real signal.
+    talk_secs_by_rep: dict[UUID, int] = {}
+    rec_rows = (
+        await session.execute(
+            select(
+                CallRecording.created_by_id,
+                func.sum(CallRecording.audio_duration_seconds),
+            )
+            .where(
+                CallRecording.created_at >= period_start_utc,
+                CallRecording.created_at < period_end_utc,
+                CallRecording.deleted_at.is_(None),
+            )
+            .group_by(CallRecording.created_by_id)
+        )
+    ).all()
+    for rec_user_id, secs in rec_rows:
+        if rec_user_id:
+            talk_secs_by_rep[rec_user_id] = int(secs or 0)
+
     rows: list[dict[str, Any]] = []
     for rep in reps:
         metrics = target_metrics.get(rep.user_id) if rep.user_id else None
@@ -647,7 +674,7 @@ async def _build_us_pod_call_report_for_period(
                 "failed": int(metrics["failed"]) if metrics else 0,
                 "unknown_outcome": int(metrics["unknown_outcome"]) if metrics else 0,
                 "meetings_booked_calls": int(metrics["meetings_booked_calls"]) if metrics else 0,
-                "duration_minutes": round((metrics["duration_seconds"] if metrics else 0) / 60, 1),
+                "duration_minutes": round(talk_secs_by_rep.get(rep.user_id, 0) / 60, 1) if rep.user_id else 0.0,
                 "unique_contacts": len(metrics["unique_contacts"]) if metrics else 0,
                 "unique_deals": len(metrics["unique_deals"]) if metrics else 0,
                 # Field name preserved for downstream/email-template compat,
