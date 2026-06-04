@@ -162,6 +162,13 @@ export type ScorecardResponse = {
 };
 
 export type RepSummary = { id: string; name: string; email: string; role: string };
+export type PodSummary = {
+  key: string;
+  label: string;
+  rep_ids: string[];      // all members — drives the rep filter
+  ae_rep_ids: string[];   // deal-owning AEs — the pipeline/forecast subset
+  reps: { id: string; name: string; email: string; role: string; is_ae: boolean }[];
+};
 
 export const performanceApi = {
   getScorecard: (params: { rep_id?: string; period?: "week" | "month"; anchor?: string }) => {
@@ -173,6 +180,7 @@ export const performanceApi = {
     return request<ScorecardResponse>(`/api/v1/performance/scorecard${tail ? `?${tail}` : ""}`);
   },
   listReps: () => request<RepSummary[]>("/api/v1/performance/reps"),
+  getPods: () => request<PodSummary[]>("/api/v1/performance/pods"),
   getFunnel: (params: { period?: "week" | "month" | "quarter"; anchor?: string; rep_id?: string }) => {
     const qs = new URLSearchParams();
     if (params.period) qs.set("period", params.period);

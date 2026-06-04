@@ -54,7 +54,7 @@ import {
 } from "../lib/api";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
-import { performanceApi, type RepSummary } from "../lib/api";
+import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
 import OutreachAnalyticsTab from "../components/analytics/OutreachAnalyticsTab";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
@@ -1740,6 +1740,7 @@ export default function SalesAnalytics() {
     | "outreach"
     | PerformanceTabKey;
   const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
+  const [pods, setPods] = useState<PodSummary[]>([]);
   const tabContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1751,6 +1752,14 @@ export default function SalesAnalytics() {
         .catch(() => setPerfReps([]));
     }
   }, [activeTab]);
+
+  // Pod rosters (US Pod / India Pod) for the one-click pod scope.
+  useEffect(() => {
+    performanceApi
+      .getPods()
+      .then(setPods)
+      .catch(() => setPods([]));
+  }, []);
 
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
@@ -2310,6 +2319,32 @@ export default function SalesAnalytics() {
                   </button>
                 );
               })()
+            )}
+            {pods.length > 0 && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pod</span>
+                {pods.map((pod) => {
+                  const ids = pod.rep_ids;
+                  const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
+                  return (
+                    <button
+                      key={pod.key}
+                      type="button"
+                      onClick={() => setRepFilter(active ? [] : ids)}
+                      title={`${pod.label} — scopes the whole dashboard (forecast, pipeline, activity) to: ${pod.reps.map((r) => r.name).join(", ")}`}
+                      style={{
+                        height: 32, padding: "0 12px", borderRadius: 999,
+                        border: active ? "1px solid #3555c4" : "1px solid #d7e2fb",
+                        background: active ? "#3555c4" : "#eef4ff",
+                        color: active ? "#fff" : "#3555c4",
+                        fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pod.label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
             <MultiSelectDropdown
               label="Rep filter"

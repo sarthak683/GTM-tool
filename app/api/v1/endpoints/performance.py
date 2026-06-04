@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import distinct, select
 
 from app.core.dependencies import CurrentUser, DBSession
+from app.core.pods import get_pod, pod_ae_emails, pod_keys
 from app.models.user import User
 from app.core.dependencies import AdminUser
 from app.services import performance_metrics as pm
@@ -577,3 +578,49 @@ async def list_reps(session: DBSession, current_user: CurrentUser):
         RepSummary(id=str(r.id), name=r.name, email=r.email, role=r.role)
         for r in rows
     ]
+
+
+# ── Pod rosters (for the pod-scoped analytics view) ──────────────────────────
+
+
+class PodRep(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+    is_ae: bool
+
+
+class PodSummary(BaseModel):
+    key: str
+    label: str
+    rep_ids: list[str]      # all members — drives the dashboard's rep filter
+    ae_rep_ids: list[str]   # deal-owning AEs — the pipeline/forecast subset
+    reps: list[PodRep]
+
+
+@router.get("/pods", response_model=list[PodSummary])
+async def list_pods(session: DBSession, current_user: CurrentUser):
+    """Pod rosters resolved to active user ids. Membership and the AE subset are
+    declared in app/core/pods.py so the report and this dashboard agree."""
+    users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
+    by_email = {u.email.lower(): u for u in users if u.email}
+    out: list[PodSummary] = []
+    for key in pod_keys():
+        pod = get_pod(key)
+        if not pod:
+            continue
+        ae_set = set(pod_ae_emails(key))
+        reps: list[PodRep] = []
+        for r in pod["reps"]:
+            u = by_email.get(r["email"].lower())
+            if u:
+                reps.append(PodRep(id=str(u.id), name=u.name, email=u.email, role=u.role, is_ae=u.email.lower() in ae_set))
+        out.append(PodSummary(
+            key=pod["key"],
+            label=pod["label"],
+            rep_ids=[r.id for r in reps],
+            ae_rep_ids=[r.id for r in reps if r.is_ae],
+            reps=reps,
+        ))
+    return out
