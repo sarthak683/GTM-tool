@@ -190,11 +190,14 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
     if target_deal_id:
         return {"deal_id": str(target_deal_id)}
 
-    # Compose the deal name from contact + company so the pipeline card
-    # is readable at a glance: "Acme · Jane Doe".
+    # Name the deal after the company so it matches the rest of the pipeline
+    # (cards elsewhere read e.g. "Dayforce", not "Company · Person"). The
+    # contact is still attached as the primary stakeholder below, so the person
+    # isn't lost — they're just not in the title. Fall back to the contact's
+    # name only when the contact has no company.
     contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or contact.email or "New deal"
     company_name = payload.get("company_name")
-    deal_name = (f"{company_name} · {contact_name}" if company_name else contact_name)[:200]
+    deal_name = (company_name or contact_name)[:200]
 
     # Meeting-booked notifications imply the prospect has agreed to meet,
     # so the deal belongs in `demo_scheduled` (or the closest configured
