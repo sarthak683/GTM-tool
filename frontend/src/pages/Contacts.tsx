@@ -717,8 +717,12 @@ export default function Contacts() {
 
   const downloadProspectTemplate = () => {
     const template = [
-      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone"],
-      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199"],
+      // SDR / AE are OPTIONAL ownership columns: put a teammate's email or full
+      // name to assign the prospect to them. Leave blank to assign it to you
+      // (the uploader). Email is the most reliable; a name must match one
+      // teammate exactly.
+      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone", "SDR", "AE"],
+      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199", "mahesh@beacon.li", "Pravalika Jamalpur"],
     ]
       .map((row) => row.join(","))
       .join("\n");
