@@ -618,7 +618,13 @@ class ContactRepository(BaseRepository[Contact]):
                 if color == "green":
                     clauses.append(Contact.sequence_status.in_(email_positive))
                 elif color == "red":
-                    clauses.append(Contact.sequence_status == email_negative)
+                    # EMAIL negative only. sequence_status='not_interested' is an
+                    # OVERLOADED field also written by negative CALL/LinkedIn
+                    # dispositions, so a phone "not interested" was wrongly shown
+                    # as a negative EMAIL reply. instantly_status='not_interested'
+                    # is set ONLY by the genuine email paths (Instantly negative
+                    # webhook / reply), so it's the correct email-sourced marker.
+                    clauses.append(Contact.instantly_status == email_negative)
                 elif color == "blue":
                     clauses.append(
                         and_(

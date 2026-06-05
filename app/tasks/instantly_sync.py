@@ -405,9 +405,12 @@ async def _async_sync_active_campaigns() -> dict:
                                 elif interest == 1 and contact.sequence_status != "interested":
                                     contact.sequence_status = "interested"
                                     contact.instantly_status = "interested"
-                                elif interest == -1 and contact.sequence_status != "not_interested":
-                                    contact.sequence_status = "not_interested"
-                                    contact.instantly_status = "not_interested"
+                                # NOTE: lt_interest_status == -1 ("not interested")
+                                # is deliberately NOT mapped here. Instantly stamps
+                                # -1 from auto-replies / OOO / imports with no real
+                                # negative reply, which produced phantom "negative
+                                # email reply" flags. Genuine negatives flow through
+                                # the human-set lead_not_interested webhook instead.
 
                                 if lead.get("email_open_count", 0) > (contact.email_open_count or 0):
                                     contact.email_open_count = lead["email_open_count"]

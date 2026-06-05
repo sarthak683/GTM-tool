@@ -47,7 +47,10 @@ async def build_outreach_overview(
     clicked = sum(1 for c in contacts_in_window if (c.email_click_count or 0) > 0)
     interested = sum(1 for c in contacts_in_window if c.sequence_status == "interested")
     booked = sum(1 for c in contacts_in_window if c.sequence_status == "meeting_booked")
-    not_interested = sum(1 for c in contacts_in_window if c.sequence_status == "not_interested")
+    # EMAIL negative only — instantly_status (not the call/LinkedIn-overloaded
+    # sequence_status), so a phone "not interested" no longer inflates the email
+    # not_interested count / reply_rate.
+    not_interested = sum(1 for c in contacts_in_window if c.instantly_status == "not_interested")
     bounced = sum(1 for c in contacts_in_window if c.sequence_status == "bounced")
     unsubscribed = sum(1 for c in contacts_in_window if c.sequence_status == "unsubscribed")
 

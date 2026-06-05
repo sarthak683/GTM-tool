@@ -848,6 +848,10 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         activity_type = "email"
         if contact:
             contact.sequence_status = "not_interested"
+            # Stamp the EMAIL-sourced marker too — this is what the email-outcome
+            # red dot + email analytics key off, so a genuine email negative
+            # (human-marked in Instantly) correctly shows as a negative reply.
+            contact.instantly_status = "not_interested"
             contact.updated_at = now
             session.add(contact)
 
@@ -884,9 +888,14 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"{lead_email} marked as Out of Office in Instantly"
         activity_type = "email"
         if contact:
-            contact.instantly_status = "out_of_office"
-            contact.updated_at = now
-            session.add(contact)
+            # OOO is transient — never let it DOWNGRADE a terminal email outcome
+            # (not_interested/unsubscribed/bounced). An OOO firing seconds after a
+            # genuine "not interested" used to clobber the negative marker and make
+            # the prospect silently lose its red dot.
+            if (contact.instantly_status or "") not in ("not_interested", "unsubscribed", "bounced"):
+                contact.instantly_status = "out_of_office"
+                contact.updated_at = now
+                session.add(contact)
 
     elif event_type == "lead_wrong_person":
         content = f"{lead_email} marked as Wrong Person in Instantly"

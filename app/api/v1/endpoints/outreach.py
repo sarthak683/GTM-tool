@@ -1051,9 +1051,10 @@ async def sync_campaign_from_instantly(
                     elif interest == 1:
                         contact.sequence_status = "interested"
                         contact.instantly_status = "interested"
-                    elif interest == -1:
-                        contact.sequence_status = "not_interested"
-                        contact.instantly_status = "not_interested"
+                    # interest == -1 ("not interested") deliberately NOT mapped:
+                    # Instantly stamps it on auto-replies/OOO/imports with no real
+                    # reply (phantom negatives). Genuine negatives come via the
+                    # human-set lead_not_interested webhook. (Matches instantly_sync.)
                     elif lead_status == 1:
                         contact.instantly_status = "active"
 

@@ -871,7 +871,11 @@ async def _refresh_contact_tasks(session: AsyncSession, entity_id: UUID) -> None
     has_recent_interested = bool(latest_interested and latest_interested.created_at >= datetime.utcnow() - timedelta(days=5))
     is_bounced = bool(latest_bounce or seq_status == "bounced")
     is_unsubscribed = bool(latest_unsubscribed or seq_status == "unsubscribed")
-    is_not_interested = seq_status == "not_interested"
+    # EMAIL negative only — the "Instantly flagged this prospect as Not Interested"
+    # system task must key off the email-sourced marker, not the overloaded
+    # sequence_status (which a negative CALL/LinkedIn disposition also sets). Else
+    # a phone "Connected - Not Interested" wrongly raises an Instantly-attributed task.
+    is_not_interested = _normalize(contact.instantly_status) == "not_interested"
 
     if not contact.phone and bool(contact.email):
         await _upsert_system_task(
