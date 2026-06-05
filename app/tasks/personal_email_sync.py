@@ -107,6 +107,7 @@ async def _enqueue_all_inboxes() -> dict:
     from sqlalchemy.orm import sessionmaker
     from sqlmodel import select
 
+    from app.models.settings import WorkspaceSettings
     from app.models.user_email_connection import UserEmailConnection
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
@@ -115,6 +116,13 @@ async def _enqueue_all_inboxes() -> dict:
     queued = 0
     try:
         async with SessionLocal() as session:
+            # Zippy-only mode: stop pulling reps' full personal inboxes. Existing
+            # synced activities are untouched — this only halts future capture,
+            # and flipping the flag back off resumes syncing immediately.
+            ws = await session.get(WorkspaceSettings, 1)
+            if ws and (ws.sync_schedule_settings or {}).get("zippy_only_email_sync"):
+                logger.info("Personal inbox sync skipped — zippy_only_email_sync on")
+                return {"queued": 0, "status": "skipped", "reason": "zippy_only_email_sync"}
             result = await session.execute(
                 select(UserEmailConnection.id).where(
                     UserEmailConnection.is_active == True  # noqa: E712

@@ -983,6 +983,13 @@ export const settingsApi = {
     request<{ status: string; tldv_sync_enabled: boolean }>("/api/v1/settings/sync-schedule/tldv-stop", {
       method: "POST",
     }),
+  getProspectVisibility: () =>
+    request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility"),
+  updateProspectVisibility: (userIds: string[]) =>
+    request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility", {
+      method: "PUT",
+      body: JSON.stringify({ user_ids: userIds }),
+    }),
   getZippySystemPrompt: () =>
     request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt"),
   updateZippySystemPrompt: (prompt: string) =>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import UnifiedTimeline from "../components/UnifiedTimeline";
 import {
   companiesApi,
   contactsApi,
@@ -440,6 +441,13 @@ export default function CompanyDetail() {
                   </p>
                 </div>
               )}
+            </CompanySection>
+
+            <CompanySection title="Account activity">
+              <UnifiedTimeline
+                scope={{ type: "company", id: company.id }}
+                emptyMessage="No activity logged for this account yet."
+              />
             </CompanySection>
 
             <CompanySection

@@ -233,6 +233,11 @@ class WorkspaceSettings(SQLModel, table=True):
     # NULL means "use the hardcoded default in zippy_agent.SYSTEM_PROMPT".
     zippy_system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # Prospect visibility grants: user_ids (strings) of non-admins allowed to
+    # see ALL prospects, not just their own + unassigned. Admins always see all;
+    # this widens specific people. NULL/[] = nobody extra.
+    prospect_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
@@ -399,6 +404,9 @@ class SyncScheduleSettingsRead(SQLModel):
     tldv_last_synced_at: Optional[str] = None
     email_sync_interval_seconds: int
     deal_health_hour: int
+    # When True, emails are tracked ONLY via zippy+<deal-alias> CC; the broad
+    # contact-fallback match and personal-inbox bulk sync are paused.
+    zippy_only_email_sync: bool = False
 
 
 class SyncScheduleSettingsUpdate(SQLModel):
@@ -408,6 +416,16 @@ class SyncScheduleSettingsUpdate(SQLModel):
     tldv_max_pages: Optional[int] = None
     email_sync_interval_seconds: Optional[int] = None
     deal_health_hour: Optional[int] = None
+    zippy_only_email_sync: Optional[bool] = None
+
+
+class ProspectVisibilityRead(SQLModel):
+    """User ids of non-admins granted 'see all prospects' access."""
+    user_ids: list[str] = []
+
+
+class ProspectVisibilityUpdate(SQLModel):
+    user_ids: list[str] = []
 
 
 class GmailSettingsRead(SQLModel):

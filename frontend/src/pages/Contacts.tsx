@@ -11,7 +11,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight,
+  Mic, ArrowRight, MessageCircle,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -462,6 +462,10 @@ export default function Contacts() {
   const [linkedinSuggestion, setLinkedinSuggestion] = useState<string | null>(null);
   const [linkedinSuggestionLoading, setLinkedinSuggestionLoading] = useState(false);
   const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
+  const [whatsappContact, setWhatsappContact] = useState<Contact | null>(null);
+  const [whatsappOutcome, setWhatsappOutcome] = useState("sent");
+  const [whatsappNotes, setWhatsappNotes] = useState("");
+  const [savingWhatsapp, setSavingWhatsapp] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   // Upload progress UI: phase = "uploading" while bytes are on the wire,
   // "processing" once they're all delivered and the server is parsing.
@@ -1452,7 +1456,14 @@ export default function Contacts() {
         toast.error("LinkedIn saved but timeline write failed — check activity feed.", "Partial save");
       }
 
-      toast.success(`LinkedIn touch logged for ${linkedinContact.first_name}.`, "LinkedIn logged");
+      // Quick confirmation — reps log many touches in a row, so this toast
+      // auto-dismisses fast (2s) instead of the 5s default.
+      toast.show({
+        tone: "success",
+        message: `LinkedIn touch logged for ${linkedinContact.first_name}.`,
+        title: "LinkedIn logged",
+        durationMs: 2000,
+      });
       // Preserve scroll: capture where the rep is, then reload silently so the
       // list stays mounted (a non-silent reload flips `loading` and bounces the
       // page to the top — the bug reps reported after logging a LinkedIn touch).
@@ -1465,6 +1476,47 @@ export default function Contacts() {
       toast.error("Failed to log LinkedIn touch.", "Error");
     } finally {
       setSavingLinkedin(false);
+    }
+  };
+
+  // wa.me needs a bare international number (country code + digits, no + or spaces).
+  const waPhoneDigits = (phone?: string | null) => (phone || "").replace(/[^\d]/g, "");
+
+  const saveWhatsappTouch = async () => {
+    if (!whatsappContact || !whatsappOutcome) return;
+    setSavingWhatsapp(true);
+    try {
+      const label = ({
+        sent: "Sent WhatsApp message",
+        replied: "WhatsApp reply received",
+        no_response: "WhatsApp — no response",
+        meeting_booked: "Meeting booked via WhatsApp",
+      } as Record<string, string>)[whatsappOutcome] ?? `WhatsApp: ${whatsappOutcome}`;
+      const contactLabel = `${whatsappContact.first_name ?? ""} ${whatsappContact.last_name ?? ""}`.trim();
+      const content = whatsappNotes ? `${label} — ${contactLabel}: ${whatsappNotes}` : `${label} — ${contactLabel}`;
+      await activitiesApi.create({
+        type: "whatsapp",
+        medium: "whatsapp",
+        source: "manual",
+        content,
+        contact_id: whatsappContact.id,
+      } as Partial<Activity>);
+      // Quick auto-dismiss toast (reps log many touches in a row).
+      toast.show({
+        tone: "success",
+        message: `WhatsApp logged for ${whatsappContact.first_name}.`,
+        title: "WhatsApp logged",
+        durationMs: 2000,
+      });
+      const scroller = document.querySelector<HTMLElement>(".crm-content");
+      restoreScrollRef.current = scroller ? scroller.scrollTop : null;
+      setWhatsappContact(null);
+      setWhatsappNotes("");
+      loadContacts({ silent: true });
+    } catch {
+      toast.error("Failed to log WhatsApp message.", "Error");
+    } finally {
+      setSavingWhatsapp(false);
     }
   };
 
@@ -1996,7 +2048,7 @@ export default function Contacts() {
                         fontWeight: 800,
                       }}
                     >
-                      {ownerScope === "mine" ? "My list" : "All reps"}
+                      {ownerScope === "mine" ? "My list" : isAdmin ? "All reps" : "Mine + unassigned"}
                     </button>
                   </div>
                   <div style={{ position: "relative" }}>
@@ -3139,6 +3191,9 @@ export default function Contacts() {
                                       </a>
                                       <button type="button" onClick={(e) => { e.stopPropagation(); setLinkedinContact(c); setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent"); setLinkedinNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log LinkedIn touch">
                                         <Link2 size={13} /> Log
+                                      </button>
+                                      <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) { setWhatsappContact(c); setWhatsappOutcome("sent"); setWhatsappNotes(""); } }} style={{ height: 38, borderRadius: 10, border: "1px solid #b7e3c5", background: c.phone ? "#e7f9ef" : "#f6f8fb", color: c.phone ? "#0f9d58" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? "WhatsApp & log message" : "No phone number"}>
+                                        <MessageCircle size={13} /> WhatsApp
                                       </button>
                                       <button type="button" onClick={(e) => { e.stopPropagation(); setOpenActionsId((current) => (current === c.id ? null : c.id)); }} style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", color: "#4a6580", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} title="Prospect actions">
                                         <MoreHorizontal size={16} />
@@ -4410,6 +4465,94 @@ export default function Contacts() {
                 >
                   {savingLinkedin ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
                   {savingLinkedin ? "Saving…" : "Log touch"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {whatsappContact && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setWhatsappContact(null)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 420, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#25D366,#128C7E)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <MessageCircle size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Log WhatsApp</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{whatsappContact.first_name} {whatsappContact.last_name}</div>
+                </div>
+              </div>
+              <button onClick={() => setWhatsappContact(null)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              {waPhoneDigits(whatsappContact.phone) ? (
+                <a href={`https://wa.me/${waPhoneDigits(whatsappContact.phone)}`} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#0f9d58", fontWeight: 700, textDecoration: "none" }}>
+                  <MessageCircle size={14} /> Open WhatsApp chat ({whatsappContact.phone})
+                </a>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "#b06a00" }}>No phone number saved — you can still log a message.</div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>What happened? *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+                  {([
+                    { value: "sent", label: "Message sent" },
+                    { value: "replied", label: "Replied" },
+                    { value: "no_response", label: "No response" },
+                    { value: "meeting_booked", label: "Meeting booked" },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setWhatsappOutcome(opt.value)}
+                      style={{
+                        padding: "10px 0", borderRadius: 10, border: `2px solid ${whatsappOutcome === opt.value ? "#0f9d58" : "#dce8f4"}`,
+                        background: whatsappOutcome === opt.value ? "#e7f9ef" : "#f7faff",
+                        color: whatsappOutcome === opt.value ? "#0f7a47" : "#4a6580",
+                        fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes (optional)</label>
+                <textarea
+                  value={whatsappNotes}
+                  onChange={(e) => setWhatsappNotes(e.target.value)}
+                  placeholder="What did you send or hear back? Any signals…"
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setWhatsappContact(null)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveWhatsappTouch()}
+                  disabled={savingWhatsapp}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#25D366,#128C7E)", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: savingWhatsapp ? 0.7 : 1 }}
+                >
+                  {savingWhatsapp ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  {savingWhatsapp ? "Saving…" : "Log message"}
                 </button>
               </div>
             </div>

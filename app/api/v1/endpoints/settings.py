@@ -47,6 +47,8 @@ from app.models.settings import (
     RolePermissionsRead,
     RolePermissionsUpdate,
     StageBucketSettings,
+    ProspectVisibilityRead,
+    ProspectVisibilityUpdate,
     SyncScheduleSettingsRead,
     SyncScheduleSettingsUpdate,
     WorkspaceSettings,
@@ -843,6 +845,7 @@ SYNC_DEFAULTS = {
     "tldv_last_synced_at": None,
     "email_sync_interval_seconds": 180,
     "deal_health_hour": 2,
+    "zippy_only_email_sync": False,
 }
 
 
@@ -924,6 +927,29 @@ async def stop_tldv_sync(session: DBSession, _admin: AdminUser):
     session.add(row)
     await session.commit()
     return {"status": "stopped", "tldv_sync_enabled": False}
+
+
+@router.get("/prospect-visibility", response_model=ProspectVisibilityRead)
+async def get_prospect_visibility(session: DBSession, _admin: AdminUser):
+    """User ids of non-admins granted 'see all prospects' access (admin only)."""
+    row = await _get_or_create(session)
+    return ProspectVisibilityRead(user_ids=[str(uid) for uid in (row.prospect_view_all_user_ids or [])])
+
+
+@router.put("/prospect-visibility", response_model=ProspectVisibilityRead)
+async def update_prospect_visibility(body: ProspectVisibilityUpdate, session: DBSession, _admin: AdminUser):
+    """Set the full list of non-admins allowed to see ALL prospects (admin only).
+
+    Stores an explicit allowlist of user ids; everyone else falls back to the
+    default own+unassigned scope. Empty list clears all grants.
+    """
+    row = await _get_or_create(session)
+    ids = list(dict.fromkeys(str(uid).strip() for uid in body.user_ids if str(uid).strip()))
+    row.prospect_view_all_user_ids = ids or None
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return ProspectVisibilityRead(user_ids=[str(uid) for uid in (row.prospect_view_all_user_ids or [])])
 
 
 @router.get("/email-sync", response_model=GmailSettingsRead)

@@ -746,6 +746,8 @@ export interface SyncScheduleSettings {
   tldv_last_synced_at?: string | null;
   email_sync_interval_seconds: number;
   deal_health_hour: number;
+  /** When on, emails track only via zippy+<deal-alias> CC; bulk inbox sync pauses. */
+  zippy_only_email_sync: boolean;
 }
 
 export interface ClickUpCrmSettings {

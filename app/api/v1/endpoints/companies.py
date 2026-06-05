@@ -162,3 +162,13 @@ async def get_company_deals(company_id: UUID, session: DBSession, _user: Current
         .order_by(Deal.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/{company_id}/timeline")
+async def get_company_timeline(
+    company_id: UUID, session: DBSession, _user: CurrentUser, limit: int = 200
+):
+    """Account-level activity rollup across all of this company's contacts + deals."""
+    from app.services.timeline import build_company_timeline
+
+    return {"items": await build_company_timeline(session, company_id, limit=limit)}

@@ -10,6 +10,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import and_, case, false, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -20,6 +21,56 @@ from app.models.outreach import OutreachSequence
 from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.services.contact_tracking import apply_contact_tracking
+
+
+async def get_or_create_contact_by_email(
+    session: AsyncSession,
+    email: str,
+    defaults: Optional[dict] = None,
+) -> tuple[Contact, bool]:
+    """Case-insensitive dedup on email. Returns ``(contact, created)``.
+
+    Single funnel for the ~dozen contact-creation sites so none of them can mint
+    a duplicate. Safe under the partial unique index on ``lower(email)``: if a
+    concurrent writer (or a path that skipped the pre-lookup) already inserted
+    the same address, the nested-savepoint insert hits the constraint, we roll
+    back ONLY that savepoint (not the caller's transaction) and re-fetch the
+    winning row. Callers get the existing contact instead of an IntegrityError.
+    """
+    normalized = (email or "").strip()
+    fields = {k: v for k, v in (defaults or {}).items() if k != "email"}
+
+    if not normalized:
+        # No email -> nothing to dedup on; the partial unique index ignores
+        # null/empty emails, so just create the row.
+        contact = Contact(email=None, **fields)
+        session.add(contact)
+        await session.flush()
+        return contact, True
+
+    key = normalized.lower()
+
+    async def _fetch() -> Optional[Contact]:
+        res = await session.execute(
+            select(Contact).where(func.lower(Contact.email) == key).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    existing = await _fetch()
+    if existing is not None:
+        return existing, False
+
+    contact = Contact(email=normalized, **fields)
+    try:
+        async with session.begin_nested():
+            session.add(contact)
+            await session.flush()
+        return contact, True
+    except IntegrityError:
+        existing = await _fetch()
+        if existing is not None:
+            return existing, False
+        raise
 
 FREE_EMAIL_PROVIDERS = frozenset({
     "gmail.com",
@@ -113,6 +164,7 @@ class ContactRepository(BaseRepository[Contact]):
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
         owner_id: Optional[str] = None,
+        restrict_to_owner_id: Optional[str] = None,
         scope_any_match: bool = False,
         prospect_only: bool = False,
         timezone: Optional[str] = None,
@@ -388,6 +440,20 @@ class ContactRepository(BaseRepository[Contact]):
         ae_ids = _parse_uuid_values(ae_id)
         sdr_ids = _parse_uuid_values(sdr_id)
         owner_ids = _parse_uuid_values(owner_id)
+
+        # Hard server-side visibility gate (NOT user-selectable): when set, the
+        # viewer may see only prospects they own (either ownership slot) or that
+        # are unowned (both slots empty). Admins/granted users bypass this by
+        # passing restrict_to_owner_id=None. ANDed with every other filter.
+        restrict_ids = _parse_uuid_values(restrict_to_owner_id)
+        if restrict_ids:
+            visibility_filter = or_(
+                Contact.assigned_to_id.in_(restrict_ids),
+                Contact.sdr_id.in_(restrict_ids),
+                and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
+            )
+            base_stmt = base_stmt.where(visibility_filter)
+            count_stmt = count_stmt.where(visibility_filter)
 
         if owner_ids:
             owner_filter = or_(

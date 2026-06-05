@@ -81,6 +81,46 @@ def _build_display_name(addr: str, explicit_name: str | None = None) -> str:
     return f"{first} {last}".strip()
 
 
+async def _notify_unmatched_zippy_alias(session, msg, aliases: list[str]) -> None:
+    """Zippy-only mode: a ``zippy+<alias>`` address matched no deal.
+
+    Tell the sender (if they're a Beacon user) so they can create the deal /
+    fix the CC. We deliberately do NOT auto-create a deal — a typo'd alias
+    shouldn't spawn a junk deal — and we don't silently drop it: the rep is
+    notified. The notification is deduped per message so re-runs don't spam.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.user import User
+    from app.services.notifications import create_notification
+
+    sender = (msg.from_addr or "").strip().lower()
+    if not sender or not aliases:
+        return
+    user = (
+        await session.execute(select(User).where(func.lower(User.email) == sender))
+    ).scalars().first()
+    if not user:
+        return  # external sender — no in-app inbox to notify
+    alias_str = ", ".join(aliases)
+    try:
+        await create_notification(
+            session,
+            user_id=user.id,
+            type="zippy_email_unmatched",
+            title="Email not tracked — no matching deal",
+            body=(
+                f'Your email "{(msg.subject or "(no subject)")[:120]}" was sent to '
+                f"zippy+{alias_str} but no deal owns that address. Create the deal, then "
+                f"add its Zippy CC address — emails will track from then on."
+            ),
+            dedup_key=f"zippy_unmatched:{msg.message_id}",
+            push=False,
+        )
+    except Exception:
+        logger.exception("Failed to notify sender of unmatched zippy alias %s", alias_str)
+
+
 @celery_app.task(
     name="app.tasks.email_sync.sync_gmail_inbox",
     bind=True,
@@ -135,6 +175,10 @@ async def _async_sync() -> dict:
                 else ""
             )
             token_payload = settings_row.gmail_token_data if settings_row and settings_row.gmail_token_data else None
+            # Zippy-only mode (default off): when on, an email is tracked ONLY
+            # if it's CC'd to zippy+<deal-alias>. Stored in the existing
+            # sync_schedule_settings JSON so the cutover needs no DB migration.
+            zippy_only = bool((settings_row.sync_schedule_settings or {}).get("zippy_only_email_sync")) if settings_row else False
 
         if not inbox or not (token_payload or settings.GMAIL_TOKEN_JSON):
             return {"status": "skipped", "reason": "gmail not connected"}
@@ -186,6 +230,12 @@ async def _async_sync() -> dict:
                 matched_aliases = _extract_deal_aliases(all_addrs, inbox)
                 deal_ids: list = []
 
+                # Zippy-only mode: a message is tracked ONLY if it carries a
+                # zippy+<deal-alias> address. No alias → not opted-in; skip
+                # without falling back to contact-email matching.
+                if zippy_only and not matched_aliases:
+                    continue
+
                 if matched_aliases:
                     matched_via = "alias"
                     deal_rows = await session.execute(
@@ -193,6 +243,11 @@ async def _async_sync() -> dict:
                     )
                     deal_ids = list(dict.fromkeys([row.id for row in deal_rows.all()]))
                     if not deal_ids:
+                        # Alias present but no deal owns it. In zippy-only mode
+                        # tell the sender so they can fix it — we never auto-
+                        # create a deal (a CC typo shouldn't spawn junk).
+                        if zippy_only:
+                            await _notify_unmatched_zippy_alias(session, msg, matched_aliases)
                         logger.warning(
                             "Email sync skipped message %s because alias %s did not map to a deal",
                             msg.message_id,

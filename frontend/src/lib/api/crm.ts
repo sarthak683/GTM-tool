@@ -470,6 +470,12 @@ export const timelineApi = {
     );
     return res.items ?? [];
   },
+  forCompany: async (companyId: string, limit = 200) => {
+    const res = await request<{ items: TimelineEvent[] }>(
+      `/api/v1/companies/${companyId}/timeline?limit=${limit}`
+    );
+    return res.items ?? [];
+  },
 };
 
 export const meetingsApi = {

@@ -18,7 +18,8 @@ from uuid import UUID
 from sqlalchemy import or_, select
 
 from app.models.activity import Activity
-from app.models.deal import DealContact
+from app.models.contact import Contact
+from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.user import User
 
@@ -213,6 +214,54 @@ async def build_deal_timeline(
         select(Meeting).where(Meeting.deal_id == deal_id)
     )
     meetings = list(meetings_result.scalars().all())
+
+    events: list[TimelineEvent] = [_activity_to_event(a) for a in activities]
+    events.extend(_meeting_to_event(m) for m in meetings)
+    events.sort(key=lambda e: e["occurred_at"] or "", reverse=True)
+    return await _attach_actor_names(session, events[:limit])
+
+
+async def build_company_timeline(
+    session, company_id: UUID, limit: int = 200
+) -> list[TimelineEvent]:
+    """Account-level rollup: activities + meetings across ALL of a company's
+    contacts and deals (newest first).
+
+    This is what makes "how many emails went to this account today" answerable in
+    one place — the per-contact/per-deal timelines fragment it across many rows.
+    """
+    contact_ids = [
+        row[0]
+        for row in (
+            await session.execute(select(Contact.id).where(Contact.company_id == company_id))
+        ).all()
+    ]
+    deal_ids = [
+        row[0]
+        for row in (
+            await session.execute(select(Deal.id).where(Deal.company_id == company_id))
+        ).all()
+    ]
+
+    conds = []
+    if contact_ids:
+        conds.append(Activity.contact_id.in_(contact_ids))
+    if deal_ids:
+        conds.append(Activity.deal_id.in_(deal_ids))
+
+    activities = []
+    if conds:
+        activities = (
+            await session.execute(
+                select(Activity).where(or_(*conds)).order_by(Activity.created_at.desc()).limit(limit)
+            )
+        ).scalars().all()
+
+    meetings: list[Meeting] = []
+    if deal_ids:
+        meetings = list(
+            (await session.execute(select(Meeting).where(Meeting.deal_id.in_(deal_ids)))).scalars().all()
+        )
 
     events: list[TimelineEvent] = [_activity_to_event(a) for a in activities]
     events.extend(_meeting_to_event(m) for m in meetings)

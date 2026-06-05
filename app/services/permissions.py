@@ -63,3 +63,16 @@ async def require_workspace_permission(session: AsyncSession, user: User, permis
     if await user_has_permission(session, user, permission_key):
         return
     raise ForbiddenError("You do not have permission to perform this action")
+
+
+async def can_view_all_prospects(session: AsyncSession, user: User) -> bool:
+    """True if the user may see every prospect (not just their own + unassigned).
+
+    Admins always can. Specific non-admins can be granted broader access by an
+    admin via WorkspaceSettings.prospect_view_all_user_ids.
+    """
+    if user.role == "admin":
+        return True
+    row = await session.get(WorkspaceSettings, 1)
+    granted = (row.prospect_view_all_user_ids if row else None) or []
+    return str(user.id) in {str(uid) for uid in granted}

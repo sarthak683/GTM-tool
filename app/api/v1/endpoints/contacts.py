@@ -26,7 +26,7 @@ from app.services.disposition_effects import (
     apply_linkedin_status_effects,
 )
 from app.services.timeline import build_contact_timeline
-from app.services.permissions import require_workspace_permission
+from app.services.permissions import can_view_all_prospects, require_workspace_permission
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
 
@@ -238,14 +238,18 @@ async def list_contacts(
     """
     Returns contacts with company_name populated via a single SQL JOIN.
 
-    Visibility: every authenticated user sees every contact in the workspace.
-    Assignment (`sdr_id` / `assigned_to_id`) is a label for ownership, NOT a
-    visibility filter — this keeps the team on a shared view of the pipeline.
-    Any per-rep filtering happens via the `ae_id` / `sdr_id` query params,
-    which are driven by explicit user selection in the UI, not by the
-    caller's own role.
+    Visibility (default): a non-admin sees only prospects they own — in either
+    the `sdr_id` or `assigned_to_id` slot — plus unassigned ones (both slots
+    empty). Admins see every prospect (needed to reassign and audit). This is a
+    hard server-side gate: query params like `owner_id` can only narrow within
+    what the caller may already see, never widen it.
     """
     repo = ContactRepository(session)
+    # Hard visibility gate. None = full visibility (admins + admin-granted
+    # users); otherwise restrict to this user's own + unassigned prospects.
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, current_user) else str(current_user.id)
+    )
     items, total = await repo.list_with_company_name(
         company_id=company_id,
         q=q,
@@ -260,6 +264,7 @@ async def list_contacts(
         ae_id=ae_id,
         sdr_id=sdr_id,
         owner_id=owner_id,
+        restrict_to_owner_id=restrict_to_owner_id,
         scope_any_match=scope_any_match,
         prospect_only=prospect_only,
         timezone=timezone,
@@ -347,6 +352,16 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
         (payload.linkedin_url or "").strip(),
     ]):
         raise HTTPException(status_code=422, detail="Provide at least a name, email, title, or LinkedIn URL.")
+
+    # Case-insensitive dedup so manually adding an existing email returns a clean
+    # 409 instead of a 500 under the partial unique index on lower(email).
+    email_val = (payload.email or "").strip()
+    if email_val:
+        existing_dupe = (await session.execute(
+            select(Contact).where(func.lower(Contact.email) == email_val.lower()).limit(1)
+        )).scalar_one_or_none()
+        if existing_dupe:
+            raise HTTPException(status_code=409, detail="A contact with this email already exists.")
 
     contact = Contact(**payload.model_dump())
 

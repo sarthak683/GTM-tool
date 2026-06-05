@@ -29,7 +29,7 @@ from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import update as sa_update
+from sqlalchemy import func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -2755,7 +2755,7 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
             # stable across title changes and repeated imports.
             if email:
                 existing = await session.execute(
-                    select(Contact).where(Contact.email == email).limit(1)
+                    select(Contact).where(func.lower(Contact.email) == email.strip().lower()).limit(1)
                 )
                 if existing.scalars().first():
                     continue

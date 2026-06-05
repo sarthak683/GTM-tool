@@ -23,7 +23,7 @@ import {
   PhoneCall,
   Loader2,
 } from "lucide-react";
-import { settingsApi, personalEmailSyncApi, driveApi } from "../lib/api";
+import { settingsApi, personalEmailSyncApi, driveApi, authApi } from "../lib/api";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder, JobHealthRow } from "../lib/api";
 import { DriveFolderPicker } from "../components/DriveFolderPicker";
@@ -120,6 +120,9 @@ export default function SettingsPage() {
   const [preMeetingSettings, setPreMeetingSettings] = useState<PreMeetingAutomationSettings | null>(null);
   const [syncSchedule, setSyncSchedule] = useState<SyncScheduleSettings | null>(null);
   const [savingSyncSchedule, setSavingSyncSchedule] = useState(false);
+  const [allUsers, setAllUsers] = useState<Array<{ id: string; name?: string | null; email?: string | null; role: string }>>([]);
+  const [prospectViewAll, setProspectViewAll] = useState<string[]>([]);
+  const [savingProspectVis, setSavingProspectVis] = useState(false);
   const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
@@ -949,6 +952,25 @@ export default function SettingsPage() {
     }
   };
 
+  const handleToggleZippyOnly = async (next: boolean) => {
+    setSavingSyncSchedule(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateSyncSchedule({ zippy_only_email_sync: next });
+      setSyncSchedule(updated);
+      setMessage(
+        next
+          ? "Zippy-only email tracking is ON — only zippy+<deal> CC'd emails are tracked; bulk inbox sync paused."
+          : "Zippy-only email tracking is OFF — normal email sync resumed.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update email tracking mode");
+    } finally {
+      setSavingSyncSchedule(false);
+    }
+  };
+
   const updateSalesReportField = <K extends keyof SalesReportSettings>(field: K, value: SalesReportSettings[K]) => {
     if (!salesReportSettings) return;
     setSalesReportSettings({ ...salesReportSettings, [field]: value });
@@ -1058,6 +1080,37 @@ export default function SettingsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
+
+  // Lazy-load users + prospect-visibility grants when the Permissions tab opens.
+  useEffect(() => {
+    if (activeTab === "permissions" && isAdmin && allUsers.length === 0) {
+      Promise.all([
+        authApi.listUsers().catch(() => []),
+        settingsApi.getProspectVisibility().catch(() => ({ user_ids: [] as string[] })),
+      ]).then(([users, vis]) => {
+        setAllUsers(users as Array<{ id: string; name?: string | null; email?: string | null; role: string }>);
+        setProspectViewAll(vis.user_ids || []);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
+  const toggleProspectViewAll = async (userId: string, checked: boolean) => {
+    const prev = prospectViewAll;
+    const next = checked ? Array.from(new Set([...prev, userId])) : prev.filter((id) => id !== userId);
+    setProspectViewAll(next); // optimistic
+    setSavingProspectVis(true);
+    setError(null);
+    try {
+      const res = await settingsApi.updateProspectVisibility(next);
+      setProspectViewAll(res.user_ids || []);
+    } catch (err) {
+      setProspectViewAll(prev); // revert on failure
+      setError(err instanceof Error ? err.message : "Failed to update prospect visibility");
+    } finally {
+      setSavingProspectVis(false);
+    }
+  };
 
   const loadJobHealth = () => {
     setJobHealthLoading(true);
@@ -1199,6 +1252,35 @@ export default function SettingsPage() {
                 {statusTone.label}
               </div>
             </div>
+
+            {isAdmin && (
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", border: "1px solid #d8def8", background: "#f7f9ff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ maxWidth: 660 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 4 }}>
+                      Zippy-only email tracking
+                    </div>
+                    <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+                      When ON, Beacon tracks an email <strong>only</strong> if it's CC'd to an alias like <strong>{ccPattern}</strong>.
+                      The broad contact-match fallback and per-rep inbox bulk sync pause — existing activity is untouched, and turning
+                      this OFF resumes normal sync immediately.
+                    </p>
+                  </div>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: syncSchedule ? "pointer" : "not-allowed" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(syncSchedule?.zippy_only_email_sync)}
+                      disabled={!syncSchedule || savingSyncSchedule}
+                      onChange={(event) => void handleToggleZippyOnly(event.target.checked)}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <span style={{ fontWeight: 800, color: syncSchedule?.zippy_only_email_sync ? "#1f7a47" : "#7c86a6" }}>
+                      {syncSchedule?.zippy_only_email_sync ? "ON" : "OFF"}
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
 
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(320px, 0.75fr)", gap: 18 }}>
               <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none" }}>
@@ -1832,6 +1914,42 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+
+            {isAdmin && (
+              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>Prospect visibility</h3>
+                  <p className="crm-muted" style={{ maxWidth: 760, fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
+                    By default everyone sees only <strong>their own</strong> prospects plus <strong>unassigned</strong> ones; admins see all.
+                    Turn someone on here to let them see <strong>every</strong> prospect.
+                  </p>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {allUsers.filter((u) => u.role !== "admin").map((u) => {
+                    const on = prospectViewAll.includes(u.id);
+                    return (
+                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "11px 14px", background: "#fbfdff" }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>{u.name || u.email || u.id}</div>
+                          <div className="crm-muted" style={{ fontSize: 12 }}>
+                            {(u.role || "").toUpperCase()} · {on ? "Sees all prospects" : "Own + unassigned"}
+                          </div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={savingProspectVis}
+                          onChange={(event) => void toggleProspectViewAll(u.id, event.target.checked)}
+                        />
+                      </label>
+                    );
+                  })}
+                  {allUsers.filter((u) => u.role !== "admin").length === 0 && (
+                    <p className="crm-muted" style={{ fontSize: 13 }}>No non-admin teammates to configure yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ) : activeTab === "reports" ? (
           <div style={{ display: "grid", gap: 18 }}>
