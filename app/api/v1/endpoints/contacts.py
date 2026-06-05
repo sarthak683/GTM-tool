@@ -12,7 +12,9 @@ from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.repositories.contact import ContactRepository
 from app.schemas.common import PaginatedResponse
+from app.models.user import User
 from app.services.account_sourcing import (
+    _find,
     load_workspace_sequence_schedule,
     parse_prospect_upload_file,
     refresh_company_prospecting_fields,
@@ -727,6 +729,34 @@ async def discover_contacts(company_id: UUID, session: DBSession, _user: Current
     return reads
 
 
+async def _resolve_upload_owner(session, raw: str, cache: dict):
+    """Resolve an uploaded SDR/AE cell (email or name) to an active User, or None.
+
+    Email matches exactly; a name matches only when exactly one active user has
+    it (ambiguous/unknown names fall through to the uploader/company fallback
+    rather than risk mis-assigning). Cached per-upload so 200 rows that share an
+    SDR don't hit the DB 200 times.
+    """
+    key = (raw or "").strip().lower()
+    if not key:
+        return None
+    if key in cache:
+        return cache[key]
+    user = None
+    if "@" in key:
+        user = (await session.execute(
+            select(User).where(func.lower(User.email) == key, User.is_active == True)  # noqa: E712
+        )).scalars().first()
+    else:
+        matches = (await session.execute(
+            select(User).where(func.lower(User.name) == key, User.is_active == True).limit(2)  # noqa: E712
+        )).scalars().all()
+        if len(matches) == 1:
+            user = matches[0]
+    cache[key] = user
+    return user
+
+
 @router.post("/import-csv", response_model=ProspectImportResponse, status_code=201)
 async def import_contacts_csv(
     current_user: CurrentUser,
@@ -769,6 +799,11 @@ async def import_contacts_csv(
     from app.models.sourcing_batch import SourcingBatch
 
     auto_create_batch: SourcingBatch | None = None
+    # Cache for resolving SDR/AE column values (name|email) -> User across rows.
+    owner_cache: dict = {}
+    # Uploader fallback target slot: an SDR uploader owns their uploads in the SDR
+    # slot, an AE uploader in the AE slot, an admin owns neither (-> unassigned).
+    uploader_role = (current_user.role or "").lower()
 
     async def _ensure_auto_create_batch() -> UUID | None:
         nonlocal auto_create_batch
@@ -868,11 +903,15 @@ async def import_contacts_csv(
 
         if company:
             touched_company_ids.add(company.id)
-            contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
-            contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
-            contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
-            contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
             contact_fields["company_id"] = company.id
+        # Ownership is assigned EXPLICITLY below (not via the generic field loop)
+        # so re-uploads don't reassign via the uploader fallback and a blank file
+        # cell never wipes an existing owner. Resolve the file's SDR/AE columns
+        # to real users first (file value is authoritative, incl. on re-upload).
+        for _own_key in ("sdr_id", "sdr_name", "assigned_to_id", "assigned_rep_email", "assigned_rep_name"):
+            contact_fields.pop(_own_key, None)
+        file_sdr = await _resolve_upload_owner(session, _find(row, "sdr"), owner_cache)
+        file_ae = await _resolve_upload_owner(session, _find(row, "ae"), owner_cache)
 
         raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
         raw_enrichment["source"] = "prospect_csv_upload"
@@ -921,6 +960,17 @@ async def import_contacts_csv(
                 if getattr(existing, key, None) != value:
                     setattr(existing, key, value)
                     changed = True
+            # Re-upload ownership: ONLY an explicit, resolved file value overwrites
+            # (so changing the SDR/AE in the file re-assigns). A blank cell leaves
+            # the existing owner untouched — no uploader fallback, no wipe.
+            if file_sdr and existing.sdr_id != file_sdr.id:
+                existing.sdr_id = file_sdr.id
+                existing.sdr_name = file_sdr.name
+                changed = True
+            if file_ae and existing.assigned_to_id != file_ae.id:
+                existing.assigned_to_id = file_ae.id
+                existing.assigned_rep_email = file_ae.email
+                changed = True
             if changed or not existing.persona:
                 existing.persona = classify_persona(existing)
                 existing.updated_at = datetime.utcnow()
@@ -932,6 +982,25 @@ async def import_contacts_csv(
                 skipped_count += 1
         else:
             contact = Contact(**contact_fields)
+            # New-contact ownership precedence per slot:
+            #   SDR slot: file SDR -> uploader (if SDR) -> company SDR -> none
+            #   AE slot:  file AE  -> uploader (if AE)  -> company AE  -> none
+            # Admin uploaders match neither role fallback, so blank cells stay
+            # unassigned (per the agreed rule).
+            sdr_user = file_sdr or (current_user if uploader_role == "sdr" else None)
+            if sdr_user:
+                contact.sdr_id = sdr_user.id
+                contact.sdr_name = sdr_user.name
+            elif company and company.sdr_id:
+                contact.sdr_id = company.sdr_id
+                contact.sdr_name = company.sdr_name
+            ae_user = file_ae or (current_user if uploader_role == "ae" else None)
+            if ae_user:
+                contact.assigned_to_id = ae_user.id
+                contact.assigned_rep_email = ae_user.email
+            elif company and company.assigned_to_id:
+                contact.assigned_to_id = company.assigned_to_id
+                contact.assigned_rep_email = company.assigned_rep_email
             contact.persona = classify_persona(contact)
             if company:
                 refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
