@@ -988,13 +988,26 @@ async def import_contacts_csv(
             # Admin uploaders match neither role fallback, so blank cells stay
             # unassigned (per the agreed rule).
             sdr_user = file_sdr or (current_user if uploader_role == "sdr" else None)
+            ae_user = file_ae or (current_user if uploader_role == "ae" else None)
+            # MIRROR — a prospect must never be left half-owned. If exactly one
+            # role resolved to a real rep AND nothing else (file/uploader/the
+            # company) will fill the other slot, that same rep covers both until
+            # someone reassigns: an SDR who sources an account is its interim AE,
+            # and vice-versa. This only fills a slot that would otherwise be
+            # orphaned — it never overrides a company's real SDR/AE, and a
+            # both-empty admin bulk upload still stays fully unassigned.
+            company_has_sdr = bool(company and company.sdr_id)
+            company_has_ae = bool(company and company.assigned_to_id)
+            if sdr_user and not ae_user and not company_has_ae:
+                ae_user = sdr_user
+            elif ae_user and not sdr_user and not company_has_sdr:
+                sdr_user = ae_user
             if sdr_user:
                 contact.sdr_id = sdr_user.id
                 contact.sdr_name = sdr_user.name
             elif company and company.sdr_id:
                 contact.sdr_id = company.sdr_id
                 contact.sdr_name = company.sdr_name
-            ae_user = file_ae or (current_user if uploader_role == "ae" else None)
             if ae_user:
                 contact.assigned_to_id = ae_user.id
                 contact.assigned_rep_email = ae_user.email
