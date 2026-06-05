@@ -854,12 +854,28 @@ function RepActivityTable({
               Rank #{index + 1}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 10 }}>
-            <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" onClick={() => onOpenMetric(row, "emails")} />
-            <StatPill label="Reply %" value={`${row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}%`} tone="#eefbf2" text="#2f8d5d" />
-            <StatPill label="Open %" value={`${row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}%`} tone="#eefbf2" text="#2f8d5d" />
-            <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" onClick={() => onOpenMetric(row, "calls")} />
-            <StatPill label="Connected %" value={`${row.calls > 0 ? Math.round((row.connected_calls / row.calls) * 100) : 0}%`} tone="#edf9f8" text="#15736d" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+            <StatPill
+              label="Emails"
+              value={row.emails}
+              tone="#eefbf2"
+              text="#2f8d5d"
+              sub={
+                <>
+                  <span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% reply</span>
+                  <span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>
+                </>
+              }
+              onClick={() => onOpenMetric(row, "emails")}
+            />
+            <StatPill
+              label="Calls"
+              value={row.calls}
+              tone="#eef3ff"
+              text="#445fd0"
+              sub={<span>{row.calls > 0 ? Math.round((row.connected_calls / row.calls) * 100) : 0}% connected</span>}
+              onClick={() => onOpenMetric(row, "calls")}
+            />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
             <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
           </div>
@@ -874,12 +890,14 @@ function StatPill({
   value,
   tone,
   text,
+  sub,
   onClick,
 }: {
   label: string;
   value: string | number;
   tone: string;
   text: string;
+  sub?: ReactNode;
   onClick?: () => void;
 }) {
   // Rate pills pass a string like "45%": display-only, always full opacity.
@@ -906,6 +924,23 @@ function StatPill({
     >
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+      {sub ? (
+        <span
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 1,
+            marginTop: 2,
+            fontSize: 10,
+            fontWeight: 700,
+            color: text,
+            opacity: 0.78,
+          }}
+        >
+          {sub}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -1066,12 +1101,26 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
               </p>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))", gap: 10 }}>
-              <StatPill label="Emails" value={selectedRow.totals.emails} tone="#eefbf2" text="#2f8d5d" />
-              <StatPill label="Reply %" value={`${emailReplyRate}%`} tone="#eefbf2" text="#2f8d5d" />
-              <StatPill label="Open %" value={`${emailOpenRate}%`} tone="#eefbf2" text="#2f8d5d" />
-              <StatPill label="Calls" value={selectedRow.totals.calls} tone="#eef3ff" text="#445fd0" />
-              <StatPill label="Connected %" value={`${callConnectionRate}%`} tone="#edf9f8" text="#15736d" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+              <StatPill
+                label="Emails"
+                value={selectedRow.totals.emails}
+                tone="#eefbf2"
+                text="#2f8d5d"
+                sub={
+                  <>
+                    <span>{emailReplyRate}% reply</span>
+                    <span>{emailOpenRate}% open</span>
+                  </>
+                }
+              />
+              <StatPill
+                label="Calls"
+                value={selectedRow.totals.calls}
+                tone="#eef3ff"
+                text="#445fd0"
+                sub={<span>{callConnectionRate}% connected</span>}
+              />
               <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
             </div>
           </div>
