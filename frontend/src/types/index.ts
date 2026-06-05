@@ -94,6 +94,9 @@ export interface Contact {
   // Aggregate count of Activity rows with type='call' for this contact.
   // Drives the per-attempt yellow-dot rail on the prospect-page progress cell.
   call_attempt_count?: number;
+  // Latest rep comment + total count (comments are activity rows, type='comment').
+  latest_comment?: string | null;
+  comment_count?: number;
   // Scheduled follow-up datetime for `interested_follow_up_required` /
   // `call_back_later_rescheduled` dispositions. Cleared automatically when
   // the disposition changes to something that doesn't imply a follow-up.

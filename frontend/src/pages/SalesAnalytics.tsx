@@ -856,12 +856,12 @@ function RepActivityTable({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 10 }}>
             <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" onClick={() => onOpenMetric(row, "emails")} />
+            <StatPill label="Reply %" value={`${row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}%`} tone="#eefbf2" text="#2f8d5d" />
+            <StatPill label="Open %" value={`${row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}%`} tone="#eefbf2" text="#2f8d5d" />
             <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" onClick={() => onOpenMetric(row, "calls")} />
-            <StatPill label="Connected" value={row.connected_calls} tone="#edf9f8" text="#15736d" onClick={() => onOpenMetric(row, "connected_calls")} />
-            <StatPill label="Live Calls" value={row.live_calls} tone="#f4efff" text="#6b4bd6" onClick={() => onOpenMetric(row, "live_calls")} />
+            <StatPill label="Connected %" value={`${row.calls > 0 ? Math.round((row.connected_calls / row.calls) * 100) : 0}%`} tone="#edf9f8" text="#15736d" />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
             <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
-            <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" onClick={() => onOpenMetric(row, "total")} />
           </div>
         </div>
       ))}
@@ -882,13 +882,15 @@ function StatPill({
   text: string;
   onClick?: () => void;
 }) {
-  const numericValue = Number(value || 0);
+  // Rate pills pass a string like "45%": display-only, always full opacity.
+  const isRate = typeof value === "string";
+  const numericValue = isRate ? 1 : Number(value || 0);
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick || numericValue <= 0}
-      title={numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
+      title={isRate ? label : numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -918,7 +920,6 @@ const REP_ACTIVITY_METRICS: Array<{
   { key: "emails", label: "Emails", color: "#2f8d5d", tone: "#eefbf2", icon: Mail },
   { key: "calls", label: "Calls", color: "#445fd0", tone: "#eef3ff", icon: Phone },
   { key: "connected_calls", label: "Connected", color: "#15736d", tone: "#edf9f8", icon: Phone },
-  { key: "live_calls", label: "Live Calls", color: "#6b4bd6", tone: "#f4efff", icon: Phone },
   { key: "linkedin_reachouts", label: "LinkedIn", color: "#0a66c2", tone: "#eef4ff", icon: Link2 },
   { key: "meetings", label: "Meetings", color: "#c16a18", tone: "#fff4ea", icon: CalendarDays },
 ];
@@ -926,7 +927,7 @@ const REP_ACTIVITY_METRICS: Array<{
 type RepMetricKey = (typeof REP_ACTIVITY_METRICS)[number]["key"];
 
 const OUTREACH_MIX_KEYS: RepMetricKey[] = ["emails", "calls", "linkedin_reachouts", "meetings"];
-const CALL_QUALITY_KEYS: RepMetricKey[] = ["calls", "connected_calls", "live_calls"];
+const CALL_QUALITY_KEYS: RepMetricKey[] = ["calls", "connected_calls"];
 
 const REP_ACTIVITY_META = Object.fromEntries(
   REP_ACTIVITY_METRICS.map((metric) => [metric.key, metric]),
@@ -1030,7 +1031,8 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
     total: week.total,
   }));
   const callConnectionRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.connected_calls / selectedRow.totals.calls) * 100) : 0;
-  const liveCallRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.live_calls / selectedRow.totals.calls) * 100) : 0;
+  const emailReplyRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_replies / selectedRow.totals.emails) * 100) : 0;
+  const emailOpenRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_opens / selectedRow.totals.emails) * 100) : 0;
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -1065,11 +1067,11 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))", gap: 10 }}>
-              <StatPill label="Touches" value={selectedRow.totals.total} tone="#f5efff" text="#7245d7" />
               <StatPill label="Emails" value={selectedRow.totals.emails} tone="#eefbf2" text="#2f8d5d" />
+              <StatPill label="Reply %" value={`${emailReplyRate}%`} tone="#eefbf2" text="#2f8d5d" />
+              <StatPill label="Open %" value={`${emailOpenRate}%`} tone="#eefbf2" text="#2f8d5d" />
               <StatPill label="Calls" value={selectedRow.totals.calls} tone="#eef3ff" text="#445fd0" />
               <StatPill label="Connected %" value={`${callConnectionRate}%`} tone="#edf9f8" text="#15736d" />
-              <StatPill label="Live %" value={`${liveCallRate}%`} tone="#f4efff" text="#6b4bd6" />
               <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
             </div>
           </div>

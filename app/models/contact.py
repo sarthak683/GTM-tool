@@ -106,6 +106,11 @@ class ContactRead(ContactBase):
     # Computed aggregate: count of activities of type='call' for this contact.
     # Populated by ContactRepository.list_with_company_name; never written by clients.
     call_attempt_count: int = 0
+    # Computed: the most recent rep comment (activity type='comment') + how many
+    # exist. Populated by list_with_company_name; comments themselves live as
+    # Activity rows so the full history is in the timeline / GET /activities.
+    latest_comment: Optional[str] = None
+    comment_count: int = 0
     created_at: datetime
     updated_at: datetime
 

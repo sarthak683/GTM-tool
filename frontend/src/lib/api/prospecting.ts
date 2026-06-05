@@ -30,6 +30,15 @@ export const outreachApi = {
     request<OutreachSequence>(`/api/v1/outreach/sequences/${contactId}`),
   getSequenceOptional: (contactId: string) =>
     request<OutreachSequence | null>(`/api/v1/outreach/contacts/${contactId}/sequence`),
+  listInstantlyCampaigns: () =>
+    request<{ campaigns: { id: string; name: string; status?: number | string | null }[] }>(
+      `/api/v1/outreach/instantly/campaigns`,
+    ),
+  bulkAddToInstantlyCampaign: (contactIds: string[], campaignId: string) =>
+    request<{ campaign_id: string; requested: number; enrolled: number; skipped_no_email: number }>(
+      `/api/v1/outreach/instantly/bulk-add`,
+      { method: "POST", body: JSON.stringify({ contact_ids: contactIds, campaign_id: campaignId }) },
+    ),
   bulkGenerate: (companyId: string, personaFilter?: string) => {
     const params = personaFilter ? `?persona_filter=${personaFilter}` : "";
     return request<{ generated: number; skipped_existing: number; sequences: unknown[] }>(

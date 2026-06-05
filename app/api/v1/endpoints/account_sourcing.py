@@ -33,6 +33,7 @@ from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.user import User
 from app.repositories.company import CompanyRepository
+from app.repositories.contact import visible_contact_restriction
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
     _clean_company_name,
@@ -1553,8 +1554,8 @@ async def export_sourced_companies(
 
 @router.get("/export-contacts")
 async def export_sourced_contacts(
-    _user: CurrentUser,
-    session: DBSession = None,
+    current_user: CurrentUser,
+    session: DBSession,
     assigned_rep_email: str | None = Query(default=None),
     batch_id: UUID | None = Query(default=None),
 ):
@@ -1564,6 +1565,12 @@ async def export_sourced_contacts(
         .where(Company.sourcing_batch_id.isnot(None))
         .order_by(Company.created_at.desc(), Contact.created_at.desc())
     )
+    # Prospect-visibility: a non-admin may export only their own + unassigned
+    # contacts (this CSV emits full name/email/linkedin, so an ungated export was
+    # a full-identity workspace dump).
+    restriction = await visible_contact_restriction(session, current_user)
+    if restriction is not None:
+        stmt = stmt.where(restriction)
     if assigned_rep_email:
         stmt = stmt.where(
             (Contact.assigned_rep_email == assigned_rep_email) | (Company.assigned_rep_email == assigned_rep_email)
@@ -1727,17 +1734,27 @@ async def icp_research_company(company_id: UUID, session: DBSession = None):
 # ── Company Contacts ──────────────────────────────────────────────────────────
 
 @router.get("/companies/{company_id}/contacts", response_model=list[ContactRead])
-async def get_company_contacts(company_id: UUID, session: DBSession = None):
-    """Get all contacts discovered for a company."""
+async def get_company_contacts(company_id: UUID, session: DBSession, current_user: CurrentUser):
+    """Get the contacts for a company, scoped to what the caller may see.
+
+    Visibility is identical to the prospects list: a non-admin sees only the
+    company's contacts they own (either slot) plus unassigned ones. Without this,
+    clicking a prospect's company name exposed every rep's contacts at that
+    account (the prospect-visibility leak).
+    """
     company = await session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    result = await session.execute(
+    stmt = (
         select(Contact)
         .where(Contact.company_id == company_id)
         .order_by(Contact.created_at.desc())
     )
+    restriction = await visible_contact_restriction(session, current_user)
+    if restriction is not None:
+        stmt = stmt.where(restriction)
+    result = await session.execute(stmt)
     all_contacts = result.scalars().all()
     filtered_contacts = [contact for contact in all_contacts if is_priority_stakeholder_candidate(contact)]
     contacts = filtered_contacts or all_contacts

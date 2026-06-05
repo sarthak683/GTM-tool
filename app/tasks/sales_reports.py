@@ -43,10 +43,38 @@ def send_us_pod_call_report(
     return _run_async_task(_async_send_us_pod_call_report(report_date, report_type, recipients))
 
 
+@celery_app.task(name="app.tasks.sales_reports.send_india_pod_call_report")
+def send_india_pod_call_report(
+    report_date: str | None = None,
+    report_type: str = "auto",
+    recipients: list[str] | None = None,
+) -> dict:
+    """Send the scheduled India pod call report — same report machinery as the
+    US pod, pointed at the India roster + its own config block / schedule."""
+    from app.services.us_pod_call_report import (
+        INDIA_POD_REPS,
+        INDIA_DEFAULT_SALES_REPORT_SETTINGS,
+    )
+    return _run_async_task(_async_send_us_pod_call_report(
+        report_date,
+        report_type,
+        recipients,
+        config_key="india_sales_report",
+        config_defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS,
+        reps=INDIA_POD_REPS,
+        pod_label="India Pod",
+    ))
+
+
 async def _async_send_us_pod_call_report(
     report_date: str | None = None,
     report_type: str = "auto",
     recipients: list[str] | None = None,
+    *,
+    config_key: str = "sales_report",
+    config_defaults: dict | None = None,
+    reps: list[dict] | None = None,
+    pod_label: str = "US Pod",
 ) -> dict:
     # Local imports so module load doesn't bind the shared engine to whatever
     # loop happens to be active at Celery worker import time. We deliberately
@@ -70,7 +98,7 @@ async def _async_send_us_pod_call_report(
     parsed_date = date.fromisoformat(report_date) if report_date else None
 
     async with task_session() as session:
-        report_settings = await load_sales_report_settings(session)
+        report_settings = await load_sales_report_settings(session, key=config_key, defaults=config_defaults)
         resolved_report_type = scheduled_report_type(report_settings=report_settings) if report_type == "auto" else report_type
         scheduled_call = not parsed_date and recipients is None and report_type == "auto"
 
@@ -183,6 +211,10 @@ async def _async_send_us_pod_call_report(
                 parsed_date,
                 report_type=rtype,
                 recipients=recipients,
+                reps=reps,
+                config_key=config_key,
+                config_defaults=config_defaults,
+                pod_label=pod_label,
             )
             send_results = report.get("send_results", []) or []
             all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
@@ -191,7 +223,7 @@ async def _async_send_us_pod_call_report(
             ]
 
             if scheduled_call and all_sent:
-                current = normalize_sales_report_settings(report_settings)
+                current = normalize_sales_report_settings(report_settings, defaults=config_defaults)
                 current[_stored_key_field(rtype)] = tkey
                 # Maintain the legacy single-key field too — keeps any
                 # external consumer that reads `last_scheduled_send_key`
@@ -201,7 +233,7 @@ async def _async_send_us_pod_call_report(
                 row = await session.get(WorkspaceSettings, 1)
                 if row is not None:
                     sync_settings = dict(row.sync_schedule_settings or {})
-                    sync_settings["sales_report"] = current
+                    sync_settings[config_key] = current
                     row.sync_schedule_settings = sync_settings
                     session.add(row)
                     await session.commit()

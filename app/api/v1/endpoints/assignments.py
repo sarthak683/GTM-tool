@@ -36,10 +36,14 @@ class BulkAssignRequest(BaseModel):
 
 
 def _validate_assignment_user(user: User, *, role: str) -> None:
-    expected_role = "sdr" if role == "sdr" else "ae"
-    if user.role != expected_role:
+    # The AE/SDR slots are ownership labels, not a hard role gate: any active
+    # team member (admin/ae/sdr) may hold either slot. This lets admins (e.g.
+    # Shahruk) own prospects as AE *or* SDR, and lets AEs cover the SDR slot.
+    # We only reject genuinely non-assignable accounts.
+    assignable = {"admin", "ae", "sdr"}
+    if (user.role or "").lower() not in assignable:
         raise ValidationError(
-            f"Cannot assign {user.name} ({user.role.upper()}) to the {expected_role.upper()} slot"
+            f"Cannot assign {user.name} ({(user.role or 'unknown').upper()}) — not an assignable team member"
         )
 
 
@@ -139,9 +143,17 @@ async def assign_company(
     ).scalars().all()
     for contact in contacts:
         if is_sdr:
+            # Preserve deliberate per-contact splits: only cascade onto contacts
+            # that were following the company's previous SDR (or are unassigned).
+            # A contact pointed at a DIFFERENT SDR (e.g. a timezone split) is left
+            # untouched. `current_assigned_id` is the company's pre-change SDR.
+            if contact.sdr_id not in (None, current_assigned_id):
+                continue
             contact.sdr_id = company.sdr_id
             contact.sdr_name = company.sdr_name
         else:
+            if contact.assigned_to_id not in (None, current_assigned_id):
+                continue
             contact.assigned_to_id = company.assigned_to_id
             contact.assigned_rep_email = company.assigned_rep_email
         contact.updated_at = datetime.utcnow()
@@ -326,9 +338,14 @@ async def bulk_assign_companies(
         ).scalars().all()
         for contact in contacts:
             if is_sdr:
+                # Preserve deliberate per-contact SDR splits (see assign_company).
+                if contact.sdr_id not in (None, current_assigned_id):
+                    continue
                 contact.sdr_id = company.sdr_id
                 contact.sdr_name = company.sdr_name
             else:
+                if contact.assigned_to_id not in (None, current_assigned_id):
+                    continue
                 contact.assigned_to_id = company.assigned_to_id
                 contact.assigned_rep_email = company.assigned_rep_email
             contact.updated_at = datetime.utcnow()

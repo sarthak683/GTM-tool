@@ -78,6 +78,13 @@ celery_app.conf.update(
             "task": "app.tasks.sales_reports.send_us_pod_call_report",
             "schedule": crontab(minute="*/15"),
         },
+        # India pod report — same 15-min cadence; the task self-gates on its own
+        # config block (india_sales_report): enabled flag, send_days, send time,
+        # and dedup key. Default-off until verified, then flip enabled=true.
+        "send-india-pod-call-report-daily": {
+            "task": "app.tasks.sales_reports.send_india_pod_call_report",
+            "schedule": crontab(minute="*/15"),
+        },
         "sync-instantly-campaigns": {
             "task": "app.tasks.instantly_sync.sync_active_instantly_campaigns",
             "schedule": 900,  # every 15 minutes — fallback for webhook delivery gaps

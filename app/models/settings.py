@@ -467,6 +467,7 @@ class SalesReportSettingsRead(SQLModel):
     send_minute: int
     cutoff_timezone: str
     cutoff_hour: int
+    cutoff_minute: int = 0
     report_label_timezone: str
     send_days: list[str]
     weekly_report_day: str
@@ -485,6 +486,7 @@ class SalesReportSettingsUpdate(SQLModel):
     send_minute: Optional[int] = None
     cutoff_timezone: Optional[str] = None
     cutoff_hour: Optional[int] = None
+    cutoff_minute: Optional[int] = None
     report_label_timezone: Optional[str] = None
     send_days: Optional[list[str]] = None
     weekly_report_day: Optional[str] = None

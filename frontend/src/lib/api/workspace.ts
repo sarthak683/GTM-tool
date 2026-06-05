@@ -328,6 +328,8 @@ export type SalesRepActivityRow = {
   connected_calls: number;
   live_calls: number;
   emails: number;
+  email_opens: number;
+  email_replies: number;
   linkedin_reachouts: number;
   meetings: number;
   total: number;

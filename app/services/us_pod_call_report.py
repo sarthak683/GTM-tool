@@ -45,6 +45,47 @@ US_POD_REPORT_RECIPIENTS = [
     "sarthak@beacon.li",
 ]
 
+# India pod — same {name, email, aliases} roster shape as US, sourced from the
+# shared pod registry. The same call-report machinery is reused, just pointed at
+# this roster + its own config block (`india_sales_report`) and schedule.
+INDIA_POD_REPS = [
+    {"name": "Annie Gupta", "email": "annie@beacon.li", "aliases": ["annie"]},
+    {"name": "Dyuthith Din", "email": "dyuthith@beacon.li", "aliases": ["dyuthith"]},
+    {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
+    {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},
+    {"name": "Sandeep Sinha", "email": "sandeep@beacon.li", "aliases": ["sandeep"]},
+]
+
+INDIA_POD_REPORT_RECIPIENTS = [
+    "annie@beacon.li",
+    "dyuthith@beacon.li",
+    "yash@beacon.li",
+    "bhavya@beacon.li",
+    "sandeep@beacon.li",
+    "rakesh@beacon.li",  # boss
+    "sarthak@beacon.li",
+]
+
+# India pod works an IST daytime (it doesn't call US prospects overnight like the
+# US pod), so its "day" is a normal IST calendar day: reset at IST midnight, send
+# the recap the next morning IST. Distinct from the US pod's 7:30 AM IST cutoff.
+INDIA_DEFAULT_SALES_REPORT_SETTINGS = {
+    "enabled": False,  # seeded on; flip on after first verification
+    "recipients": INDIA_POD_REPORT_RECIPIENTS,
+    "send_timezone": "Asia/Kolkata",
+    "send_hour": 9,
+    "send_minute": 0,
+    "cutoff_timezone": "Asia/Kolkata",
+    "cutoff_hour": 0,
+    "cutoff_minute": 0,
+    "report_label_timezone": "Asia/Kolkata",
+    "send_days": ["mon", "tue", "wed", "thu", "fri", "sat"],
+    "weekly_report_day": "sat",
+    "skip_weekends": True,
+    "nonprod_scheduled_enabled": False,
+    "nonprod_recipients": ["sarthak@beacon.li"],
+}
+
 DEFAULT_SALES_REPORT_SETTINGS = {
     "enabled": True,
     "recipients": US_POD_REPORT_RECIPIENTS,
@@ -53,6 +94,7 @@ DEFAULT_SALES_REPORT_SETTINGS = {
     "send_minute": 0,
     "cutoff_timezone": "Asia/Kolkata",
     "cutoff_hour": 6,
+    "cutoff_minute": 0,
     "report_label_timezone": "America/Chicago",
     # Saturday IS a send day: the pod reports US/Chicago activity from an IST
     # clock, so Friday's US workday only completes Saturday morning IST. The
@@ -78,9 +120,10 @@ def _zone_name(value: object, fallback: str) -> str:
         return fallback
 
 
-def normalize_sales_report_settings(value: dict | None) -> dict[str, Any]:
+def normalize_sales_report_settings(value: dict | None, defaults: dict | None = None) -> dict[str, Any]:
+    base = defaults or DEFAULT_SALES_REPORT_SETTINGS
     raw = value if isinstance(value, dict) else {}
-    merged = {**DEFAULT_SALES_REPORT_SETTINGS, **raw}
+    merged = {**DEFAULT_SALES_REPORT_SETTINGS, **base, **raw}
 
     def _emails(items: object, fallback: list[str]) -> list[str]:
         if isinstance(items, str):
@@ -107,12 +150,13 @@ def normalize_sales_report_settings(value: dict | None) -> dict[str, Any]:
 
     return {
         "enabled": bool(merged.get("enabled")),
-        "recipients": _emails(merged.get("recipients"), US_POD_REPORT_RECIPIENTS),
+        "recipients": _emails(merged.get("recipients"), base.get("recipients", US_POD_REPORT_RECIPIENTS)),
         "send_timezone": _zone_name(merged.get("send_timezone"), "Asia/Kolkata"),
         "send_hour": max(0, min(23, int(merged.get("send_hour") or 0))),
         "send_minute": max(0, min(59, int(merged.get("send_minute") or 0))),
         "cutoff_timezone": _zone_name(merged.get("cutoff_timezone"), "Asia/Kolkata"),
         "cutoff_hour": max(0, min(23, int(merged.get("cutoff_hour") or 0))),
+        "cutoff_minute": max(0, min(59, int(merged.get("cutoff_minute") or 0))),
         "report_label_timezone": _zone_name(merged.get("report_label_timezone"), "America/Chicago"),
         "send_days": send_days,
         "weekly_report_day": weekly_report_day,
@@ -134,12 +178,19 @@ def normalize_sales_report_settings(value: dict | None) -> dict[str, Any]:
     }
 
 
-async def load_sales_report_settings(session: AsyncSession) -> dict[str, Any]:
+async def load_sales_report_settings(
+    session: AsyncSession,
+    key: str = "sales_report",
+    defaults: dict | None = None,
+) -> dict[str, Any]:
+    """Load a pod's report config block. `key` selects the block in
+    sync_schedule_settings ("sales_report" = US, "india_sales_report" = India);
+    `defaults` supplies that pod's defaults when the block is absent/partial."""
     row = await session.get(WorkspaceSettings, 1)
     raw = None
     if row and isinstance(row.sync_schedule_settings, dict):
-        raw = row.sync_schedule_settings.get("sales_report")
-    return normalize_sales_report_settings(raw if isinstance(raw, dict) else None)
+        raw = row.sync_schedule_settings.get(key)
+    return normalize_sales_report_settings(raw if isinstance(raw, dict) else None, defaults=defaults)
 
 
 def _report_zone(config: dict[str, Any] | None, key: str, fallback: ZoneInfo) -> ZoneInfo:
@@ -152,6 +203,12 @@ def _cutoff_hour(config: dict[str, Any] | None) -> int:
     if not config:
         return REPORT_CUTOFF_HOUR
     return max(0, min(23, int(config.get("cutoff_hour", REPORT_CUTOFF_HOUR))))
+
+
+def _cutoff_minute(config: dict[str, Any] | None) -> int:
+    if not config:
+        return 0
+    return max(0, min(59, int(config.get("cutoff_minute", 0) or 0)))
 
 
 def is_production_environment() -> bool:
@@ -208,13 +265,14 @@ def _latest_completed_report_cutoff(now: datetime | None = None, report_settings
         reference = reference.replace(tzinfo=timezone.utc)
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
+    cutoff_minute = _cutoff_minute(report_settings)
     local_reference = reference.astimezone(cutoff_tz)
     cutoff_date = local_reference.date()
-    if local_reference.time() < time(cutoff_hour):
+    if local_reference.time() < time(cutoff_hour, cutoff_minute):
         cutoff_date -= timedelta(days=1)
     return datetime.combine(
         cutoff_date,
-        time(cutoff_hour),
+        time(cutoff_hour, cutoff_minute),
         tzinfo=cutoff_tz,
     )
 
@@ -246,9 +304,10 @@ def weekly_report_period(report_date: date | None = None, report_settings: dict[
 def _utc_bounds_for_report_day(day: date, report_settings: dict[str, Any] | None = None) -> tuple[datetime, datetime]:
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
+    cutoff_minute = _cutoff_minute(report_settings)
     local_end = datetime.combine(
         day + timedelta(days=1),
-        time(cutoff_hour),
+        time(cutoff_hour, cutoff_minute),
         tzinfo=cutoff_tz,
     )
     local_start = local_end - timedelta(days=1)
@@ -264,14 +323,15 @@ def _activity_report_date(activity: Activity, report_settings: dict[str, Any] | 
         created_at = created_at.replace(tzinfo=timezone.utc)
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
+    cutoff_minute = _cutoff_minute(report_settings)
     label_tz = _report_zone(report_settings, "report_label_timezone", REPORT_TIMEZONE)
     local_created_at = created_at.astimezone(cutoff_tz)
     report_period_start = local_created_at.date()
-    if local_created_at.time() < time(cutoff_hour):
+    if local_created_at.time() < time(cutoff_hour, cutoff_minute):
         report_period_start -= timedelta(days=1)
     report_cutoff_end = datetime.combine(
         report_period_start + timedelta(days=1),
-        time(cutoff_hour),
+        time(cutoff_hour, cutoff_minute),
         tzinfo=cutoff_tz,
     )
     return report_cutoff_end.astimezone(label_tz).date()
@@ -372,7 +432,8 @@ def _is_meeting_booked_call(activity: Activity) -> bool:
     return outcome in {"demo_scheduled_booked", "meeting_confirmed"}
 
 
-async def _resolve_reps(session: AsyncSession) -> list[ResolvedRep]:
+async def _resolve_reps(session: AsyncSession, reps: list[dict] | None = None) -> list[ResolvedRep]:
+    roster = reps if reps is not None else US_POD_REPS
     users = (
         await session.execute(select(User).where(User.is_active == True))  # noqa: E712
     ).scalars().all()
@@ -380,7 +441,7 @@ async def _resolve_reps(session: AsyncSession) -> list[ResolvedRep]:
     by_name = {_normalize(user.name): user for user in users}
 
     resolved: list[ResolvedRep] = []
-    for rep in US_POD_REPS:
+    for rep in roster:
         expected_email = _normalize(rep["email"])
         user = by_email.get(expected_email)
         if not user:
@@ -475,6 +536,7 @@ async def build_us_pod_call_report(
     session: AsyncSession,
     report_date: date | None = None,
     report_settings: dict[str, Any] | None = None,
+    reps: list[dict] | None = None,
 ) -> dict[str, Any]:
     config = normalize_sales_report_settings(report_settings or await load_sales_report_settings(session))
     target_date = report_date or default_report_date(report_settings=config)
@@ -484,6 +546,7 @@ async def build_us_pod_call_report(
         period_end=target_date,
         report_type="daily",
         report_settings=config,
+        reps=reps,
     )
 
 
@@ -491,6 +554,7 @@ async def build_us_pod_weekly_call_report(
     session: AsyncSession,
     report_date: date | None = None,
     report_settings: dict[str, Any] | None = None,
+    reps: list[dict] | None = None,
 ) -> dict[str, Any]:
     config = normalize_sales_report_settings(report_settings or await load_sales_report_settings(session))
     period_start, period_end = weekly_report_period(report_date, report_settings=config)
@@ -500,6 +564,7 @@ async def build_us_pod_weekly_call_report(
         period_end=period_end,
         report_type="weekly",
         report_settings=config,
+        reps=reps,
     )
 
 
@@ -510,6 +575,7 @@ async def _build_us_pod_call_report_for_period(
     period_end: date,
     report_type: str,
     report_settings: dict[str, Any] | None = None,
+    reps: list[dict] | None = None,
 ) -> dict[str, Any]:
     config = normalize_sales_report_settings(report_settings)
     target_date = period_end
@@ -521,7 +587,7 @@ async def _build_us_pod_call_report_for_period(
     period_start_utc, _ = _utc_bounds_for_report_day(period_start, config)
     _, period_end_utc = _utc_bounds_for_report_day(period_end, config)
 
-    reps = await _resolve_reps(session)
+    reps = await _resolve_reps(session, reps)
     rep_ids = {rep.user_id for rep in reps if rep.user_id}
     rep_ids_by_aircall_name = {
         _normalize(rep.name): rep.user_id
@@ -704,15 +770,17 @@ async def _build_us_pod_call_report_for_period(
 
 
 def _report_subject(report: dict[str, Any]) -> str:
+    pod = report.get("pod_label", "US Pod")
     if report.get("report_type") == "weekly":
-        return f"US Pod Weekly Call Report - {report['period_start']} to {report['period_end']}"
-    return f"US Pod Daily Call Report - {report['report_date']}"
+        return f"{pod} Weekly Call Report - {report['period_start']} to {report['period_end']}"
+    return f"{pod} Daily Call Report - {report['report_date']}"
 
 
 def _report_title(report: dict[str, Any]) -> str:
+    pod = report.get("pod_label", "US Pod")
     if report.get("report_type") == "weekly":
-        return f"US Pod Weekly Call Report - {report['period_start']} to {report['period_end']}"
-    return f"US Pod Daily Call Report - {report['report_date']}"
+        return f"{pod} Weekly Call Report - {report['period_start']} to {report['period_end']}"
+    return f"{pod} Daily Call Report - {report['report_date']}"
 
 
 def _render_report_text(report: dict[str, Any]) -> str:
@@ -824,12 +892,21 @@ async def send_us_pod_call_report_email(
     *,
     report_type: str = "daily",
     recipients: list[str] | None = None,
+    reps: list[dict] | None = None,
+    config_key: str = "sales_report",
+    config_defaults: dict | None = None,
+    pod_label: str = "US Pod",
 ) -> dict[str, Any]:
-    report_settings = await load_sales_report_settings(session)
+    report_settings = await load_sales_report_settings(session, key=config_key, defaults=config_defaults)
     if report_type == "weekly":
-        report = await build_us_pod_weekly_call_report(session, report_date, report_settings=report_settings)
+        report = await build_us_pod_weekly_call_report(session, report_date, report_settings=report_settings, reps=reps)
     else:
-        report = await build_us_pod_call_report(session, report_date, report_settings=report_settings)
+        report = await build_us_pod_call_report(session, report_date, report_settings=report_settings, reps=reps)
+    report["pod_label"] = pod_label
+    # Re-stamp subject/body now that pod_label is known (build defaults to US Pod).
+    report["subject"] = _report_subject(report)
+    report["body"] = _render_report_text(report)
+    report["html_body"] = _render_report_html(report)
     safe_recipients, blocked_recipients = _resolve_report_recipients(recipients, report_settings)
     report["recipients"] = safe_recipients
     if blocked_recipients:

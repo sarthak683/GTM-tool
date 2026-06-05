@@ -70,6 +70,7 @@ export const contactsApi = {
     sequenceStatus?: string[];
     callDisposition?: string[];
     emailState?: string[];
+    linkedinStatus?: string[];
     // Outcome-color filters wired to the prospect-row progress dots.
     // Backend maps each color to a set of dispositions / sequence states
     // (see app/repositories/contact.py). Multi-value = OR.
@@ -107,6 +108,7 @@ export const contactsApi = {
     if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
     if (params.callDisposition?.length) search.set("call_disposition", params.callDisposition.join(","));
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
+    if (params.linkedinStatus?.length) search.set("linkedin_status", params.linkedinStatus.join(","));
     if (params.callOutcomeColor?.length) search.set("call_outcome_color", params.callOutcomeColor.join(","));
     if (params.emailOutcomeColor?.length) search.set("email_outcome_color", params.emailOutcomeColor.join(","));
     if (params.callAttemptsBucket?.length) search.set("call_attempts_bucket", params.callAttemptsBucket.join(","));

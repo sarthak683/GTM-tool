@@ -198,6 +198,8 @@ class RepActivityRow(BaseModel):
     connected_calls: int = 0
     live_calls: int = 0
     emails: int
+    email_opens: int = 0
+    email_replies: int = 0
     linkedin_reachouts: int = 0
     meetings: int
     total: int
@@ -1402,9 +1404,27 @@ async def sales_dashboard(
                 if week_counts is not None:
                     week_counts["live_calls"] += 1
         elif medium == "email" or kind == "email":
-            activity_bucket["emails"] += 1
-            if week_counts is not None:
-                week_counts["emails"] += 1
+            # All email events share type="email"; the sent/opened/replied
+            # distinction lives in event_metadata.event_type (Instantly) or
+            # source (replies). Count SENT for the emails total, and tally
+            # opens/replies separately so the cards can show open/reply rate
+            # over emails sent. Personal-sync rows carry no event_type → treated
+            # as sent (they ARE real sent/received emails).
+            meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+            event_type = str(meta.get("event_type") or "").strip().lower()
+            src = str(row.source or "").strip().lower()
+            if event_type == "email_opened":
+                activity_bucket["email_opens"] = activity_bucket.get("email_opens", 0) + 1
+            elif event_type == "reply_received" or src == "email_reply":
+                activity_bucket["email_replies"] = activity_bucket.get("email_replies", 0) + 1
+            elif event_type in ("", "email_sent"):
+                # SENT only — empty event_type = real sent/synced email (gmail/
+                # personal sync); "email_sent" = Instantly send. Everything else
+                # (bounced, clicked, campaign_completed, lead_* signals) is NOT a
+                # sent email and is excluded from the denominator.
+                activity_bucket["emails"] += 1
+                if week_counts is not None:
+                    week_counts["emails"] += 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
@@ -1530,6 +1550,8 @@ async def sales_dashboard(
             connected_calls=int(bucket["connected_calls"]),
             live_calls=int(bucket["live_calls"]),
             emails=int(bucket["emails"]),
+            email_opens=int(bucket.get("email_opens", 0)),
+            email_replies=int(bucket.get("email_replies", 0)),
             linkedin_reachouts=int(bucket["linkedin_reachouts"]),
             meetings=int(bucket["meetings"]),
             total=int(bucket["total"]),

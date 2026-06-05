@@ -145,6 +145,37 @@ def _search_tokens(value: str) -> list[str]:
     ]
 
 
+def contact_visibility_filter(user_id: UUID):
+    """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
+
+    A non-admin may see a contact only if they own it in either slot, or it is
+    fully unassigned (both slots NULL — an unclaimed lead anyone may pick up).
+    This is the SINGLE SOURCE OF TRUTH for the rule; reuse it on EVERY contact-
+    browse surface (the prospects list, the account-sourcing company page, global
+    search) so visibility can never diverge between surfaces. Mirrors the inline
+    `.in_()` form in ``list_with_company_name`` (which supports a multi-id list).
+    """
+    return or_(
+        Contact.assigned_to_id == user_id,
+        Contact.sdr_id == user_id,
+        and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
+    )
+
+
+async def visible_contact_restriction(session: AsyncSession, user):
+    """Return the visibility predicate for `user`, or None if they may see ALL
+    prospects (admins + users in the view-all grant list).
+
+    Apply with ``stmt = stmt.where(restriction)`` only when not None. Keeps every
+    endpoint's gate consistent with the main list's `can_view_all_prospects` rule.
+    """
+    from app.services.permissions import can_view_all_prospects
+
+    if await can_view_all_prospects(session, user):
+        return None
+    return contact_visibility_filter(user.id)
+
+
 class ContactRepository(BaseRepository[Contact]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Contact, session)
@@ -159,6 +190,7 @@ class ContactRepository(BaseRepository[Contact]):
         sequence_status: Optional[str] = None,
         call_disposition: Optional[str] = None,
         email_state: Optional[str] = None,
+        linkedin_status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_dir: Optional[str] = None,
         ae_id: Optional[str] = None,
@@ -198,6 +230,25 @@ class ContactRepository(BaseRepository[Contact]):
             .correlate(Contact)
             .scalar_subquery()
         )
+        # Rep comments are stored as Activity rows (type='comment'). Surface the
+        # newest one + a count so the prospect table can show a "Comments" column
+        # at a glance; the full history is fetched on demand via GET /activities.
+        latest_comment_subq = (
+            select(Activity.content)
+            .where(Activity.contact_id == Contact.id)
+            .where(Activity.type == "comment")
+            .order_by(Activity.created_at.desc())
+            .limit(1)
+            .correlate(Contact)
+            .scalar_subquery()
+        )
+        comment_count_subq = (
+            select(func.count(Activity.id))
+            .where(Activity.contact_id == Contact.id)
+            .where(Activity.type == "comment")
+            .correlate(Contact)
+            .scalar_subquery()
+        )
         base_stmt = (
             select(
                 Contact,
@@ -205,6 +256,8 @@ class ContactRepository(BaseRepository[Contact]):
                 ae_user.name.label("assigned_to_name"),
                 sdr_user.name.label("sdr_name"),
                 call_attempt_count_subq.label("call_attempt_count"),
+                latest_comment_subq.label("latest_comment"),
+                comment_count_subq.label("comment_count"),
             )
             .outerjoin(Company, Contact.company_id == Company.id)
             .outerjoin(ae_user, Contact.assigned_to_id == ae_user.id)
@@ -420,6 +473,28 @@ class ContactRepository(BaseRepository[Contact]):
             if disposition_filter is not None:
                 base_stmt = base_stmt.where(disposition_filter)
                 count_stmt = count_stmt.where(disposition_filter)
+
+        # LinkedIn-status filter — mirrors call_disposition. Named values are
+        # sent / accepted / follow_up / meeting_booked / meeting_rejected;
+        # "not_contacted" matches prospects with no LinkedIn touch logged yet
+        # (status null/empty/"none").
+        linkedin_status_values = _parse_multi_query(linkedin_status)
+        if linkedin_status_values:
+            include_not_contacted = "not_contacted" in linkedin_status_values
+            named_statuses = [v for v in linkedin_status_values if v != "not_contacted"]
+            clauses = []
+            if named_statuses:
+                clauses.append(Contact.linkedin_status.in_(named_statuses))
+            if include_not_contacted:
+                clauses.append(or_(
+                    Contact.linkedin_status.is_(None),
+                    Contact.linkedin_status == "",
+                    Contact.linkedin_status == "none",
+                ))
+            linkedin_filter = or_(*clauses) if clauses else None
+            if linkedin_filter is not None:
+                base_stmt = base_stmt.where(linkedin_filter)
+                count_stmt = count_stmt.where(linkedin_filter)
 
         email_filters = []
         for state in _parse_multi_query(email_state):
@@ -676,12 +751,14 @@ class ContactRepository(BaseRepository[Contact]):
         ).all()
 
         result: list[ContactRead] = []
-        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count in rows:
+        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count, latest_comment, comment_count in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
             read.assigned_to_name = assigned_to_name
             read.sdr_name = sdr_name
             read.call_attempt_count = int(call_attempt_count or 0)
+            read.latest_comment = latest_comment
+            read.comment_count = int(comment_count or 0)
             result.append(read)
 
         await apply_contact_tracking(self.session, result)
