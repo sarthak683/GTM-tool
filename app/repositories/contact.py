@@ -148,16 +148,22 @@ def _search_tokens(value: str) -> list[str]:
 def contact_visibility_filter(user_id: UUID):
     """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
 
-    A non-admin may see a contact only if they own it in either slot, or it is
-    fully unassigned (both slots NULL — an unclaimed lead anyone may pick up).
-    This is the SINGLE SOURCE OF TRUTH for the rule; reuse it on EVERY contact-
-    browse surface (the prospects list, the account-sourcing company page, global
-    search) so visibility can never diverge between surfaces. Mirrors the inline
-    `.in_()` form in ``list_with_company_name`` (which supports a multi-id list).
+    A non-admin may see a contact if they own it in either slot, OR they are the
+    AE on the contact's COMPANY (account-scoped: an AE sees every prospect inside
+    the accounts they own, including ones an SDR sourced and hasn't handed over
+    yet), OR it is fully unassigned (both slots NULL — an unclaimed lead anyone
+    may pick up). This is the SINGLE SOURCE OF TRUTH for the rule; reuse it on
+    EVERY contact-browse surface (the prospects list, the account-sourcing
+    company page, global search) so visibility can never diverge between
+    surfaces. Mirrors the inline `.in_()` form in ``list_with_company_name``
+    (which supports a multi-id list).
     """
     return or_(
         Contact.assigned_to_id == user_id,
         Contact.sdr_id == user_id,
+        Contact.company_id.in_(
+            select(Company.id).where(Company.assigned_to_id == user_id)
+        ),
         and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
     )
 
@@ -517,14 +523,20 @@ class ContactRepository(BaseRepository[Contact]):
         owner_ids = _parse_uuid_values(owner_id)
 
         # Hard server-side visibility gate (NOT user-selectable): when set, the
-        # viewer may see only prospects they own (either ownership slot) or that
-        # are unowned (both slots empty). Admins/granted users bypass this by
-        # passing restrict_to_owner_id=None. ANDed with every other filter.
+        # viewer may see prospects they own (either ownership slot), prospects in
+        # an account they own as AE (account-scoped — an AE sees everything inside
+        # their accounts, incl. SDR-sourced prospects not yet handed over), or
+        # unowned prospects (both slots empty). Admins/granted users bypass this
+        # by passing restrict_to_owner_id=None. ANDed with every other filter.
+        # Keep in lockstep with contact_visibility_filter() above.
         restrict_ids = _parse_uuid_values(restrict_to_owner_id)
         if restrict_ids:
             visibility_filter = or_(
                 Contact.assigned_to_id.in_(restrict_ids),
                 Contact.sdr_id.in_(restrict_ids),
+                Contact.company_id.in_(
+                    select(Company.id).where(Company.assigned_to_id.in_(restrict_ids))
+                ),
                 and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
             )
             base_stmt = base_stmt.where(visibility_filter)
