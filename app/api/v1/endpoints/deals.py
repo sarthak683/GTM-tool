@@ -278,6 +278,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             and deal.next_step_due_at is None
         ):
             update_data["next_step_due_at"] = _default_next_step_due()
+    if "qualification_reason" in update_data:
+        update_data["qualification_reason"] = _normalize_optional_text(update_data.get("qualification_reason"))
 
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:
@@ -295,6 +297,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         changes.append(f"Amount changed to ${update_data['value']}")
     if "priority" in update_data and update_data["priority"] != deal.priority:
         changes.append(f"Priority changed to {update_data['priority']}")
+    if "priority_tag" in update_data and update_data["priority_tag"] != deal.priority_tag:
+        changes.append(f"Priority changed to {update_data['priority_tag'] or 'none'}")
     if "assigned_to_id" in update_data and str(update_data.get("assigned_to_id")) != str(deal.assigned_to_id):
         changes.append("Assignee changed")
     if "commit_to_deal" in update_data and update_data["commit_to_deal"] != deal.commit_to_deal:
@@ -305,6 +309,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         # Only stamp next_step_updated_at when the text itself changed —
         # ignore no-op writes that send the same string back.
         update_data["next_step_updated_at"] = datetime.utcnow()
+    if "qualification_reason" in update_data and update_data["qualification_reason"] != _normalize_optional_text(deal.qualification_reason):
+        changes.append(_summarize_text_change("Qualification criteria", update_data["qualification_reason"]))
     if "description" in update_data and update_data["description"] != _normalize_optional_text(deal.description):
         changes.append(_summarize_text_change("Description", update_data["description"]))
 

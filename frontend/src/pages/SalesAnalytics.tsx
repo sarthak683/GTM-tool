@@ -1999,9 +1999,12 @@ export default function SalesAnalytics() {
     trend?: { curr: number; prev: number };
   }> = data ? (() => {
     const s = data.summary;
-    const pocProcuredCount = s.poc_agreed_count + (s.poc_wip_count ?? 0);
-    const pocProcuredPrev = (s.prev_poc_agreed_count ?? 0) + (s.prev_poc_wip_count ?? 0);
-    const pocProcuredDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed" || d.milestone_key === "poc_wip");
+    // POC Agreed and POC WIP are distinct funnel stages. Report each on its own
+    // milestone so the board MIS sees true POC WIP numbers — previously these two
+    // were summed under a single, mislabeled "POC WIP" tile, so the drill-down
+    // was dominated by POC Agreed deals.
+    const pocAgreedDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed");
+    const pocWipDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_wip");
 
     return [
     {
@@ -2056,13 +2059,22 @@ export default function SalesAnalytics() {
       trend: { curr: s.demo_done_count, prev: s.prev_demo_done_count ?? 0 },
     },
     {
-      label: "POC WIP",
-      value: String(pocProcuredCount),
-      hint: "Unique companies that entered POC Agreed or POC WIP for the first time in this window",
+      label: "POC Agreed",
+      value: String(s.poc_agreed_count),
+      hint: "Unique companies that reached POC Agreed for the first time in this window",
       tone: "blue" as const,
       icon: ArrowUpRight,
-      deals: pocProcuredDeals,
-      trend: { curr: pocProcuredCount, prev: pocProcuredPrev },
+      deals: pocAgreedDeals,
+      trend: { curr: s.poc_agreed_count, prev: s.prev_poc_agreed_count ?? 0 },
+    },
+    {
+      label: "POC WIP",
+      value: String(s.poc_wip_count ?? 0),
+      hint: "Unique companies that reached POC WIP for the first time in this window",
+      tone: "blue" as const,
+      icon: ArrowUpRight,
+      deals: pocWipDeals,
+      trend: { curr: s.poc_wip_count ?? 0, prev: s.prev_poc_wip_count ?? 0 },
     },
     {
       label: "POC Done",

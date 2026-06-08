@@ -627,7 +627,7 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "", source: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", geography: "", tags: "", source: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; source: boolean }>({ name: false, source: false });
@@ -675,7 +675,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         company_id: form.company_id || undefined,
         value: form.value ? Number(form.value) : undefined,
         close_date_est: form.close_date_est || undefined,
-        priority: form.priority,
+        priority_tag: form.priority_tag || undefined,
         assigned_to_id: form.assigned_to_id || undefined,
         geography: form.geography || undefined,
         source: form.source || undefined,
@@ -772,11 +772,11 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))}>
                 {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}
               </select>
-              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}>
-                <option value="urgent">Urgent</option>
-                <option value="high">High</option>
-                <option value="normal">Normal</option>
-                <option value="low">Low</option>
+              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.priority_tag} onChange={(event) => setForm((current) => ({ ...current, priority_tag: event.target.value }))}>
+                <option value="">No priority</option>
+                <option value="P0">P0</option>
+                <option value="P1">P1</option>
+                <option value="P2">P2</option>
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -940,7 +940,7 @@ function CrmImportModal({
 }
 
 
-function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; accountPriorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
+function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; priorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
 
   return (
@@ -1000,14 +1000,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag, s
           <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#7a8ca1" }}><Clock3 size={10} /><span>{deal.days_in_stage ?? 0}d</span></div>
           {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 10, color: "#5e738b", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={10} />{deal.contact_count}</span>}
         </div>
-        {accountPriorityTag && (
+        {priorityTag && (
           <span style={{
             fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 5, flexShrink: 0,
-            background: accountPriorityTag === "P0" ? "#fff1f2" : accountPriorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
-            color: accountPriorityTag === "P0" ? "#be123c" : accountPriorityTag === "P1" ? "#c2410c" : "#15803d",
-            border: `1px solid ${accountPriorityTag === "P0" ? "#fecdd3" : accountPriorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
+            background: priorityTag === "P0" ? "#fff1f2" : priorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
+            color: priorityTag === "P0" ? "#be123c" : priorityTag === "P1" ? "#c2410c" : "#15803d",
+            border: `1px solid ${priorityTag === "P0" ? "#fecdd3" : priorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
           }}>
-            {accountPriorityTag}
+            {priorityTag}
           </span>
         )}
       </div>
@@ -1773,7 +1773,7 @@ export default function Pipeline() {
       });
       if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
       if (priorityFilters.length) items = items.filter((deal) => {
-        const tag = deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : null;
+        const tag = deal.priority_tag ?? null;
         return tag ? priorityFilters.includes(tag) : false;
       });
       if (healthFilters.length) items = items.filter((deal) => healthFilters.includes((deal.health || "unknown").toLowerCase()));
@@ -2035,7 +2035,7 @@ export default function Pipeline() {
       "Geography": deal.geography || normalizeGeo(company?.region) || "",
       "Health": deal.health || "",
       "Health Score": deal.health_score ?? "",
-      "Priority": company?.priority_tag || "",
+      "Priority": deal.priority_tag || "",
       "Commit": deal.commit_to_deal ? "Yes" : "No",
       "Close Date": deal.close_date_est ? formatDate(deal.close_date_est) : "",
       "Days In Stage": deal.days_in_stage ?? "",
@@ -2766,7 +2766,7 @@ export default function Pipeline() {
                             next.set("deal", deal.id);
                             return next;
                           }, { replace: true });
-                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} accountPriorityTag={deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} priorityTag={deal.priority_tag ?? undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -2814,7 +2814,7 @@ export default function Pipeline() {
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrency(deal.value)}</span>
-                        {(() => { const p = companyMap.get(deal.company_id!)?.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
+                        {(() => { const p = deal.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
                       </div>
                     </div>
                   </div>
@@ -2876,7 +2876,7 @@ export default function Pipeline() {
           next.delete("deal");
           return next;
         }, { replace: true });
-      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} onCompanyUpdated={(updated) => setCompanies((prev) => prev.some((c) => c.id === updated.id) ? prev.map((c) => c.id === updated.id ? updated : c) : [...prev, updated])} />}
+      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingDealMove && (
         <>

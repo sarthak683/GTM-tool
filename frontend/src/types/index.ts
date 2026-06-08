@@ -44,6 +44,8 @@ export interface Company {
   pe_investors?: string;
   vc_investors?: string;
   strategic_investors?: string;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -179,6 +181,8 @@ export interface Deal {
   next_step?: string;
   next_step_updated_at?: string;
   next_step_due_at?: string;
+  qualification_reason?: string;
+  priority_tag?: "P0" | "P1" | "P2" | null;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;
