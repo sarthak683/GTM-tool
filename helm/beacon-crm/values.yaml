@@ -1,3 +1,12 @@
+# =============================================================================
+# WARNING: image tags
+# Every image below defaults to `tag: latest`. `latest` is mutable — it defeats
+# rollbacks (you can't roll back to a previous "latest") and makes the running
+# code ambiguous. For staging/prod, ALWAYS override each image with a real,
+# immutable per-deploy tag (e.g. v0.13-<git-sha>), as the deploy handoff does
+# via --set-string backend.image=... / frontend.image=...
+# =============================================================================
+
 # -- Global settings
 global:
   imageRegistry: ""
@@ -28,15 +37,39 @@ backend:
     CLAUDE_MODEL_COMPLEX: claude-opus-4-6
     RESEND_FROM_EMAIL: onboarding@resend.dev
 
-# -- Celery Worker
+# -- Celery Worker (default queue only)
 worker:
   image:
     repository: beacon-crm/backend
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Comma-separated Celery queues this worker consumes. The default worker takes
+  # ONLY "celery"; the "priority" queue is served by the priorityWorker below so
+  # latency-sensitive user tasks aren't blocked behind long syncs.
+  queues: celery
   # Right-sized to observed prod usage (~44m CPU, ~190Mi); generous mem limit
   # for heavy tasks (transcription, enrichment, report generation).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 640Mi
+
+# -- Celery Priority Worker (serves the "priority" queue)
+# Mirrors the prod gtm-priority-worker-deployment. Without it, tasks routed to
+# the "priority" queue (sourcing upload, ICP research, call transcription) would
+# have no consumer.
+priorityWorker:
+  image:
+    repository: beacon-crm/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Consumes ONLY the "priority" queue.
+  queues: priority
   resources:
     requests:
       cpu: 100m
@@ -68,7 +101,11 @@ frontend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
-  port: 80
+  # 8080, not 80: the image is nginxinc/nginx-unprivileged, which runs as a
+  # non-root user and listens on 8080 (see frontend/nginx.conf). This value
+  # drives the container port, readiness/liveness probes, and the Service
+  # targetPort. The Service's external port stays 80.
+  port: 8080
   # Nginx serving static assets — tiny (~1m CPU, ~6Mi).
   resources:
     requests:
@@ -138,3 +175,41 @@ secrets:
   anthropicApiKey: ""
   claudeApiKey: ""
   resendApiKey: ""
+
+# -- Pod/container hardening (applied to backend, worker, priority-worker, beat,
+# and frontend deployments). runAsUser/runAsGroup/fsGroup 10001 must match the
+# `appuser` baked into the backend Dockerfile. The frontend overrides the uid to
+# 101 because it runs the nginx-unprivileged image.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  allowPrivilegeEscalation: false
+  # Default for workloads that don't write to the container root fs. Deployments
+  # that need scratch space mount a /tmp emptyDir and keep this true; the
+  # template passes an explicit per-container override where needed.
+  readOnlyRootFilesystem: true
+  # nginx-unprivileged image user (uid/gid 101).
+  frontend:
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+
+# -- Horizontal Pod Autoscaling (CPU-based, autoscaling/v2).
+# Disabled by default to preserve current single-replica behavior. When enabled,
+# the backend (and optionally worker) Deployments drop their static replicas and
+# the HPA owns the count. CPU targets are a percentage of the container CPU
+# request, so keep resources.requests.cpu set on the scaled workloads.
+autoscaling:
+  enabled: false
+  backend:
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  worker:
+    # Only takes effect when autoscaling.enabled is also true.
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 75

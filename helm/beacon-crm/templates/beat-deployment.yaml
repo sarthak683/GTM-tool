@@ -19,10 +19,15 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- include "beacon.podSecurityContext" . | nindent 6 }}
       containers:
         - name: beat
           image: {{ include "beacon.image" (dict "image" .Values.beat.image "global" .Values.global) }}
-          command: ["celery", "-A", "app.celery_app.celery_app", "beat", "--loglevel=info"]
+          # Celery's default PersistentScheduler writes a celerybeat-schedule shelve
+          # file relative to the workdir (/app). Redirect it into the writable /tmp
+          # emptyDir so the rest of the root filesystem can stay read-only.
+          command: ["celery", "-A", "app.celery_app.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
           envFrom:
             - secretRef:
                 name: {{ include "beacon.fullname" . }}-secret
@@ -37,3 +42,9 @@ spec:
               value: {{ include "beacon.redisUrl" . }}
           resources:
             {{- toYaml .Values.beat.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

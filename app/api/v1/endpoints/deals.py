@@ -465,7 +465,7 @@ async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
 # ── Deal Contacts ────────────────────────────────────────────────────────────
 
 @router.get("/{deal_id}/contacts", response_model=list[DealContactRead])
-async def list_deal_contacts(deal_id: UUID, session: DBSession):
+async def list_deal_contacts(deal_id: UUID, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     await repo.get_or_raise(deal_id)
     return await repo.list_contacts(deal_id)
@@ -551,7 +551,7 @@ async def list_deal_stage_history(deal_id: UUID, session: DBSession, _user: Curr
 
 
 @router.get("/{deal_id}/activities", response_model=list[ActivityRead])
-async def list_deal_activities(deal_id: UUID, session: DBSession):
+async def list_deal_activities(deal_id: UUID, session: DBSession, _user: CurrentUser):
     from app.models.meeting import Meeting
 
     repo = DealRepository(session)

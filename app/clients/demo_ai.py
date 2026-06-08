@@ -224,7 +224,22 @@ async def _call_model(
                         "type": "enabled",
                         "budget_tokens": thinking_budget,
                     },
-                    system=system,
+                    # Prompt caching: the system prompt (~3.3KB) is byte-stable
+                    # across the initial attempt, the compact retry, the repair
+                    # path, and all transient-error retries — only the user
+                    # message varies. Cache it with an ephemeral breakpoint so
+                    # repeated calls read the prefix instead of re-billing it.
+                    # On Sonnet 4.6 the 2048-token minimum applies; this prompt
+                    # is borderline, so caching is best-effort (no harm if the
+                    # prefix is below the floor — it simply won't cache). The
+                    # per-request `thinking`/`budget_tokens` are untouched.
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
                     messages=[{"role": "user", "content": user_message}],
                 ) as stream:
                     final = await stream.get_final_message()

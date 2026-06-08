@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import func, literal, or_
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -45,14 +46,32 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 _WEBHOOK_SECRET_HEADER = "x-beacon-webhook-secret"
 
 
-def _verify_webhook_secret(request: Request, expected: str) -> None:
+def _verify_webhook_secret(request: Request, expected: str, source: str = "webhook") -> None:
     """Constant-time compare of the shared-secret header.
 
-    If `expected` is empty (e.g. dev / mock mode with no secret configured),
-    verification is skipped so local testing keeps working. Production must
-    set INSTANTLY_WEBHOOK_SECRET and AIRCALL_WEBHOOK_SECRET.
+    Behaviour by configuration:
+      * `expected` is set → the request must carry a matching
+        X-Beacon-Webhook-Secret header (constant-time compare); mismatch or
+        missing header is rejected with 401.
+      * `expected` is empty/unset and REQUIRE_WEBHOOK_SECRETS is True →
+        fail-closed: reject with 401 because the source cannot be verified.
+      * `expected` is empty/unset and REQUIRE_WEBHOOK_SECRETS is False →
+        allow (so local/dev keeps working) but emit a warning so the
+        unverified source is visible in logs.
     """
     if not expected:
+        if settings.REQUIRE_WEBHOOK_SECRETS:
+            logger.warning(
+                "Rejecting %s webhook: no shared secret configured and "
+                "REQUIRE_WEBHOOK_SECRETS is enabled.",
+                source,
+            )
+            raise HTTPException(status_code=401, detail="Webhook secret not configured")
+        logger.warning(
+            "%s webhook is UNVERIFIED: no shared secret configured. Set the "
+            "corresponding *_WEBHOOK_SECRET to authenticate this source.",
+            source,
+        )
         return
     provided = request.headers.get(_WEBHOOK_SECRET_HEADER, "") or ""
     if not hmac.compare_digest(provided, expected):
@@ -157,20 +176,32 @@ async def _find_contact_by_phone(session, phone: str | None) -> Optional[Contact
     if not clean:
         return None
 
-    # Try suffix match using last 9 digits — covers country code variations
-    # Fetch ALL contacts with a phone number (no LIMIT — number grows over time)
-    result = await session.execute(
-        select(Contact).where(Contact.phone.isnot(None))
-    )
-    candidates = result.scalars().all()
+    # Suffix match on the last 9 digits — covers country-code variations.
+    # Push the matching into Postgres instead of materializing every
+    # phone-bearing contact and looping in Python: strip non-digits with
+    # regexp_replace, then reproduce the exact three OR-conditions the old
+    # Python used (full equality; candidate ends with incoming's last-9;
+    # incoming ends with candidate's last-9). `right()` mirrors Python's [-9:]
+    # slice (returns the whole string when the number is shorter than 9).
     suffix = clean[-9:]
-    for candidate in candidates:
-        candidate_clean = _clean_phone(candidate.phone)
-        if not candidate_clean:
-            continue
-        if candidate_clean == clean or candidate_clean.endswith(suffix) or clean.endswith(candidate_clean[-9:]):
-            return candidate
-    return None
+    # Candidate digits, with non-digits stripped — equivalent to _clean_phone().
+    cand_digits = func.regexp_replace(Contact.phone, r"\D", "", "g")
+    cand_last9 = func.right(cand_digits, 9)
+    result = await session.execute(
+        select(Contact)
+        .where(
+            Contact.phone.isnot(None),
+            cand_digits != "",  # mirror Python's `if not candidate_clean: continue`
+            or_(
+                cand_digits == clean,                                  # candidate_clean == clean
+                func.right(cand_digits, len(suffix)) == suffix,        # candidate_clean.endswith(suffix)
+                func.right(literal(clean), func.length(cand_last9))    # clean.endswith(candidate_clean[-9:])
+                == cand_last9,
+            ),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _find_best_deal_for_contact(session, contact_id: Optional[UUID]) -> Optional[Deal]:
@@ -198,6 +229,17 @@ _AIRCALL_CI_EVENTS = {
     "action_item.created",
     "sentiment.created",
 }
+# Map each CI event to the single CI signal it announces, so we can fetch only
+# that one endpoint instead of all five on every event. The key matches the
+# `labels` used in _fetch_aircall_bundle / the keys stored in the ci bundle.
+_AIRCALL_CI_EVENT_SIGNAL = {
+    "summary.created": "summary",
+    "topics.created": "topics",
+    "transcription.created": "transcription",
+    "action_item.created": "action_items",
+    "sentiment.created": "sentiments",
+}
+_AIRCALL_CI_SIGNALS = ("summary", "topics", "transcription", "action_items", "sentiments")
 _AIRCALL_CALL_ENRICH_EVENTS = {
     "call.ended",
     "call.commented",
@@ -455,29 +497,80 @@ async def _safe_aircall_fetch(label: str, call_id: int, coro) -> Any:
         return None
 
 
-async def _fetch_aircall_bundle(client: AircallClient, call_id: int, event: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+def _merge_aircall_ci_bundle(
+    base: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Merge a freshly-fetched (possibly partial) CI bundle onto a stored one.
+
+    All five CI events for a call share one Activity row (external id
+    `aircall:ci:{call_id}`), so each late-arriving signal must layer onto the
+    bundle already persisted instead of clobbering the others. Only non-empty
+    incoming values overwrite; `raw` is merged key-by-key.
+    """
+    if not incoming:
+        return dict(base) if base else {}
+    merged: dict[str, Any] = dict(base) if base else {}
+    for key in ("summary", "topics", "transcription", "utterances", "action_items", "sentiments"):
+        value = incoming.get(key)
+        if value:
+            merged[key] = value
+    incoming_raw = incoming.get("raw")
+    if isinstance(incoming_raw, dict):
+        merged_raw = dict(merged.get("raw") or {})
+        for raw_key, raw_value in incoming_raw.items():
+            if raw_value is not None:
+                merged_raw[raw_key] = raw_value
+        if merged_raw:
+            merged["raw"] = merged_raw
+    return merged
+
+
+async def _fetch_aircall_bundle(
+    client: AircallClient,
+    call_id: int,
+    event: str,
+    *,
+    ci_signals: tuple[str, ...] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Fetch call details and/or conversation-intelligence signals.
+
+    `ci_signals` controls which CI endpoints are hit. When None, the set is
+    derived from the event (one signal for a CI event, all five for
+    `call.comm_assets_generated`). The returned ci_bundle only contains the
+    fetched signals, so it can be merged onto an existing bundle without
+    requiring the other four endpoints to be re-fetched per event.
+    """
     fetched_call: dict[str, Any] | None = None
     ci_bundle: dict[str, Any] = {}
 
     should_fetch_call = event in _AIRCALL_CALL_ENRICH_EVENTS or event in _AIRCALL_CI_EVENTS
-    should_fetch_ci = event in _AIRCALL_CI_EVENTS or event == "call.comm_assets_generated"
+
+    if ci_signals is None:
+        if event in _AIRCALL_CI_EVENTS:
+            signal = _AIRCALL_CI_EVENT_SIGNAL.get(event)
+            ci_signals = (signal,) if signal else ()
+        elif event == "call.comm_assets_generated":
+            ci_signals = _AIRCALL_CI_SIGNALS
+        else:
+            ci_signals = ()
+    wanted = tuple(s for s in _AIRCALL_CI_SIGNALS if s in ci_signals)
+
+    _ci_fetchers = {
+        "summary": client.get_call_summary,
+        "topics": client.get_call_topics,
+        "transcription": client.get_call_transcription,
+        "action_items": client.get_call_action_items,
+        "sentiments": client.get_call_sentiments,
+    }
 
     labels: list[str] = []
     coroutines = []
     if should_fetch_call:
         labels.append("call")
         coroutines.append(_safe_aircall_fetch("call", call_id, client.get_call(call_id)))
-    if should_fetch_ci:
-        labels.extend(["summary", "topics", "transcription", "action_items", "sentiments"])
-        coroutines.extend(
-            [
-                _safe_aircall_fetch("summary", call_id, client.get_call_summary(call_id)),
-                _safe_aircall_fetch("topics", call_id, client.get_call_topics(call_id)),
-                _safe_aircall_fetch("transcription", call_id, client.get_call_transcription(call_id)),
-                _safe_aircall_fetch("action_items", call_id, client.get_call_action_items(call_id)),
-                _safe_aircall_fetch("sentiments", call_id, client.get_call_sentiments(call_id)),
-            ]
-        )
+    for signal in wanted:
+        labels.append(signal)
+        coroutines.append(_safe_aircall_fetch(signal, call_id, _ci_fetchers[signal](call_id)))
 
     if not coroutines:
         return None, {}
@@ -489,11 +582,14 @@ async def _fetch_aircall_bundle(client: AircallClient, call_id: int, event: str)
     if isinstance(call_payload, dict):
         fetched_call = call_payload.get("call") if isinstance(call_payload.get("call"), dict) else call_payload
 
-    summary_text = _normalize_aircall_summary(result_map.get("summary"))
-    topics = _normalize_aircall_topics(result_map.get("topics"))
-    transcript_text, utterances = _normalize_aircall_transcription(result_map.get("transcription"))
-    action_items = _normalize_aircall_action_items(result_map.get("action_items"))
-    sentiments = _normalize_aircall_sentiments(result_map.get("sentiments"))
+    summary_text = _normalize_aircall_summary(result_map.get("summary")) if "summary" in result_map else None
+    topics = _normalize_aircall_topics(result_map.get("topics")) if "topics" in result_map else []
+    if "transcription" in result_map:
+        transcript_text, utterances = _normalize_aircall_transcription(result_map.get("transcription"))
+    else:
+        transcript_text, utterances = None, []
+    action_items = _normalize_aircall_action_items(result_map.get("action_items")) if "action_items" in result_map else []
+    sentiments = _normalize_aircall_sentiments(result_map.get("sentiments")) if "sentiments" in result_map else []
 
     if summary_text or topics or transcript_text or action_items or sentiments:
         ci_bundle = {
@@ -504,11 +600,9 @@ async def _fetch_aircall_bundle(client: AircallClient, call_id: int, event: str)
             "action_items": action_items,
             "sentiments": sentiments,
             "raw": {
-                "summary": result_map.get("summary"),
-                "topics": result_map.get("topics"),
-                "transcription": result_map.get("transcription"),
-                "action_items": result_map.get("action_items"),
-                "sentiments": result_map.get("sentiments"),
+                key: result_map.get(key)
+                for key in ("summary", "topics", "transcription", "action_items", "sentiments")
+                if key in result_map
             },
         }
 
@@ -581,7 +675,7 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     the matching Contact and OutreachSequence, then update statuses and
     log an Activity.
     """
-    _verify_webhook_secret(request, settings.INSTANTLY_WEBHOOK_SECRET)
+    _verify_webhook_secret(request, settings.INSTANTLY_WEBHOOK_SECRET, source="instantly")
     payload: Dict[str, Any] = await request.json()
 
     # ── Parse common fields from Instantly payload ─────────────────────────────
@@ -1010,6 +1104,7 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
 
 @router.post("/fireflies")
 async def fireflies_webhook(request: Request, session: DBSession) -> dict:
+    _verify_webhook_secret(request, settings.FIREFLIES_WEBHOOK_SECRET, source="fireflies")
     payload: Dict[str, Any] = await request.json()
     title = payload.get("title", "Meeting transcript")
     deal_id: Optional[UUID] = None
@@ -1040,6 +1135,7 @@ async def fireflies_webhook(request: Request, session: DBSession) -> dict:
 
 @router.post("/tldv")
 async def tldv_webhook(request: Request, session: DBSession) -> dict:
+    _verify_webhook_secret(request, settings.TLDV_WEBHOOK_SECRET, source="tldv")
     payload: Dict[str, Any] = await request.json()
     event = str(payload.get("event") or "").strip()
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
@@ -1079,7 +1175,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
       call.commented     → sync agent note to CRM activity
       call.missed        → log missed call
     """
-    _verify_webhook_secret(request, settings.AIRCALL_WEBHOOK_SECRET)
+    _verify_webhook_secret(request, settings.AIRCALL_WEBHOOK_SECRET, source="aircall")
     payload: Dict[str, Any] = await request.json()
 
     event = str(payload.get("event", "") or "")
@@ -1128,11 +1224,22 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
 
     fetched_call: Dict[str, Any] | None = None
     ci_bundle: dict[str, Any] = {}
+    parsed_call_id: int | None = None
+    aircall_client: AircallClient | None = None
     if aircall_call_id:
         try:
-            fetched_call, ci_bundle = await _fetch_aircall_bundle(AircallClient(), int(aircall_call_id), event)
+            parsed_call_id = int(aircall_call_id)
         except ValueError:
             logger.warning("Aircall call id %s could not be parsed as an integer", aircall_call_id)
+    if parsed_call_id is not None:
+        aircall_client = AircallClient()
+        # Fetch only the call payload here (cheap, single request) so the
+        # enrichment below + the dedup signature stay identical. The expensive
+        # conversation-intelligence endpoints are deferred until AFTER the
+        # idempotency lookup, so we never re-fetch CI the stored row already has.
+        fetched_call, _ = await _fetch_aircall_bundle(
+            aircall_client, parsed_call_id, event, ci_signals=()
+        )
 
     if fetched_call:
         duration = fetched_call.get("duration") or duration
@@ -1159,6 +1266,54 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
         if agent_name == "Agent":
             fetched_user = fetched_call.get("user") if isinstance(fetched_call.get("user"), dict) else {}
             agent_name = fetched_user.get("name") or fetched_user.get("email") or agent_name
+
+    # ── Idempotency lookup BEFORE the expensive CI fetch ──────────────────────
+    # Compute the dedup key now (comment_text/tags already enriched above, so the
+    # signature is identical to before) and load any existing Activity for this
+    # call. All five CI events share one row (aircall:ci:{call_id}); reading the
+    # CI bundle already persisted on that row lets us skip re-fetching the four
+    # signals we already have and fetch only the one this event announces.
+    external_source_id = _build_aircall_external_id(
+        event=event,
+        call_id=aircall_call_id,
+        comment_text=comment_text,
+        tags=tags,
+        ci_bundle=ci_bundle,
+    )
+    existing_activity = await _get_activity_by_external_id(
+        session,
+        external_source="aircall",
+        external_source_id=external_source_id,
+    )
+    stored_ci_bundle: dict[str, Any] = {}
+    if existing_activity and isinstance(existing_activity.event_metadata, dict):
+        stored = existing_activity.event_metadata.get("conversation_intelligence")
+        if isinstance(stored, dict):
+            stored_ci_bundle = stored
+
+    # Deferred CI fetch: only for CI / comm-asset events, and only the signal(s)
+    # not already stored. A late-arriving CI event for an existing call fetches
+    # just its own signal; the others are reused from the persisted bundle.
+    if parsed_call_id is not None and aircall_client is not None and (
+        event in _AIRCALL_CI_EVENTS or event == "call.comm_assets_generated"
+    ):
+        if event in _AIRCALL_CI_EVENTS:
+            signal = _AIRCALL_CI_EVENT_SIGNAL.get(event)
+            wanted = (signal,) if signal else ()
+        else:  # call.comm_assets_generated — backfill anything still missing
+            wanted = _AIRCALL_CI_SIGNALS
+        # Skip signals the stored bundle already carries; fetch only the rest.
+        missing = tuple(s for s in wanted if not stored_ci_bundle.get(s))
+        if missing:
+            _, fresh_ci = await _fetch_aircall_bundle(
+                aircall_client, parsed_call_id, event, ci_signals=missing
+            )
+        else:
+            fresh_ci = {}
+        ci_bundle = _merge_aircall_ci_bundle(stored_ci_bundle, fresh_ci)
+    elif stored_ci_bundle:
+        # Non-CI event re-touching an existing CI row: keep what was stored.
+        ci_bundle = stored_ci_bundle
 
     contact = await _find_contact_by_phone(session, raw_digits)
     contact_id = contact.id if contact else None
@@ -1261,18 +1416,8 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
     if ci_bundle:
         enriched_payload["conversation_intelligence"] = ci_bundle
 
-    external_source_id = _build_aircall_external_id(
-        event=event,
-        call_id=aircall_call_id,
-        comment_text=comment_text,
-        tags=tags,
-        ci_bundle=ci_bundle,
-    )
-    existing_activity = await _get_activity_by_external_id(
-        session,
-        external_source="aircall",
-        external_source_id=external_source_id,
-    )
+    # external_source_id + existing_activity were resolved before the CI fetch
+    # above (the idempotency gate); reuse them here for the upsert.
     activity = existing_activity or Activity(
         source=source,
         external_source="aircall",
@@ -1353,6 +1498,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
 
 @router.post("/rb2b")
 async def rb2b_webhook(request: Request, session: DBSession) -> dict:
+    _verify_webhook_secret(request, settings.RB2B_WEBHOOK_SECRET, source="rb2b")
     payload: Dict[str, Any] = await request.json()
     visitor = payload.get("name", "Unknown visitor")
     company_name = payload.get("company_name", "Unknown company")

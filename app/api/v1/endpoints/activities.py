@@ -19,7 +19,13 @@ from app.services.disposition_effects import (
     apply_call_disposition_effects,
     is_meeting_booked_disposition,
 )
-from app.services.tasks import backfill_open_task_assignments, refresh_system_tasks_for_entity
+from app.services.tasks import (
+    backfill_open_task_assignments,
+    compute_deal_task_input_hash,
+    mark_deal_task_refresh_requested,
+    refresh_system_tasks_for_entity,
+    should_queue_deal_task_refresh,
+)
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 logger = logging.getLogger(__name__)
@@ -36,8 +42,25 @@ async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact
                 await refresh_system_tasks_for_entity(session, "contact", contact_id)
                 await backfill_open_task_assignments(session, entity_type="contact", entity_id=contact_id)
             if deal_id:
-                await refresh_system_tasks_for_entity(session, "deal", deal_id)
-                await backfill_open_task_assignments(session, entity_type="deal", entity_id=deal_id)
+                # refresh_system_tasks_for_entity(..., "deal", ...) unconditionally
+                # runs two Opus calls (interpret_deal_activity + emit_ai_tasks). This
+                # fires on EVERY activity create, so several activities in one session
+                # re-run identical Opus pairs even when the deal's inputs are unchanged.
+                # Apply the same hash+TTL+debounce gate the GET /tasks path already
+                # trusts (tasks.py list_tasks), short-circuiting BEFORE the LLM calls.
+                # Scoped to this activity-triggered deal path only — the GET "force"
+                # path and other always-run callers of refresh_system_tasks_for_entity
+                # are not affected because the gate lives here, not in that function.
+                deal = await session.get(Deal, deal_id)
+                if deal is not None:
+                    input_hash = await compute_deal_task_input_hash(session, deal)
+                    if should_queue_deal_task_refresh(deal, input_hash=input_hash):
+                        # Mark requested so a concurrent GET-path debounce sees this
+                        # in-flight refresh, mirroring the GET path's bookkeeping.
+                        mark_deal_task_refresh_requested(deal)
+                        session.add(deal)
+                        await refresh_system_tasks_for_entity(session, "deal", deal_id)
+                        await backfill_open_task_assignments(session, entity_type="deal", entity_id=deal_id)
             await session.commit()
         except Exception as exc:  # pragma: no cover - background safety net
             logger.warning("activity-triggered task refresh failed for deal=%s contact=%s: %s", deal_id, contact_id, exc)

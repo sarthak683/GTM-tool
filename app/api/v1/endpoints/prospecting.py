@@ -35,7 +35,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.config import settings
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.company import Company
 from app.repositories.company import CompanyRepository
 from app.services.icp_scorer import score_company
@@ -197,7 +197,11 @@ def _row_to_fields(row: dict) -> dict:
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.post("/bulk")
-async def bulk_prospect(file: UploadFile = File(...), session: DBSession = None):
+async def bulk_prospect(
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    session: DBSession = None,
+):
     """
     Upload a CSV of target companies. Works with Tracxn exports, Apollo
     exports, or a simple list with just company names.
@@ -264,7 +268,7 @@ async def bulk_prospect(file: UploadFile = File(...), session: DBSession = None)
 
 
 @router.get("/status/{batch_id}")
-async def batch_status(batch_id: str):
+async def batch_status(batch_id: str, current_user: CurrentUser):
     """Poll enrichment progress for a bulk import batch."""
     redis_client = _get_redis()
     raw = await redis_client.get(f"batch:{batch_id}")

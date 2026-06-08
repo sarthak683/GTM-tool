@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, MessageSquare, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react";
 
-import { authApi, tasksApi } from "../../lib/api";
+import { tasksApi } from "../../lib/api";
+import { getCachedUsers } from "../../lib/cachedFetch";
 import { useAuth } from "../../lib/AuthContext";
 import type { TaskItem, User as UserType } from "../../types";
 import { formatDate } from "../../lib/utils";
@@ -475,7 +476,7 @@ function TaskCenterModal({
     }
     if (isVisible) {
       void load("auto", { showSpinner: !cached });
-      authApi.listAllUsers().then(setUsers).catch(() => setUsers([]));
+      getCachedUsers().then(setUsers).catch(() => setUsers([]));
     }
   }, [cacheKey, isVisible, entityType, entityId]);
 

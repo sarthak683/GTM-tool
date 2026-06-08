@@ -1105,7 +1105,7 @@ async def cancel_batch_enrichment(batch_id: UUID, _admin: AdminUser, session: DB
 
 
 @router.get("/batches/{batch_id}/companies", response_model=list[CompanyRead])
-async def get_batch_companies(batch_id: UUID, session: DBSession = None, page: Pagination = None):
+async def get_batch_companies(batch_id: UUID, _user: CurrentUser, session: DBSession = None, page: Pagination = None):
     """List companies belonging to a specific sourcing batch."""
     batch = await session.get(SourcingBatch, batch_id)
     if not batch:
@@ -1360,6 +1360,40 @@ async def create_manual_company(
             message=f"Added back into sourcing by {current_user.name}",
             metadata={"batch_id": str(batch.id)},
         )
+    elif normalized_domain:
+        # Real domain supplied: funnel the insert through the domain-keyed
+        # get-or-create so a duplicate domain (e.g. two admins adding the same
+        # account at once) collapses onto the existing row under the
+        # lower(domain) unique index instead of raising. The lookups above just
+        # missed, so created=True is the expected path.
+        from app.repositories.company import get_or_create_company_by_domain
+
+        create_fields = {k: v for k, v in fields.items() if k != "domain"}
+        company, created = await get_or_create_company_by_domain(
+            session,
+            fields["domain"],
+            defaults={**create_fields, "sourcing_batch_id": batch.id},
+        )
+        if created:
+            append_company_activity_log(
+                company,
+                action="manual_company_created",
+                actor_name=current_user.name,
+                actor_email=current_user.email,
+                message=f"Manually created by {current_user.name}",
+                metadata={"batch_id": str(batch.id)},
+            )
+        else:
+            company = merge_company_from_upload(company, fields)
+            company.sourcing_batch_id = batch.id
+            append_company_activity_log(
+                company,
+                action="manual_company_requeued",
+                actor_name=current_user.name,
+                actor_email=current_user.email,
+                message=f"Added back into sourcing by {current_user.name}",
+                metadata={"batch_id": str(batch.id)},
+            )
     else:
         company = Company(**fields, sourcing_batch_id=batch.id)
         append_company_activity_log(
@@ -1413,7 +1447,7 @@ async def create_manual_company(
 # ── Single Company Detail ─────────────────────────────────────────────────────
 
 @router.get("/companies/{company_id}", response_model=CompanyRead)
-async def get_sourced_company(company_id: UUID, session: DBSession = None):
+async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Get a single sourced company with full enrichment data (including cache)."""
     company = await session.get(Company, company_id)
     if not company:
@@ -1606,7 +1640,7 @@ async def export_sourced_contacts(
 # ── Company Re-enrich ─────────────────────────────────────────────────────────
 
 @router.post("/companies/{company_id}/re-enrich")
-async def re_enrich_company(company_id: UUID, session: DBSession = None):
+async def re_enrich_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Re-run the deep TAL / ICP research pipeline for a company."""
     company = await session.get(Company, company_id)
     if not company:
@@ -1708,7 +1742,7 @@ async def bulk_enrich_companies(
 
 
 @router.post("/companies/{company_id}/icp-research")
-async def icp_research_company(company_id: UUID, session: DBSession = None):
+async def icp_research_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Run the full ICP intelligence pipeline for a single company.
 
     Uses web search, Apollo, website scraping, and Claude AI to produce
@@ -1766,7 +1800,7 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactRead)
-async def get_company_contact(contact_id: UUID, session: DBSession = None):
+async def get_company_contact(contact_id: UUID, _user: CurrentUser, session: DBSession = None):
     contact = await session.get(Contact, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
@@ -1779,7 +1813,7 @@ async def get_company_contact(contact_id: UUID, session: DBSession = None):
 
 
 @router.put("/contacts/{contact_id}", response_model=ContactRead)
-async def update_company_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession = None):
+async def update_company_contact(contact_id: UUID, payload: ContactUpdate, _user: CurrentUser, session: DBSession = None):
     contact = await session.get(Contact, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
@@ -1876,7 +1910,7 @@ async def add_contact_note(contact_id: UUID, payload: NoteCreate, session: DBSes
 # ── Contact Re-enrich ─────────────────────────────────────────────────────────
 
 @router.post("/contacts/{contact_id}/re-enrich")
-async def re_enrich_contact(contact_id: UUID, session: DBSession = None):
+async def re_enrich_contact(contact_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Re-enrich a single contact via Apollo + AI persona classification."""
     contact = await session.get(Contact, contact_id)
     if not contact:
@@ -1900,6 +1934,7 @@ async def re_enrich_contact(contact_id: UUID, session: DBSession = None):
 @router.post("/companies/{company_id}/push-instantly")
 async def push_to_instantly(
     company_id: UUID,
+    _user: CurrentUser,
     campaign_id: str = "default",
     session: DBSession = None,
 ):

@@ -151,7 +151,7 @@ async def reindex_user_folder(
         logger.exception("Unexpected error during user folder reindex")
         raise HTTPException(
             status_code=500,
-            detail=f"Reindex failed: {exc}. Check server logs for the full traceback.",
+            detail="Reindex failed. Check server logs for details.",
         ) from exc
 
 
@@ -183,10 +183,7 @@ async def reindex_admin_folder(
         logger.exception("Unexpected error during admin folder reindex")
         raise HTTPException(
             status_code=500,
-            detail=(
-                f"Reindex failed: {exc}. "
-                "Check server logs for the full traceback."
-            ),
+            detail="Reindex failed. Check server logs for details.",
         ) from exc
 
 

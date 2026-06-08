@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { UserPlus } from "lucide-react";
-import { authApi, assignmentsApi } from "../lib/api";
+import { assignmentsApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { User } from "../types";
 
@@ -52,7 +53,7 @@ export default function AssignDropdown({
 
   useEffect(() => {
     if (open && users.length === 0) {
-      authApi.listAllUsers().then(setUsers).catch(() => {});
+      getCachedUsers().then(setUsers).catch(() => {});
     }
   }, [open, users.length]);
 

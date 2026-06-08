@@ -35,7 +35,6 @@ import {
 } from "lucide-react";
 import {
   analyticsApi,
-  authApi,
   dealsApi,
   tasksApi,
   type SalesHighlight,
@@ -52,6 +51,7 @@ import {
   type SalesStageBucket,
   type SalesVelocityRow,
 } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
@@ -1860,8 +1860,7 @@ export default function SalesAnalytics() {
   );
 
   useEffect(() => {
-    authApi
-      .listAllUsers()
+    getCachedUsers()
       .then((users) => {
         setTeamUsers(
           users

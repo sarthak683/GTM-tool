@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
+import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
+import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
@@ -1686,7 +1687,7 @@ export default function Pipeline() {
     try {
       const [companyList, userList, summarySettings] = await Promise.all([
         companiesApi.list(),
-        authApi.listAllUsers().catch(() => []),
+        getCachedUsers().catch(() => []),
         settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
       ]);
       setCompanies(companyList);
@@ -1709,7 +1710,7 @@ export default function Pipeline() {
   }, []);
 
   useEffect(() => {
-    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
+    getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {

@@ -73,3 +73,37 @@ Redis URL.
 {{- define "beacon.redisUrl" -}}
 redis://{{ include "beacon.fullname" . }}-redis:{{ .Values.redis.port }}/0
 {{- end }}
+
+{{/*
+Pod-level securityContext (applies to every container in the pod).
+Sets the non-root uid/gid and the fsGroup so mounted volumes (e.g. the /tmp
+emptyDir) are group-writable by the runtime user. uid/gid 10001 must match the
+appuser baked into the backend Dockerfile.
+Usage: {{- include "beacon.podSecurityContext" . | nindent 6 }}
+*/}}
+{{- define "beacon.podSecurityContext" -}}
+securityContext:
+  runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+  runAsUser: {{ .Values.securityContext.runAsUser }}
+  runAsGroup: {{ .Values.securityContext.runAsGroup }}
+  fsGroup: {{ .Values.securityContext.fsGroup }}
+{{- end }}
+
+{{/*
+Container-level securityContext.
+Drops all Linux capabilities and blocks privilege escalation. readOnlyRootFilesystem
+is opt-in per workload because some containers write scratch files to /tmp:
+pass a dict with "readOnlyRootFilesystem" to override the global default.
+Usage:
+  {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+*/}}
+{{- define "beacon.containerSecurityContext" -}}
+{{- $readOnly := .context.Values.securityContext.readOnlyRootFilesystem -}}
+{{- if hasKey . "readOnlyRootFilesystem" }}{{- $readOnly = .readOnlyRootFilesystem -}}{{- end }}
+securityContext:
+  allowPrivilegeEscalation: {{ .context.Values.securityContext.allowPrivilegeEscalation }}
+  readOnlyRootFilesystem: {{ $readOnly }}
+  capabilities:
+    drop:
+      - ALL
+{{- end }}
