@@ -4,6 +4,7 @@ Hunter.io client — email pattern and company enrichment data.
 Real mode: calls Hunter API v2 when HUNTER_API_KEY is set.
 Mock mode: returns Faker data when key is empty.
 """
+import random
 from typing import Optional
 
 import httpx

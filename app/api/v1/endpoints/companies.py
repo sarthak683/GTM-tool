@@ -13,6 +13,7 @@ from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdat
 from app.models.deal import Deal, DealRead
 from app.repositories.company import CompanyRepository
 from app.schemas.common import PaginatedResponse
+from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 

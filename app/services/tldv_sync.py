@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,8 @@ from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
 from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.tasks import refresh_system_tasks_for_entity
+
+logger = logging.getLogger(__name__)
 
 
 FREE_EMAIL_PROVIDERS = {
