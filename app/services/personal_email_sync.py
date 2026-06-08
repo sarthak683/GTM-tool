@@ -517,6 +517,12 @@ async def _create_ai_task_for_deal(
     Create a system task on a deal based on an AI-detected intent.
     Returns True if a task was created.
     """
+    # This generator writes Task(task_type="system") directly (it does not go
+    # through refresh_system_tasks_for_entity), so it needs its own gate to
+    # honour the manual-tasks-only switch.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return False
+
     # intent_key is either "move_deal_stage:POC_AGREED" or a plain action
     if ":" in intent_key:
         action, target_stage = intent_key.split(":", 1)

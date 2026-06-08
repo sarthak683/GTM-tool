@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Query, Response
 from sqlalchemy import and_, case, delete, func, or_, select
 
+from app.config import settings
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.database import AsyncSessionLocal
@@ -253,6 +254,13 @@ async def list_tasks(
     _validate_entity_type(entity_type)
     if refresh_mode not in {"auto", "force", "none"}:
         raise ValidationError("refresh_mode must be one of: ['auto', 'force', 'none']")
+
+    # Manual-tasks-only mode: never regenerate or queue system tasks on read.
+    # Collapsing to "none" makes every refresh/queue branch below inert, so the
+    # endpoint just returns the rows that exist (which, after migration 085, are
+    # human-created tasks only).
+    if not settings.ENABLE_SYSTEM_TASKS:
+        refresh_mode = "none"
 
     refresh_result = "skipped"
     tasks: list[Task]

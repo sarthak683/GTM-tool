@@ -3715,6 +3715,13 @@ async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) ->
 
 
 async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: str, entity_id: UUID) -> None:
+    # Single chokepoint for every automated task generator. When system tasks
+    # are disabled the whole product is "manual tasks only" — return before any
+    # generator (incl. the Opus-calling deal interpreter + AI emitter) runs, so
+    # all ~12 callers (webhooks, activity logging, meeting/email sync, call
+    # dispositions, the task-list load, the Celery health job) become no-ops.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return
     if entity_type == "company":
         await _refresh_company_tasks(session, entity_id)
     elif entity_type == "contact":

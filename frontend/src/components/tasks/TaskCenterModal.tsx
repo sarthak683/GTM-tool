@@ -44,6 +44,13 @@ const PRIORITY_LABEL_STYLE = {
   P2: { bg: colors.primarySoft, border: "#d5e5ff", color: colors.primary },
 } as const;
 
+// Manual-tasks-only product: system/Beacon-recommended tasks are no longer
+// generated (backend settings.ENABLE_SYSTEM_TASKS=False). Keep the renderers in
+// tree but gate every system-task surface behind this flag so the Task Center
+// shows only human-created tasks. Mirrors DealDetailDrawer.SYSTEM_TASKS_ENABLED;
+// flip back to true to restore the AI/recommendation sections.
+const SYSTEM_TASKS_ENABLED = false;
+
 const TASK_CACHE_TTL_MS = 5 * 60 * 1000;
 const taskListCache = new Map<string, { items: TaskItem[]; fetchedAt: number }>();
 
@@ -492,7 +499,7 @@ function TaskCenterModal({
   }, [entityType, entityId, user?.id]);
 
   const openSystemTasks = useMemo(
-    () => tasks.filter((task) => task.status === "open" && task.task_type === "system"),
+    () => (SYSTEM_TASKS_ENABLED ? tasks.filter((task) => task.status === "open" && task.task_type === "system") : []),
     [tasks],
   );
   const openCriticalTasks = useMemo(
@@ -513,7 +520,12 @@ function TaskCenterModal({
     () => tasks.filter((task) => task.status === "open" && task.task_type === "manual"),
     [tasks],
   );
-  const historyTasks = useMemo(() => tasks.filter((task) => task.status !== "open"), [tasks]);
+  const historyTasks = useMemo(
+    // Manual-only mode also keeps historical (dismissed) auto-tasks out of the
+    // History section so the Task Center is purely human-created tasks.
+    () => tasks.filter((task) => task.status !== "open" && (SYSTEM_TASKS_ENABLED || task.task_type === "manual")),
+    [tasks],
+  );
   const [hygieneOpen, setHygieneOpen] = useState(false);
 
   const resetForm = () => {
@@ -626,28 +638,32 @@ function TaskCenterModal({
           }}
         >
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>Task framework</div>
+            <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>Tasks</div>
             <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-              Manual tasks keep human follow-ups visible. System tasks are Beacon recommendations created from synced signals and record state.
+              Manual follow-ups created by you and your teammates. Assign each task to its owner so it lands in their personal queue.
             </div>
-            {entityType === "deal" && (refreshing || queuedRefresh) ? (
+            {SYSTEM_TASKS_ENABLED && entityType === "deal" && (refreshing || queuedRefresh) ? (
               <div style={{ color: colors.faint, fontSize: 12.5, lineHeight: 1.5 }}>
                 {queuedRefresh ? "Beacon is updating recommendations in the background. Stored tasks stay visible while it refreshes." : "Checking whether this deal has fresher recommendation inputs..."}
               </div>
             ) : null}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {openCriticalTasks.length > 0 ? (
-              <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.redSoft, color: colors.red, border: "1px solid #ffd0d8", fontSize: 12, fontWeight: 800 }}>
-                {openCriticalTasks.length} critical
-              </span>
+            {SYSTEM_TASKS_ENABLED ? (
+              <>
+                {openCriticalTasks.length > 0 ? (
+                  <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.redSoft, color: colors.red, border: "1px solid #ffd0d8", fontSize: 12, fontWeight: 800 }}>
+                    {openCriticalTasks.length} critical
+                  </span>
+                ) : null}
+                <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 800 }}>
+                  {openSalesAiTasks.length} sales AI
+                </span>
+                <span style={{ borderRadius: 999, padding: "5px 10px", background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 800 }}>
+                  {openHygieneTasks.length} hygiene
+                </span>
+              </>
             ) : null}
-            <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.violetSoft, color: colors.violet, border: "1px solid #eadbff", fontSize: 12, fontWeight: 800 }}>
-              {openSalesAiTasks.length} sales AI
-            </span>
-            <span style={{ borderRadius: 999, padding: "5px 10px", background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, fontSize: 12, fontWeight: 800 }}>
-              {openHygieneTasks.length} hygiene
-            </span>
             <span style={{ borderRadius: 999, padding: "5px 10px", background: colors.primarySoft, color: colors.primary, border: "1px solid #d5e5ff", fontSize: 12, fontWeight: 800 }}>
               {openManualTasks.length} manual
             </span>
@@ -723,6 +739,7 @@ function TaskCenterModal({
               </div>
             ) : null}
 
+            {SYSTEM_TASKS_ENABLED ? (
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
                 <Sparkles size={14} color={colors.violet} />
@@ -753,6 +770,7 @@ function TaskCenterModal({
                 ))
               )}
             </div>
+            ) : null}
 
             {openHygieneTasks.length > 0 ? (
               <div style={{ display: "grid", gap: 10 }}>
@@ -861,11 +879,11 @@ function TaskCenterModal({
               <span>Tasks</span>
             </div>
             <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-              Track manual follow-ups and review system-recommended actions for {entityLabel}.
+              Track manual follow-ups for {entityLabel}.
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            {entityType === "deal" ? (
+            {SYSTEM_TASKS_ENABLED && entityType === "deal" ? (
               <button type="button" onClick={() => void refreshRecommendations()} disabled={refreshing} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", display: "inline-flex", gap: 6, alignItems: "center", opacity: refreshing ? 0.7 : 1 }}>
                 <Sparkles size={14} /> {refreshing ? "Refreshing..." : "Refresh AI"}
               </button>
@@ -892,11 +910,11 @@ function TaskCenterModal({
                 <span>Tasks</span>
               </div>
               <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>
-                Track manual follow-ups and review system-recommended actions for {entityLabel}.
+                Track manual follow-ups for {entityLabel}.
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {entityType === "deal" ? (
+              {SYSTEM_TASKS_ENABLED && entityType === "deal" ? (
                 <button type="button" onClick={() => void refreshRecommendations()} disabled={refreshing} style={{ borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.sub, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", display: "inline-flex", gap: 6, alignItems: "center", opacity: refreshing ? 0.7 : 1 }}>
                   <Sparkles size={14} /> {refreshing ? "Refreshing..." : "Refresh AI"}
                 </button>

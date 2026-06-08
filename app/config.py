@@ -88,8 +88,18 @@ class Settings(BaseSettings):
     CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-6"
     CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
 
+    # Master switch for ALL system-generated tasks. Default is OFF: the product
+    # is "manual tasks only" — the task list contains only human-created
+    # (task_type="manual") tasks. Every automated generator is short-circuited
+    # at the single chokepoint (refresh_system_tasks_for_entity) — AI emitter,
+    # deterministic critical rules, stage playbook, contact/company hygiene, and
+    # personal-email-sync. The generator code stays in-tree and dormant, so
+    # auto-tasks can be re-enabled by setting this back to true (env override).
+    ENABLE_SYSTEM_TASKS: bool = False
+
     # AI task emitter — the 5 LLM-gated codes (T-STAGE, T-AMOUNT, T-CLOSE,
     # T-MEDPICC, T-CONTACT). T-CRITICAL always runs (deterministic rules).
+    # Finer sub-gate: only relevant when ENABLE_SYSTEM_TASKS is true.
     ENABLE_AI_TASK_EMITTER: bool = True
 
     # Demo generation tuning

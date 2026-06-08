@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { globalSearchApi, tasksApi } from "../lib/api";
@@ -175,7 +175,6 @@ function MeetingFollowUpBlock({ task }: { task: TaskWorkspaceItem }) {
 }
 
 type TaskStatusFilter = "open" | "completed" | "dismissed" | "all";
-type TaskTypeFilter = "all" | "manual" | "system";
 type EntityFilter = "all" | "company" | "contact" | "deal";
 type CreateTaskEntityType = Exclude<EntityFilter, "all">;
 type TaskPriority = "low" | "medium" | "high";
@@ -582,7 +581,6 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskWorkspaceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(() => (searchParams.get("status") as TaskStatusFilter) ?? "open");
-  const [typeFilter, setTypeFilter] = useState<TaskTypeFilter>(() => (searchParams.get("type") as TaskTypeFilter) ?? "all");
   const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
   const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
   const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
@@ -618,7 +616,9 @@ export default function TasksPage() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       statusFilter !== "open" ? next.set("status", statusFilter) : next.delete("status");
-      typeFilter !== "all" ? next.set("type", typeFilter) : next.delete("type");
+      // Manual-tasks-only: the task-type filter is gone. Strip any legacy
+      // ?type= param (e.g. bookmarked ?type=system) so stale URLs resolve clean.
+      next.delete("type");
       entityFilter !== "all" ? next.set("entity", entityFilter) : next.delete("entity");
       dueDateFilter !== "all" ? next.set("due", dueDateFilter) : next.delete("due");
       queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
@@ -626,7 +626,7 @@ export default function TasksPage() {
       showCreateTask ? next.set("new", "task") : next.delete("new");
       return next;
     }, { replace: true });
-  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, dealFilter, showCreateTask]);
+  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter, showCreateTask]);
 
   useEffect(() => {
     if (searchParams.get("new") === "task") setShowCreateTask(true);
@@ -696,7 +696,10 @@ export default function TasksPage() {
     try {
       const rows = await tasksApi.workspace({
         includeClosed: true,
-        taskType: typeFilter === "all" ? undefined : typeFilter,
+        // Manual-tasks-only product: the workspace never shows system-generated
+        // tasks. Pinning task_type to "manual" also hides any historical (now
+        // dismissed) auto-tasks from the "all statuses" view.
+        taskType: "manual",
         entityType: entityFilter === "all" ? undefined : entityFilter,
         dealId: dealFilter || undefined,
         scope: isAdmin ? queueScope : "mine",
@@ -713,7 +716,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     void load();
-  }, [typeFilter, entityFilter, queueScope, dealFilter, isAdmin]);
+  }, [entityFilter, queueScope, dealFilter, isAdmin]);
 
   const visibleTasks = useMemo(() => {
     let filtered = statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter);
@@ -743,11 +746,10 @@ export default function TasksPage() {
   // produced fewer than 4 pages of results.
   useEffect(() => {
     setTasksPage(1);
-  }, [statusFilter, typeFilter, entityFilter, dueDateFilter, queueScope, dealFilter]);
+  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter]);
 
   const summary = useMemo(() => ({
     open: tasks.filter((task) => task.status === "open").length,
-    system: tasks.filter((task) => task.status === "open" && task.task_type === "system").length,
     manual: tasks.filter((task) => task.status === "open" && task.task_type === "manual").length,
     completed: tasks.filter((task) => task.status === "completed").length,
     overdue: tasks.filter((task) => task.status === "open" && getDueBadge(task.due_at, task.status)?.bucket === "overdue").length,
@@ -930,7 +932,7 @@ export default function TasksPage() {
               <CheckCircle2 size={28} style={{ margin: "0 auto 6px", color: colors.green }} />
               <div style={{ fontWeight: 800, color: colors.text }}>You're all caught up.</div>
               <div style={{ fontSize: 12.5, color: colors.faint, marginTop: 4 }}>
-                New recommendations and assignments will appear here.
+                New tasks assigned to you will appear here.
               </div>
             </div>
           ) : (
@@ -989,8 +991,8 @@ export default function TasksPage() {
             <h2 style={{ fontSize: 28, fontWeight: 800, color: colors.text, marginBottom: 8 }}>Tasks</h2>
             <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
               {user?.role === "admin"
-                ? "Use My Queue for daily execution and Team Queue for coaching. Beacon recommendations stay alongside manual follow-ups so you can drive the right next actions."
-                : `Everything assigned to ${user?.name || "you"} in one place. Beacon recommendations stay alongside manual follow-ups so reps can triage work quickly and then jump into the right company, prospect, or deal.`}
+                ? "Use My Queue for daily execution and Team Queue for coaching. Every task here is created by you or a teammate — assign, prioritise, and drive the right next actions."
+                : `Everything assigned to ${user?.name || "you"} in one place. Triage your follow-ups quickly and then jump into the right company, prospect, or deal.`}
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -998,13 +1000,9 @@ export default function TasksPage() {
               <Plus size={14} />
               New Task
             </button>
-            <span className="crm-chip" style={{ background: colors.violetSoft, color: colors.violet, borderColor: "#eadbff" }}>
-              <Sparkles size={14} />
-              {summaryValue(summary.system)} recommendations
-            </span>
             <span className="crm-chip" style={{ background: colors.primarySoft, color: colors.primary, borderColor: "#d5e5ff" }}>
               <MessageSquare size={14} />
-              {summaryValue(summary.manual)} manual
+              {summaryValue(summary.manual)} open
             </span>
             <span className="crm-chip" style={{ background: "#eef7f1", color: colors.green, borderColor: "#cfe8d7" }}>
               <CheckCircle2 size={14} />
@@ -1013,11 +1011,9 @@ export default function TasksPage() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
           {[
             { label: "Open now", value: summaryValue(summary.open), tone: colors.primarySoft, color: colors.primary },
-            { label: "Beacon recommendations", value: summaryValue(summary.system), tone: colors.violetSoft, color: colors.violet },
-            { label: "Manual follow-ups", value: summaryValue(summary.manual), tone: "#eef7f1", color: colors.green },
             { label: "Completed", value: summaryValue(summary.completed), tone: "#f6f7fb", color: colors.sub },
             { label: "Overdue", value: summaryValue(summary.overdue), tone: colors.redSoft, color: colors.red },
             { label: "Due today", value: summaryValue(summary.dueToday), tone: colors.amberSoft, color: colors.amber },
@@ -1078,11 +1074,6 @@ export default function TasksPage() {
             <option value="completed">Completed</option>
             <option value="dismissed">Dismissed</option>
             <option value="all">All statuses</option>
-          </select>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TaskTypeFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
-            <option value="all">All task types</option>
-            <option value="system">System recommendations</option>
-            <option value="manual">Manual tasks</option>
           </select>
           <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value as EntityFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="all">All record types</option>
@@ -1149,7 +1140,7 @@ export default function TasksPage() {
         ) : visibleTasks.length === 0 ? (
           <div className="crm-panel" style={{ padding: 28, color: colors.faint, display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 800, color: colors.text }}>No tasks match these filters</div>
-            <div>When Beacon recommends something or a teammate assigns you a manual follow-up, it will appear here.</div>
+            <div>When you or a teammate creates a follow-up, it will appear here.</div>
           </div>
         ) : (
           <>
