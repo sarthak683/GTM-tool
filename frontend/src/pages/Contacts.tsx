@@ -1,7 +1,8 @@
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
+import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -837,12 +838,11 @@ export default function Contacts() {
   }, []);
 
   useEffect(() => {
-    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
+    getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {
-    authApi
-      .listAllUsers()
+    getCachedUsers()
       .then((users) => {
         setTeamUsers(
           users
@@ -3044,7 +3044,7 @@ export default function Contacts() {
                     <select
                       value=""
                       disabled={selectedContactIds.size === 0 || bulkAssigningSdr}
-                      onFocus={() => { if (assignableUsers.length === 0) authApi.listAllUsers().then((u) => setAssignableUsers(u as never)).catch(() => {}); }}
+                      onFocus={() => { if (assignableUsers.length === 0) getCachedUsers().then((u) => setAssignableUsers(u as never)).catch(() => {}); }}
                       onChange={(e) => { if (e.target.value) void bulkAssignSelectedSdr(e.target.value); e.currentTarget.value = ""; }}
                       title="Assign selected prospects' SDR"
                       style={{

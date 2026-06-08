@@ -12,7 +12,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import { settingsApi, tasksApi } from "../../lib/api";
+import { tasksApi } from "../../lib/api";
+import { getCachedRolePermissions } from "../../lib/cachedFetch";
 import { useAuth } from "../../lib/AuthContext";
 
 // Navigation is grouped so the rail reads as a focused command center rather
@@ -87,8 +88,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       return;
     }
     let cancelled = false;
-    settingsApi
-      .getRolePermissions()
+    getCachedRolePermissions()
       .then((permissions) => {
         if (!cancelled) {
           const permissionRole = user.role === "admin" ? null : user.role;

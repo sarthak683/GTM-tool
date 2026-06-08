@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 from urllib.parse import urlparse
 from uuid import UUID
@@ -28,6 +28,40 @@ from app.config import settings
 from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
+
+# Skip re-running the paid research waterfall (~7 Serper searches + a Claude
+# call per company) when a cached ICP analysis is still fresh. Mirrors the
+# tiered path's _PAID_CACHE_TTL_HOURS (14 days) so both sourcing paths dedupe
+# on the same window. Manual re-research forces a re-run via force=True.
+_ICP_ANALYSIS_TTL_HOURS = 24 * 14
+
+
+def _icp_analysis_is_fresh(cache: dict[str, Any], ttl_hours: int = _ICP_ANALYSIS_TTL_HOURS) -> bool:
+    """True when enrichment_cache['icp_analysis'] was analyzed within the TTL.
+
+    The icp_analysis entry stamps its timestamp under 'analyzed_at' (the rest of
+    the pipeline uses 'fetched_at'), so this reads that field specifically.
+    """
+    if not isinstance(cache, dict):
+        return False
+    entry = cache.get("icp_analysis")
+    if not isinstance(entry, dict):
+        return False
+    # Require real analysis content — an empty/placeholder entry should not
+    # suppress a first genuine run.
+    if not entry.get("data"):
+        return False
+    analyzed_at = entry.get("analyzed_at")
+    if not isinstance(analyzed_at, str):
+        return False
+    try:
+        analyzed = datetime.fromisoformat(analyzed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if analyzed.tzinfo is not None:
+        analyzed = analyzed.replace(tzinfo=None)
+    return datetime.utcnow() - analyzed <= timedelta(hours=ttl_hours)
+
 
 # ── Research Orchestrator ─────────────────────────────────────────────────────
 
@@ -1302,10 +1336,16 @@ def _build_extra_context(company) -> dict[str, Any]:
 async def research_company_and_update(
     company_id: UUID,
     session,
+    force: bool = False,
 ) -> dict[str, Any] | None:
     """
     Research a company by ID, run ICP analysis, and update the DB record
     with the results. Returns the ICP analysis dict or None on failure.
+
+    Freshness guard: each run fires ~7 Serper searches + a Claude call. When a
+    cached ICP analysis is still within the TTL we skip the paid waterfall and
+    return the cached analysis unchanged — a clean first run is unaffected.
+    Pass force=True (manual re-research / refresh) to always re-run.
     """
     from app.models.company import Company
     from app.services.account_sourcing import (
@@ -1321,6 +1361,17 @@ async def research_company_and_update(
     if not company:
         logger.warning(f"ICP research: company {company_id} not found")
         return None
+
+    if not force and _icp_analysis_is_fresh(company.enrichment_cache or {}):
+        logger.info(
+            "ICP research: skipping %s (%s) — cached ICP analysis is still fresh "
+            "(<%dd). Pass force=True to re-run.",
+            company.name,
+            company_id,
+            _ICP_ANALYSIS_TTL_HOURS // 24,
+        )
+        cached = company.enrichment_cache["icp_analysis"]
+        return cached.get("data") if isinstance(cached, dict) else None
 
     extra_context = _build_extra_context(company)
 

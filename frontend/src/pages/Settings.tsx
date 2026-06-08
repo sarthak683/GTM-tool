@@ -24,6 +24,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi, authApi } from "../lib/api";
+import { getCachedGmailSync, getCachedRolePermissions, invalidateGmailSyncCache, invalidateRolePermissionsCache } from "../lib/cachedFetch";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder, JobHealthRow } from "../lib/api";
 import { DriveFolderPicker } from "../components/DriveFolderPicker";
@@ -180,7 +181,7 @@ export default function SettingsPage() {
     setError(null);
     try {
       const [gmailData, reportSenderData, salesReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
-        settingsApi.getGmailSync(),
+        getCachedGmailSync(),
         settingsApi.getReportSender().catch(() => null),
         settingsApi.getSalesReportSettings().catch(() => null),
         settingsApi.getOutreachContent(),
@@ -188,7 +189,7 @@ export default function SettingsPage() {
         settingsApi.getDealStages(),
         settingsApi.getProspectStages().catch(() => null),
         settingsApi.getClickUpCrmSettings(),
-        settingsApi.getRolePermissions(),
+        getCachedRolePermissions(),
         settingsApi.getPreMeetingAutomation(),
         settingsApi.getSyncSchedule().catch(() => null),
         personalEmailSyncApi.getStatus().catch(() => null),
@@ -382,6 +383,7 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       const data = await settingsApi.updateGmailInbox(inbox.trim());
+      invalidateGmailSyncCache();
       setGmail(data);
       setMessage("Shared mailbox saved. Next step: connect Gmail once as an admin.");
     } catch (err) {
@@ -398,6 +400,7 @@ export default function SettingsPage() {
     try {
       if (!gmail?.inbox || gmail.inbox !== inbox.trim()) {
         await settingsApi.updateGmailInbox(inbox.trim());
+        invalidateGmailSyncCache();
       }
       const result = await settingsApi.getGmailConnectUrl();
       window.location.assign(result.url);
@@ -413,6 +416,7 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       await settingsApi.disconnectGmail();
+      invalidateGmailSyncCache();
       await loadSettings();
       setMessage("Gmail disconnected. Sync is paused until an admin reconnects it.");
     } catch (err) {
@@ -874,6 +878,7 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       const saved = await settingsApi.updateRolePermissions(rolePermissions);
+      invalidateRolePermissionsCache();
       setRolePermissions(saved);
       setMessage("Role permissions saved. Beacon will now enforce these rules across shared workflows.");
     } catch (err) {

@@ -31,7 +31,8 @@ import {
   AlertCircle,
   X,
 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
+import { activitiesApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Deal, Meeting, MeetingPrepMonitor, User as UserType } from "../types/index";
 import { formatOptionalDate, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
@@ -701,7 +702,7 @@ export default function PreMeetingAssistance() {
       setUsers([]);
       return;
     }
-    authApi.listAllUsers().then(setUsers).catch(() => setUsers([]));
+    getCachedUsers().then(setUsers).catch(() => setUsers([]));
   }, [isAdmin]);
 
   useEffect(() => {

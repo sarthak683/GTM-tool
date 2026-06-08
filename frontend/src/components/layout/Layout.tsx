@@ -9,7 +9,7 @@ import { NotificationBell } from "./NotificationBell";
 import { ZippyLauncher } from "../zippy/ZippyLauncher";
 import { ZippyProvider } from "../zippy/ZippyContext";
 import { useAuth } from "../../lib/AuthContext";
-import { authApi } from "../../lib/api";
+import { getCachedUsers } from "../../lib/cachedFetch";
 import type { User as UserRecord } from "../../types";
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -61,7 +61,7 @@ function Layout() {
   // opens the menu and isn't already impersonating, and only once.
   useEffect(() => {
     if (showUserMenu && isSuperAdmin && !isImpersonating && people.length === 0) {
-      authApi.listAllUsers().then(setPeople).catch(() => {});
+      getCachedUsers().then(setPeople).catch(() => {});
     }
   }, [showUserMenu, isSuperAdmin, isImpersonating, people.length]);
 

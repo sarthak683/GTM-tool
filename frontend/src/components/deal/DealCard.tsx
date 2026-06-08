@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
@@ -16,7 +17,7 @@ interface DealCardProps {
   companyName?: string;
 }
 
-export default function DealCard({ deal, companyName }: DealCardProps) {
+function DealCard({ deal, companyName }: DealCardProps) {
   const navigate = useNavigate();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: deal.id });
 
@@ -57,3 +58,8 @@ export default function DealCard({ deal, companyName }: DealCardProps) {
     </div>
   );
 }
+
+// Memoized so unrelated Pipeline state changes (drag, filters, the 1s import
+// timer) don't repaint every card. Props are `deal` (stable ref per board load)
+// and the primitive `companyName`, so the default shallow comparison is correct.
+export default memo(DealCard);

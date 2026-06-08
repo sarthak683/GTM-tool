@@ -925,12 +925,33 @@ async def run_turn(
     final_text = ""
     active_system_prompt = await _resolve_system_prompt(session)
 
+    # Prompt caching: the tools (~13K tokens) + system prompt (~7.6K tokens)
+    # form a byte-stable prefix that is re-sent on every tool-loop iteration
+    # (up to MAX_TOOL_ITERATIONS). Render order is tools → system → messages,
+    # so we cache the whole prefix with two ephemeral breakpoints: one on the
+    # LAST tool definition (caches the entire tool list) and one on the system
+    # block (caches tools + system). On Sonnet 4.6 the 2048-token minimum
+    # cacheable prefix is cleared comfortably. Neither TOOL_DEFINITIONS nor the
+    # system text interpolates a per-request value (date/uuid), so the prefix
+    # is stable across iterations and across turns — repeat calls read the
+    # cache instead of re-billing ~20K input tokens. Verify at runtime via
+    # response.usage.cache_read_input_tokens (> 0 on the 2nd+ iteration).
+    cached_tools = [dict(tool) for tool in TOOL_DEFINITIONS]
+    cached_tools[-1] = {**cached_tools[-1], "cache_control": {"type": "ephemeral"}}
+    cached_system = [
+        {
+            "type": "text",
+            "text": active_system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
     for iteration in range(MAX_TOOL_ITERATIONS):
         response = await client.messages.create(
             model=settings.ZIPPY_MODEL,
             max_tokens=settings.ZIPPY_MAX_TOKENS,
-            system=active_system_prompt,
-            tools=TOOL_DEFINITIONS,
+            system=cached_system,
+            tools=cached_tools,
             messages=api_messages,
         )
 

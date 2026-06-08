@@ -7,7 +7,8 @@ import {
   Shield, BarChart2, ClipboardList, Presentation,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
-import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
+import { accountSourcingApi, companiesApi, dealsApi, contactsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
+import { getCachedGmailSync } from "../../lib/cachedFetch";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
@@ -578,7 +579,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   };
 
   useEffect(() => {
-    settingsApi.getGmailSync().then((data) => {
+    getCachedGmailSync().then((data) => {
       if (data.inbox) setSharedInbox(data.inbox);
       setSharedEmailSyncConnected(Boolean(data.configured));
     }).catch(() => {});

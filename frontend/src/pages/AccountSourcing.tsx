@@ -22,7 +22,8 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, authApi } from "../lib/api";
+import { accountSourcingApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import { getAccountPrioritySnapshot } from "../lib/utils";
 import type { AccountSourcingSummary, Company, SourcingBatch, User } from "../types";
 import AssignDropdown from "../components/AssignDropdown";
@@ -436,7 +437,7 @@ export default function AccountSourcing() {
 
   // Load team users once for the Owner multi-select.
   useEffect(() => {
-    authApi.listAllUsers()
+    getCachedUsers()
       .then((users) => setTeamUsers(users.filter((u) => u.is_active)))
       .catch(() => setTeamUsers([]));
   }, []);
