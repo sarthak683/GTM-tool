@@ -122,13 +122,15 @@ async def send_message(
             image_base64=payload.image_base64,
             image_media_type=payload.image_media_type,
         )
-    except RuntimeError as exc:
+    except RuntimeError:
         # Config errors (missing API key etc.) — surface as 503 so the UI can
-        # show a "Zippy is not configured" state.
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
+        # show a "Zippy is not configured" state. The real detail goes to logs;
+        # we never echo internal config text back to the client.
+        logger.exception("Zippy turn failed: not configured")
+        raise HTTPException(status_code=503, detail="Zippy is not configured")
+    except Exception:
         logger.exception("Zippy turn failed")
-        raise HTTPException(status_code=500, detail=f"Zippy failed: {exc}")
+        raise HTTPException(status_code=500, detail="Zippy failed")
 
     return _agent_turn_to_response(turn)
 

@@ -10,7 +10,7 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
-from app.repositories.contact import ContactRepository
+from app.repositories.contact import ContactRepository, get_or_create_contact_by_email
 from app.schemas.common import PaginatedResponse
 from app.models.user import User
 from app.services.account_sourcing import (
@@ -174,15 +174,23 @@ async def _get_or_create_uploaded_placeholder_company(
         "pending_icp_review": True,
     }
 
-    company = Company(
-        name=name,
-        domain=domain,
-        enrichment_sources=enrichment_sources,
-        sourcing_batch_id=sourcing_batch_id,
+    # Route the insert through the domain-keyed get-or-create so a racing/repeat
+    # upload of the same domain collapses onto the existing company (under the
+    # lower(domain) unique index) instead of aborting the import. The 3-layer
+    # matcher above already missed, so created=True is the normal case here.
+    from app.repositories.company import get_or_create_company_by_domain
+
+    company, created = await get_or_create_company_by_domain(
+        session,
+        domain,
+        defaults={
+            "name": name,
+            "enrichment_sources": enrichment_sources,
+            "sourcing_batch_id": sourcing_batch_id,
+        },
     )
-    session.add(company)
     await session.flush()  # populate company.id before the caller links contacts
-    return company, True
+    return company, created
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
@@ -434,7 +442,7 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
-async def get_contact(contact_id: UUID, session: DBSession):
+async def get_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     contact = await ContactRepository(session).get_or_raise(contact_id)
     return await to_contact_read(session, contact)
 
@@ -801,6 +809,12 @@ async def import_contacts_csv(
     auto_create_batch: SourcingBatch | None = None
     # Cache for resolving SDR/AE column values (name|email) -> User across rows.
     owner_cache: dict = {}
+    # CSV-internal dedup: the partial unique index is on lower(email), so two
+    # rows in the SAME file sharing an address must not both insert (the second
+    # would abort the batch commit). We remember each lower(email) we've already
+    # materialised this upload and fold a later duplicate into that same row
+    # instead of minting a second pending Contact. Maps lower(email) -> Contact.
+    seen_emails: dict[str, Contact] = {}
     # Uploader fallback target slot: an SDR uploader owns their uploads in the SDR
     # slot, an AE uploader in the AE slot, an admin owns neither (-> unassigned).
     uploader_role = (current_user.role or "").lower()
@@ -925,9 +939,17 @@ async def import_contacts_csv(
 
         existing = None
         if email:
-            existing = (
-                await session.execute(select(Contact).where(Contact.email == email).limit(1))
-            ).scalars().first()
+            # First honor a row we already created earlier in THIS upload for the
+            # same address (case-insensitive) — otherwise the second duplicate
+            # row would try to insert a colliding lower(email) and abort the
+            # whole import at commit.
+            existing = seen_emails.get(email)
+            if existing is None:
+                existing = (
+                    await session.execute(
+                        select(Contact).where(func.lower(Contact.email) == email).limit(1)
+                    )
+                ).scalars().first()
         if not existing and first_name and last_name:
             name_match_filters = [
                 Contact.first_name == first_name,
@@ -980,8 +1002,11 @@ async def import_contacts_csv(
                 updated_count += 1
             else:
                 skipped_count += 1
+            # Remember this row so a later duplicate (same lower(email)) in the
+            # same file folds onto it instead of re-querying / re-inserting.
+            if email:
+                seen_emails[email] = existing
         else:
-            contact = Contact(**contact_fields)
             # New-contact ownership precedence per slot:
             #   SDR slot: file SDR -> uploader (if SDR) -> company SDR -> none
             #   AE slot:  file AE  -> uploader (if AE)  -> company AE  -> none
@@ -1003,22 +1028,53 @@ async def import_contacts_csv(
             elif ae_user and not sdr_user and not company_has_sdr:
                 sdr_user = ae_user
             if sdr_user:
-                contact.sdr_id = sdr_user.id
-                contact.sdr_name = sdr_user.name
+                contact_fields["sdr_id"] = sdr_user.id
+                contact_fields["sdr_name"] = sdr_user.name
             elif company and company.sdr_id:
-                contact.sdr_id = company.sdr_id
-                contact.sdr_name = company.sdr_name
+                contact_fields["sdr_id"] = company.sdr_id
+                contact_fields["sdr_name"] = company.sdr_name
             if ae_user:
-                contact.assigned_to_id = ae_user.id
-                contact.assigned_rep_email = ae_user.email
+                contact_fields["assigned_to_id"] = ae_user.id
+                contact_fields["assigned_rep_email"] = ae_user.email
             elif company and company.assigned_to_id:
-                contact.assigned_to_id = company.assigned_to_id
-                contact.assigned_rep_email = company.assigned_rep_email
-            contact.persona = classify_persona(contact)
-            if company:
-                refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+                contact_fields["assigned_to_id"] = company.assigned_to_id
+                contact_fields["assigned_rep_email"] = company.assigned_rep_email
+
+            # Funnel the insert through the email-keyed get-or-create. If a row
+            # with this lower(email) already slipped in (a concurrent writer, or
+            # a path that skipped the pre-lookup), the savepoint catches the
+            # unique-index violation and re-fetches the winner instead of
+            # aborting the whole import at commit. created=False means we landed
+            # on an existing row, so apply the same non-empty-field merge the
+            # update branch uses.
+            contact, was_created = await get_or_create_contact_by_email(
+                session,
+                email or "",
+                defaults={k: v for k, v in contact_fields.items() if k != "email"},
+            )
+            if was_created:
+                contact.persona = classify_persona(contact)
+                if company:
+                    refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+                created_count += 1
+            else:
+                for key, value in contact_fields.items():
+                    if value in (None, "", []) or key == "email":
+                        continue
+                    if key == "enrichment_data":
+                        current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+                        current_enrichment.update(value)
+                        contact.enrichment_data = current_enrichment
+                        continue
+                    setattr(contact, key, value)
+                contact.persona = classify_persona(contact)
+                contact.updated_at = datetime.utcnow()
+                if company:
+                    refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+                updated_count += 1
             session.add(contact)
-            created_count += 1
+            if email:
+                seen_emails[email] = contact
 
     await session.commit()
 
@@ -1104,7 +1160,7 @@ async def import_contacts_csv(
 
 
 @router.get("/{contact_id}/brief")
-async def get_contact_brief(contact_id: UUID, session: DBSession):
+async def get_contact_brief(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Generate AI stakeholder brief (Playwright + GPT-4o, 5-20s). Not cached."""
     from app.services.contact_intelligence import generate_contact_brief
     result = await generate_contact_brief(contact_id, session)

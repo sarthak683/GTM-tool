@@ -27,6 +27,8 @@ from app.services.auth import (
 )
 from app.services.permissions import require_workspace_permission
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
 
@@ -62,14 +64,30 @@ async def google_callback(
     # user's identity details that our app stores locally.
     try:
         google_info = await exchange_google_code(code, settings.GOOGLE_REDIRECT_URI)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).error("Google OAuth exchange failed: %s", exc)
-        raise UnauthorizedError(f"Failed to authenticate with Google: {exc}")
+    except Exception:
+        # Log the underlying error server-side, but never echo provider/internal
+        # detail back to the browser.
+        logger.exception("Google OAuth exchange failed")
+        raise UnauthorizedError("Failed to authenticate with Google. Please try again.")
 
     email = google_info["email"]
-    # Domain restriction removed — any Google account can sign in for testing.
-    # TODO: re-enable domain check for production (e.g. @beacon.li only)
+
+    # Domain allowlist (opt-in). When ALLOWED_EMAIL_DOMAINS is empty the list is
+    # empty and we allow any Google account — preserving the current default so
+    # nobody is locked out. When set (e.g. "beacon.li"), only emails on those
+    # domains may sign in; everyone else is bounced to the login screen with a
+    # machine-readable reason (no sensitive detail leaked).
+    allowed_domains = settings.allowed_email_domains
+    if allowed_domains:
+        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+        if email_domain not in allowed_domains:
+            logger.warning(
+                "Rejected sign-in for %s: domain %r not in allowlist",
+                email,
+                email_domain,
+            )
+            error_url = f"{settings.FRONTEND_URL}/login?{urlencode({'error': 'domain_not_allowed'})}"
+            return RedirectResponse(error_url)
 
     # We treat Google as the source of truth for identity, so the lookup is keyed
     # by Google's stable user id rather than by email.
@@ -103,10 +121,20 @@ async def google_callback(
             await session.refresh(existing_by_email)
             user = existing_by_email
         else:
-            # Genuinely new user — superadmins always get admin, first user gets
-            # admin, everyone else defaults to sdr.
+            # Genuinely new user — superadmins always get admin; emails on the
+            # ADMIN_BOOTSTRAP_EMAILS allowlist get admin; otherwise the legacy
+            # "first user to sign in becomes admin" fallback applies; everyone
+            # else defaults to sdr. With ADMIN_BOOTSTRAP_EMAILS unset the
+            # bootstrap set is empty, so behaviour is unchanged.
             user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
-            role = "admin" if google_info["email"] in SUPERADMIN_EMAILS or user_count == 0 else "sdr"
+            is_bootstrap_admin = email.lower() in settings.admin_bootstrap_emails
+            role = (
+                "admin"
+                if google_info["email"] in SUPERADMIN_EMAILS
+                or is_bootstrap_admin
+                or user_count == 0
+                else "sdr"
+            )
 
             user = User(
                 email=google_info["email"],

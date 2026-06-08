@@ -20,6 +20,7 @@ Polling / delivery:
   DELETE /custom-demos/{id}       — delete a demo
 """
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
@@ -38,6 +39,7 @@ from app.services.demo_generator import (
 )
 from app.clients.demo_ai import is_valid_demo_html, repair_demo_html
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/custom-demos", tags=["custom-demos"])
 
 
@@ -199,13 +201,15 @@ async def generate_from_file(
     if filename.endswith(".pdf") or "pdf" in content_type:
         try:
             source_text = extract_pdf_text(raw)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Failed to read PDF: {e}")
+        except Exception:
+            logger.exception("Failed to read PDF upload for custom demo")
+            raise HTTPException(status_code=422, detail="Failed to read PDF")
     elif filename.endswith(".docx") or "word" in content_type:
         try:
             source_text = extract_docx_text(raw)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Failed to read DOCX: {e}")
+        except Exception:
+            logger.exception("Failed to read DOCX upload for custom demo")
+            raise HTTPException(status_code=422, detail="Failed to read DOCX")
     else:
         raise HTTPException(status_code=422, detail="Only PDF and DOCX files are supported.")
 
@@ -316,12 +320,13 @@ async def demo_html(demo_id: UUID, session: DBSession, _user: CurrentUser):
                 timeout=25,
             )
             html = repaired
-        except Exception as exc:
+        except Exception:
+            logger.exception("Demo HTML repair failed for demo %s", demo_id)
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Demo HTML is invalid and automatic repair failed. "
-                    f"Please regenerate or revise this demo. Details: {exc}"
+                    "Please regenerate or revise this demo."
                 ),
             )
 

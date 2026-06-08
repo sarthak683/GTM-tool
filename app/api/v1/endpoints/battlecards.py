@@ -57,7 +57,7 @@ async def delete_battlecard(battlecard_id: UUID, session: DBSession, _user: Curr
 
 
 @router.post("/seed", status_code=201)
-async def seed_battlecards(session: DBSession):
+async def seed_battlecards(session: DBSession, _user: CurrentUser):
     """Seed default Beacon.li battlecards. Safe to run multiple times."""
     defaults = [
         {
