@@ -501,6 +501,7 @@ export const meetingsApi = {
     temporalStatus?: string[];
     meetingType?: string[];
     assigneeId?: string[];
+    assigneeUnassigned?: boolean;
     linkState?: string[];
     hasIntel?: boolean;
     order?: "asc" | "desc";
@@ -520,6 +521,7 @@ export const meetingsApi = {
     for (const value of params.temporalStatus ?? []) search.append("temporal_status", value);
     for (const value of params.meetingType ?? []) search.append("meeting_type", value);
     for (const value of params.assigneeId ?? []) search.append("assignee_id", value);
+    if (params.assigneeUnassigned) search.set("assignee_unassigned", "true");
     for (const value of params.linkState ?? []) search.append("link_state", value);
     if (params.hasIntel !== undefined) search.set("has_intel", params.hasIntel ? "true" : "false");
     if (params.order) search.set("order", params.order);

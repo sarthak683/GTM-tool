@@ -133,6 +133,16 @@ def _parse_uuid_values(value: str | None) -> list[UUID]:
     return parsed
 
 
+# Sentinel the frontend sends to request "no owner" in an ownership filter. It
+# can never be a real UUID, so _parse_uuid_values silently drops it; we detect
+# it on the raw string instead and translate it to an IS NULL clause.
+UNASSIGNED_SENTINEL = "__unassigned__"
+
+
+def _has_unassigned(value: str | None) -> bool:
+    return UNASSIGNED_SENTINEL in _parse_multi_query(value)
+
+
 def _like_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -521,6 +531,12 @@ class ContactRepository(BaseRepository[Contact]):
         ae_ids = _parse_uuid_values(ae_id)
         sdr_ids = _parse_uuid_values(sdr_id)
         owner_ids = _parse_uuid_values(owner_id)
+        # "Unassigned" selections: each maps to an IS NULL clause on the matching
+        # ownership slot(s). Detected on the raw param string (the sentinel is
+        # dropped by UUID parsing above).
+        ae_unassigned = _has_unassigned(ae_id)
+        sdr_unassigned = _has_unassigned(sdr_id)
+        owner_unassigned = _has_unassigned(owner_id)
 
         # Hard server-side visibility gate (NOT user-selectable): when set, the
         # viewer may see prospects they own (either ownership slot), prospects in
@@ -542,33 +558,55 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(visibility_filter)
             count_stmt = count_stmt.where(visibility_filter)
 
-        if owner_ids:
-            owner_filter = or_(
-                Contact.assigned_to_id.in_(owner_ids),
-                Contact.sdr_id.in_(owner_ids),
-            )
+        if owner_ids or owner_unassigned:
+            owner_clauses = []
+            if owner_ids:
+                owner_clauses.append(
+                    or_(
+                        Contact.assigned_to_id.in_(owner_ids),
+                        Contact.sdr_id.in_(owner_ids),
+                    )
+                )
+            if owner_unassigned:
+                # Owner is empty only when BOTH ownership slots are null.
+                owner_clauses.append(
+                    and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None))
+                )
+            owner_filter = or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0]
             base_stmt = base_stmt.where(owner_filter)
             count_stmt = count_stmt.where(owner_filter)
 
-        if scope_any_match and (ae_ids or sdr_ids):
-            clauses = []
-            if ae_ids:
-                clauses.append(Contact.assigned_to_id.in_(ae_ids))
-            if sdr_ids:
-                clauses.append(Contact.sdr_id.in_(sdr_ids))
+        # Per-slot filter terms, each optionally including an "unassigned" (IS
+        # NULL) alternative for that slot.
+        ae_term = None
+        if ae_ids and ae_unassigned:
+            ae_term = or_(Contact.assigned_to_id.in_(ae_ids), Contact.assigned_to_id.is_(None))
+        elif ae_ids:
+            ae_term = Contact.assigned_to_id.in_(ae_ids)
+        elif ae_unassigned:
+            ae_term = Contact.assigned_to_id.is_(None)
+
+        sdr_term = None
+        if sdr_ids and sdr_unassigned:
+            sdr_term = or_(Contact.sdr_id.in_(sdr_ids), Contact.sdr_id.is_(None))
+        elif sdr_ids:
+            sdr_term = Contact.sdr_id.in_(sdr_ids)
+        elif sdr_unassigned:
+            sdr_term = Contact.sdr_id.is_(None)
+
+        if scope_any_match and (ae_term is not None or sdr_term is not None):
+            clauses = [t for t in (ae_term, sdr_term) if t is not None]
             scope_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
             base_stmt = base_stmt.where(scope_filter)
             count_stmt = count_stmt.where(scope_filter)
         else:
-            if ae_ids:
-                ae_filter = Contact.assigned_to_id.in_(ae_ids)
-                base_stmt = base_stmt.where(ae_filter)
-                count_stmt = count_stmt.where(ae_filter)
+            if ae_term is not None:
+                base_stmt = base_stmt.where(ae_term)
+                count_stmt = count_stmt.where(ae_term)
 
-            if sdr_ids:
-                sdr_filter = Contact.sdr_id.in_(sdr_ids)
-                base_stmt = base_stmt.where(sdr_filter)
-                count_stmt = count_stmt.where(sdr_filter)
+            if sdr_term is not None:
+                base_stmt = base_stmt.where(sdr_term)
+                count_stmt = count_stmt.where(sdr_term)
 
         # Call-outcome color filter. Each color maps to a set of call_disposition
         # values; "yellow" means "attempts exist but no decisive outcome". The

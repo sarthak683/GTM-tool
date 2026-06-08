@@ -2529,10 +2529,16 @@ export default function Contacts() {
                 companyFilter ||
                 search
               );
-              const teamUserOptions = teamUsers.map((u) => ({
-                value: u.id,
-                label: u.name || u.email,
-              }));
+              const teamUserOptions = [
+                // Sentinel for "no owner" — backend maps "__unassigned__" to an
+                // IS NULL clause on the matching ownership slot(s) so reps can
+                // surface prospects that slipped through with no AE/SDR.
+                { value: "__unassigned__", label: "Unassigned" },
+                ...teamUsers.map((u) => ({
+                  value: u.id,
+                  label: u.name || u.email,
+                })),
+              ];
               return (
                 <div className="prospect-desktop-only" style={{
                   display: "flex", flexDirection: "column", alignItems: "stretch", gap: 9,

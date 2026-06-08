@@ -626,6 +626,12 @@ export default function PreMeetingAssistance() {
       // e.g. a closed_won customer's daily syncs don't clutter the prep list.
       const isPrepView = !statusFilter.some((s) => s === "past" || s === "completed");
 
+      // "__unassigned__" can't ride inside assignee_id (typed list[UUID] on the
+      // server); split it into the dedicated assignee_unassigned flag, exactly
+      // like the Meetings page does.
+      const assigneeUserIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+      const assigneeUnassigned = assigneeFilter.includes("__unassigned__");
+
       const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
         meetingsApi.listPaginated({
           skip: (page - 1) * 25,
@@ -633,7 +639,7 @@ export default function PreMeetingAssistance() {
           status: apiStatusFilter,
           temporalStatus: temporalStatusFilter,
           meetingType: typeFilter,
-          assigneeId: assigneeFilter,
+          assigneeId: assigneeUserIds, assigneeUnassigned,
           linkState: linkFilter,
           hasIntel: hasIntelFilter,
           order: statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "desc" : "asc",
@@ -641,10 +647,10 @@ export default function PreMeetingAssistance() {
           internalScope: showInternal ? "only" : "exclude",
           excludeClosedPipeline: isPrepView,
         }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude" }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
       ]);
       const ms = pageResp.items;
 
@@ -853,11 +859,14 @@ export default function PreMeetingAssistance() {
         if (!intelFilter.includes(intelState)) return false;
       }
       if (typeFilter.length > 0 && !typeFilter.includes(m.meeting_type)) return false;
-      if (assigneeFilter.length > 0 && m.deal_id) {
-        const assignee = dealAssigneeMap.get(m.deal_id);
-        if (!assignee || !assigneeFilter.includes(assignee.id)) return false;
-      } else if (assigneeFilter.length > 0 && !m.deal_id) {
-        return false;
+      if (assigneeFilter.length > 0) {
+        // "Unassigned" = no linked deal, or a deal with no AE assigned.
+        const wantUnassigned = assigneeFilter.includes("__unassigned__");
+        const userIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+        const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
+        const matchesUser = !!assignee && userIds.includes(assignee.id);
+        const matchesUnassigned = wantUnassigned && !assignee;
+        if (!matchesUser && !matchesUnassigned) return false;
       }
       if (linkFilter.length > 0) {
         const linkState = !m.company_id || !m.deal_id ? "needs_review" : "linked";
@@ -1087,7 +1096,10 @@ export default function PreMeetingAssistance() {
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
               label="Rep"
-              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              options={[
+                { value: "__unassigned__", label: "Unassigned" },
+                ...visibleUsers.map((u) => ({ value: u.id, label: u.name })),
+              ]}
               selected={assigneeFilter}
               onChange={setAssigneeFilter}
               placeholder="All reps"

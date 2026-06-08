@@ -733,6 +733,9 @@ export default function AccountSourcingCompanyDetail() {
                   return null;
                 })()}
                 uploadedBy={(() => {
+                  // Prefer the explicit creator stamped on the account; fall back
+                  // to the legacy prospect-import placeholder for older rows.
+                  if (company.created_by_name) return company.created_by_name;
                   const es = company.enrichment_sources as Record<string, unknown> | null | undefined;
                   const placeholder = es?.prospect_import_placeholder as Record<string, unknown> | undefined;
                   return (placeholder?.uploaded_by as string | undefined) ?? null;

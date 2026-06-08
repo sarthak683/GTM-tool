@@ -1510,7 +1510,13 @@ export default function AccountSourcing() {
                 <MultiSelectFilter
                   values={ownerFilter}
                   onChange={setOwnerFilter}
-                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                  options={[
+                    // Sentinel for "no owner" — backend maps "__unassigned__" to
+                    // assigned_to_id IS NULL AND sdr_id IS NULL so reps can
+                    // surface accounts that slipped through with no owner.
+                    { value: "__unassigned__", label: "Unassigned" },
+                    ...teamUsers.map((u) => ({ value: u.id, label: u.name || u.email })),
+                  ]}
                   label="Owner"
                   allLabel="Owner: All"
                   minWidth={170}

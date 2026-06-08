@@ -709,7 +709,12 @@ async def _process_uploaded_rows(
                 else:
                     attached_existing += 1
             else:
-                company = Company(**fields, sourcing_batch_id=batch_id)
+                company = Company(
+                    **fields,
+                    sourcing_batch_id=batch_id,
+                    created_by_id=UUID(admin_payload["id"]) if admin_payload.get("id") else None,
+                    created_by_name=admin_payload.get("name"),
+                )
                 append_company_activity_log(
                     company,
                     action="company_created",
@@ -1160,16 +1165,28 @@ async def list_sourced_companies(
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
         owner_uuids: list[UUID] = []
+        owner_unassigned = False
         for raw in str(owner_id).split(","):
             raw = raw.strip()
             if not raw:
+                continue
+            # Mirror the contacts repository: a "__unassigned__" sentinel means
+            # "no owner" (both ownership slots null), OR-ed in alongside any real
+            # owner ids so reps can surface accounts that slipped through.
+            if raw == "__unassigned__":
+                owner_unassigned = True
                 continue
             try:
                 owner_uuids.append(UUID(raw))
             except ValueError:
                 continue
+        owner_clauses = []
         if owner_uuids:
-            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+        if owner_unassigned:
+            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
+        if owner_clauses:
+            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
 
     # Advanced filter: prospects (contacts) per account. We materialise a
     # per-company count via a correlated subquery and apply >= / <= bounds.
@@ -1215,16 +1232,28 @@ async def get_sourced_company_summary(
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
         owner_uuids: list[UUID] = []
+        owner_unassigned = False
         for raw in str(owner_id).split(","):
             raw = raw.strip()
             if not raw:
+                continue
+            # Mirror the contacts repository: a "__unassigned__" sentinel means
+            # "no owner" (both ownership slots null), OR-ed in alongside any real
+            # owner ids so reps can surface accounts that slipped through.
+            if raw == "__unassigned__":
+                owner_unassigned = True
                 continue
             try:
                 owner_uuids.append(UUID(raw))
             except ValueError:
                 continue
+        owner_clauses = []
         if owner_uuids:
-            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+        if owner_unassigned:
+            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
+        if owner_clauses:
+            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
 
     companies = (await session.execute(stmt)).scalars().all()
 
@@ -1372,7 +1401,12 @@ async def create_manual_company(
         company, created = await get_or_create_company_by_domain(
             session,
             fields["domain"],
-            defaults={**create_fields, "sourcing_batch_id": batch.id},
+            defaults={
+                **create_fields,
+                "sourcing_batch_id": batch.id,
+                "created_by_id": current_user.id,
+                "created_by_name": current_user.name,
+            },
         )
         if created:
             append_company_activity_log(
@@ -1395,7 +1429,7 @@ async def create_manual_company(
                 metadata={"batch_id": str(batch.id)},
             )
     else:
-        company = Company(**fields, sourcing_batch_id=batch.id)
+        company = Company(**fields, sourcing_batch_id=batch.id, created_by_id=current_user.id, created_by_name=current_user.name)
         append_company_activity_log(
             company,
             action="manual_company_created",

@@ -59,6 +59,12 @@ class Company(CompanyBase, table=True):
     pe_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     vc_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     strategic_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Who added this account (manual add or CSV/Excel upload). created_by_name is
+    # denormalized — like assigned_rep_name/sdr_name — so the UI can show
+    # "Added by X" without a join. System-created rows (imports, AI sourcing,
+    # seed) leave these null.
+    created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    created_by_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -102,6 +108,8 @@ class CompanyRead(CompanyBase):
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
+    created_by_id: Optional[UUID] = None
+    created_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
