@@ -1,0 +1,60 @@
+{{/*
+Dedicated Celery worker for the "priority" queue.
+
+The app routes user-facing, latency-sensitive tasks (sourcing upload, ICP
+research, real-time call transcription) to the "priority" queue via
+app/celery_app.py task_routes. The default worker-deployment consumes only the
+"celery" queue, so without this deployment those tasks would have no consumer
+and would queue forever. This matches the prod gtm-priority-worker-deployment.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beacon.fullname" . }}-priority-worker
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "priority-worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.priorityWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "beacon.selectorLabels" (dict "context" . "component" "priority-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "beacon.selectorLabels" (dict "context" . "component" "priority-worker") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "beacon.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: priority-worker
+          image: {{ include "beacon.image" (dict "image" .Values.priorityWorker.image "global" .Values.global) }}
+          # Consumes ONLY the "priority" queue so user-triggered work is never
+          # blocked behind long-running syncs on the default worker.
+          command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo", "-Q", "{{ .Values.priorityWorker.queues }}"]
+          # Call transcription writes scratch files to /tmp
+          # (app/tasks/transcribe_call.py), so root fs is read-only with a /tmp emptyDir.
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "beacon.fullname" . }}-secret
+            - configMapRef:
+                name: {{ include "beacon.fullname" . }}-config
+          env:
+            - name: DATABASE_URL
+              value: {{ include "beacon.databaseUrl" . }}
+            - name: SYNC_DATABASE_URL
+              value: {{ include "beacon.syncDatabaseUrl" . }}
+            - name: REDIS_URL
+              value: {{ include "beacon.redisUrl" . }}
+          resources:
+            {{- toYaml .Values.priorityWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
