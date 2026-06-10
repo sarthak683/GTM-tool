@@ -187,6 +187,22 @@ class Settings(BaseSettings):
     VAPID_PRIVATE_KEY: str = ""  # base64url-encoded P-256 private key (never commit)
     VAPID_SUBJECT: str = "mailto:admin@beacon.li"  # mailto: or https: contact for push services
 
+    # Recotap (ABM / account intelligence) — sandbox + prod share an X-Api-Key
+    # auth. Mind the hyphen: sandbox is reco-tap.com, prod is recotap.com.
+    RECOTAP_ENVIRONMENT: str = "sandbox"  # "sandbox" | "prod"
+    RECOTAP_SANDBOX_API_KEY: str = ""
+    RECOTAP_API_KEY: str = ""  # prod key
+    RECOTAP_SANDBOX_BASE_URL: str = "https://sandboxapi.reco-tap.com/api/v1"
+    RECOTAP_PROD_BASE_URL: str = "https://eapi.recotap.com/api/v1"
+
+    @property
+    def recotap_base_url(self) -> str:
+        return self.RECOTAP_PROD_BASE_URL if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_BASE_URL
+
+    @property
+    def recotap_api_key(self) -> str:
+        return self.RECOTAP_API_KEY if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_API_KEY
+
     # Aircall
     AIRCALL_API_ID: str = ""
     AIRCALL_API_TOKEN: str = ""

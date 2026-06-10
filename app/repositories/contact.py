@@ -161,18 +161,26 @@ def contact_visibility_filter(user_id: UUID):
     A non-admin may see a contact if they own it in either slot, OR they are the
     AE on the contact's COMPANY (account-scoped: an AE sees every prospect inside
     the accounts they own, including ones an SDR sourced and hasn't handed over
-    yet), OR it is fully unassigned (both slots NULL — an unclaimed lead anyone
-    may pick up). This is the SINGLE SOURCE OF TRUTH for the rule; reuse it on
-    EVERY contact-browse surface (the prospects list, the account-sourcing
-    company page, global search) so visibility can never diverge between
-    surfaces. Mirrors the inline `.in_()` form in ``list_with_company_name``
-    (which supports a multi-id list).
+    yet), OR they own a DEAL on the contact's company (an AE running a demo/POC
+    sees the prospects at that account even when the company/contacts are still
+    held by the sourcing SDR or another company AE), OR it is fully unassigned
+    (both slots NULL — an unclaimed lead anyone may pick up). This is the SINGLE
+    SOURCE OF TRUTH for the rule; reuse it on EVERY contact-browse surface (the
+    prospects list, the account-sourcing company page, global search) so
+    visibility can never diverge between surfaces. Mirrors the inline `.in_()`
+    form in ``list_with_company_name`` (which supports a multi-id list).
     """
+    from app.models.deal import Deal
     return or_(
         Contact.assigned_to_id == user_id,
         Contact.sdr_id == user_id,
         Contact.company_id.in_(
             select(Company.id).where(Company.assigned_to_id == user_id)
+        ),
+        Contact.company_id.in_(
+            select(Deal.company_id).where(
+                Deal.assigned_to_id == user_id, Deal.company_id.is_not(None)
+            )
         ),
         and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
     )
@@ -547,11 +555,20 @@ class ContactRepository(BaseRepository[Contact]):
         # Keep in lockstep with contact_visibility_filter() above.
         restrict_ids = _parse_uuid_values(restrict_to_owner_id)
         if restrict_ids:
+            from app.models.deal import Deal
             visibility_filter = or_(
                 Contact.assigned_to_id.in_(restrict_ids),
                 Contact.sdr_id.in_(restrict_ids),
                 Contact.company_id.in_(
                     select(Company.id).where(Company.assigned_to_id.in_(restrict_ids))
+                ),
+                # Deal owner (e.g. the AE running the demo/POC) sees the account's
+                # prospects even when the company/contacts sit with the sourcing
+                # SDR or another company AE. Lockstep with contact_visibility_filter().
+                Contact.company_id.in_(
+                    select(Deal.company_id).where(
+                        Deal.assigned_to_id.in_(restrict_ids), Deal.company_id.is_not(None)
+                    )
                 ),
                 and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
             )

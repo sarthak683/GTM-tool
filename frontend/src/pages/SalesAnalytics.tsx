@@ -42,6 +42,7 @@ import {
   type SalesActivityDrilldown,
   type SalesActivityDrilldownRow,
   type SalesDashboard,
+  type SalesAccountStatusRow,
   type SalesForecastRow,
   type SalesFunnelStep,
   type SalesPipelineOwnerRow,
@@ -52,6 +53,7 @@ import {
   type SalesVelocityRow,
 } from "../lib/api";
 import { getCachedUsers } from "../lib/cachedFetch";
+import { accountStatusOption } from "../lib/accountStatus";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
@@ -63,7 +65,18 @@ import {
   type PerformanceTabKey,
 } from "./sales-analytics/PerformanceTabs";
 
-const WINDOW_OPTIONS = [30, 90, 180] as const;
+// "All time" is modeled as a very large day-window so the existing
+// window_days → date-range math on the backend keeps working unchanged.
+const ALL_TIME_DAYS = 36500;
+const WINDOW_PRESETS = [
+  { days: 7, label: "1W" },
+  { days: 30, label: "1M" },
+  { days: 90, label: "3M" },
+  { days: 180, label: "6M" },
+  { days: ALL_TIME_DAYS, label: "All" },
+] as const;
+const windowPresetLabel = (days: number): string =>
+  WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total";
@@ -823,12 +836,16 @@ function HighlightsCard({
 function RepActivityTable({
   rows,
   onOpenMetric,
+  showDemos = false,
+  emptyLabel = "No rep activity yet for this time range.",
 }: {
   rows: SalesRepActivityRow[];
   onOpenMetric: (row: SalesRepActivityRow, metric: SalesActivityMetric) => void;
+  showDemos?: boolean;
+  emptyLabel?: string;
 }) {
   if (rows.length === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No rep activity yet for this time range.</p>;
+    return <p className="crm-muted" style={{ margin: 0 }}>{emptyLabel}</p>;
   }
 
   return (
@@ -878,9 +895,54 @@ function RepActivityTable({
             />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
             <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
+            {showDemos ? (
+              <>
+                <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" />
+                <StatPill label="Demos Done" value={row.demos_done} tone="#eafaf1" text="#1c7a4f" />
+                <StatPill
+                  label="Converted"
+                  value={row.demos_converted}
+                  tone="#fdf1e3"
+                  text="#b4690e"
+                  sub={<span>{row.demos_done > 0 ? Math.round((row.demos_converted / row.demos_done) * 100) : 0}% of done</span>}
+                />
+              </>
+            ) : null}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AccountStatusBreakdown({ rows }: { rows: SalesAccountStatusRow[] }) {
+  const total = rows.reduce((sum, row) => sum + (row.count || 0), 0);
+  if (total === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No sourced accounts in this scope.</p>;
+  }
+  const max = Math.max(...rows.map((row) => row.count || 0), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {rows.map((row) => {
+        const option = accountStatusOption(row.key);
+        const color = option?.color ?? "#64748b";
+        const bg = option?.bg ?? "#eef2f7";
+        const pct = total > 0 ? Math.round((row.count / total) * 100) : 0;
+        return (
+          <div key={row.key} style={{ display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#243447" }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
+                {row.label}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#5d7187" }}>{row.count} • {pct}%</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 999, background: bg, overflow: "hidden" }}>
+              <div style={{ width: `${Math.max((row.count / max) * 100, row.count > 0 ? 6 : 0)}%`, height: "100%", borderRadius: 999, background: color }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1812,7 +1874,7 @@ export default function SalesAnalytics() {
       .catch(() => setPods([]));
   }, []);
 
-  const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
+  const [windowDays, setWindowDays] = useState<number>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string[]>([]);
@@ -2024,7 +2086,9 @@ export default function SalesAnalytics() {
     {
       label: "Forecast Window",
       value: formatShortCurrency(data.summary.forecast_amount),
-      hint: `Weighted pipeline expected to land inside the next ${data.window_days} days`,
+      hint: data.window_days >= ALL_TIME_DAYS
+        ? "Weighted pipeline expected to land across all open deals"
+        : `Weighted pipeline expected to land inside the next ${data.window_days} days`,
       tone: "amber" as const,
       icon: CalendarRange,
     },
@@ -2109,6 +2173,18 @@ export default function SalesAnalytics() {
   const visibleRepActivity = useMemo(
     () => (!hideDeveloper ? data?.rep_activity ?? [] : (data?.rep_activity ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
     [data?.rep_activity, hideDeveloper, user?.id],
+  );
+
+  // Split the leaderboard by role. SDRs get the demo funnel columns; AEs keep
+  // the pipeline-focused view. Rows with no role (unattributed activity) are
+  // dropped from the per-rep boards rather than padding either side.
+  const sdrRepActivity = useMemo(
+    () => visibleRepActivity.filter((row) => (row.role || "").toLowerCase() === "sdr"),
+    [visibleRepActivity],
+  );
+  const aeRepActivity = useMemo(
+    () => visibleRepActivity.filter((row) => (row.role || "").toLowerCase() === "ae"),
+    [visibleRepActivity],
   );
 
   const visibleRepWeeklyActivity = useMemo(
@@ -2310,24 +2386,24 @@ export default function SalesAnalytics() {
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {WINDOW_OPTIONS.map((value) => (
+              {WINDOW_PRESETS.map((preset) => (
                 <button
-                  key={value}
+                  key={preset.days}
                   type="button"
-                  onClick={() => { setWindowDays(value); setFromDate(""); setToDate(""); }}
+                  onClick={() => { setWindowDays(preset.days); setFromDate(""); setToDate(""); }}
                   style={{
                     height: 38,
                     padding: "0 14px",
                     borderRadius: 999,
-                    border: !usingCustomRange && value === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
-                    background: !usingCustomRange && value === windowDays ? "#f3fbe3" : "#fff",
-                    color: !usingCustomRange && value === windowDays ? "#4d7c0f" : "#506378",
+                    border: !usingCustomRange && preset.days === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
+                    background: !usingCustomRange && preset.days === windowDays ? "#f3fbe3" : "#fff",
+                    color: !usingCustomRange && preset.days === windowDays ? "#4d7c0f" : "#506378",
                     fontSize: 12,
                     fontWeight: 800,
                     cursor: "pointer",
                   }}
                 >
-                  {value}d
+                  {preset.label}
                 </button>
               ))}
             </div>
@@ -2425,7 +2501,9 @@ export default function SalesAnalytics() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
-                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>{windowDays}d</p>
+                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>
+                  {usingCustomRange ? "Custom" : windowDays >= ALL_TIME_DAYS ? "All time" : windowPresetLabel(windowDays)}
+                </p>
               </div>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Updated</p>
@@ -2439,7 +2517,7 @@ export default function SalesAnalytics() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f7f9fc", border: "1px solid #e3ebf4", color: "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <CalendarRange size={14} />
-            Window: last {windowDays} days
+            {usingCustomRange ? "Window: custom range" : windowDays >= ALL_TIME_DAYS ? "Window: all time" : `Window: last ${windowDays} days`}
           </div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: repFilter.length > 0 ? "#eef4ff" : "#f7f9fc", border: repFilter.length > 0 ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: repFilter.length > 0 ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <BarChart3 size={14} />
@@ -2494,19 +2572,44 @@ export default function SalesAnalytics() {
 
           <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(320px, 1fr)", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18 }}>
             <SectionCard
-              title="Rep Activity Leaderboard"
-              subtitle="Weekly-touch totals by rep across email, calls, connected/live conversations, LinkedIn, and meetings, alongside the live pipeline they own."
+              title="SDR Leaderboard"
+              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and how many converted to a qualified deal."
             >
-              <RepActivityTable rows={visibleRepActivity} onOpenMetric={handleOpenActivityMetric} />
+              <RepActivityTable
+                rows={sdrRepActivity}
+                onOpenMetric={handleOpenActivityMetric}
+                showDemos
+                emptyLabel="No SDR activity yet for this time range."
+              />
             </SectionCard>
 
+            <SectionCard
+              title="AE Leaderboard"
+              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) by AE, alongside the live pipeline each one owns."
+            >
+              <RepActivityTable
+                rows={aeRepActivity}
+                onOpenMetric={handleOpenActivityMetric}
+                emptyLabel="No AE activity yet for this time range."
+              />
+            </SectionCard>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(300px, 1fr)", gap: 18 }}>
             <SectionCard
               title="Conversion Funnel"
               subtitle="How this window's pipeline moves from Lead to Closed Won, with step-to-step conversion rates."
             >
               <ConversionFunnelView steps={data.conversion_funnel} />
+            </SectionCard>
+
+            <SectionCard
+              title="Accounts by Status"
+              subtitle="Sourced accounts grouped by their manual status. Scoped to the selected reps and geography."
+            >
+              <AccountStatusBreakdown rows={data.accounts_by_status ?? []} />
             </SectionCard>
           </div>
 

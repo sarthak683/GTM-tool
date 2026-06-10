@@ -1,5 +1,6 @@
 import "./account-sourcing-refresh.css";
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import {
@@ -23,20 +24,19 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi } from "../lib/api";
+import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
+import type { RecotapSummary } from "../lib/api/prospecting";
 import { getCachedUsers } from "../lib/cachedFetch";
 import { getAccountPrioritySnapshot } from "../lib/utils";
 import type { AccountSourcingSummary, Company, SourcingBatch, User } from "../types";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import {
-  asText,
   cardStyle,
   colors,
   containerStyle,
   DISPOSITION_OPTIONS,
   formatBatchStage,
-  getIcpAnalysis,
-  getSalesPlay,
   ICP_STYLE,
   OUTREACH_LANE_OPTIONS,
   pageStyle,
@@ -231,64 +231,229 @@ function UploadPanel({
   );
 }
 
+// Recotap journey-stage + engagement badge styling (low → high intent).
+const JOURNEY_STAGE_STYLE: Record<string, { bg: string; color: string; border: string }> = {
+  Unaware: { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" },
+  Aware: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+  Consideration: { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa" },
+  Opportunity: { bg: "#f5f3ff", color: "#6d28d9", border: "#ddd6fe" },
+  Customer: { bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" },
+};
+const ENGAGEMENT_STYLE: Record<string, { bg: string; color: string; border: string }> = {
+  Hot: { bg: "#fef2f2", color: "#b91c1c", border: "#fecaca" },
+  Warm: { bg: "#fffbeb", color: "#92400e", border: "#fde68a" },
+  Cold: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+};
+const NEUTRAL_BADGE = { bg: "#f4f7fb", color: "#55657a", border: "#d9e1ec" };
+const JOURNEY_STAGE_ORDER = ["Unaware", "Aware", "Consideration", "Opportunity", "Customer"];
+const JOURNEY_FILTER_OPTIONS = [
+  ...JOURNEY_STAGE_ORDER.map((s) => ({ value: s, label: s })),
+  { value: "not_scored", label: "Not scored" },
+];
+
+// Manual account-status filter options. "unset" mirrors the backend sentinel
+// for accounts with no status (parallels the Unassigned owner convention).
+const ACCOUNT_STATUS_FILTER_OPTIONS = [
+  ...ACCOUNT_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+  { value: "unset", label: "No status" },
+];
+
+// The Recotap buying-journey funnel — the ABM centerpiece of Account Sourcing.
+// Each stage tile shows its account count, is color-coded low→high intent, and
+// click-filters the list. Engagement chips + a Sync button sit in the header.
+function JourneyFunnel({
+  summary,
+  active,
+  onToggle,
+  onSync,
+  syncing,
+}: {
+  summary: RecotapSummary | null;
+  active: string[];
+  onToggle: (stage: string) => void;
+  onSync: () => void;
+  syncing: boolean;
+}) {
+  if (!summary) return null;
+  const stages = JOURNEY_STAGE_ORDER;
+  const maxCount = Math.max(1, ...stages.map((s) => summary.stages[s] ?? 0));
+  const eng = summary.engagement || {};
+  return (
+    <div style={{ border: "1px solid #e3ebf4", borderRadius: 16, background: "linear-gradient(180deg,#fbfdff,#eff5ff)", padding: "16px 18px", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#16273d" }}>Buying Journey</span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#5b6ef5", background: "#eef0ff", border: "1px solid #dfe3ff", borderRadius: 999, padding: "3px 9px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Powered by Recotap</span>
+          <span style={{ fontSize: 11.5, color: "#7f8fa5" }}>{summary.scored} scored · {summary.not_scored} not scored</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {(["Hot", "Warm", "Cold"] as const).map((k) => (
+            <span key={k} style={{ fontSize: 11, fontWeight: 700, color: ENGAGEMENT_STYLE[k].color, background: ENGAGEMENT_STYLE[k].bg, border: `1px solid ${ENGAGEMENT_STYLE[k].border}`, borderRadius: 999, padding: "3px 9px" }}>{k} {eng[k] ?? 0}</span>
+          ))}
+          <button type="button" onClick={onSync} disabled={syncing} style={{ fontSize: 11.5, fontWeight: 700, color: "#24567e", background: "#fff", border: "1px solid #cbd9ec", borderRadius: 8, padding: "5px 10px", cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <RefreshCw size={12} className={syncing ? "animate-spin" : undefined} />{syncing ? "Syncing…" : "Sync Recotap"}
+          </button>
+        </div>
+      </div>
+      <div className="as-journey-funnel" style={{ display: "grid", gap: 8 }}>
+        {stages.map((stage, i) => {
+          const count = summary.stages[stage] ?? 0;
+          const s = JOURNEY_STAGE_STYLE[stage] ?? NEUTRAL_BADGE;
+          const isActive = active.includes(stage);
+          const pct = Math.round((count / maxCount) * 100);
+          return (
+            <button
+              key={stage}
+              type="button"
+              onClick={() => onToggle(stage)}
+              title={`${count} account${count === 1 ? "" : "s"} · ${stage}`}
+              style={{
+                textAlign: "left",
+                border: `1.5px solid ${isActive ? s.color : s.border}`,
+                background: isActive ? s.bg : "#fff",
+                borderRadius: 12,
+                padding: "10px 12px",
+                cursor: "pointer",
+                boxShadow: isActive ? `0 0 0 2px ${s.bg}` : "none",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                minWidth: 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: s.color, textTransform: "uppercase", letterSpacing: "0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{stage}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9aa7b8", flexShrink: 0 }}>{i + 1}/{stages.length}</span>
+              </div>
+              <span style={{ fontSize: 24, fontWeight: 800, color: "#16273d", lineHeight: 1 }}>{count}</span>
+              <div style={{ height: 5, borderRadius: 999, background: "#eef2f7", overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: s.color, borderRadius: 999 }} />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Stable colored avatar (initial) for the account row — Recotap-style.
+const AVATAR_PALETTE = [
+  ["#eef2ff", "#4f46e5"], ["#ecfdf5", "#047857"], ["#fff7ed", "#c2410c"],
+  ["#eff6ff", "#1d4ed8"], ["#fdf4ff", "#a21caf"], ["#fef2f2", "#b91c1c"], ["#f0fdfa", "#0f766e"],
+];
+function CompanyAvatar({ name }: { name: string }) {
+  const clean = (name || "?").trim();
+  const initial = clean.charAt(0).toUpperCase() || "?";
+  const idx = [...clean].reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % AVATAR_PALETTE.length;
+  const [bg, fg] = AVATAR_PALETTE[idx];
+  return (
+    <div style={{ width: 38, height: 38, borderRadius: 11, background: bg, color: fg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>
+      {initial}
+    </div>
+  );
+}
+
+// Column header for the Recotap-style account table (desktop only).
+function CompanyTableHeader() {
+  const cell: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
+  return (
+    <div className="as-company-table-header" style={{ padding: "2px 18px 6px" }}>
+      <span style={cell}>Account</span>
+      <span style={cell}>ICP Fit</span>
+      <span style={cell}>Journey Stage</span>
+      <span style={cell}>HQ Location</span>
+      <span style={cell}>Engagement</span>
+      <span style={cell} />
+    </div>
+  );
+}
+
 function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (userId: string | null, userName: string | null) => void }) {
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
   const priority = getAccountPrioritySnapshot(company);
-  const icpAnalysis = getIcpAnalysis(company);
-  const salesPlay = getSalesPlay(company);
-  const talVerdict = asText(salesPlay?.tal_verdict) || (typeof icpAnalysis?.classification === "string" ? icpAnalysis.classification : undefined);
   const disposition = company.disposition || "";
+  const statusOption = accountStatusOption(company.account_status);
+  const rtp = company.recotap;
+  const journeyStyle = rtp?.journey_stage ? (JOURNEY_STAGE_STYLE[rtp.journey_stage] ?? NEUTRAL_BADGE) : NEUTRAL_BADGE;
+  const engagementStyle = rtp?.engagement ? (ENGAGEMENT_STYLE[rtp.engagement] ?? NEUTRAL_BADGE) : NEUTRAL_BADGE;
+  const domainText = company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain;
 
   return (
     <div
-      className="as-company-card crm-hover-lift"
+      className="as-company-card as-company-row crm-hover-lift"
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
-        padding: "14px 20px",
+        borderRadius: 14,
+        boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
+        padding: "11px 18px",
         cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
         transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background 0.15s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
     >
-      <Building2 size={18} color="#71839a" style={{ flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{company.name}</div>
-        <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>
-          {company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain}
-          {company.industry ? ` · ${company.industry}` : ""}
-        </div>
-        <div className="as-company-card-mobile-chips" style={{ display: "none", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-          <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10, fontWeight: 800, padding: "3px 8px" }}>{tier.toUpperCase()}</span>
-          {talVerdict && <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{talVerdict}</span>}
-          <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{priority.priorityBand}</span>
+      {/* Account */}
+      <div className="as-col-account" style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+        <CompanyAvatar name={company.name} />
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ color: colors.text, fontWeight: 800, fontSize: 14.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+              {domainText}{company.industry ? ` · ${company.industry}` : ""}
+            </span>
+            {disposition ? (
+              <span style={{ flexShrink: 0, background: "#f4f7fb", color: colors.sub, borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 700, border: `1px solid ${colors.border}` }}>{disposition}</span>
+            ) : null}
+            {statusOption ? (
+              <span style={{ flexShrink: 0, background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>{statusOption.label}</span>
+            ) : null}
+          </div>
+          {/* Mobile-only stacked chips (the desktop columns are hidden under 980px) */}
+          <div className="as-company-card-mobile-chips" style={{ display: "none", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+            <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10, fontWeight: 800, padding: "3px 8px" }}>{tier.toUpperCase()}</span>
+            {rtp?.journey_stage && <span style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{rtp.journey_stage}</span>}
+            {rtp?.engagement && <span style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 700 }}>{rtp.engagement}</span>}
+            <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{priority.priorityBand}</span>
+          </div>
         </div>
       </div>
-      <div className="as-company-card-desktop-chips" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
-        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>
-          {tier.toUpperCase()}
-        </span>
-        {talVerdict ? (
-          <span style={{ background: "#eef6ff", color: "#24567e", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
-            {talVerdict}
-          </span>
-        ) : null}
-        <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800 }}>
-          {priority.priorityBand}
-        </span>
-        {disposition ? (
-          <span style={{ background: "#f4f7fb", color: colors.sub, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700, border: `1px solid ${colors.border}` }}>
-            {disposition}
-          </span>
-        ) : null}
+
+      {/* ICP Fit */}
+      <div className="as-col as-col-icp">
+        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>{tier.toUpperCase()}</span>
       </div>
-      <div className="as-company-card-assign" style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+
+      {/* Journey Stage */}
+      <div className="as-col as-col-journey">
+        {rtp?.journey_stage ? (
+          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
+            {rtp.journey_stage}
+          </span>
+        ) : (
+          <span style={{ color: colors.faint, fontSize: 13 }}>—</span>
+        )}
+      </div>
+
+      {/* HQ Location */}
+      <div className="as-col as-col-hq" style={{ color: colors.sub, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+        {rtp?.hq_location || <span style={{ color: colors.faint }}>—</span>}
+      </div>
+
+      {/* Engagement */}
+      <div className="as-col as-col-eng">
+        {rtp?.engagement ? (
+          <span title="Recotap account engagement" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>{rtp.engagement}</span>
+        ) : (
+          <span style={{ color: colors.faint, fontSize: 13 }}>—</span>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="as-col-actions as-company-card-assign" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={(e) => e.stopPropagation()}>
         <AssignDropdown
           entityType="company"
           entityId={company.id}
@@ -309,8 +474,8 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           compact
           label="SDR"
         />
+        <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
       </div>
-      <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
     </div>
   );
 }
@@ -338,6 +503,10 @@ export default function AccountSourcing() {
   const [advValue, setAdvValue] = useState("");
   const [advValue2, setAdvValue2] = useState("");
   const [downloadingFiltered, setDownloadingFiltered] = useState(false);
+  // Recotap journey-stage filter + the funnel counts that power the ABM band.
+  const [journeyFilter, setJourneyFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("journey")));
+  const [journeySummary, setJourneySummary] = useState<RecotapSummary | null>(null);
+  const [syncingRecotap, setSyncingRecotap] = useState(false);
   const hasAdvancedFilter = prospectsMin !== undefined || prospectsMax !== undefined;
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
   // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
@@ -346,6 +515,7 @@ export default function AccountSourcing() {
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("status")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
   const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(searchParams.get("sort")));
   const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
@@ -408,7 +578,7 @@ export default function AccountSourcing() {
         ownerScope === "mine"
           ? user?.id
           : (ownerFilter.length ? ownerFilter : undefined);
-      const [companyPage, companySummary, b] = await Promise.all([
+      const [companyPage, companySummary, b, rtpSummary] = await Promise.all([
         accountSourcingApi.listCompaniesPaginated({
           skip: (page - 1) * pageSize,
           limit: pageSize,
@@ -416,7 +586,9 @@ export default function AccountSourcing() {
           ownerId: effectiveOwnerId,
           icpTier: tierFilter.length ? tierFilter : undefined,
           disposition: dispositionFilter.length ? dispositionFilter : undefined,
+          accountStatus: statusFilter.length ? statusFilter : undefined,
           recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
+          journeyStage: journeyFilter.length ? journeyFilter : undefined,
           prospectsMin,
           prospectsMax,
         }),
@@ -424,16 +596,32 @@ export default function AccountSourcing() {
           ownerId: effectiveOwnerId,
         }),
         accountSourcingApi.listBatches(),
+        accountSourcingApi.recotapSummary().catch(() => null),
       ]);
       setCompanies(companyPage.items);
       setCompanyTotal(companyPage.total);
       setCompanyPages(companyPage.pages);
       setSummary(companySummary);
       setBatches(b);
+      setJourneySummary(rtpSummary);
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
+
+  // Pull live Recotap signals + (re)seed mock data, then reload so the funnel
+  // and rows reflect the new data.
+  const handleSyncRecotap = useCallback(async () => {
+    setSyncingRecotap(true);
+    try {
+      await accountSourcingApi.recotapRefresh();
+      await load();
+    } catch {
+      // surfaced via unchanged counts; no destructive failure
+    } finally {
+      setSyncingRecotap(false);
+    }
+  }, [load]);
 
   // Load team users once for the Owner multi-select.
   useEffect(() => {
@@ -465,14 +653,16 @@ export default function AccountSourcing() {
       ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
       tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
       dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
+      statusFilter.length ? next.set("status", statusFilter.join(",")) : next.delete("status");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
+      journeyFilter.length ? next.set("journey", journeyFilter.join(",")) : next.delete("journey");
       sortBy !== "recent" ? next.set("sort", sortBy) : next.delete("sort");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       prospectsMin !== undefined ? next.set("pmin", String(prospectsMin)) : next.delete("pmin");
       prospectsMax !== undefined ? next.set("pmax", String(prospectsMax)) : next.delete("pmax");
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -483,7 +673,7 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, laneFilter, ownerFilter, ownerScope, tierFilter, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, ownerScope, tierFilter, prospectsMin, prospectsMax]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -528,7 +718,7 @@ export default function AccountSourcing() {
     return withIndex.map((item) => item.company);
   }, [companies, sortBy]);
 
-  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || laneFilter.length);
+  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -940,7 +1130,9 @@ export default function AccountSourcing() {
             setOwnerFilter([]);
             setTierFilter([]);
             setDispositionFilter([]);
+            setStatusFilter([]);
             setLaneFilter([]);
+            setJourneyFilter([]);
           };
           const toggleTier = (t: string) => {
             setActiveTab("accounts");
@@ -1240,6 +1432,16 @@ export default function AccountSourcing() {
 
         {activeTab === "accounts" ? (
           <>
+            <JourneyFunnel
+              summary={journeySummary}
+              active={journeyFilter}
+              onToggle={(stage) => {
+                setPage(1);
+                setJourneyFilter((prev) => (prev.length === 1 && prev[0] === stage ? [] : [stage]));
+              }}
+              onSync={handleSyncRecotap}
+              syncing={syncingRecotap}
+            />
             {showAdvancedFilter && (
               <div
                 data-mobile-modal
@@ -1531,12 +1733,28 @@ export default function AccountSourcing() {
                 minWidth={150}
               />
               <MultiSelectFilter
+                values={statusFilter}
+                onChange={setStatusFilter}
+                options={ACCOUNT_STATUS_FILTER_OPTIONS}
+                label="Status"
+                allLabel="All statuses"
+                minWidth={150}
+              />
+              <MultiSelectFilter
                 values={laneFilter}
                 onChange={setLaneFilter}
                 options={OUTREACH_LANE_OPTIONS}
                 label="Outreach Lane"
                 allLabel="All lanes"
                 minWidth={170}
+              />
+              <MultiSelectFilter
+                values={journeyFilter}
+                onChange={setJourneyFilter}
+                options={JOURNEY_FILTER_OPTIONS}
+                label="Journey Stage"
+                allLabel="All journey stages"
+                minWidth={175}
               />
               <select
                 value={sortBy}
@@ -1574,7 +1792,9 @@ export default function AccountSourcing() {
                     setOwnerFilter([]);
                     setTierFilter([]);
                     setDispositionFilter([]);
+                    setStatusFilter([]);
                     setLaneFilter([]);
+                    setJourneyFilter([]);
                   }}
                   style={{
                     border: `1px solid ${colors.border}`,
@@ -1607,7 +1827,8 @@ export default function AccountSourcing() {
             {hasFilters ? "No companies match these filters." : "No companies sourced yet."}
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gap: 8 }}>
+            <CompanyTableHeader />
             {sortedCompanies.map((c) => (
               <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
             ))}

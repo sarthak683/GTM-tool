@@ -81,6 +81,20 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   bofu: ["meeting_booked"],
 };
 const GEO_OPTIONS = ["India", "America", "Rest of the World"] as const;
+// Friendly labels for the standard (create-modal) deal sources. The marketing
+// Source filter shows these plus any other source values actually present on
+// deals (e.g. system-generated ones), so no deal is hidden from the filter.
+const SOURCE_LABELS: Record<string, string> = {
+  inbound: "Inbound",
+  outbound: "Outbound",
+  referral: "Referral",
+  partner: "Partner",
+  event: "Event",
+  cold_call: "Cold Call",
+  linkedin: "LinkedIn",
+};
+const KNOWN_SOURCES = ["inbound", "outbound", "referral", "partner", "event", "cold_call", "linkedin"];
+const sourceLabel = (value: string) => SOURCE_LABELS[value] ?? value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const ENGAGEMENT_SIGNAL_LEGEND = "Signal legend: Active = last touch within 3d; Watch = 4-7d; Stale = older than 7d; No signal = no captured activity yet.";
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
@@ -1569,6 +1583,7 @@ export default function Pipeline() {
   const [assigneeFilters, setAssigneeFilters] = useState<string[]>([]);
   const [geographyFilters, setGeographyFilters] = useState<string[]>([]);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
   const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
   const [commitFilter, setCommitFilter] = useState<string[]>([]);
   const [stalledOnly, setStalledOnly] = useState(false);
@@ -1613,6 +1628,7 @@ export default function Pipeline() {
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
   const dealTags = useMemo(() => Array.from(new Set(allDeals.flatMap((deal) => deal.tags ?? []))).sort((a, b) => a.localeCompare(b)), [allDeals]);
+  const dealSources = useMemo(() => Array.from(new Set(allDeals.map((deal) => deal.source).filter((s): s is string => Boolean(s)))).sort((a, b) => a.localeCompare(b)), [allDeals]);
   const effectiveDealStages = useMemo(() => {
     const configured = dealStages.length ? dealStages : DEFAULT_DEAL_STAGES;
     const seen = new Set(configured.map((stage) => stage.id));
@@ -1772,6 +1788,7 @@ export default function Pipeline() {
         return geo ? geographyFilters.includes(geo) : false;
       });
       if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
+      if (sourceFilters.length) items = items.filter((deal) => (deal.source ? sourceFilters.includes(deal.source) : false));
       if (priorityFilters.length) items = items.filter((deal) => {
         const tag = deal.priority_tag ?? null;
         return tag ? priorityFilters.includes(tag) : false;
@@ -1850,7 +1867,7 @@ export default function Pipeline() {
       next[stage.id] = items;
     }
     return next;
-  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
+  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, sourceFilters, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1972,7 +1989,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || sourceFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
@@ -2009,6 +2026,7 @@ export default function Pipeline() {
     { value: "missing", label: "No contacts linked" },
   ];
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
+  const sourceOptions = Array.from(new Set([...KNOWN_SOURCES, ...dealSources])).map((value) => ({ value, label: sourceLabel(value) }));
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
   const accentBorder = tab === "deal" ? "#b8d0f0" : "#b2e0dc";
@@ -2129,6 +2147,7 @@ export default function Pipeline() {
     setAssigneeFilters([]);
     setGeographyFilters([]);
     setTagFilters([]);
+    setSourceFilters([]);
     setPriorityFilters([]);
     setCommitFilter([]);
     setHealthFilters([]);
@@ -2632,6 +2651,7 @@ export default function Pipeline() {
             <MultiSelectFilter values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={sourceFilters} onChange={setSourceFilters} label="Source" allLabel="All Sources" options={sourceOptions} />}
             {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
             {tab === "deal" && <MultiSelectFilter values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
             {tab === "deal" && <MultiSelectFilter values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}

@@ -271,3 +271,46 @@
     grid-template-columns: minmax(0, 2.7fr) minmax(360px, 1fr) !important;
   }
 }
+
+/* Recotap buying-journey funnel: 5 stage tiles on desktop, wraps on mobile. */
+.as-journey-funnel {
+  grid-template-columns: repeat(5, 1fr);
+}
+@media (max-width: 640px) {
+  .as-journey-funnel {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Recotap-style account table: aligned columns (desktop), stacked (mobile).
+   Only the Account column flexes; the rest are fixed so the header row and
+   every card row resolve to identical column tracks and line up. */
+.account-sourcing-page .as-company-row,
+.account-sourcing-page .as-company-table-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 156px 150px 104px 172px;
+  align-items: center;
+  column-gap: 14px;
+}
+.account-sourcing-page .as-company-table-header {
+  border: 1px solid transparent; /* match the card's 1px border for alignment */
+}
+.account-sourcing-page .as-company-row .as-col {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .account-sourcing-page .as-company-table-header { display: none; }
+  .account-sourcing-page .as-company-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .account-sourcing-page .as-company-row .as-col-icp,
+  .account-sourcing-page .as-company-row .as-col-journey,
+  .account-sourcing-page .as-company-row .as-col-hq,
+  .account-sourcing-page .as-company-row .as-col-eng { display: none; }
+  .account-sourcing-page .as-company-row .as-col-account { flex: 1; min-width: 0; }
+  .account-sourcing-page .as-company-card-mobile-chips { display: flex !important; }
+}

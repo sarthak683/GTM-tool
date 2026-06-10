@@ -54,6 +54,14 @@ from app.services.data_reset import (
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.icp_scorer import score_company
+from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
+from app.services.recotap import (
+    normalize_domain as recotap_domain,
+    pull_into_db as recotap_pull,
+    push_crm_status as recotap_push_status,
+    seed_mock_signals as recotap_seed,
+    signals_by_domain as recotap_signals,
+)
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
 
@@ -1136,9 +1144,11 @@ async def list_sourced_companies(
     q: str | None = Query(default=None),
     icp_tier: str | None = Query(default=None),
     disposition: str | None = Query(default=None),
+    account_status: str | None = Query(default=None, description="One or more account_status values (comma-separated). Use 'unset' for accounts with no status."),
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage."),
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
@@ -1160,6 +1170,16 @@ async def list_sourced_companies(
         )
     stmt = _apply_text_multi_filter(stmt, Company.icp_tier, icp_tier)
     stmt = _apply_text_multi_filter(stmt, Company.disposition, disposition)
+    if account_status:
+        status_tokens = [t.strip().lower() for t in str(account_status).split(",") if t.strip()]
+        status_clauses = []
+        real_statuses = [t for t in status_tokens if t != "unset"]
+        if real_statuses:
+            status_clauses.append(Company.account_status.in_(real_statuses))
+        if "unset" in status_tokens:
+            status_clauses.append(or_(Company.account_status.is_(None), Company.account_status == ""))
+        if status_clauses:
+            stmt = stmt.where(or_(*status_clauses))
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, recommended_outreach_lane)
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
@@ -1187,6 +1207,36 @@ async def list_sourced_companies(
             owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
         if owner_clauses:
             stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+
+    # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
+    # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
+    # accounts with no Recotap row or an empty/null stage.
+    if journey_stage:
+        stages = [s.strip() for s in str(journey_stage).split(",") if s.strip()]
+        want_not_scored = "not_scored" in stages
+        real_stages = [s for s in stages if s != "not_scored"]
+        journey_clauses = []
+        if real_stages:
+            journey_clauses.append(
+                Company.id.in_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.in_(real_stages),
+                    )
+                )
+            )
+        if want_not_scored:
+            journey_clauses.append(
+                Company.id.notin_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.is_not(None),
+                        RecotapAccount.journey_stage != "",
+                    )
+                )
+            )
+        if journey_clauses:
+            stmt = stmt.where(or_(*journey_clauses) if len(journey_clauses) > 1 else journey_clauses[0])
 
     # Advanced filter: prospects (contacts) per account. We materialise a
     # per-company count via a correlated subquery and apply >= / <= bounds.
@@ -1217,7 +1267,11 @@ async def list_sourced_companies(
             .limit(page.limit)
         )
     ).scalars().all()
-    return PaginatedResponse.build(items=items, total=total, skip=page.skip, limit=page.limit)
+    reads = [CompanyRead.model_validate(company) for company in items]
+    sig = await recotap_signals(session, [company.domain for company in items])
+    for read, company in zip(reads, items):
+        read.recotap = sig.get(recotap_domain(company.domain))
+    return PaginatedResponse.build(items=reads, total=total, skip=page.skip, limit=page.limit)
 
 
 @router.get("/summary", response_model=CompanySourcingSummary)
@@ -1490,7 +1544,72 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
     cache = dict(read.enrichment_cache or {})
     cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)
     read.enrichment_cache = cache
+    sig = await recotap_signals(session, [company.domain])
+    read.recotap = sig.get(recotap_domain(company.domain))
     return read
+
+
+@router.post("/recotap/refresh")
+async def refresh_recotap_signals(
+    _user: CurrentUser,
+    session: DBSession = None,
+    seed: bool = True,
+    overwrite: bool = False,
+):
+    """Pull live Recotap account signals into recotap_accounts, then (by default)
+    seed deterministic mock signals for sourced companies — the sandbox scores
+    asynchronously, so seeding gives the UI journey-stage/score data to work with.
+    """
+    pulled = await recotap_pull(session)
+    seeded = await recotap_seed(session, overwrite=overwrite) if seed else {"seeded": 0}
+    return {"pull": pulled, "seed": seeded}
+
+
+@router.get("/recotap/summary")
+async def recotap_summary(_user: CurrentUser, session: DBSession = None):
+    """Journey-stage + engagement counts across sourced accounts — powers the
+    Account Sourcing journey funnel + filter chips."""
+    total = (
+        await session.execute(select(func.count(Company.id)).where(_account_sourcing_visibility_filter()))
+    ).scalar_one()
+    stage_rows = (
+        await session.execute(
+            select(RecotapAccount.journey_stage, func.count())
+            .where(RecotapAccount.company_id.is_not(None))
+            .group_by(RecotapAccount.journey_stage)
+        )
+    ).all()
+    stages = {s: 0 for s in RECOTAP_JOURNEY_STAGES}
+    scored = 0
+    for stage, cnt in stage_rows:
+        if stage and stage in stages:
+            stages[stage] = cnt
+            scored += cnt
+    eng_rows = (
+        await session.execute(
+            select(RecotapAccount.engagement, func.count())
+            .where(RecotapAccount.company_id.is_not(None))
+            .group_by(RecotapAccount.engagement)
+        )
+    ).all()
+    engagement = {e: 0 for e in RECOTAP_ENGAGEMENT_LEVELS}
+    for eng, cnt in eng_rows:
+        if eng and eng in engagement:
+            engagement[eng] = cnt
+    return {
+        "stages": stages,
+        "engagement": engagement,
+        "scored": scored,
+        "not_scored": max(0, total - scored),
+        "total": total,
+    }
+
+
+@router.post("/recotap/push")
+async def push_recotap_crm_status(_user: CurrentUser, session: DBSession = None, limit: int | None = None):
+    """Push Beacon CRM deal-stage status to Recotap as account tags
+    (Customer / POC / Negotiation / ...). `limit` caps the number pushed (test runs)."""
+    return await recotap_push_status(session, limit=limit)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)

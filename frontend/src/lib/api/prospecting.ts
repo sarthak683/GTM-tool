@@ -9,6 +9,14 @@ import type {
 } from "../../types";
 import { BASE, getAuthHeaders, request, requestList, requestPaginated } from "./core";
 
+export interface RecotapSummary {
+  stages: Record<string, number>;
+  engagement: Record<string, number>;
+  scored: number;
+  not_scored: number;
+  total: number;
+}
+
 export const enrichmentApi = {
   triggerCompany: (companyId: string) =>
     request<{ status: string; task_id: string; message: string }>(
@@ -383,9 +391,11 @@ export const accountSourcingApi = {
     q?: string;
     icpTier?: string[];
     disposition?: string[];
+    accountStatus?: string[];
     recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
     ownerId?: string | string[];
+    journeyStage?: string[];
     prospectsMin?: number;
     prospectsMax?: number;
   }) => {
@@ -396,16 +406,27 @@ export const accountSourcingApi = {
     if (params?.q) search.set("q", params.q);
     if (params?.icpTier?.length) search.set("icp_tier", params.icpTier.join(","));
     if (params?.disposition?.length) search.set("disposition", params.disposition.join(","));
+    if (params?.accountStatus?.length) search.set("account_status", params.accountStatus.join(","));
     if (params?.recommendedOutreachLane?.length) search.set("recommended_outreach_lane", params.recommendedOutreachLane.join(","));
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     if (params?.ownerId) {
       const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
       if (ownerValue) search.set("owner_id", ownerValue);
     }
+    if (params?.journeyStage?.length) search.set("journey_stage", params.journeyStage.join(","));
     if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
     if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
+
+  recotapSummary: () =>
+    request<RecotapSummary>("/api/v1/account-sourcing/recotap/summary"),
+
+  recotapRefresh: () =>
+    request<{ pull: { pulled: number; configured: number }; seed: { seeded: number } }>(
+      "/api/v1/account-sourcing/recotap/refresh",
+      { method: "POST" },
+    ),
 
   summary: (params?: { assignedRepEmail?: string; ownerId?: string | string[] }) => {
     const search = new URLSearchParams();

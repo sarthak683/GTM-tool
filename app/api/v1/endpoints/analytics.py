@@ -66,6 +66,24 @@ REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 # or appear as a rep row. User.role is one of: admin | ae | sdr.
 REP_ROLES = {"ae", "sdr"}
 
+# A demo "converts" when its account reaches a qualified opportunity or beyond.
+# Lost/dead stages (closed_lost, not_a_fit, churned, cold, on_hold, nurture) are
+# explicitly NOT conversions. Used for the SDR demo funnel.
+CONVERTED_DEAL_STAGES = {
+    "qualified_lead", "poc_agreed", "poc_wip", "poc_done",
+    "commercial_negotiation", "msa_review", "workshop", "closed_won",
+}
+
+# Canonical account-sourcing status values + display labels. Kept in lockstep
+# with ACCOUNT_STATUS_VALUES in app/models/company.py and the frontend control.
+ACCOUNT_STATUS_LABELS: dict[str, str] = {
+    "in_progress": "In Progress",
+    "cold": "Cold",
+    "dnd": "DND",
+    "in_pipeline": "In Pipeline",
+    "reach_out_later": "Reach Out Later",
+}
+
 
 def _is_rep(rep_id, rep_user_ids) -> bool:
     """True if this attributed id should count as rep activity.
@@ -194,6 +212,8 @@ class RepActivityRow(BaseModel):
     key: str
     user_id: Optional[UUID] = None
     rep_name: str
+    # "ae" | "sdr" | None. Drives the SDR/AE leaderboard split on the client.
+    role: Optional[str] = None
     calls: int
     connected_calls: int = 0
     live_calls: int = 0
@@ -205,6 +225,11 @@ class RepActivityRow(BaseModel):
     total: int
     active_deals: int
     pipeline_amount: float
+    # SDR demo funnel (attributed to the account's SDR). demos_converted counts
+    # done demos whose account reached a qualified deal or beyond.
+    demos_scheduled: int = 0
+    demos_done: int = 0
+    demos_converted: int = 0
 
 
 class RepActivityWeekRow(BaseModel):
@@ -308,6 +333,12 @@ class MonthlyUniqueFunnelRow(BaseModel):
     closed_won: int
 
 
+class AccountStatusRow(BaseModel):
+    key: str       # canonical status value (or "unset")
+    label: str     # human label
+    count: int
+
+
 class SalesDashboardRead(BaseModel):
     generated_at: datetime
     window_days: int
@@ -326,6 +357,7 @@ class SalesDashboardRead(BaseModel):
     forecast_granularity: str = "month"
     conversion_funnel: list[FunnelStep]
     monthly_unique_funnel: list[MonthlyUniqueFunnelRow]
+    accounts_by_status: list[AccountStatusRow] = []
     quota: QuotaState
 
 
@@ -705,7 +737,7 @@ async def sales_activity_drilldown(
         Literal["emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "meetings", "total"],
         Query(description="Activity metric to inspect"),
     ],
-    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
     rep_id: Annotated[Optional[UUID], Query()] = None,
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
@@ -993,7 +1025,7 @@ async def sales_activity_drilldown(
 async def sales_dashboard(
     session: DBSession,
     _user: CurrentUser,
-    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
     rep_id: Annotated[list[UUID], Query()] = [],
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
@@ -1053,6 +1085,7 @@ async def sales_dashboard(
         Deal.days_in_stage,
         Deal.stage_entered_at,
         Deal.assigned_to_id,
+        Deal.company_id,
         Deal.created_at,
         Deal.updated_at,
         Deal.geography,
@@ -1082,9 +1115,16 @@ async def sales_dashboard(
     allowed_contact_ids = {row.id for row in contact_rows}
     contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
-    week_starts = _rolling_week_starts(window_start, window_end)
+    # Bound the weekly-activity chart to at most ~1 year of buckets. Totals are
+    # still computed over the full window (activities older than this still count
+    # toward the leaderboard); only the per-week breakdown is capped so "All time"
+    # doesn't generate thousands of weekly buckets per rep.
+    week_window_start = max(window_start, window_end - timedelta(weeks=52))
+    week_starts = _rolling_week_starts(week_window_start, window_end)
     user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
     users = {row.id: row.name for row in user_rows}
+    user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
+    user_roles = {row.id: str(row.role or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
     # Only ae/sdr users are reps; admin activity must not inflate rep metrics
     # or create an admin rep row (the "Rakesh 419 emails" leak).
@@ -1104,6 +1144,7 @@ async def sales_dashboard(
                 Activity.aircall_user_name,
                 Activity.call_outcome,
                 Activity.call_duration,
+                Activity.email_from,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -1131,6 +1172,7 @@ async def sales_dashboard(
                 Meeting.external_source,
                 Meeting.attendees,
                 Meeting.is_internal,
+                Meeting.meeting_type,
             ).where(
                 Meeting.is_internal.is_(False),
                 or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
@@ -1417,14 +1459,22 @@ async def sales_dashboard(
                 activity_bucket["email_opens"] = activity_bucket.get("email_opens", 0) + 1
             elif event_type == "reply_received" or src == "email_reply":
                 activity_bucket["email_replies"] = activity_bucket.get("email_replies", 0) + 1
-            elif event_type in ("", "email_sent"):
-                # SENT only — empty event_type = real sent/synced email (gmail/
-                # personal sync); "email_sent" = Instantly send. Everything else
-                # (bounced, clicked, campaign_completed, lead_* signals) is NOT a
-                # sent email and is excluded from the denominator.
+            elif event_type == "email_sent":
+                # Instantly campaign send — always outbound.
                 activity_bucket["emails"] += 1
                 if week_counts is not None:
                     week_counts["emails"] += 1
+            elif event_type == "":
+                # Personal-sync (gmail) row carries no event_type and can be a
+                # SENT or a RECEIVED email. Per the "outbound only" rule, count it
+                # only when the attributed rep is the sender; received mail is not
+                # a rep touch. (Same direction signal the drilldown uses.)
+                rep_email = user_emails.get(row_rep_id, "")
+                sender = str(row.email_from or "").strip().lower()
+                if rep_email and sender == rep_email:
+                    activity_bucket["emails"] += 1
+                    if week_counts is not None:
+                        week_counts["emails"] += 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
@@ -1541,11 +1591,106 @@ async def sales_dashboard(
                 continue
             bump_meeting(row_rep_id, meeting_timestamp)
 
+    # ── SDR demo funnel ──────────────────────────────────────────────────────
+    # Demos scheduled / done / converted, attributed to the account's SDR (the
+    # rep who books and owns the prospect), NOT the AE running the call. This is
+    # a dedicated query rather than a reuse of `meetings_rows` for two reasons:
+    #  1) meetings_rows is pre-filtered by _meeting_rep_ids (owner/AE/attendees),
+    #     which would drop an SDR's demos whenever the dashboard is rep-filtered.
+    #  2) demos count regardless of the deal's current stage (the rep-activity
+    #     stage gate excludes meetings once an account is deep in POC).
+    # A demo "converts" when its account has any deal at qualified_lead or beyond.
+    demo_meeting_rows = (
+        await session.execute(
+            select(
+                Meeting.company_id,
+                Meeting.deal_id,
+                Meeting.scheduled_at,
+                Meeting.created_at,
+                Meeting.status,
+                Meeting.external_source,
+            ).where(
+                Meeting.is_internal.is_(False),
+                func.lower(func.coalesce(Meeting.meeting_type, "")) == "demo",
+                Meeting.company_id.isnot(None),
+                or_(
+                    (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                    Meeting.scheduled_at.is_(None)
+                    & (Meeting.created_at >= window_start)
+                    & (Meeting.created_at <= window_end),
+                ),
+            )
+        )
+    ).all()
+    deduped_demos = _dedupe_meetings_across_sources(
+        [row for row in demo_meeting_rows if str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES]
+    )
+    demo_company_ids = {row.company_id for row in deduped_demos if row.company_id}
+
+    company_sdr: dict[UUID, UUID | None] = {}
+    company_region_for_demo: dict[UUID, str | None] = {}
+    converted_company_ids: set[UUID] = set()
+    if demo_company_ids:
+        sdr_rows = (
+            await session.execute(
+                select(Company.id, Company.sdr_id, Company.region).where(Company.id.in_(demo_company_ids))
+            )
+        ).all()
+        company_sdr = {row.id: row.sdr_id for row in sdr_rows}
+        company_region_for_demo = {row.id: row.region for row in sdr_rows}
+        conv_rows = (
+            await session.execute(
+                select(Deal.company_id, Deal.stage).where(Deal.company_id.in_(demo_company_ids))
+            )
+        ).all()
+        for crow in conv_rows:
+            if crow.company_id and str(crow.stage or "").strip().lower() in CONVERTED_DEAL_STAGES:
+                converted_company_ids.add(crow.company_id)
+
+    def bump_demo(sdr_id: UUID | None, *, done: bool, converted: bool) -> None:
+        if not sdr_id:
+            return
+        if filter_rep_ids and sdr_id not in filter_rep_ids:
+            return
+        rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
+        bucket = rep_activity.setdefault(
+            rep_key,
+            {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
+                "emails": 0,
+                "linkedin_reachouts": 0,
+                "meetings": 0,
+                "total": 0,
+                "active_deals": 0,
+                "pipeline_amount": 0.0,
+            },
+        )
+        bucket["demos_scheduled"] = int(bucket.get("demos_scheduled", 0)) + 1
+        if done:
+            bucket["demos_done"] = int(bucket.get("demos_done", 0)) + 1
+            if converted:
+                bucket["demos_converted"] = int(bucket.get("demos_converted", 0)) + 1
+
+    for row in deduped_demos:
+        if filter_geographies:
+            region_key = _normalize_geography_key(company_region_for_demo.get(row.company_id))
+            if region_key not in filter_geographies:
+                continue
+        is_done = str(row.status or "").strip().lower() == "completed"
+        is_converted = bool(row.company_id and row.company_id in converted_company_ids)
+        bump_demo(company_sdr.get(row.company_id), done=is_done, converted=is_converted)
+
     rep_activity_rows = [
         RepActivityRow(
             key=str(bucket["key"]),
             user_id=bucket["user_id"],
             rep_name=str(bucket["rep_name"]),
+            role=(user_roles.get(bucket["user_id"]) or None) if bucket["user_id"] else None,
             calls=int(bucket["calls"]),
             connected_calls=int(bucket["connected_calls"]),
             live_calls=int(bucket["live_calls"]),
@@ -1557,6 +1702,9 @@ async def sales_dashboard(
             total=int(bucket["total"]),
             active_deals=int(bucket["active_deals"]),
             pipeline_amount=round(float(bucket["pipeline_amount"]), 2),
+            demos_scheduled=int(bucket.get("demos_scheduled", 0)),
+            demos_done=int(bucket.get("demos_done", 0)),
+            demos_converted=int(bucket.get("demos_converted", 0)),
         )
         for bucket in sorted(
             rep_activity.values(),
@@ -1898,6 +2046,32 @@ async def sales_dashboard(
 
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 
+    # ── Accounts by status ───────────────────────────────────────────────────
+    # Distribution of sourced accounts across the manual account_status field,
+    # scoped to the selected reps (owner or SDR) and geography. Always emits the
+    # 5 canonical statuses so the UI stays stable; "No status" only if non-zero.
+    status_select = select(
+        Company.account_status, Company.region, Company.assigned_to_id, Company.sdr_id
+    )
+    if filter_rep_ids:
+        status_select = status_select.where(
+            or_(Company.assigned_to_id.in_(filter_rep_ids), Company.sdr_id.in_(filter_rep_ids))
+        )
+    status_counts: dict[str, int] = {}
+    for srow in (await session.execute(status_select)).all():
+        if filter_geographies and _normalize_geography_key(srow.region) not in filter_geographies:
+            continue
+        key = str(srow.account_status or "").strip().lower() or "unset"
+        status_counts[key] = status_counts.get(key, 0) + 1
+    accounts_by_status = [
+        AccountStatusRow(key=key, label=label, count=status_counts.get(key, 0))
+        for key, label in ACCOUNT_STATUS_LABELS.items()
+    ]
+    if status_counts.get("unset"):
+        accounts_by_status.append(
+            AccountStatusRow(key="unset", label="No status", count=status_counts["unset"])
+        )
+
     result = SalesDashboardRead(
         generated_at=now,
         window_days=window_days,
@@ -1938,6 +2112,7 @@ async def sales_dashboard(
         forecast_granularity=forecast_granularity,
         conversion_funnel=funnel_rows,
         monthly_unique_funnel=monthly_unique_funnel,
+        accounts_by_status=accounts_by_status,
         quota=QuotaState(
             configured=False,
             title="Quota setup required",

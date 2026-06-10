@@ -35,13 +35,17 @@ from app.services.prospect_hygiene import is_valid_prospect_candidate
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
 
-def _authorize_contact_edit(contact, user) -> None:
+async def _authorize_contact_edit(contact, user, session) -> None:
     """Ownership gate for editing a prospect (SDR/AE model).
 
     Admins edit anything. A rep may edit a prospect they own (AE via
     assigned_to_id, SDR via sdr_id). If the slot for the rep's role is empty,
-    editing CLAIMS it to them (auto-claim) and proceeds. Otherwise the prospect
-    is owned by someone else and the rep can only view it -> 403.
+    editing CLAIMS it to them (auto-claim) and proceeds. A rep who owns a DEAL on
+    the prospect's company may also edit it (the AE running a demo/POC works that
+    account's prospects, even when the company/contacts sit with the sourcing
+    SDR) — this mirrors the read-side ``contact_visibility_filter`` deal clause so
+    "can see but can't act" can't happen. Otherwise the prospect is owned by
+    someone else and the rep can only view it -> 403.
     """
     role = (user.role or "").lower()
     if role == "admin":
@@ -55,6 +59,20 @@ def _authorize_contact_edit(contact, user) -> None:
     elif contact.assigned_to_id is None:
         contact.assigned_to_id = user.id
         return
+    # Deal owner on this prospect's company may edit (no auto-claim — the SDR/AE
+    # of record stay intact). Lockstep with contact_visibility_filter().
+    if contact.company_id is not None:
+        from app.models.deal import Deal
+
+        owns_deal = (
+            await session.execute(
+                select(Deal.id)
+                .where(Deal.company_id == contact.company_id, Deal.assigned_to_id == user.id)
+                .limit(1)
+            )
+        ).first()
+        if owns_deal:
+            return
     raise HTTPException(
         status_code=403,
         detail="You can only edit prospects assigned to you. Claim an unassigned one, or ask an admin to reassign this prospect.",
@@ -451,8 +469,9 @@ async def get_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
-    # Reps may only edit prospects they own; editing an unassigned one claims it.
-    _authorize_contact_edit(contact, _user)
+    # Reps may only edit prospects they own (or own a deal on the company);
+    # editing an unassigned one claims it.
+    await _authorize_contact_edit(contact, _user, session)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
@@ -669,72 +688,19 @@ async def enrich_contact(contact_id: UUID, session: DBSession, _user: CurrentUse
 @router.post("/discover/{company_id}", response_model=list[ContactRead], status_code=201)
 async def discover_contacts(company_id: UUID, session: DBSession, _user: CurrentUser):
     """
-    Call Hunter domain-search for the given company and create any new contacts found.
-    Skips duplicates by email. Returns the newly created contacts.
+    DISABLED — prospects are added only by CSV upload on the Account Sourcing or
+    Prospecting pages. Automated Hunter/Apollo contact discovery has been removed
+    so account enrichment never silently pulls in contacts. Kept as an explicit
+    410 (rather than deleting the route) so any stale client gets a clear signal
+    instead of a confusing 404.
     """
-    from app.repositories.company import CompanyRepository
-    from app.clients.hunter import HunterClient
-    from app.services.persona_classifier import classify_persona
-    from sqlmodel import select
-
-    company = await CompanyRepository(session).get_or_raise(company_id)
-
-    # If the company was imported without a real domain, try to resolve it via AI first
-    if company.domain.endswith(".unknown"):
-        from app.services.domain_resolver import resolve_and_update_domain
-        resolved = await resolve_and_update_domain(company, session)
-        if not resolved:
-            return []  # Can't search Hunter without a real domain
-
-    hunter = HunterClient()
-    hunter_data = await hunter.domain_search(company.domain)
-    raw_contacts = (hunter_data or {}).get("contacts", [])
-
-    created: list[Contact] = []
-    for c in raw_contacts:
-        email = (c.get("email") or "").strip()
-        if not email:
-            continue
-        # Use first-row existence check to tolerate historical duplicate rows.
-        existing = await session.execute(
-            select(Contact).where(Contact.email == email).limit(1)
-        )
-        if existing.scalars().first():
-            continue
-        first = (c.get("first_name") or "").strip()
-        last = (c.get("last_name") or "").strip()
-        if not first and not last:
-            prefix = email.split("@")[0]
-            parts = prefix.replace(".", " ").replace("_", " ").split()
-            first = parts[0].capitalize() if parts else prefix
-            last = parts[1].capitalize() if len(parts) > 1 else ""
-        if not is_valid_prospect_candidate(
-            first_name=first,
-            last_name=last,
-            email=email,
-            title=c.get("title"),
-            linkedin_url=c.get("linkedin_url"),
-        ):
-            continue
-        contact = Contact(
-            first_name=first,
-            last_name=last,
-            email=email,
-            title=c.get("title"),
-            linkedin_url=c.get("linkedin_url"),
-            company_id=company.id,
-        )
-        contact.persona = classify_persona(contact)
-        session.add(contact)
-        created.append(contact)
-
-    await session.commit()
-    for c in created:
-        await session.refresh(c)
-
-    reads = [ContactRead.model_validate(c) for c in created]
-    await apply_contact_tracking(session, reads)
-    return reads
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Contact discovery has been disabled. Add prospects by uploading a CSV "
+            "on the Account Sourcing or Prospecting page."
+        ),
+    )
 
 
 async def _resolve_upload_owner(session, raw: str, cache: dict):

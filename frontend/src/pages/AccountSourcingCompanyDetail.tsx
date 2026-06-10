@@ -29,13 +29,14 @@ import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, s
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
+import { ACCOUNT_STATUS_OPTIONS } from "../lib/accountStatus";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
-import type { Company, Contact, DealStageSetting } from "../types";
+import type { Company, Contact, DealStageSetting, RecotapSignals } from "../types";
 import { formatDate, formatDomain, getAccountPrioritySnapshot, gmailComposeUrl } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
 import ProvenanceBar from "../components/ProvenanceBar";
@@ -72,6 +73,64 @@ import {
   unwrapCache,
   wrapStyle,
 } from "./accountSourcingCompanyDetailShared";
+
+// ── Recotap (ABM) signals panel ─────────────────────────────────────────────
+const RTP_JOURNEY_STYLE: Record<string, { bg: string; color: string; border: string }> = {
+  Unaware: { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" },
+  Aware: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+  Consideration: { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa" },
+  Opportunity: { bg: "#f5f3ff", color: "#6d28d9", border: "#ddd6fe" },
+  Customer: { bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" },
+};
+const RTP_ENG_STYLE: Record<string, { bg: string; color: string; border: string }> = {
+  Hot: { bg: "#fef2f2", color: "#b91c1c", border: "#fecaca" },
+  Warm: { bg: "#fffbeb", color: "#92400e", border: "#fde68a" },
+  Cold: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+};
+const RTP_NEUTRAL = { bg: "#f4f7fb", color: "#55657a", border: "#d9e1ec" };
+
+function RecotapSignalsPanel({ rtp }: { rtp?: RecotapSignals | null }) {
+  if (!rtp) return null;
+  const j = rtp.journey_stage ? (RTP_JOURNEY_STYLE[rtp.journey_stage] ?? RTP_NEUTRAL) : null;
+  const e = rtp.engagement ? (RTP_ENG_STYLE[rtp.engagement] ?? RTP_NEUTRAL) : null;
+  const scored = Boolean(rtp.journey_stage) || (rtp.score ?? 0) > 0;
+  const intents: [string, number | null | undefined][] = [
+    ["Advertising", rtp.advertising_activity_score],
+    ["Website", rtp.website_intent_score],
+    ["G2", rtp.g2_intent_score],
+    ["Bombora", rtp.bombora_intent_score],
+  ];
+  const pill = "999px";
+  return (
+    <div style={{ marginTop: 12, border: "1px solid #d9e1ec", borderRadius: 14, background: "#fbfdff", padding: "14px 16px", display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: "0.06em" }}>Recotap signals</span>
+        <span style={{ fontSize: 10, fontWeight: 700, color: rtp.source === "seed" ? "#b56d00" : "#1f8f5f", background: rtp.source === "seed" ? "#fff4df" : "#e8f8f0", border: `1px solid ${rtp.source === "seed" ? "#ffe3b3" : "#cdeedc"}`, borderRadius: pill, padding: "2px 8px" }}>
+          {rtp.source === "seed" ? "Sample data" : "Live from Recotap"}
+        </span>
+      </div>
+      {scored ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {j ? <span style={{ background: j.bg, color: j.color, border: `1px solid ${j.border}`, borderRadius: pill, padding: "5px 12px", fontSize: 12.5, fontWeight: 800 }}>{rtp.journey_stage}</span> : null}
+          {e ? <span style={{ background: e.bg, color: e.color, border: `1px solid ${e.border}`, borderRadius: pill, padding: "5px 12px", fontSize: 12.5, fontWeight: 700 }}>{rtp.engagement}</span> : null}
+          {typeof rtp.score === "number" ? <span style={{ background: "#fff", color: "#1d2b3c", border: "1px solid #d9e1ec", borderRadius: pill, padding: "5px 12px", fontSize: 12.5, fontWeight: 800 }}>Account score {rtp.score}</span> : null}
+          {rtp.icp_fit ? <span style={{ background: "#fff", color: "#55657a", border: "1px solid #d9e1ec", borderRadius: pill, padding: "5px 12px", fontSize: 12.5, fontWeight: 600 }}>ICP fit: {rtp.icp_fit}</span> : null}
+          {rtp.hq_location ? <span style={{ background: "#fff", color: "#55657a", border: "1px solid #d9e1ec", borderRadius: pill, padding: "5px 12px", fontSize: 12.5, fontWeight: 600 }}>HQ: {rtp.hq_location}</span> : null}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12.5, color: "#7f8fa5" }}>Not yet scored by Recotap (scoring is asynchronous).</div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+        {intents.map(([label, val]) => (
+          <div key={label} style={{ border: "1px solid #e3ebf4", borderRadius: 10, padding: "8px 10px", background: "#fff" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label} intent</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#16273d", marginTop: 2 }}>{typeof val === "number" ? val : "—"}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () => void }) {
   const [re, setRe] = useState(false);
@@ -298,6 +357,7 @@ export default function AccountSourcingCompanyDetail() {
   const [editingDomain, setEditingDomain] = useState(false);
   const [domainInput, setDomainInput] = useState("");
   const [domainSaving, setDomainSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [existingCompanyDeals, setExistingCompanyDeals] = useState<Array<{ id: string; name: string; stage?: string }>>([]);
@@ -653,6 +713,24 @@ export default function AccountSourcingCompanyDetail() {
     }
   };
 
+  // Manual account status. Clicking the active status clears it. Optimistic
+  // update with rollback so the segmented control feels instant.
+  const handleStatusChange = async (value: string) => {
+    if (!company || statusSaving) return;
+    const next = company.account_status === value ? null : value;
+    const previous = company.account_status ?? null;
+    setStatusSaving(true);
+    setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
+    try {
+      await accountSourcingApi.updateCompany(company.id, { account_status: next });
+    } catch {
+      setCompany((prev) => (prev ? { ...prev, account_status: previous ?? undefined } : prev));
+      toast.error("Could not update status. Please try again.", "Update failed");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
 
   const tier = company.icp_tier || "cold";
@@ -720,6 +798,35 @@ export default function AccountSourcingCompanyDetail() {
                   </>
                 ) : null}
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#8b98ad" }}>Status</span>
+                {ACCOUNT_STATUS_OPTIONS.map((option) => {
+                  const active = company.account_status === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleStatusChange(option.value)}
+                      disabled={statusSaving}
+                      title={active ? "Click to clear this status" : `Set status to ${option.label}`}
+                      style={{
+                        borderRadius: 999,
+                        padding: "5px 12px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: statusSaving ? "wait" : "pointer",
+                        background: active ? option.bg : "#fff",
+                        color: active ? option.color : "#64748b",
+                        border: `1px solid ${active ? option.color : "#dbe3ee"}`,
+                        opacity: statusSaving && !active ? 0.6 : 1,
+                        transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
               <ProvenanceBar
                 source={(() => {
                   const es = company.enrichment_sources as Record<string, unknown> | null | undefined;
@@ -744,6 +851,8 @@ export default function AccountSourcingCompanyDetail() {
                 updatedAt={company.updated_at}
                 enrichedAt={company.enriched_at}
               />
+
+              <RecotapSignalsPanel rtp={company.recotap} />
 
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {detailMetaItems.map((item) => (

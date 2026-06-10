@@ -2,9 +2,15 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+# Manual account-sourcing status. Canonical snake_case values stored in the DB;
+# human labels live in ACCOUNT_STATUS_LABELS (app/api/v1/endpoints/analytics.py)
+# and the frontend control. Keep all three in lockstep.
+ACCOUNT_STATUS_VALUES = {"in_progress", "cold", "dnd", "in_pipeline", "reach_out_later"}
 
 
 class CompanyBase(SQLModel):
@@ -44,6 +50,9 @@ class Company(CompanyBase, table=True):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = Field(default=None, index=True)
+    # Manual sourcing status (in_progress | cold | dnd | in_pipeline |
+    # reach_out_later). Distinct from disposition; set by reps on the detail page.
+    account_status: Optional[str] = Field(default=None, index=True)
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -94,6 +103,7 @@ class CompanyRead(CompanyBase):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
+    account_status: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -110,6 +120,10 @@ class CompanyRead(CompanyBase):
     strategic_investors: Optional[str] = None
     created_by_id: Optional[UUID] = None
     created_by_name: Optional[str] = None
+    # Recotap ABM signals (journey stage, score, engagement, intent sub-scores),
+    # joined by domain from recotap_accounts. Populated only by the Account
+    # Sourcing endpoints — no rtp_* columns on the companies table itself.
+    recotap: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
 
@@ -159,6 +173,7 @@ class CompanyUpdate(SQLModel):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
+    account_status: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -173,3 +188,18 @@ class CompanyUpdate(SQLModel):
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
+
+    @field_validator("account_status", mode="before")
+    @classmethod
+    def _validate_account_status(cls, value):
+        """Accept a canonical status, blank (→ clear), or reject anything else."""
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized not in ACCOUNT_STATUS_VALUES:
+            raise ValueError(
+                f"account_status must be one of {sorted(ACCOUNT_STATUS_VALUES)} or empty"
+            )
+        return normalized
