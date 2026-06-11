@@ -76,11 +76,16 @@ CONVERTED_DEAL_STAGES = {
 
 # Canonical account-sourcing status values + display labels. Kept in lockstep
 # with ACCOUNT_STATUS_VALUES in app/models/company.py and the frontend control.
+# Insertion order drives the "Accounts by Status" breakdown order on the
+# dashboard; keep it in lockstep with frontend/src/lib/accountStatus.ts.
 ACCOUNT_STATUS_LABELS: dict[str, str] = {
-    "in_progress": "In Progress",
     "cold": "Cold",
-    "dnd": "DND",
+    "in_progress": "In Progress",
+    "meeting_booked": "Meeting Booked",
+    "meeting_done": "Meeting Done",
     "in_pipeline": "In Pipeline",
+    "not_a_fit": "Not a Fit",
+    "dnd": "DND",
     "reach_out_later": "Reach Out Later",
 }
 

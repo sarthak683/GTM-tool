@@ -9,8 +9,18 @@ from sqlmodel import Field, SQLModel
 
 # Manual account-sourcing status. Canonical snake_case values stored in the DB;
 # human labels live in ACCOUNT_STATUS_LABELS (app/api/v1/endpoints/analytics.py)
-# and the frontend control. Keep all three in lockstep.
-ACCOUNT_STATUS_VALUES = {"in_progress", "cold", "dnd", "in_pipeline", "reach_out_later"}
+# and the frontend control (frontend/src/lib/accountStatus.ts, which owns the
+# display order). Keep all three in lockstep.
+ACCOUNT_STATUS_VALUES = {
+    "cold",
+    "in_progress",
+    "meeting_booked",
+    "meeting_done",
+    "in_pipeline",
+    "not_a_fit",
+    "dnd",
+    "reach_out_later",
+}
 
 
 class CompanyBase(SQLModel):
@@ -50,9 +60,12 @@ class Company(CompanyBase, table=True):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = Field(default=None, index=True)
-    # Manual sourcing status (in_progress | cold | dnd | in_pipeline |
-    # reach_out_later). Distinct from disposition; set by reps on the detail page.
+    # Manual sourcing status (see ACCOUNT_STATUS_VALUES). Distinct from
+    # disposition; set by reps on the detail page.
     account_status: Optional[str] = Field(default=None, index=True)
+    # Free-text quick notes SDRs keep on the account ("Outbound Summary"),
+    # surfaced under the status control on the detail page.
+    outbound_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -104,6 +117,7 @@ class CompanyRead(CompanyBase):
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     account_status: Optional[str] = None
+    outbound_summary: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -174,6 +188,7 @@ class CompanyUpdate(SQLModel):
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     account_status: Optional[str] = None
+    outbound_summary: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None

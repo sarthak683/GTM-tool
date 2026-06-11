@@ -30,8 +30,10 @@ export interface Company {
   sdr_name?: string;
   outreach_status?: string;
   disposition?: string;
-  // Manual sourcing status: in_progress | cold | dnd | in_pipeline | reach_out_later
+  // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)
   account_status?: string | null;
+  // Free-text "Outbound Summary" quick notes shown under the status control.
+  outbound_summary?: string | null;
   rep_feedback?: string;
   account_thesis?: string;
   why_now?: string;

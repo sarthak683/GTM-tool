@@ -1,5 +1,5 @@
 import "./account-sourcing-refresh.css";
-import { CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
@@ -359,6 +359,8 @@ export default function AccountSourcingCompanyDetail() {
   const [domainInput, setDomainInput] = useState("");
   const [domainSaving, setDomainSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [summarySaving, setSummarySaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
   const [existingCompanyDeals, setExistingCompanyDeals] = useState<Array<{ id: string; name: string; stage?: string }>>([]);
@@ -389,6 +391,16 @@ export default function AccountSourcingCompanyDetail() {
     }
   }, [id]);
 
+  // Cleared on unmount so refreshUntilSettled stops polling (it can otherwise
+  // keep fetching + setting state for up to ~90s after the page is left).
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
   const refreshUntilSettled = useCallback(async (options?: {
     attempts?: number;
     delayMs?: number;
@@ -400,10 +412,12 @@ export default function AccountSourcingCompanyDetail() {
     const delayMs = options?.delayMs ?? 5000;
     for (let i = 0; i < attempts; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (!aliveRef.current) return false;
       const [c, ct] = await Promise.all([
         accountSourcingApi.getCompany(id),
         accountSourcingApi.getContacts(id),
       ]);
+      if (!aliveRef.current) return false;
       setCompany(c);
       setContacts(ct);
       options?.onProgress?.({ attempt: i + 1, attempts, company: c });
@@ -732,6 +746,35 @@ export default function AccountSourcingCompanyDetail() {
     }
   };
 
+  // Seed the Outbound Summary draft when the account loads/changes. Keyed on id
+  // only so an optimistic save (which leaves id unchanged) never clobbers
+  // in-progress edits.
+  useEffect(() => {
+    setSummaryDraft(company?.outbound_summary ?? "");
+  }, [company?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save the SDR quick-notes ("Outbound Summary"). Optimistic with rollback;
+  // no-ops when unchanged (so the blur after a Save click doesn't re-PATCH).
+  const saveOutboundSummary = async () => {
+    if (!company || summarySaving) return;
+    const current = company.outbound_summary ?? "";
+    if (summaryDraft === current) return;
+    const previous = company.outbound_summary ?? null;
+    const nextValue = summaryDraft.trim() ? summaryDraft : null;
+    setSummarySaving(true);
+    setCompany((prev) => (prev ? { ...prev, outbound_summary: nextValue ?? undefined } : prev));
+    try {
+      await accountSourcingApi.updateCompany(company.id, { outbound_summary: nextValue });
+      setSummaryDraft(nextValue ?? "");
+    } catch {
+      setCompany((prev) => (prev ? { ...prev, outbound_summary: previous ?? undefined } : prev));
+      setSummaryDraft(previous ?? "");
+      toast.error("Could not save notes. Please try again.", "Save failed");
+    } finally {
+      setSummarySaving(false);
+    }
+  };
+
   const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
 
   const tier = company.icp_tier || "cold";
@@ -851,6 +894,70 @@ export default function AccountSourcingCompanyDetail() {
                     </button>
                   );
                 })}
+              </div>
+              {/* Outbound Summary — SDR quick notes, saved on blur or via the
+                  Save button. Sits directly under the status control. */}
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "12px 15px",
+                  background: "#ffffff",
+                  border: "1px solid #e3e9f2",
+                  borderRadius: 14,
+                  boxShadow: "0 2px 10px rgba(30,55,95,0.04)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#6b7a90" }}>
+                    Outbound Summary
+                  </span>
+                  {summaryDraft !== (company.outbound_summary ?? "") ? (
+                    <button
+                      type="button"
+                      onClick={saveOutboundSummary}
+                      disabled={summarySaving}
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "#fff",
+                        background: "#1d4ed8",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "5px 13px",
+                        cursor: summarySaving ? "wait" : "pointer",
+                        opacity: summarySaving ? 0.6 : 1,
+                      }}
+                    >
+                      {summarySaving ? "Saving…" : "Save"}
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#9aa8bd" }}>
+                      {company.outbound_summary ? "Saved" : ""}
+                    </span>
+                  )}
+                </div>
+                <textarea
+                  value={summaryDraft}
+                  onChange={(e) => setSummaryDraft(e.target.value)}
+                  onBlur={saveOutboundSummary}
+                  placeholder="Quick notes on outbound for this account — angles tried, who responded, the next move…"
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    resize: "vertical",
+                    minHeight: 64,
+                    border: "1px solid #dbe3f0",
+                    borderRadius: 10,
+                    padding: "9px 11px",
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    color: "#1f2d3d",
+                    fontFamily: "inherit",
+                    outline: "none",
+                    boxSizing: "border-box",
+                    background: "#fbfdff",
+                  }}
+                />
               </div>
               <ProvenanceBar
                 source={(() => {
