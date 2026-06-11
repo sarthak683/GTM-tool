@@ -1650,6 +1650,13 @@ async def sales_dashboard(
     def bump_demo(sdr_id: UUID | None, *, done: bool, converted: bool) -> None:
         if not sdr_id:
             return
+        # The account's SDR must be an actual rep (ae/sdr). Without this, a
+        # company whose sdr_id points to an admin (or any non-rep) would mint a
+        # leaderboard row for them — unlike every other bump path, which gates on
+        # _is_rep. The row stays hidden by the client's role filter today, but it
+        # should never be created in the first place.
+        if not _is_rep(sdr_id, rep_user_ids):
+            return
         if filter_rep_ids and sdr_id not in filter_rep_ids:
             return
         rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
