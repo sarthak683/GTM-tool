@@ -24,7 +24,9 @@ _TIMEOUT = 25.0
 class RecotapClient:
     def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None) -> None:
         self.base_url = (base_url or settings.recotap_base_url).rstrip("/")
-        self.api_key = api_key or settings.recotap_api_key
+        # Strip stray whitespace/newlines — a space or CR pasted into the env/secret
+        # would otherwise produce an "Illegal header value" on the X-Api-Key header.
+        self.api_key = (api_key or settings.recotap_api_key or "").strip()
 
     def configured(self) -> bool:
         return bool(self.api_key)
