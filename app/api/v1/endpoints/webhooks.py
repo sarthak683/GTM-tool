@@ -143,11 +143,13 @@ async def _create_activity(
     contact_id: Optional[UUID] = None,
     external_source: Optional[str] = None,
     external_source_id: Optional[str] = None,
+    medium: Optional[str] = None,
 ) -> Activity:
     activity = Activity(
         type=type_,
         source=source,
         content=content,
+        medium=medium,
         event_metadata=payload,
         deal_id=deal_id,
         contact_id=contact_id,
@@ -1059,6 +1061,10 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         contact_id=contact_id,
         external_source="instantly",
         external_source_id=event_external_id,
+        # Stamp the channel like the instantly_sync poller does — its dedup
+        # counts existing email rows by medium, so webhook-logged email events
+        # must carry medium="email" too or the poller mints duplicates.
+        medium="email" if activity_type == "email" else None,
     )
 
     if email_subject:

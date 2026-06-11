@@ -3,9 +3,12 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column, Numeric, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+from app.models.meeting import to_naive_utc
 
 
 # ── Stage definitions ────────────────────────────────────────────────────────
@@ -135,6 +138,11 @@ class DealCreate(SQLModel):
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
 
+    @field_validator("next_step_due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
+
 
 class DealRead(DealBase):
     id: UUID
@@ -208,6 +216,11 @@ class DealUpdate(SQLModel):
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
     commit_to_deal: Optional[bool] = None
+
+    @field_validator("next_step_due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
 
 
 # ── DealContact junction ─────────────────────────────────────────────────────

@@ -690,7 +690,11 @@ async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSessio
             f"Company: {company_name}\nMeeting type: {meeting.meeting_type}\n"
             f"Meeting notes:\n{raw_notes[:2000]}\n\nAnalyse and return JSON as specified."
         )
-        raw = await ai.complete(system, user, max_tokens=700)
+        from app.config import settings
+
+        # Structured JSON debrief score — pin the standard model so
+        # max_tokens=700 doesn't route this to the complex tier.
+        raw = await ai.complete(system, user, max_tokens=700, model_override=settings.CLAUDE_MODEL_STANDARD)
         try:
             result_data = json.loads(raw or "{}")
         except Exception:

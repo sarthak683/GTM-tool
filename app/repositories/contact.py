@@ -838,9 +838,30 @@ class ContactRepository(BaseRepository[Contact]):
         return result, total
 
     async def delete_all(self) -> None:
-        """Delete all contacts and their dependent records. Admin only."""
+        """Delete all contacts and their dependent records. Admin only.
+
+        Mirrors the dependent cleanup in ``delete_many`` so an all-rows purge
+        cannot trip a NO ACTION foreign key. ``reminders.contact_id`` is NO
+        ACTION (migration 026), so a bare ``DELETE FROM contacts`` raised
+        ForeignKeyViolation whenever any reminder existed. outreach steps,
+        deal-stakeholder links and angel mappings are removed here too to keep
+        the two delete paths consistent; their FKs already cascade, but the
+        explicit deletes guard against future ondelete regressions. Outreach
+        steps go before their sequences. call_recordings are removed by their
+        ON DELETE CASCADE foreign key (migration 072).
+        """
         from sqlalchemy import delete as sa_delete
+
+        from app.models.angel import AngelMapping
+        from app.models.deal import DealContact
+        from app.models.outreach import OutreachStep
+        from app.models.reminder import Reminder
+
+        await self.session.execute(sa_delete(OutreachStep))
         await self.session.execute(sa_delete(OutreachSequence))
+        await self.session.execute(sa_delete(DealContact))
+        await self.session.execute(sa_delete(Reminder))
+        await self.session.execute(sa_delete(AngelMapping))
         await self.session.execute(sa_delete(Activity).where(Activity.contact_id.isnot(None)))
         await self.session.execute(sa_delete(Contact))
         await self.session.commit()

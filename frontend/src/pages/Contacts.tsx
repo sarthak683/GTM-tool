@@ -467,6 +467,11 @@ export default function Contacts() {
   // call drawer closes. Queried via the DOM since the element lives outside
   // this component's tree.
   const restoreScrollRef = useRef<number | null>(null);
+  // Monotonic request id for loadContacts: only the latest in-flight request
+  // is allowed to write state (see loadContacts for the race it guards).
+  const loadSeqRef = useRef(0);
+  // Angel-mapping data is fetched lazily the first time that tab opens.
+  const angelsLoadedRef = useRef(false);
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
   // Id of the recording attached to the in-progress call disposition,
@@ -662,6 +667,10 @@ export default function Contacts() {
   };
 
   const loadContacts = (opts?: { silent?: boolean }) => {
+    // A filter change fires this twice (once with the old page still in the
+    // closure, once after the page-reset effect runs), so two requests race.
+    // The sequence counter lets only the latest response write state.
+    const seq = ++loadSeqRef.current;
     // Silent reloads skip the loading state so the table stays mounted — this
     // is what lets us preserve scroll position after the call drawer closes
     // (the loading flash would otherwise unmount the list and reset scroll).
@@ -700,6 +709,8 @@ export default function Contacts() {
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       prospectOnly: true,
     }).then((result) => {
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       setContacts(result.items);
       setContactsTotal(result.total);
       setContactsPages(result.pages);
@@ -713,7 +724,14 @@ export default function Contacts() {
           if (scroller) scroller.scrollTop = target;
         });
       }
-    }).finally(() => { if (!opts?.silent) setLoading(false); });
+    }).catch((error) => {
+      if (seq !== loadSeqRef.current) return;
+      toast.error(error instanceof Error ? error.message : "Failed to load prospects.", "Load failed");
+    }).finally(() => {
+      // Only the latest request controls the spinner; this also recovers if a
+      // superseded non-silent request left loading=true behind.
+      if (seq === loadSeqRef.current) setLoading(false);
+    });
   };
 
   const downloadProspectTemplate = () => {
@@ -833,9 +851,14 @@ export default function Contacts() {
     }).catch(() => setAngelLoading(false));
   };
 
+  // Angel-mapping data only renders on that tab, so fetch it lazily the first
+  // time the tab becomes active instead of on every prospecting-page mount.
   useEffect(() => {
+    if (tab !== "angel-mapping" || angelsLoadedRef.current) return;
+    angelsLoadedRef.current = true;
     loadAngels();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));

@@ -18,6 +18,25 @@ from sqlmodel import Field, SQLModel
 from pydantic import field_validator
 
 
+def to_naive_utc(v: Any) -> Optional[datetime]:
+    """Coerce ISO strings / tz-aware datetimes to naive UTC.
+
+    All timestamp columns are TIMESTAMP WITHOUT TIME ZONE and asyncpg rejects
+    aware datetimes, so the frontend's ``...Z`` ISO strings must be normalized
+    before they reach the driver. Shared by the Meeting/Task/Deal write schemas.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("must be a valid ISO datetime, not free text") from exc
+    if isinstance(v, datetime) and v.tzinfo is not None:
+        v = v.astimezone(timezone.utc).replace(tzinfo=None)
+    return v
+
+
 class MeetingBase(SQLModel):
     title: str
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
@@ -29,16 +48,7 @@ class MeetingBase(SQLModel):
     @classmethod
     def strip_timezone(cls, v: Any) -> Optional[datetime]:
         """Ensure scheduled_at is always a naive UTC datetime (TIMESTAMP WITHOUT TIME ZONE)."""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            try:
-                v = datetime.fromisoformat(v.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ValueError("scheduled_at must be a valid ISO datetime, not free text") from exc
-        if isinstance(v, datetime) and v.tzinfo is not None:
-            v = v.astimezone(timezone.utc).replace(tzinfo=None)
-        return v
+        return to_naive_utc(v)
     status: str = "scheduled"     # scheduled | completed | cancelled
     meeting_type: str = "discovery"  # discovery | demo | poc | qbr | other
 
@@ -128,3 +138,10 @@ class MeetingUpdate(SQLModel):
     next_steps: Optional[str] = None
     intel_email_sent_at: Optional[datetime] = None
     manually_linked: Optional[bool] = None
+
+    # MeetingUpdate is a plain SQLModel (it does NOT inherit MeetingBase), so
+    # PUT /meetings/{id} needs its own tz normalization for datetime fields.
+    @field_validator("scheduled_at", "intel_email_sent_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)

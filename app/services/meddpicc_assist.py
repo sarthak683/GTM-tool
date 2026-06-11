@@ -283,7 +283,9 @@ async def _recommend_with_ai(
         "}"
     )
 
-    raw = await ai.complete(system, user, max_tokens=650)
+    # Structured JSON scoring — pin the standard model so max_tokens=650
+    # doesn't route this to the complex tier via _pick_model.
+    raw = await ai.complete(system, user, max_tokens=650, model_override=settings.CLAUDE_MODEL_STANDARD)
     payload = _extract_json_object(raw)
     if not payload:
         return None

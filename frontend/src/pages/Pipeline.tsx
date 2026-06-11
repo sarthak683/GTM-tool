@@ -1717,12 +1717,19 @@ export default function Pipeline() {
   };
 
   const loadBoard = async () => {
-    void loadSupportingData();
     await Promise.all([loadDealBoard(), loadProspectBoard()]);
   };
 
   useEffect(() => {
     loadBoard();
+  }, []);
+
+  // Companies (~1000 rows), users, and summary settings rarely change, so load
+  // them once on mount instead of refetching on every board reload (loadBoard
+  // runs after each drag-drop). Flows that can create companies (CRM import,
+  // prospect migration) call loadSupportingData explicitly.
+  useEffect(() => {
+    void loadSupportingData();
   }, []);
 
   useEffect(() => {
@@ -2434,6 +2441,8 @@ export default function Pipeline() {
             if (status.status === "success") {
               window.clearInterval(interval);
               setCrmImportResult(status.result ?? null);
+              // CRM import can create companies — refresh supporting data too.
+              void loadSupportingData();
               await loadBoard();
               resolve();
             } else if (status.status === "failure") {
@@ -2458,6 +2467,8 @@ export default function Pipeline() {
     setMigratingProspects(true);
     try {
       const result = await contactsApi.importCsv(file);
+      // CSV import auto-creates accounts — refresh supporting data too.
+      void loadSupportingData();
       await loadBoard();
       const missingMessage = result.missing_company_count
         ? `\nPlaceholder companies created: ${result.missing_company_count} (they were imported now and can be enriched or remapped later)`

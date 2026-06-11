@@ -23,6 +23,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -1309,6 +1310,27 @@ async def get_sourced_company_summary(
         if owner_clauses:
             stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
 
+    # The summary only inspects a handful of columns per company (the counters
+    # below + the JSONB keys account_priority_snapshot / _icp_analysis read).
+    # Load just those and skip the heavy unused blobs (enrichment_sources,
+    # tech_stack) and the long Text columns, so computing ~12 counters no longer
+    # drags the whole companies table — including columns this handler never
+    # touches — into memory. Behavior and response shape are unchanged.
+    stmt = stmt.options(
+        load_only(
+            Company.icp_tier,
+            Company.disposition,
+            Company.domain,
+            Company.enriched_at,
+            Company.outreach_plan,
+            Company.enrichment_cache,
+            Company.intent_signals,
+            Company.prospecting_profile,
+            Company.recommended_outreach_lane,
+            Company.outreach_status,
+            Company.icp_score,
+        )
+    )
     companies = (await session.execute(stmt)).scalars().all()
 
     hot_count = 0
@@ -1379,7 +1401,7 @@ async def create_manual_company(
 
     filename = f"Manual entry - {name}"
     domain = (payload.domain or "").strip()
-    normalized_domain = domain.lower().replace("https://", "").replace("http://", "").lstrip("www.").split("/")[0] if domain else ""
+    normalized_domain = domain.lower().replace("https://", "").replace("http://", "").removeprefix("www.").split("/")[0] if domain else ""
     fake_row = {"company name": name}
     if normalized_domain:
         fake_row["domain"] = normalized_domain

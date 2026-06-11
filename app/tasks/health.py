@@ -105,6 +105,13 @@ def reconcile_recent_deal_tasks() -> dict:
 
 
 async def _async_reconcile_recent_deal_tasks() -> int:
+    from app.config import settings
+
+    # Manual-tasks-only mode: skip the candidate query + assignment sweep entirely
+    # instead of running 96x/day just to no-op inside refresh_system_tasks_for_entity.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return 0
+
     from app.database import task_session
     from app.models.deal import Deal
     from app.models.task import Task

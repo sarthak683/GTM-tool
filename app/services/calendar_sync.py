@@ -43,7 +43,7 @@ FREE_EMAIL_PROVIDERS = {
 def _domain_from_email(addr: str) -> str:
     if "@" not in addr:
         return ""
-    return addr.split("@", 1)[1].lower().strip().lstrip("www.")
+    return addr.split("@", 1)[1].lower().strip().removeprefix("www.")
 
 
 def _normalize_name_key(value: str) -> str:
@@ -154,7 +154,7 @@ async def sync_calendar_events(
     company_domain_map: dict[str, tuple[UUID, str]] = {}
     company_name_candidates: list[tuple[str, UUID, str]] = []
     for row in company_rows:
-        domain = (row.domain or "").strip().lower().lstrip("www.")
+        domain = (row.domain or "").strip().lower().removeprefix("www.")
         if domain:
             company_domain_map[domain] = (row.id, row.name)
         norm = _normalize_name_key(row.name)

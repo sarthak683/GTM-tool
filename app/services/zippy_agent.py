@@ -946,7 +946,24 @@ async def run_turn(
         }
     ]
 
+    # Third breakpoint (Anthropic allows 4 per request; tools + system use two
+    # above): mark the LAST content block of the LAST message before each API
+    # call so the conversation history — including re-injected artifact bodies
+    # from _to_api_messages and prior tool results — is cache-read instead of
+    # re-billed at full input price on every tool-loop iteration. The marker
+    # moves forward each iteration, so strip it from the previous block first
+    # to keep exactly one history breakpoint in flight.
+    history_cache_block: Optional[dict[str, Any]] = None
+
     for iteration in range(MAX_TOOL_ITERATIONS):
+        if history_cache_block is not None:
+            history_cache_block.pop("cache_control", None)
+            history_cache_block = None
+        last_content = api_messages[-1].get("content")
+        if isinstance(last_content, list) and last_content and isinstance(last_content[-1], dict):
+            history_cache_block = last_content[-1]
+            history_cache_block["cache_control"] = {"type": "ephemeral"}
+
         response = await client.messages.create(
             model=settings.ZIPPY_MODEL,
             max_tokens=settings.ZIPPY_MAX_TOKENS,

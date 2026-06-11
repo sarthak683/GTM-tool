@@ -67,6 +67,44 @@ def _is_noise_email_from(addr: str | None) -> bool:
     return False
 
 
+# How many recent rows per (deal, side) the engagement signal helpers consume:
+# _signal_label reads the single latest, _infer_engagement_reason the top-6. We
+# only hydrate heavy text columns for this many rows per side, which bounds the
+# email-body / transcript payload the board fetches.
+_SIGNAL_ROW_CAP = 6
+
+
+class _EngagementRow:
+    """Mutable per-activity holder for the board engagement maps.
+
+    Pass 1 fills the cheap classification columns; pass 2 hydrates the heavy
+    text columns (email_subject / content / ai_summary / event_metadata) only
+    for the bounded set of rows the signal helpers actually read. Exposes the
+    same attribute surface the _is_*_touch / _signal_label /
+    _infer_engagement_reason helpers access off a Row.
+    """
+
+    __slots__ = (
+        "id", "deal_id", "created_at", "type", "source", "email_from",
+        "contact_id", "email_subject", "content", "ai_summary",
+        "event_metadata",
+    )
+
+    def __init__(self, lite_row: Any) -> None:
+        self.id = lite_row.id
+        self.deal_id = lite_row.deal_id
+        self.created_at = lite_row.created_at
+        self.type = lite_row.type
+        self.source = lite_row.source
+        self.email_from = lite_row.email_from
+        self.contact_id = lite_row.contact_id
+        # Heavy columns — filled in pass 2 for capped rows, else stay None.
+        self.email_subject = None
+        self.content = None
+        self.ai_summary = None
+        self.event_metadata = None
+
+
 def _apply_flag_fields(read: DealRead, qualification: Any) -> None:
     """Populate the flag-matrix fields on a DealRead from raw qualification JSONB."""
     summary = compute_deal_flags(qualification)
@@ -362,20 +400,26 @@ class DealRepository(BaseRepository[Deal]):
         if not deal_ids:
             return {}, {}, {}, {}, {}, {}
 
-        activity_rows = (
+        # Two-pass load so the board stops shipping every email body + transcript
+        # blob. Pass 1 pulls only the cheap classification columns for *all*
+        # activities, which is enough to compute the per-side latest-engagement
+        # timestamp exactly (the unbounded MAX, never truncated). Pass 2 fetches
+        # the heavy text columns — email_subject / content / ai_summary /
+        # event_metadata — only for the bounded set of rows the signal helpers
+        # actually read: the most-recent _SIGNAL_ROW_CAP per (deal, side), which
+        # covers both _signal_label (latest row) and _infer_engagement_reason
+        # (top-6 recent per side). Output is byte-identical to the old all-rows,
+        # all-columns load.
+        lite_rows = (
             await self.session.execute(
                 select(
+                    Activity.id,
                     Activity.deal_id,
                     Activity.created_at,
                     Activity.type,
                     Activity.source,
                     Activity.email_from,
                     Activity.contact_id,
-                    Activity.email_subject,
-                    Activity.content,
-                    Activity.ai_summary,
-                    Activity.event_metadata,
-                    Activity.call_outcome,
                 ).where(
                     Activity.deal_id.in_(deal_ids)
                 )
@@ -388,21 +432,74 @@ class DealRepository(BaseRepository[Deal]):
         client_signal: dict[UUID, dict] = {}
         seller_rows: dict[UUID, list[Any]] = {}
         client_rows: dict[UUID, list[Any]] = {}
-        for row in activity_rows:
+        # id -> enriched row object the helpers run against (heavy fields filled
+        # in pass 2). Only rows that survive the per-side recency cap are kept.
+        enriched_by_id: dict[UUID, _EngagementRow] = {}
+        for row in lite_rows:
             if not row.deal_id:
                 continue
-            if self._is_seller_touch(row):
-                seller_rows.setdefault(row.deal_id, []).append(row)
-                current = seller_engagement.get(row.deal_id)
-                if current is None or row.created_at > current:
-                    seller_engagement[row.deal_id] = row.created_at
-                    seller_signal[row.deal_id] = self._signal_label(row)
-            if self._is_client_touch(row):
-                client_rows.setdefault(row.deal_id, []).append(row)
-                current = client_engagement.get(row.deal_id)
-                if current is None or row.created_at > current:
-                    client_engagement[row.deal_id] = row.created_at
-                    client_signal[row.deal_id] = self._signal_label(row)
+            er = _EngagementRow(row)
+            is_seller = self._is_seller_touch(row)
+            is_client = self._is_client_touch(row)
+            if is_seller:
+                seller_rows.setdefault(row.deal_id, []).append(er)
+            if is_client:
+                client_rows.setdefault(row.deal_id, []).append(er)
+            if is_seller or is_client:
+                enriched_by_id[row.id] = er
+
+        # Keep only the rows the signal helpers consume: the most recent
+        # _SIGNAL_ROW_CAP per (deal, side). _infer_engagement_reason reads the
+        # top-6 and _signal_label the single latest, so this cap is a superset.
+        def _cap(buckets: dict[UUID, list[Any]]) -> None:
+            for deal_id, rows in buckets.items():
+                rows.sort(key=lambda r: r.created_at, reverse=True)
+                del rows[_SIGNAL_ROW_CAP:]
+
+        _cap(seller_rows)
+        _cap(client_rows)
+
+        # The latest per-side row (top of each capped bucket) drives both the
+        # engagement timestamp and the signal label.
+        for deal_id, rows in seller_rows.items():
+            latest = rows[0]
+            seller_engagement[deal_id] = latest.created_at
+        for deal_id, rows in client_rows.items():
+            latest = rows[0]
+            client_engagement[deal_id] = latest.created_at
+
+        # Pass 2: hydrate heavy text columns for exactly the capped rows.
+        needed_ids = {
+            r.id
+            for rows in (*seller_rows.values(), *client_rows.values())
+            for r in rows
+        }
+        if needed_ids:
+            heavy_rows = (
+                await self.session.execute(
+                    select(
+                        Activity.id,
+                        Activity.email_subject,
+                        Activity.content,
+                        Activity.ai_summary,
+                        Activity.event_metadata,
+                    ).where(Activity.id.in_(needed_ids))
+                )
+            ).all()
+            for hr in heavy_rows:
+                er = enriched_by_id.get(hr.id)
+                if er is not None:
+                    er.email_subject = hr.email_subject
+                    er.content = hr.content
+                    er.ai_summary = hr.ai_summary
+                    er.event_metadata = hr.event_metadata
+
+        # Now that heavy fields are present, build the latest-row signal labels.
+        for deal_id, rows in seller_rows.items():
+            seller_signal[deal_id] = self._signal_label(rows[0])
+        for deal_id, rows in client_rows.items():
+            client_signal[deal_id] = self._signal_label(rows[0])
+
         seller_reason = {
             deal_id: self._infer_engagement_reason(rows, side="seller")
             for deal_id, rows in seller_rows.items()

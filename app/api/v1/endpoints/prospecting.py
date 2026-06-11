@@ -87,8 +87,8 @@ def _clean_domain(raw: str) -> str:
         return ""
     if raw.startswith("http"):
         parsed = urlparse(raw)
-        raw = parsed.netloc.lstrip("www.")
-    raw = raw.lstrip("www.")
+        raw = parsed.netloc.removeprefix("www.")
+    raw = raw.removeprefix("www.")
     return raw.split("/")[0]  # drop any path
 
 

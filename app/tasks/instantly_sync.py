@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import and_, func, or_
 from sqlmodel import select
 
 from app.celery_app import celery_app
@@ -92,14 +93,18 @@ _PRE_SEND_INSTANTLY = {"", "ready", "missing_email", "none"}
 
 async def _existing_synced_event_count(session, contact_id: UUID, event_type: str) -> int:
     result = await session.execute(
-        select(Activity.id).where(
+        select(func.count(Activity.id)).where(
             Activity.contact_id == contact_id,
             Activity.source == "instantly",
-            Activity.medium == "email",
+            # Webhook-logged email activities historically carried medium=None
+            # (only this poller stamped medium="email"), so match both — a
+            # medium-only predicate missed webhook rows and made every poll
+            # cycle mint duplicate events.
+            or_(Activity.medium == "email", Activity.medium.is_(None)),
             Activity.event_metadata["event_type"].as_string() == event_type,
         )
     )
-    return len(result.scalars().all())
+    return int(result.scalar_one() or 0)
 
 
 async def _backfill_synced_sent_event(
@@ -319,15 +324,29 @@ async def _async_sync_active_campaigns() -> dict:
 
     async with task_session() as session:
         # Find all sequences with active Instantly campaigns
+        # Sequences whose campaign finished ("completed"/"error") more than 7
+        # days ago are skipped: their leads have already had a week of
+        # idempotent backfill passes, the campaign will never send again, and
+        # re-polling them forever burns Instantly API quota. The webhook still
+        # covers anything missed. updated_at is bumped by every webhook/sync
+        # touch, so it doubles as a "last seen change" marker.
+        stale_cutoff = datetime.utcnow() - timedelta(days=7)
         result = await session.execute(
             select(OutreachSequence).where(
                 OutreachSequence.instantly_campaign_id.isnot(None),
-                # Include completed/error campaigns too: they've already sent
-                # emails, so their leads need the email_sent/reply backfill even
-                # though no further webhooks will fire. The per-lead work is
-                # idempotent, so re-checking a finished campaign is cheap.
-                OutreachSequence.instantly_campaign_status.in_(
-                    ["active", "paused", "completed", "error", None]
+                or_(
+                    OutreachSequence.instantly_campaign_status.in_(["active", "paused"]),
+                    # NULL status = never synced yet — poll it. (SQL `IN` never
+                    # matches NULL, so this needs an explicit IS NULL.)
+                    OutreachSequence.instantly_campaign_status.is_(None),
+                    # Include recently completed/error campaigns too: they've
+                    # already sent emails, so their leads need the
+                    # email_sent/reply backfill even though no further webhooks
+                    # will fire. The per-lead work is idempotent.
+                    and_(
+                        OutreachSequence.instantly_campaign_status.in_(["completed", "error"]),
+                        OutreachSequence.updated_at >= stale_cutoff,
+                    ),
                 ),
             )
         )

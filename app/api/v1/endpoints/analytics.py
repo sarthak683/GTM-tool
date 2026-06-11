@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 
@@ -439,14 +439,17 @@ def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
 
 def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
     now = _utcnow()
-    if from_date:
-        window_start = datetime.fromisoformat(from_date)
-    else:
-        window_start = now - timedelta(days=window_days)
-    if to_date:
-        window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
-    else:
-        window_end = now
+    try:
+        if from_date:
+            window_start = datetime.fromisoformat(from_date)
+        else:
+            window_start = now - timedelta(days=window_days)
+        if to_date:
+            window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
+        else:
+            window_end = now
+    except ValueError:
+        raise HTTPException(status_code=422, detail="from_date/to_date must be ISO 8601")
     return window_start, window_end
 
 
@@ -817,13 +820,19 @@ async def sales_activity_drilldown(
                     Activity.contact_id.in_(scoped_contact_ids or {UUID(int=0)}),
                 )
             )
-        activities = (
-            await session.execute(
-                activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
-            )
-        ).scalars().all()
+        # For metric="total" the activity and meeting streams are merged and
+        # paginated ONCE on the combined list below, so we must NOT pre-offset
+        # this stream — fetch from the top through offset+limit (+1 sentinel).
+        # Other metrics paginate this stream alone, so keep the SQL offset.
+        if metric == "total":
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).limit(offset + limit + 1)
+        else:
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
+        activities = (await session.execute(activity_stmt)).scalars().all()
 
-        activity_page = activities[:limit]
+        # total merges globally, so every fetched activity must participate;
+        # single-metric pages are already the final slice (cap at limit).
+        activity_page = activities if metric == "total" else activities[:limit]
         contact_ids = {activity.contact_id for activity in activity_page if activity.contact_id}
         deal_ids = {activity.deal_id for activity in activity_page if activity.deal_id}
 
@@ -985,7 +994,15 @@ async def sales_activity_drilldown(
             reverse=True,
         )
         meeting_has_more = len(_meeting_entries) > offset + limit
-        for meeting, row_rep_id in _meeting_entries[offset:offset + limit]:
+        # metric="total" merges this stream with activities and slices once
+        # below, so feed it the top offset+limit (+1 sentinel) un-offset; the
+        # meetings-only page is its own final slice.
+        meeting_slice = (
+            _meeting_entries[: offset + limit + 1]
+            if metric == "total"
+            else _meeting_entries[offset:offset + limit]
+        )
+        for meeting, row_rep_id in meeting_slice:
             meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
             company_id = meeting.company_id or deal_company_ids.get(meeting.deal_id)
             rows.append(
@@ -1006,10 +1023,16 @@ async def sales_activity_drilldown(
     rows.sort(key=lambda row: row.occurred_at, reverse=True)
     selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
     has_more = False
-    if metric != "meetings":
-        has_more = has_more or len(locals().get("activities", [])) > limit
-    if metric in {"meetings", "total"}:
-        has_more = has_more or meeting_has_more
+    if metric == "total":
+        # Both streams were fetched un-offset, merged and sorted above; paginate
+        # the combined list exactly once so a page is never larger than `limit`
+        # and interleaved rows are not dropped/duplicated across page boundaries.
+        has_more = len(rows) > offset + limit
+        rows = rows[offset:offset + limit]
+    elif metric == "meetings":
+        has_more = meeting_has_more
+    else:
+        has_more = len(locals().get("activities", [])) > limit
     return SalesActivityDrilldownRead(
         generated_at=_utcnow(),
         metric=metric,

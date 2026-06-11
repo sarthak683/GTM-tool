@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,6 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.deal import Deal
+
+# How long to skip the milestone backfill after a successful in-process run.
+# analytics.py calls backfill_company_stage_milestones() on every dashboard /
+# funnel request, but the backfill is an idempotent catch-up that scans every
+# stage_change activity + every milestone-stage deal — far too heavy to run per
+# request. Throttle here (we can't edit analytics.py) so it runs at most once
+# every few hours per process. Per-process granularity is acceptable: with a
+# couple of replicas the worst case is one backfill per replica per window, and
+# the work is idempotent so nothing is double-created.
+_BACKFILL_MIN_INTERVAL = timedelta(hours=6)
+# Wall-clock time of the last completed backfill in this process. Module-level
+# so it survives across requests within a worker/replica.
+_last_backfill_at: datetime | None = None
 
 MILESTONE_STAGE_MAP: dict[str, str] = {
     "demo_done": "demo_done",
@@ -82,6 +95,15 @@ def _parse_new_stage_from_activity(activity: Activity) -> str | None:
 
 
 async def backfill_company_stage_milestones(session: AsyncSession) -> int:
+    # Throttle: if this process ran the backfill less than _BACKFILL_MIN_INTERVAL
+    # ago, skip the heavy scan and report no new rows. The backfill is idempotent
+    # catch-up, so skipping a request-triggered run only defers work the next
+    # uncached call (or any milestone write path) will pick up.
+    global _last_backfill_at
+    now = datetime.utcnow()
+    if _last_backfill_at is not None and (now - _last_backfill_at) < _BACKFILL_MIN_INTERVAL:
+        return 0
+
     existing_pairs = {
         (row.company_id, row.milestone_key)
         for row in (
@@ -159,4 +181,8 @@ async def backfill_company_stage_milestones(session: AsyncSession) -> int:
 
     if created:
         await session.commit()
+    # Mark a successful completion so the next few hours of requests skip the
+    # scan. Recorded only after the work runs, so a failed scan (which raises
+    # before here) doesn't suppress the retry.
+    _last_backfill_at = now
     return created

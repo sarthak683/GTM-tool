@@ -1,5 +1,5 @@
 import "./account-sourcing-refresh.css";
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
@@ -554,8 +554,15 @@ export default function AccountSourcing() {
     }
   }, [dismissedBatchIds]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Monotonic request id for load(): only the latest in-flight request is
+  // allowed to write state (a filter change can fire overlapping requests).
+  const loadSeqRef = useRef(0);
+
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const seq = ++loadSeqRef.current;
+    // Silent reloads (the in-flight batch poll) keep the table mounted
+    // instead of swapping it for a spinner on every tick.
+    if (!opts?.silent) setLoading(true);
     try {
       // ownerScope === "mine" wins over the multi-select; otherwise the
       // multi-select drives. Both ultimately collapse to a single owner_id
@@ -584,6 +591,8 @@ export default function AccountSourcing() {
         accountSourcingApi.listBatches(),
         accountSourcingApi.recotapSummary().catch(() => null),
       ]);
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       setCompanies(companyPage.items);
       setCompanyTotal(companyPage.total);
       setCompanyPages(companyPage.pages);
@@ -591,7 +600,9 @@ export default function AccountSourcing() {
       setBatches(b);
       setJourneySummary(rtpSummary);
     } finally {
-      setLoading(false);
+      // Only the latest request controls the spinner; this also recovers if a
+      // superseded non-silent request left loading=true behind.
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
 
@@ -744,7 +755,8 @@ export default function AccountSourcing() {
   useEffect(() => {
     if (!batchInFlight) return;
     const id = window.setInterval(() => {
-      void load();
+      // Silent: keep the table on screen while the batch poll refreshes data.
+      void load({ silent: true });
     }, 8000);
     return () => window.clearInterval(id);
   }, [batchInFlight, load]);
@@ -1072,7 +1084,7 @@ export default function AccountSourcing() {
                 </>
               )}
               <button
-                onClick={load}
+                onClick={() => void load()}
                 style={{
                   border: `1px solid ${colors.border}`,
                   background: colors.card,
@@ -1348,7 +1360,7 @@ export default function AccountSourcing() {
                   </button>
                 ) : (
                   <button
-                    onClick={load}
+                    onClick={() => void load()}
                     disabled={loading}
                     style={{
                       border: `1px solid ${colors.border}`,

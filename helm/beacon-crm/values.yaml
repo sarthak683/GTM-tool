@@ -33,7 +33,7 @@ backend:
     ENVIRONMENT: production
     JWT_EXPIRE_MINUTES: "1440"
     CLAUDE_MODEL_SIMPLE: claude-haiku-4-5-20251001
-    CLAUDE_MODEL_STANDARD: claude-sonnet-4-20250514
+    CLAUDE_MODEL_STANDARD: claude-sonnet-4-6
     CLAUDE_MODEL_COMPLEX: claude-opus-4-6
     RESEND_FROM_EMAIL: onboarding@resend.dev
 
