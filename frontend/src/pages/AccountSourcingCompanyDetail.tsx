@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Brain,
   Building2,
+  Check,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -798,8 +799,24 @@ export default function AccountSourcingCompanyDetail() {
                   </>
                 ) : null}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#8b98ad" }}>Status</span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 9,
+                  flexWrap: "wrap",
+                  marginTop: 14,
+                  padding: "11px 15px",
+                  // Neutral grey panel so it reads as a distinct control and every
+                  // colored pill pops against it (a tinted panel would swallow the
+                  // same-hue pill, e.g. the blue "In Progress").
+                  background: "linear-gradient(135deg, #f3f6fb 0%, #e9eef7 100%)",
+                  border: "1px solid #dbe3f0",
+                  borderRadius: 14,
+                  boxShadow: "0 2px 10px rgba(30,55,95,0.05)",
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#6b7a90", marginRight: 2 }}>Status</span>
                 {ACCOUNT_STATUS_OPTIONS.map((option) => {
                   const active = company.account_status === option.value;
                   return (
@@ -809,19 +826,27 @@ export default function AccountSourcingCompanyDetail() {
                       onClick={() => handleStatusChange(option.value)}
                       disabled={statusSaving}
                       title={active ? "Click to clear this status" : `Set status to ${option.label}`}
+                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.boxShadow = `0 2px 8px ${option.color}33`; }}
+                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.boxShadow = "none"; }}
                       style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
                         borderRadius: 999,
-                        padding: "5px 12px",
-                        fontSize: 12,
+                        padding: active ? "6px 13px 6px 10px" : "6px 13px",
+                        fontSize: 12.5,
                         fontWeight: 800,
                         cursor: statusSaving ? "wait" : "pointer",
-                        background: active ? option.bg : "#fff",
-                        color: active ? option.color : "#64748b",
-                        border: `1px solid ${active ? option.color : "#dbe3ee"}`,
-                        opacity: statusSaving && !active ? 0.6 : 1,
-                        transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                        background: active ? option.color : option.bg,
+                        color: active ? "#fff" : option.color,
+                        border: `1px solid ${active ? option.color : "transparent"}`,
+                        boxShadow: active ? `0 3px 10px ${option.color}55` : "none",
+                        transform: active ? "translateY(-1px)" : "none",
+                        opacity: statusSaving && !active ? 0.55 : 1,
+                        transition: "background 0.14s, color 0.14s, box-shadow 0.14s, transform 0.14s",
                       }}
                     >
+                      {active ? <Check size={13} strokeWidth={3} /> : null}
                       {option.label}
                     </button>
                   );
