@@ -42,7 +42,6 @@ import {
   pageStyle,
   parseManualCompanyLines,
   parseSearchParamList,
-  PRIORITY_STYLE,
   TIER_OPTIONS,
   ts,
 } from "./accountSourcingShared";
@@ -355,16 +354,26 @@ function CompanyAvatar({ name }: { name: string }) {
 }
 
 // Column header for the Recotap-style account table (desktop only).
+// Prefer a real name; if only an email exists, derive a readable display name
+// (e.g. "pulkit@beacon.li" -> "Pulkit") so owner chips never render a raw email.
+function prettyRepName(name?: string | null, email?: string | null): string | null {
+  const n = (name || "").trim();
+  if (n) return n;
+  const e = (email || "").trim();
+  if (e.includes("@")) {
+    const local = e.split("@")[0].replace(/[._-]+/g, " ").trim();
+    if (local) return local.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  }
+  return e || null;
+}
+
 function CompanyTableHeader() {
   const cell: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div className="as-company-table-header" style={{ padding: "2px 18px 6px" }}>
+    <div className="as-company-table-header" style={{ padding: "2px 18px 8px" }}>
       <span style={cell}>Account</span>
-      <span style={cell}>ICP Fit</span>
-      <span style={cell}>Journey Stage</span>
-      <span style={cell}>HQ Location</span>
-      <span style={cell}>Engagement</span>
-      <span style={cell} />
+      <span style={cell}>Signals</span>
+      <span style={{ ...cell, textAlign: "right" }}>AE · SDR</span>
     </div>
   );
 }
@@ -373,7 +382,6 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
-  const priority = getAccountPrioritySnapshot(company);
   const disposition = company.disposition || "";
   const statusOption = accountStatusOption(company.account_status);
   const rtp = company.recotap;
@@ -401,65 +409,43 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
         <CompanyAvatar name={company.name} />
         <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
           <div style={{ color: colors.text, fontWeight: 800, fontSize: 14.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-            <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
-              {domainText}{company.industry ? ` · ${company.industry}` : ""}
-            </span>
-            {disposition ? (
-              <span style={{ flexShrink: 0, background: "#f4f7fb", color: colors.sub, borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 700, border: `1px solid ${colors.border}` }}>{disposition}</span>
-            ) : null}
-            {statusOption ? (
-              <span style={{ flexShrink: 0, background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>{statusOption.label}</span>
-            ) : null}
-          </div>
-          {/* Mobile-only stacked chips (the desktop columns are hidden under 980px) */}
-          <div className="as-company-card-mobile-chips" style={{ display: "none", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-            <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10, fontWeight: 800, padding: "3px 8px" }}>{tier.toUpperCase()}</span>
-            {rtp?.journey_stage && <span style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{rtp.journey_stage}</span>}
-            {rtp?.engagement && <span style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 700 }}>{rtp.engagement}</span>}
-            <span style={{ ...PRIORITY_STYLE[priority.priorityBand], borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 800 }}>{priority.priorityBand}</span>
+          <div style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+            {domainText}{company.industry ? ` · ${company.industry}` : ""}
           </div>
         </div>
       </div>
 
-      {/* ICP Fit */}
-      <div className="as-col as-col-icp">
-        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "4px 10px" }}>{tier.toUpperCase()}</span>
-      </div>
-
-      {/* Journey Stage */}
-      <div className="as-col as-col-journey">
+      {/* Signals — one content-driven chip cluster; shows only what exists, so
+          there are no perpetually-empty columns. ICP tier always renders; the
+          rest (status, disposition, Recotap journey/engagement, HQ) appear only
+          when set. Wraps to a second line on dense rows. */}
+      <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 0 }}>
+        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>{tier.toUpperCase()}</span>
+        {statusOption ? (
+          <span style={{ background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{statusOption.label}</span>
+        ) : null}
+        {disposition ? (
+          <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>
+        ) : null}
         {rtp?.journey_stage ? (
-          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
-            {rtp.journey_stage}
-          </span>
-        ) : (
-          <span style={{ color: colors.faint, fontSize: 13 }}>—</span>
-        )}
-      </div>
-
-      {/* HQ Location */}
-      <div className="as-col as-col-hq" style={{ color: colors.sub, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
-        {rtp?.hq_location || <span style={{ color: colors.faint }}>—</span>}
-      </div>
-
-      {/* Engagement */}
-      <div className="as-col as-col-eng">
+          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
+        ) : null}
         {rtp?.engagement ? (
-          <span title="Recotap account engagement" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>{rtp.engagement}</span>
-        ) : (
-          <span style={{ color: colors.faint, fontSize: 13 }}>—</span>
-        )}
+          <span title="Recotap engagement" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{rtp.engagement}</span>
+        ) : null}
+        {rtp?.hq_location ? (
+          <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{rtp.hq_location}</span>
+        ) : null}
       </div>
 
-      {/* Actions */}
-      <div className="as-col-actions as-company-card-assign" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+      {/* Owners (AE + SDR) — names only, never raw emails */}
+      <div className="as-col-owners as-company-card-assign" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }} onClick={(e) => e.stopPropagation()}>
         <AssignDropdown
           entityType="company"
           entityId={company.id}
           role="ae"
           currentAssignedId={company.assigned_to_id ?? null}
-          currentAssignedName={company.assigned_rep_name || company.assigned_rep || company.assigned_rep_email || null}
+          currentAssignedName={prettyRepName(company.assigned_rep_name || company.assigned_rep, company.assigned_rep_email)}
           onAssigned={onAssigned}
           compact
           label="AE"
@@ -469,7 +455,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           entityId={company.id}
           role="sdr"
           currentAssignedId={company.sdr_id ?? null}
-          currentAssignedName={company.sdr_name || company.sdr_email || null}
+          currentAssignedName={prettyRepName(company.sdr_name, company.sdr_email)}
           onAssigned={onAssigned}
           compact
           label="SDR"
