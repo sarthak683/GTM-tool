@@ -653,6 +653,14 @@ export default function AccountSourcingCompanyDetail() {
       });
   }, [showDealModal, company, availableDealStages]);
 
+  // Seed the Outbound Summary draft when the account loads/changes. Keyed on id
+  // only so an optimistic save (which leaves id unchanged) never clobbers
+  // in-progress edits. MUST stay above the loading/not-found early returns below
+  // so the hook order is identical on every render (React error #310 otherwise).
+  useEffect(() => {
+    setSummaryDraft(company?.outbound_summary ?? "");
+  }, [company?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loading) {
     return (
       <div style={pageStyle}>
@@ -745,13 +753,6 @@ export default function AccountSourcingCompanyDetail() {
       setStatusSaving(false);
     }
   };
-
-  // Seed the Outbound Summary draft when the account loads/changes. Keyed on id
-  // only so an optimistic save (which leaves id unchanged) never clobbers
-  // in-progress edits.
-  useEffect(() => {
-    setSummaryDraft(company?.outbound_summary ?? "");
-  }, [company?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save the SDR quick-notes ("Outbound Summary"). Optimistic with rollback;
   // no-ops when unchanged (so the blur after a Save click doesn't re-PATCH).
