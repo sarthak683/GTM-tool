@@ -132,7 +132,12 @@ _ALIASES_RAW: dict[str, list[str]] = {
         "hq direct line", "direct line", "mobile phone",
     ],
     "contact_timezone": ["timezone", "time zone", "timezones", "time zones"],
-    "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile"],
+    "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile",
+                       # Apollo / Sales Nav exports name the person column
+                       # "Person Linkedin Url" (vs "Company Linkedin Url").
+                       "person linkedin url", "person linkedin",
+                       "linkedin profile url", "linkedin link",
+                       "contact linkedin url", "contact linkedin"],
     "next_steps":     ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
     "pe_investors":   ["pe investors"],
@@ -209,6 +214,21 @@ def _find_any_phone(row: dict) -> str:
     for key, val in row.items():
         if "phone" in key and str(val).strip():
             return str(val).strip()
+    return ""
+
+
+def _find_person_linkedin(row: dict) -> str:
+    """Last-resort person-LinkedIn lookup: any column whose normalized header
+    contains 'linkedin' — excluding company pages and activity/posts columns —
+    whose value actually looks like a linkedin.com link. Catches header
+    variants the alias table doesn't know (e.g. a de-collided 'linkedin url 2')
+    without ever grabbing 'Company Linkedin Url' or free-text activity notes."""
+    for key, val in row.items():
+        if "linkedin" not in key or "company" in key or "activit" in key:
+            continue
+        candidate = str(val).strip()
+        if "linkedin." in candidate.lower():
+            return candidate
     return ""
 
 
@@ -1098,7 +1118,7 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     last = _find(row, "contact_last_name")
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
-    linkedin_url = _find(row, "linkedin_url") or None
+    linkedin_url = _find(row, "linkedin_url") or _find_person_linkedin(row) or None
     # Prefer "Direct / Mobile (Personal)"; else generic contact phone; else HQ
     # direct line; else any column with 'phone' in its header (catches a 2nd
     # de-collided "Phone" column). Normalize to strip fused type-prefixes like
