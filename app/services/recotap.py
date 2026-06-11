@@ -37,6 +37,26 @@ def normalize_domain(value: Optional[str]) -> str:
     return d
 
 
+# Domains we must never push to Recotap. Many CRM accounts (esp. ClickUp imports)
+# carry placeholder domains like "acme.unknown" or bare numeric IDs like
+# "98364117736" — they have no real DNS name. Since POST /accounts is insert-only,
+# pushing one would CREATE a junk account in Recotap's tenant. Guard the push so
+# only a syntactically real public domain is ever sent.
+_PLACEHOLDER_TLDS = {"unknown", "local", "invalid", "test", "example", "internal", "none", "null", "localhost"}
+_REAL_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
+
+
+def is_pushable_domain(value: Optional[str]) -> bool:
+    """True only for a syntactically valid public domain — guards Beacon → Recotap
+    so placeholder/import-artifact domains never create junk accounts in Recotap."""
+    d = normalize_domain(value)
+    if not d or "." not in d:
+        return False
+    if d.rsplit(".", 1)[-1] in _PLACEHOLDER_TLDS:
+        return False
+    return bool(_REAL_DOMAIN_RE.match(d))
+
+
 def _stable(seed: str, mod: int) -> int:
     """Deterministic 0..mod-1 from a string (md5, not Python's salted hash) so
     re-seeding is stable across runs."""
@@ -241,12 +261,16 @@ async def push_crm_status(
     companies = (await session.execute(q)).scalars().all()
     results = []
     pushed = 0
+    skipped_invalid = 0
     for company in companies:
         tag = crm_status_tag(stages_by_company.get(company.id, []))
         if not tag:
             continue
         domain = normalize_domain(company.domain)
-        if not domain:
+        if not is_pushable_domain(domain):
+            # Placeholder/import-artifact domain (e.g. "*.unknown", numeric IDs) —
+            # never POST it; POST is insert-only and would create a junk account.
+            skipped_invalid += 1
             continue
         try:
             outcome = await _push_one(client, session, company, domain, [tag])
@@ -258,4 +282,4 @@ async def push_crm_status(
         if limit and pushed >= limit:
             break
     await session.commit()
-    return {"configured": 1, "pushed": pushed, "results": results}
+    return {"configured": 1, "pushed": pushed, "skipped_invalid_domain": skipped_invalid, "results": results}
