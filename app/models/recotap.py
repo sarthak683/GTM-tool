@@ -30,6 +30,9 @@ class RecotapAccount(SQLModel, table=True):
     domain: str = Field(index=True)                           # join/dedup key (lowercased)
     name: Optional[str] = None
     external_id: Optional[str] = None
+    # FK enforces ON DELETE SET NULL at the DB level via migration 091 (SQLModel's
+    # foreign_key= shorthand can't express ondelete). Deleting a company nulls this
+    # link instead of raising; the row re-links by domain on the next Recotap pull.
     company_id: Optional[UUID] = Field(default=None, foreign_key="companies.id", index=True)
     tags: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     journey_stage: Optional[str] = None
