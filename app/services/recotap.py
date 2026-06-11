@@ -90,6 +90,10 @@ async def pull_into_db(session: AsyncSession) -> dict[str, int]:
         row.external_id = a.get("externalId") or row.external_id
         row.journey_stage = a.get("rtp_journey_stage") or None
         row.score = a.get("rtp_account_score")
+        # Recotap's payload carries no engagement label — derive Hot/Warm/Cold from
+        # the real account score so the UI chip works on pulled (non-seeded) data.
+        if row.score is not None:
+            row.engagement = _engagement_for(row.score)
         row.advertising_activity_score = a.get("rtp_advertising_activity_score")
         row.website_intent_score = a.get("rtp_website_intent_score")
         row.g2_intent_score = a.get("rtp_g2_intent_score")

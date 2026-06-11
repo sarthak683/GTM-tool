@@ -36,6 +36,9 @@ backend:
     CLAUDE_MODEL_STANDARD: claude-sonnet-4-6
     CLAUDE_MODEL_COMPLEX: claude-opus-4-6
     RESEND_FROM_EMAIL: onboarding@resend.dev
+    # Recotap targets the prod tenant; the key is injected via secrets.recotapProdApiKey
+    # at deploy time. An empty key makes the integration inert (no-op), not fatal.
+    RECOTAP_ENVIRONMENT: prod
 
 # -- Celery Worker (default queue only)
 worker:
@@ -175,6 +178,10 @@ secrets:
   anthropicApiKey: ""
   claudeApiKey: ""
   resendApiKey: ""
+  # Recotap prod X-Api-Key. Inject at deploy: --set secrets.recotapProdApiKey=... or
+  # a secrets values file. Empty = integration inert. (Legacy env name RECOTAP_API_KEY
+  # is still accepted by the app for backward compatibility.)
+  recotapProdApiKey: ""
 
 # -- Pod/container hardening (applied to backend, worker, priority-worker, beat,
 # and frontend deployments). runAsUser/runAsGroup/fsGroup 10001 must match the

@@ -11,6 +11,7 @@ data:
   CLAUDE_MODEL_STANDARD: {{ .Values.backend.env.CLAUDE_MODEL_STANDARD | quote }}
   CLAUDE_MODEL_COMPLEX: {{ .Values.backend.env.CLAUDE_MODEL_COMPLEX | quote }}
   RESEND_FROM_EMAIL: {{ .Values.backend.env.RESEND_FROM_EMAIL | quote }}
+  RECOTAP_ENVIRONMENT: {{ .Values.backend.env.RECOTAP_ENVIRONMENT | quote }}
   CORS_ORIGINS: {{ printf "https://%s" .Values.ingress.host | quote }}
   GOOGLE_REDIRECT_URI: {{ printf "https://%s/api/v1/auth/google/callback" .Values.ingress.host | quote }}
   FRONTEND_URL: {{ printf "https://%s" .Values.ingress.host | quote }}

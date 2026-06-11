@@ -1575,16 +1575,23 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
 async def refresh_recotap_signals(
     _user: CurrentUser,
     session: DBSession = None,
-    seed: bool = True,
+    seed: bool | None = None,
     overwrite: bool = False,
 ):
-    """Pull live Recotap account signals into recotap_accounts, then (by default)
-    seed deterministic mock signals for sourced companies — the sandbox scores
-    asynchronously, so seeding gives the UI journey-stage/score data to work with.
+    """Pull live Recotap account signals into recotap_accounts.
+
+    Mock seeding (deterministic journey-stage/score signals for every sourced
+    company) defaults ON for the sandbox — which scores asynchronously, so the UI
+    needs something to render — and OFF for prod, where real pulled data exists and
+    fabricated signals would pollute it. An explicit ?seed=true/false always wins.
     """
+    from app.config import settings
+
+    is_prod = settings.RECOTAP_ENVIRONMENT.strip().lower() == "prod"
+    do_seed = (not is_prod) if seed is None else seed
     pulled = await recotap_pull(session)
-    seeded = await recotap_seed(session, overwrite=overwrite) if seed else {"seeded": 0}
-    return {"pull": pulled, "seed": seeded}
+    seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
+    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed}
 
 
 @router.get("/recotap/summary")

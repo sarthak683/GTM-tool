@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to this file so it works regardless of CWD
@@ -191,7 +192,12 @@ class Settings(BaseSettings):
     # auth. Mind the hyphen: sandbox is reco-tap.com, prod is recotap.com.
     RECOTAP_ENVIRONMENT: str = "sandbox"  # "sandbox" | "prod"
     RECOTAP_SANDBOX_API_KEY: str = ""
-    RECOTAP_API_KEY: str = ""  # prod key
+    # Prod X-Api-Key. Accept both RECOTAP_PROD_API_KEY (symmetric with the sandbox
+    # var, preferred) and the legacy RECOTAP_API_KEY so existing envs keep working.
+    RECOTAP_PROD_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("RECOTAP_PROD_API_KEY", "RECOTAP_API_KEY"),
+    )
     RECOTAP_SANDBOX_BASE_URL: str = "https://sandboxapi.reco-tap.com/api/v1"
     RECOTAP_PROD_BASE_URL: str = "https://eapi.recotap.com/api/v1"
 
@@ -201,7 +207,7 @@ class Settings(BaseSettings):
 
     @property
     def recotap_api_key(self) -> str:
-        return self.RECOTAP_API_KEY if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_API_KEY
+        return self.RECOTAP_PROD_API_KEY if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_API_KEY
 
     # Aircall
     AIRCALL_API_ID: str = ""
