@@ -879,6 +879,22 @@ async def run_turn(
     history = await _load_recent_messages(session, conversation_id=convo.id, limit=20)
     api_messages = _to_api_messages(history)
 
+    # Cross-turn cache anchor (breakpoint #3 of Anthropic's 4; tools + system
+    # below use two and the moving in-flight marker in the loop uses the
+    # fourth): pin the last content block of the last PERSISTED-history
+    # message — the user turn just flushed — BEFORE the volatile image /
+    # RAG-preview blocks are appended. Turn N+1 rebuilds the exact same
+    # history from the DB, so [tools, system, u1..uN] is a byte-identical
+    # prefix across turns and gets cache-read instead of re-billed. The
+    # in-flight marker logic in the loop deliberately skips this block so
+    # the anchor survives every iteration of the turn.
+    stable_history_block: Optional[dict[str, Any]] = None
+    if api_messages:
+        _stable_content = api_messages[-1].get("content")
+        if isinstance(_stable_content, list) and _stable_content and isinstance(_stable_content[-1], dict):
+            stable_history_block = _stable_content[-1]
+            stable_history_block["cache_control"] = {"type": "ephemeral"}
+
     # If the caller attached an image to THIS turn (e.g. a LinkedIn profile
     # screenshot), splice it into the most recent user message as an extra
     # content block. We deliberately do not persist the image to Postgres —
@@ -961,8 +977,14 @@ async def run_turn(
             history_cache_block = None
         last_content = api_messages[-1].get("content")
         if isinstance(last_content, list) and last_content and isinstance(last_content[-1], dict):
-            history_cache_block = last_content[-1]
-            history_cache_block["cache_control"] = {"type": "ephemeral"}
+            # Never adopt the cross-turn anchor as the moving marker — it must
+            # keep its cache_control for the whole turn (the strip above would
+            # otherwise remove it on the next iteration). This only coincides
+            # on iteration 0 when no preview/image block was appended; the
+            # block is already marked, so skipping keeps the request valid.
+            if last_content[-1] is not stable_history_block:
+                history_cache_block = last_content[-1]
+                history_cache_block["cache_control"] = {"type": "ephemeral"}
 
         response = await client.messages.create(
             model=settings.ZIPPY_MODEL,

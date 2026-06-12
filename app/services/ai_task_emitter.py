@@ -1212,6 +1212,10 @@ async def emit_ai_tasks(
         system=SYSTEM_PROMPT,
         user=USER_PROMPT_TEMPLATE.format(bundle_json=bundle_json),
         max_tokens=800,
+        # Pin the standard model: structured JSON proposals don't need the
+        # complex tier, but max_tokens>=650 would otherwise route there (5x
+        # price). Mirrors deal_activity_interpreter / meddpicc_assist pins.
+        model_override=settings.CLAUDE_MODEL_STANDARD,
     )
 
     parsed = _extract_json(response)

@@ -816,6 +816,27 @@ async def process_personal_emails(
         if not all_addrs:
             continue
 
+        # Dedup BEFORE any AI spend (mirrors app/tasks/email_sync.py): if this
+        # sync user already logged this message — with or without a deal — the
+        # downstream create_email_activity would detect the duplicate and
+        # return False anyway, but only AFTER the pass-4 Haiku classification
+        # and the Haiku summary were re-billed. Skip the message up-front so
+        # already-processed mail costs nothing. The dedup check inside
+        # create_email_activity stays as the second line of defence, and the
+        # final DB state / stats counters match the old duplicate path
+        # (emails_processed was already incremented above; activities_created
+        # and touched_deal_ids were never bumped for duplicates).
+        already_logged = await session.execute(
+            select(Activity.id).where(
+                and_(
+                    Activity.email_message_id == msg.message_id,
+                    Activity.created_by_id == sync_user.id,
+                )
+            )
+        )
+        if already_logged.first():
+            continue
+
         google_doc_contexts, updated_token = await fetch_google_doc_context(
             msg.body_text,
             token_data=connection.token_data,
