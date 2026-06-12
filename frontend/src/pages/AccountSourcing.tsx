@@ -755,6 +755,8 @@ export default function AccountSourcing() {
   useEffect(() => {
     if (!batchInFlight) return;
     const id = window.setInterval(() => {
+      // Skip hidden-tab ticks; the interval keeps running and resumes on focus.
+      if (document.visibilityState === "hidden") return;
       // Silent: keep the table on screen while the batch poll refreshes data.
       void load({ silent: true });
     }, 8000);

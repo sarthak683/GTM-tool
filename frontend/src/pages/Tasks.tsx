@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -580,6 +580,9 @@ export default function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<TaskWorkspaceItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // Rapid filter toggles fire overlapping load()s; the sequence counter lets
+  // only the latest response write state (same pattern as Contacts).
+  const loadSeqRef = useRef(0);
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(() => (searchParams.get("status") as TaskStatusFilter) ?? "open");
   const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
   const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
@@ -692,6 +695,7 @@ export default function TasksPage() {
   }, [dealSearch]);
 
   const load = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const rows = await tasksApi.workspace({
@@ -704,13 +708,15 @@ export default function TasksPage() {
         dealId: dealFilter || undefined,
         scope: isAdmin ? queueScope : "mine",
       });
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       setTasks(rows);
       if (dealFilter && !dealFilterLabel) {
         const matched = rows.find((task) => task.entity_type === "deal" && task.entity_id === dealFilter);
         if (matched) setDealFilterLabel(matched.entity_name);
       }
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 

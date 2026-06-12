@@ -61,7 +61,10 @@ export function NotificationBell() {
   // Initial count + poll.
   useEffect(() => {
     void refreshCount();
-    const id = window.setInterval(refreshCount, POLL_MS);
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void refreshCount();
+    }, POLL_MS);
     return () => window.clearInterval(id);
   }, [refreshCount]);
 

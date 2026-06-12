@@ -1624,6 +1624,13 @@ export default function Pipeline() {
   const [showAddProspect, setShowAddProspect] = useState(false);
   const [showSidebarMenu, setShowSidebarMenu] = useState(false);
   const prospectImportInputRef = useRef<HTMLInputElement | null>(null);
+  // CRM-import status poll id — kept in a ref so unmount can clear it (the
+  // interval otherwise outlives the page if the rep navigates away mid-import).
+  const crmImportPollRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (crmImportPollRef.current) window.clearInterval(crmImportPollRef.current);
+  }, []);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
@@ -2125,7 +2132,8 @@ export default function Pipeline() {
     setBulkBusy(true);
     try {
       await dealsApi.bulkUpdate({ deal_ids: [...selectedDealIds], ...payload });
-      await loadBoard();
+      // Deals-only mutation — don't re-download the 500-row prospect list.
+      await loadDealBoard();
       clearSelection();
       setBulkTag("");
     } catch {
@@ -2353,7 +2361,8 @@ export default function Pipeline() {
     setBusyStage(pendingDealMove.targetStage);
     try {
       await dealsApi.moveStage(pendingDealMove.dealId, pendingDealMove.targetStage);
-      await loadBoard();
+      // Deals-only mutation — don't re-download the 500-row prospect list.
+      await loadDealBoard();
     } finally {
       setBusyStage(null);
       setPendingDealMove(null);
@@ -2370,7 +2379,9 @@ export default function Pipeline() {
     setBusyStage(targetStage);
     try {
       await contactsApi.update(dragItem.id, prospectPatch(targetStage));
-      await loadBoard();
+      // Prospect-only mutation — the deal board is untouched (conversion to a
+      // deal happens later via handleConvertProspectToDeal, which reloads both).
+      await loadProspectBoard();
       if (targetStage === "meeting_booked" && draggedProspect?.company_id) {
         setPendingConvertProspect({
           ...draggedProspect,
@@ -2455,6 +2466,7 @@ export default function Pipeline() {
             reject(pollErr);
           }
         }, 5000);
+        crmImportPollRef.current = interval;
       });
     } catch (err) {
       setCrmImportError(err instanceof Error ? err.message : "Failed to import from CRM");

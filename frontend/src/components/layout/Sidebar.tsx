@@ -114,10 +114,20 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       }).catch(() => {});
     };
     fetchCount();
-    const interval = window.setInterval(fetchCount, 60_000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      fetchCount();
+    }, 60_000);
+    // Hidden ticks are skipped, so catch the badge up the moment the tab
+    // regains visibility (same pattern as NotificationBell).
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchCount();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [user]);
 

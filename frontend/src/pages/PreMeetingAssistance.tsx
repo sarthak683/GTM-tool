@@ -590,6 +590,9 @@ export default function PreMeetingAssistance() {
   const [meetingPages, setMeetingPages] = useState(1);
   const [summary, setSummary] = useState({ total: 0, upcoming: 0, hasIntel: 0, noIntel: 0 });
   const [prepMonitor, setPrepMonitor] = useState<MeetingPrepMonitor | null>(null);
+  // Rapid filter changes fire overlapping loadData()s; the sequence counter
+  // lets only the latest response write state (same pattern as Contacts).
+  const loadSeqRef = useRef(0);
   const hideDeveloper = isDeveloperUser(user);
 
   useEffect(() => {
@@ -598,6 +601,7 @@ export default function PreMeetingAssistance() {
   }, [user?.id]);
 
   const loadData = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const hasIntelFilter =
@@ -652,6 +656,8 @@ export default function PreMeetingAssistance() {
         meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
         meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
       ]);
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       const ms = pageResp.items;
 
       // Empty-set fallback: if default "my upcoming" returns zero, broaden
@@ -684,6 +690,7 @@ export default function PreMeetingAssistance() {
         noIntel: noIntelResp.total,
       });
       const monitor = await meetingsApi.prepMonitor(24).catch(() => null);
+      if (seq !== loadSeqRef.current) return;
       setPrepMonitor(monitor);
 
       const companyIds = Array.from(new Set(ms.map((m) => m.company_id).filter(Boolean))) as string[];
@@ -695,11 +702,12 @@ export default function PreMeetingAssistance() {
         Promise.all(dealIds.map((id) => activitiesApi.list(id).catch(() => [] as Activity[]))),
       ]);
 
+      if (seq !== loadSeqRef.current) return;
       setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
       setDeals(dealResults.filter((item): item is Deal => Boolean(item)));
       setActivities(activityResults.flat());
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
