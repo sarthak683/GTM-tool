@@ -29,8 +29,28 @@ from app.services.tasks import (
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 logger = logging.getLogger(__name__)
+# Legacy fallback only. The live "calls today" tile now reads the SAME configured
+# report cutoff as the daily call report (single source of truth), so it can never
+# drift from the report's business-day boundary again. These constants are kept as
+# the fallback when no report config is loadable.
 REPORT_CUTOFF_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REPORT_CUTOFF_HOUR = 6
+
+
+def _pod_report_config_key(email: str | None) -> tuple[str, dict]:
+    """Pick the report-config block for the viewer's pod so the live counter uses
+    the same cutoff the rep's daily report uses. India pod -> india_sales_report
+    (IST-midnight day); everyone else -> US sales_report (7:30 AM IST cutoff)."""
+    from app.core.pods import pod_rep_emails
+    from app.services.us_pod_call_report import (
+        DEFAULT_SALES_REPORT_SETTINGS,
+        INDIA_DEFAULT_SALES_REPORT_SETTINGS,
+    )
+
+    normalized = (email or "").strip().lower()
+    if normalized in pod_rep_emails("india"):
+        return "india_sales_report", INDIA_DEFAULT_SALES_REPORT_SETTINGS
+    return "sales_report", DEFAULT_SALES_REPORT_SETTINGS
 
 
 async def _refresh_tasks_after_activity_background(deal_id: UUID | None, contact_id: UUID | None) -> None:
@@ -150,16 +170,44 @@ async def list_activities(
 
 @router.get("/me/calls-today")
 async def my_calls_today(session: DBSession, current_user: CurrentUser):
+    # Use the SAME cutoff the rep's daily call report uses, so the live tile and
+    # the report always agree on where "today" starts. Previously this endpoint
+    # hardcoded a 6:00 AM IST cutoff while the US report config was 7:30 AM IST,
+    # so the tile reset ~1.5h early and looked like calls were "lost" (Mahesh,
+    # 2026-06-13). Now both read the configured cutoff_hour/minute/timezone.
+    from app.services.us_pod_call_report import (
+        load_sales_report_settings,
+        _latest_completed_report_cutoff,
+    )
+
     reference = datetime.now(timezone.utc)
-    local_reference = reference.astimezone(REPORT_CUTOFF_TIMEZONE)
-    period_start_date = local_reference.date()
-    if local_reference.time() < time(REPORT_CUTOFF_HOUR):
-        period_start_date -= timedelta(days=1)
-    period_start = datetime.combine(
-        period_start_date,
-        time(REPORT_CUTOFF_HOUR),
-        tzinfo=REPORT_CUTOFF_TIMEZONE,
-    ).astimezone(timezone.utc).replace(tzinfo=None)
+    config_key, config_defaults = _pod_report_config_key(current_user.email)
+    try:
+        report_config = await load_sales_report_settings(session, key=config_key, defaults=config_defaults)
+        # Start of the currently-open report day = the most recent cutoff boundary
+        # at or before now (subtracts a day automatically when now is before today's
+        # cutoff). This is the exact boundary the daily report uses.
+        period_start_naive = (
+            _latest_completed_report_cutoff(reference, report_config)
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
+        )
+        cutoff_tz = report_config["cutoff_timezone"]
+        cutoff_label = f"{report_config['cutoff_hour']:02d}:{report_config['cutoff_minute']:02d}"
+    except Exception:  # fall back to the legacy fixed cutoff rather than 500 the tile
+        local_reference = reference.astimezone(REPORT_CUTOFF_TIMEZONE)
+        period_start_date = local_reference.date()
+        if local_reference.time() < time(REPORT_CUTOFF_HOUR):
+            period_start_date -= timedelta(days=1)
+        period_start_naive = (
+            datetime.combine(period_start_date, time(REPORT_CUTOFF_HOUR), tzinfo=REPORT_CUTOFF_TIMEZONE)
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
+        )
+        cutoff_tz = str(REPORT_CUTOFF_TIMEZONE)
+        cutoff_label = f"{REPORT_CUTOFF_HOUR:02d}:00"
+
+    period_start = period_start_naive
     period_end = reference.replace(tzinfo=None)
 
     total = (
@@ -177,8 +225,8 @@ async def my_calls_today(session: DBSession, current_user: CurrentUser):
     ).scalar_one()
     return {
         "total": int(total or 0),
-        "timezone": str(REPORT_CUTOFF_TIMEZONE),
-        "cutoff_hour": REPORT_CUTOFF_HOUR,
+        "timezone": cutoff_tz,
+        "cutoff": cutoff_label,
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
     }
