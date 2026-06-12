@@ -6,6 +6,7 @@ import re
 from typing import Any, Optional
 from uuid import UUID
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -669,27 +670,18 @@ class DealRepository(BaseRepository[Deal]):
     # ── Cascade delete ───────────────────────────────────────────────────────
 
     async def delete_with_cascade(self, deal_id: UUID) -> None:
-        """Delete deal, its activities, contact links, and dependent milestones."""
-        for act in (
-            await self.session.execute(
-                select(Activity).where(Activity.deal_id == deal_id)
-            )
-        ).scalars().all():
-            await self.session.delete(act)
+        """Delete deal, its activities, contact links, and dependent milestones.
 
-        for milestone in (
-            await self.session.execute(
-                select(CompanyStageMilestone).where(CompanyStageMilestone.deal_id == deal_id)
-            )
-        ).scalars().all():
-            await self.session.delete(milestone)
-
-        for dc in (
-            await self.session.execute(
-                select(DealContact).where(DealContact.deal_id == deal_id)
-            )
-        ).scalars().all():
-            await self.session.delete(dc)
+        Bulk DELETEs instead of loading every row as an ORM object — a chatty
+        deal can carry thousands of activities, and instance-by-instance
+        deletes took tens of seconds. No ORM cascades/events hang off these
+        models, so the bulk statements are behavior-identical.
+        """
+        await self.session.execute(sa_delete(Activity).where(Activity.deal_id == deal_id))
+        await self.session.execute(
+            sa_delete(CompanyStageMilestone).where(CompanyStageMilestone.deal_id == deal_id)
+        )
+        await self.session.execute(sa_delete(DealContact).where(DealContact.deal_id == deal_id))
 
         deal = await self.get(deal_id)
         if deal:

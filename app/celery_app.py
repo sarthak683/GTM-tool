@@ -31,6 +31,16 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
+    # Safety net: without a global time limit, one hung HTTP call (Gmail,
+    # Instantly, tl;dv ...) wedges a worker slot forever. Generous enough for
+    # the longest legit batch jobs; tasks may still override per-task (e.g.
+    # sync_personal_inbox sets 1800).
+    task_time_limit=3600,
+    task_soft_time_limit=3300,
+    # Result blobs are only read by short-lived status pollers (imports,
+    # enrichment) — don't let beat-task results pile up in Redis for the
+    # default 24h.
+    result_expires=3600,
     # Route user-triggered tasks to priority queue so they're never blocked by long-running syncs
     task_routes={
         "app.tasks.enrichment.process_sourcing_upload_task": {"queue": "priority"},

@@ -365,6 +365,10 @@ async def _async_sync_active_campaigns() -> dict:
         # One reconcile check per unique campaign (many sequences share a
         # campaign) so we don't re-GET the same campaign for every lead.
         reconciled_open_tracking: set[str] = set()
+        # Same dedup for analytics: one GET per campaign per run instead of
+        # one per sequence (sequences sharing a campaign re-fetched the same
+        # analytics payload every 15 minutes).
+        analytics_cache: dict[str, object] = {}
 
         for seq in sequences:
             try:
@@ -378,7 +382,12 @@ async def _async_sync_active_campaigns() -> dict:
                     if await _ensure_campaign_open_tracking(client, campaign_id):
                         tracking_enabled += 1
 
-                analytics_list = await client.get_campaign_analytics(campaign_id=campaign_id)
+                if campaign_id and campaign_id in analytics_cache:
+                    analytics_list = analytics_cache[campaign_id]
+                else:
+                    analytics_list = await client.get_campaign_analytics(campaign_id=campaign_id)
+                    if campaign_id:
+                        analytics_cache[campaign_id] = analytics_list
                 if not analytics_list:
                     continue
 

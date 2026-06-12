@@ -102,47 +102,79 @@ def _extract_plan(contact: Contact) -> list[dict[str, Any]]:
     return [s for s in steps if isinstance(s, dict)]
 
 
-async def _anchor_date(
-    session: AsyncSession, contact: Contact
-) -> datetime | None:
-    """When does the plan's day 0 start?
+async def _anchor_dates(
+    session: AsyncSession, contact_ids: list[UUID]
+) -> dict[UUID, datetime | None]:
+    """When does each contact's plan day 0 start?
 
     Prefer the OutreachSequence.launched_at (when we actually pushed to
     Instantly). Fall back to the contact's updated_at, though this is a
-    weaker signal because any edit bumps it. If nothing is usable, return
-    None and the scheduler skips this contact until a sequence is launched.
+    weaker signal because any edit bumps it. If nothing is usable, the value
+    is None and the scheduler skips this contact until a sequence is launched.
+
+    One bulk SELECT replaces the old per-contact lookup; like the old
+    unordered `.first()`, the first row returned per contact wins.
     """
-    seq = (
+    if not contact_ids:
+        return {}
+    seqs = (
         await session.execute(
-            select(OutreachSequence).where(OutreachSequence.contact_id == contact.id)
+            select(OutreachSequence).where(OutreachSequence.contact_id.in_(contact_ids))
         )
-    ).scalars().first()
-    if seq and seq.launched_at:
-        return seq.launched_at
-    return None
+    ).scalars().all()
+    anchors: dict[UUID, datetime | None] = {}
+    for seq in seqs:
+        if seq.contact_id not in anchors:
+            anchors[seq.contact_id] = seq.launched_at if seq.launched_at else None
+    return anchors
 
 
-async def _has_channel_activity_since(
-    session: AsyncSession,
+async def _latest_channel_activity(
+    session: AsyncSession, contact_ids: list[UUID], since: datetime
+) -> dict[tuple[UUID, str], datetime]:
+    """Bulk prefetch for `_has_channel_activity_since`: latest call/linkedin
+    activity per (contact, type) created at/after `since` (the earliest anchor
+    across contacts). The per-contact predicate then compares against that
+    contact's own anchor, so max(created_at) >= anchor is exactly equivalent
+    to the old per-(contact, channel) EXISTS query."""
+    if not contact_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(Activity.contact_id, Activity.type, Activity.created_at).where(
+                Activity.contact_id.in_(contact_ids),
+                Activity.type.in_(("call", "linkedin")),
+                Activity.created_at >= since,
+            )
+        )
+    ).all()
+    latest: dict[tuple[UUID, str], datetime] = {}
+    for contact_id, activity_type, created_at in rows:
+        key = (contact_id, activity_type)
+        if key not in latest or created_at > latest[key]:
+            latest[key] = created_at
+    return latest
+
+
+def _has_channel_activity_since(
+    activity_latest: dict[tuple[UUID, str], datetime],
     contact_id: UUID,
     channel: str,
     since: datetime,
 ) -> bool:
     type_filter = "call" if channel == "call" else "linkedin"
-    stmt = (
-        select(Activity.id)
-        .where(
-            Activity.contact_id == contact_id,
-            Activity.type == type_filter,
-            Activity.created_at >= since,
-        )
-        .limit(1)
-    )
-    row = (await session.execute(stmt)).first()
-    return row is not None
+    latest = activity_latest.get((contact_id, type_filter))
+    return latest is not None and latest >= since
 
 
-async def _process_contact(session: AsyncSession, contact: Contact, now: datetime) -> int:
+async def _process_contact(
+    session: AsyncSession,
+    contact: Contact,
+    now: datetime,
+    anchor: datetime | None,
+    company_names: dict[UUID, str],
+    activity_latest: dict[tuple[UUID, str], datetime],
+) -> int:
     seq_status = (contact.sequence_status or "").lower()
     if seq_status in _TERMINAL:
         return 0
@@ -161,14 +193,12 @@ async def _process_contact(session: AsyncSession, contact: Contact, now: datetim
     if not steps:
         return 0
 
-    anchor = await _anchor_date(session, contact)
     if not anchor:
         return 0
 
-    company: Company | None = None
-    if contact.company_id:
-        company = await session.get(Company, contact.company_id)
-    company_name = company.name if company else "this account"
+    company_name = "this account"
+    if contact.company_id and contact.company_id in company_names:
+        company_name = company_names[contact.company_id]
     display_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or "prospect"
 
     created_or_updated = 0
@@ -189,7 +219,7 @@ async def _process_contact(session: AsyncSession, contact: Contact, now: datetim
         # If the rep already touched this channel since the anchor, don't
         # pester them with a duplicate task.
         simple_channel = "linkedin" if channel in {"linkedin", "connector_request", "connector_follow_up"} else channel
-        if await _has_channel_activity_since(session, contact.id, simple_channel, anchor):
+        if _has_channel_activity_since(activity_latest, contact.id, simple_channel, anchor):
             # There's already an activity — close any lingering system task.
             await _resolve_system_task(
                 session,
@@ -250,9 +280,41 @@ async def _run() -> dict[str, int]:
         )
         rows = list((await session.execute(stmt)).scalars().all())
         stats["scanned"] = len(rows)
+
+        # Bulk prefetch (one query each) of everything _process_contact used
+        # to fetch per contact: sequence anchor dates, company names, and
+        # call/linkedin activity. Nothing in the loop writes to these tables,
+        # so prefetching is outcome-identical to the old per-contact reads.
+        anchors = await _anchor_dates(session, [c.id for c in rows])
+
+        company_names: dict[UUID, str] = {}
+        company_ids = list({c.company_id for c in rows if c.company_id})
+        if company_ids:
+            company_names = {
+                row[0]: row[1]
+                for row in (
+                    await session.execute(
+                        select(Company.id, Company.name).where(Company.id.in_(company_ids))
+                    )
+                ).all()
+            }
+
+        activity_latest: dict[tuple[UUID, str], datetime] = {}
+        anchored_ids = [cid for cid, a in anchors.items() if a]
+        if anchored_ids:
+            min_anchor = min(anchors[cid] for cid in anchored_ids)
+            activity_latest = await _latest_channel_activity(session, anchored_ids, min_anchor)
+
         for contact in rows:
             try:
-                count = await _process_contact(session, contact, now)
+                count = await _process_contact(
+                    session,
+                    contact,
+                    now,
+                    anchors.get(contact.id),
+                    company_names,
+                    activity_latest,
+                )
                 stats["tasks_upserted"] += count
             except Exception:
                 stats["skipped"] += 1
