@@ -610,7 +610,14 @@ def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
         return "Unassigned"
-    if raw in {"us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
+    # This function normalizes BOTH raw region values (e.g. "US", "APAC") AND the
+    # filter param the UI sends, which is the already-bucketed label itself
+    # ("America", "Rest of the World", "unassigned"). So the bucket labels must map
+    # to themselves — "america" was missing from the set below, so selecting the
+    # America filter normalized to "Rest of the World" and returned the wrong region.
+    if raw == "unassigned":
+        return "Unassigned"
+    if raw in {"america", "us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
         return "America"
     if raw in {"india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"}:
         return "Rest of the World"
