@@ -770,20 +770,34 @@ async def sales_activity_drilldown(
     # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
-    deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id)
-    if filter_geographies:
-        deal_stmt = deal_stmt.where(Deal.geography.in_(list(filter_geographies)))
+    # Geography must be applied via _normalize_geography_key in Python, exactly
+    # like sales_dashboard does — the filter param holds bucket labels
+    # ("America", "Rest of the World", "Unassigned") while the DB columns hold
+    # raw values ("US", "APAC", NULL), so an IN() on the raw columns matches
+    # nothing and the drilldown disagrees with the dashboard tiles.
+    deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id, Deal.geography)
     if rep_id:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id == rep_id)
     scoped_deal_rows = (await session.execute(deal_stmt)).all()
+    if filter_geographies:
+        scoped_deal_rows = [
+            row for row in scoped_deal_rows
+            if _normalize_geography_key(row.geography) in filter_geographies
+        ]
     scoped_deal_ids = {row.id for row in scoped_deal_rows}
 
-    contact_stmt = select(Contact.id, Contact.assigned_to_id, Contact.company_id)
-    if filter_geographies:
-        contact_stmt = contact_stmt.outerjoin(Company, Contact.company_id == Company.id).where(Company.region.in_(list(filter_geographies)))
+    contact_stmt = (
+        select(Contact.id, Contact.assigned_to_id, Contact.company_id, Company.region.label("company_region"))
+        .outerjoin(Company, Contact.company_id == Company.id)
+    )
     if rep_id:
         contact_stmt = contact_stmt.where(Contact.assigned_to_id == rep_id)
     scoped_contact_rows = (await session.execute(contact_stmt)).all()
+    if filter_geographies:
+        scoped_contact_rows = [
+            row for row in scoped_contact_rows
+            if _normalize_geography_key(row.company_region) in filter_geographies
+        ]
     scoped_contact_ids = {row.id for row in scoped_contact_rows}
 
     def activity_metric_filter():
@@ -1128,6 +1142,10 @@ async def sales_dashboard(
     if filter_rep_ids:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
     deal_rows = (await session.execute(deal_stmt)).all()
+    # Keep the pre-geography list: the conversion funnel applies region by
+    # ACCOUNT (not by Deal.geography), so it reuses these rep-scoped rows
+    # instead of re-running an identical full deals query further down.
+    raw_deal_rows = deal_rows
     if filter_geographies:
         deal_rows = [row for row in deal_rows if _normalize_geography_key(row.geography) in filter_geographies]
     allowed_deal_ids = {row.id for row in deal_rows}
@@ -1218,6 +1236,10 @@ async def sales_dashboard(
             )
         )
     ).all()
+    # The conversion funnel needs the same window of meetings WITHOUT the
+    # rep/geography filters below — keep the raw result so it doesn't re-run
+    # this identical query.
+    raw_meeting_rows = meetings_rows
     if filter_rep_ids:
         meetings_rows = [
             row
@@ -1932,19 +1954,23 @@ async def sales_dashboard(
     }
 
     # Proposal / Closed Won = distinct accounts with a deal at the stage, last
-    # updated in the window. Rep-scoped by deal owner, region by the account. Its
-    # own query (rep-filtered only) so it isn't perturbed by the Deal.geography
-    # pre-filter applied to deal_rows for the other dashboard sections.
-    funnel_deal_stmt = select(Deal.id, Deal.company_id, Deal.stage, Deal.updated_at)
-    if filter_rep_ids:
-        funnel_deal_stmt = funnel_deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
-    funnel_deal_rows = (await session.execute(funnel_deal_stmt)).all()
+    # updated in the window. Rep-scoped by deal owner, region by the account.
+    # Reuses the rep-scoped, pre-geography deal fetch from above (raw_deal_rows
+    # carries id/company_id/stage/updated_at with the identical rep filter) so
+    # it isn't perturbed by the Deal.geography pre-filter and doesn't re-scan
+    # the deals table.
+    funnel_deal_rows = raw_deal_rows
     funnel_deal_company = {row.id: row.company_id for row in funnel_deal_rows}
     proposal_accounts: set = set()
     won_accounts: set = set()
     for row in funnel_deal_rows:
         cid = row.company_id
-        if cid is None or row.updated_at < window_start or not _funnel_account_in_geo(cid):
+        if (
+            cid is None
+            or row.updated_at < window_start
+            or row.updated_at > window_end
+            or not _funnel_account_in_geo(cid)
+        ):
             continue
         if row.stage in PROPOSAL_STAGES:
             proposal_accounts.add(cid)
@@ -1955,22 +1981,9 @@ async def sales_dashboard(
     # rep-scoped query (NOT pre-filtered by Deal.geography) so the region filter is
     # applied by account, matching the other steps; same gating + cross-source dedup
     # as the rep-activity meeting count.
-    funnel_meeting_rows = (
-        await session.execute(
-            select(
-                Meeting.deal_id, Meeting.company_id, Meeting.owner_user_id, Meeting.scheduled_at,
-                Meeting.created_at, Meeting.status, Meeting.external_source, Meeting.attendees,
-                Meeting.is_internal, Meeting.meeting_type,
-            ).where(
-                Meeting.is_internal.is_(False),
-                or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
-                or_(
-                    (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
-                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
-                ),
-            )
-        )
-    ).all()
+    # Identical window/columns to the rep-activity meetings query above —
+    # reuse its raw (pre rep/geo filter) result instead of re-querying.
+    funnel_meeting_rows = raw_meeting_rows
     funnel_meeting_candidates = [
         row
         for row in funnel_meeting_rows
