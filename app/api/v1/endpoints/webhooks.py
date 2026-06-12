@@ -35,6 +35,7 @@ from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.outreach import OutreachSequence
+from app.services.disposition_effects import _should_advance
 from app.services.tasks import refresh_system_tasks_for_entity
 from app.services.tldv_sync import sync_tldv_meeting
 
@@ -112,7 +113,7 @@ async def _find_contact_by_email(session, email: str) -> Optional[Contact]:
     if not email:
         return None
     result = await session.execute(
-        select(Contact).where(Contact.email == email.lower().strip()).limit(1)
+        select(Contact).where(func.lower(Contact.email) == email.lower().strip()).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -611,9 +612,20 @@ async def _fetch_aircall_bundle(
     return fetched_call, ci_bundle
 
 
-async def _summarize_aircall_signal(*, transcript_text: str | None, comment_text: str | None, summary_text: str | None) -> str | None:
+async def _summarize_aircall_signal(
+    *,
+    transcript_text: str | None,
+    comment_text: str | None,
+    summary_text: str | None,
+    existing_summary: str | None = None,
+) -> str | None:
     if summary_text:
         return summary_text
+    # Aircall delivers several events per call (transcription → summary →
+    # comm_assets) and may redeliver webhooks; once the activity already has
+    # an AI summary, reuse it instead of paying Haiku again for the same call.
+    if existing_summary:
+        return existing_summary
     source_text = " ".join(part for part in [transcript_text or "", comment_text or ""] if part).strip()
     if len(source_text) < 40 or not settings.claude_api_key:
         return None
@@ -832,14 +844,18 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         email_subject = subject
         email_sender = lead_email
         email_recipient = payload.get("email_account") or payload.get("to_email") or ""
-        # Update contact + sequence to "replied"
+        # Update contact + sequence to "replied" — but never regress a
+        # terminal state (e.g. a prospect replying after booking a meeting
+        # must not knock them back from "meeting_booked").
         if contact:
-            contact.sequence_status = "replied"
+            if _should_advance(contact.sequence_status, "replied"):
+                contact.sequence_status = "replied"
             contact.instantly_status = "replied"
             contact.updated_at = now
             session.add(contact)
         if sequence:
-            sequence.status = "replied"
+            if _should_advance(sequence.status, "replied"):
+                sequence.status = "replied"
             sequence.instantly_campaign_status = "completed"
             sequence.updated_at = now
             session.add(sequence)
@@ -1032,11 +1048,15 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"Campaign completed for {lead_email}"
         activity_type = "email"
         if contact:
-            contact.sequence_status = "completed"
+            # Never regress a terminal state (e.g. meeting_booked) just
+            # because the campaign ran dry.
+            if _should_advance(contact.sequence_status, "completed"):
+                contact.sequence_status = "completed"
             contact.updated_at = now
             session.add(contact)
         if sequence:
-            sequence.status = "completed"
+            if _should_advance(sequence.status, "completed"):
+                sequence.status = "completed"
             sequence.instantly_campaign_status = "completed"
             sequence.updated_at = now
             session.add(sequence)
@@ -1348,6 +1368,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
             transcript_text=transcript_text,
             comment_text=comment_text,
             summary_text=conversation_summary,
+            existing_summary=existing_activity.ai_summary if existing_activity else None,
         )
         content = _build_aircall_ci_content(
             summary_text=conversation_summary or ai_summary,
@@ -1393,6 +1414,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
                 transcript_text=transcript_text,
                 comment_text=comment_text,
                 summary_text=conversation_summary,
+                existing_summary=existing_activity.ai_summary if existing_activity else None,
             )
     elif event == "call.voicemail_left":
         content = f"📬 Voicemail left by {raw_digits}"
@@ -1410,6 +1432,7 @@ async def aircall_webhook(request: Request, session: DBSession) -> dict:
             transcript_text=None,
             comment_text=comment_text,
             summary_text=conversation_summary,
+            existing_summary=existing_activity.ai_summary if existing_activity else None,
         )
     elif event == "call.tagged":
         content = f"🏷 Call tagged: {', '.join(tags)}" if tags else "Call tagged"

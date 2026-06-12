@@ -26,7 +26,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contact import Contact
@@ -256,6 +256,30 @@ async def _maybe_pause_instantly_campaign(
             campaign_id = seq.instantly_campaign_id
 
     if not campaign_id:
+        return False
+
+    # Campaign-level pause assumes the legacy 1-campaign-per-contact launch
+    # path. With bulk enroll-in-campaign, MANY contacts share one campaign —
+    # pausing it because ONE prospect said "not interested" would silently
+    # stop outreach for the entire cohort. Only pause when no other contact
+    # is enrolled in this campaign.
+    others = (
+        await session.execute(
+            select(func.count(Contact.id)).where(
+                Contact.instantly_campaign_id == campaign_id,
+                Contact.id != contact.id,
+            )
+        )
+    ).scalar() or 0
+    if others:
+        logger.info(
+            "Skipping Instantly campaign pause for %s — campaign %s is shared "
+            "by %d other contact(s) (reason=%s)",
+            contact.id,
+            campaign_id,
+            others,
+            reason,
+        )
         return False
 
     try:

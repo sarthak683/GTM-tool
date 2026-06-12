@@ -855,7 +855,7 @@ async def workspace_insights(session: DBSession, current_user: CurrentUser):
 
 
 @router.get("/stages/{stage}", response_model=StageStatus)
-async def stage_status(stage: str, session: DBSession):
+async def stage_status(stage: str, session: DBSession, _user: CurrentUser):
     """
     Per-stage health check — returns ready | needs_action | blocked
     plus specific blockers and suggested actions.

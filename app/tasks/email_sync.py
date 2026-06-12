@@ -144,7 +144,7 @@ def sync_gmail_inbox(self) -> dict:
 
 async def _async_sync() -> dict:
     import redis
-    from sqlalchemy import and_, select
+    from sqlalchemy import and_, func, select
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -255,10 +255,11 @@ async def _async_sync() -> dict:
                         )
                         continue
 
-                # Find matching contacts
+                # Find matching contacts (case-insensitive: parsed addresses
+                # are lowercased, but stored contact emails may not be)
                 contact_result = await session.execute(
                     select(Contact.id, Contact.email, Contact.company_id).where(
-                        Contact.email.in_(list(all_addrs))
+                        func.lower(Contact.email).in_(list(all_addrs))
                     )
                 )
                 matched_contacts = contact_result.all()
@@ -284,7 +285,7 @@ async def _async_sync() -> dict:
                 # Determine sender contact (for activity.contact_id)
                 sender_contact_id = None
                 for c in matched_contacts:
-                    if c.email == msg.from_addr:
+                    if str(c.email or "").strip().lower() == msg.from_addr:
                         sender_contact_id = c.id
                         break
 

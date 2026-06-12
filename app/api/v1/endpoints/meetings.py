@@ -369,7 +369,7 @@ async def create_meeting(payload: MeetingCreate, session: DBSession, current_use
                 return candidate  # return existing instead of creating duplicate
 
     data.setdefault("synced_by_user_id", str(current_user.id))
-    data.setdefault("synced_at", datetime.utcnow().isoformat())
+    data.setdefault("synced_at", datetime.utcnow())
     data.setdefault("external_source", "manual")
     internal_flag = await _classify_internal_from_attendees(session, data.get("attendees"))
     if internal_flag is not None:

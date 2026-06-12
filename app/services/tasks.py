@@ -302,8 +302,13 @@ async def _find_open_system_task(
             Task.task_type == "system",
             Task.status == "open",
         )
+        # Concurrent refreshers can race in duplicate open rows (no unique
+        # constraint); pick the oldest deterministically instead of raising
+        # MultipleResultsFound and 500ing every task refresh thereafter.
+        .order_by(Task.created_at.asc())
+        .limit(1)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def _recent_system_task_exists(

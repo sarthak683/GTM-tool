@@ -10,6 +10,7 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
+from app.models.meeting import to_naive_utc
 from app.repositories.contact import ContactRepository, get_or_create_contact_by_email
 from app.schemas.common import PaginatedResponse
 from app.models.user import User
@@ -474,9 +475,10 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     await _authorize_contact_edit(contact, _user, session)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
-        # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
+        # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
+        # (replace() alone would keep the foreign wall-clock time)
         if isinstance(value, datetime) and value.tzinfo is not None:
-            value = value.replace(tzinfo=None)
+            value = to_naive_utc(value)
         setattr(contact, key, value)
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)

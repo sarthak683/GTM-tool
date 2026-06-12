@@ -416,6 +416,9 @@ async def update_task(task_id: UUID, payload: TaskUpdate, session: DBSession, cu
         _validate_status(update_data["status"])
         if update_data["status"] in {"completed", "dismissed"} and not task.completed_at:
             task.completed_at = datetime.utcnow()
+        elif update_data["status"] == "open":
+            # Reopening must clear the stale completion timestamp
+            task.completed_at = None
     if "assigned_role" in update_data and update_data["assigned_role"] is not None:
         _validate_assigned_role(update_data["assigned_role"])
     if "title" in update_data:

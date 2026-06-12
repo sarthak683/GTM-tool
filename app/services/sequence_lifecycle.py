@@ -230,11 +230,24 @@ def _reconcile_email_step(
     open_activities: list[Activity] = []
     click_activities: list[Activity] = []
     if fired_at:
-        # Find opens/clicks/replies/bounces that happened after this send
-        # but before the next step's sent (caller won't pass future ones).
+        # Find opens/clicks/replies/bounces that happened after this send but
+        # before the NEXT send. The caller passes the contact's full email
+        # history (sorted asc), so without this bound step 1 would absorb
+        # every later step's opens/clicks and a reply to step 3 would mark
+        # step 1 as replied.
+        next_sent_at: Optional[datetime] = None
         for activity in email_activities:
             if activity.created_at <= fired_at:
                 continue
+            nmeta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
+            if str(nmeta.get("event_type") or "").lower() == "email_sent":
+                next_sent_at = activity.created_at
+                break
+        for activity in email_activities:
+            if activity.created_at <= fired_at:
+                continue
+            if next_sent_at and activity.created_at >= next_sent_at:
+                break
             meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
             event_type = str(meta.get("event_type") or "").lower()
             if event_type == "email_opened":

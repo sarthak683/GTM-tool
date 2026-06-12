@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Query
 from sqlalchemy import func, or_, select
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
+from app.core.exceptions import ForbiddenError
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
 from app.models.deal import Deal
 from app.models.meeting import Meeting
@@ -285,4 +286,9 @@ async def update_activity(activity_id: UUID, payload: ActivityUpdate, session: D
 async def delete_activity(activity_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ActivityRepository(session)
     activity = await repo.get_or_raise(activity_id)
+    # Deleting another rep's logged activity silently skews call counts and
+    # leaderboards — restrict to the creator (or admin). System-generated
+    # rows (no creator) stay admin-only.
+    if _user.role != "admin" and activity.created_by_id != _user.id:
+        raise ForbiddenError("Only the activity's creator or an admin can delete it")
     await repo.delete(activity)
