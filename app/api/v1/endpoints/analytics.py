@@ -1896,21 +1896,97 @@ async def sales_dashboard(
     # switch week/month with no extra request.
     forecast_bucket_rows = forecast_week_rows if forecast_granularity == "week" else forecast_rows
 
-    leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
-    meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
-    # Reuse the deduped list from rep-activity counting above so the funnel's
-    # Meeting count agrees with per-rep totals (no tldv+gcal double-count).
-    meetings_count = len(deduped_meetings)
-    proposal_count = sum(
-        1
-        for row in deal_rows
-        if row.stage in PROPOSAL_STAGES and row.updated_at >= window_start
-    )
-    closed_won_count = sum(
-        1
-        for row in deal_rows
-        if row.stage == "closed_won" and row.updated_at >= window_start
-    )
+    # ── Conversion funnel — ACCOUNT-based, uniformly region-filtered ─────────
+    # Each step counts distinct ACCOUNTS (companies), all filtered by the account's
+    # region (Company.region). Before: 'Lead' counted contacts (~3.4k prospects),
+    # and the deal/meeting steps filtered on Deal.geography (~80% null in prod) — so
+    # the funnel mixed entity types and the America / Rest-of-World filter applied
+    # unevenly (it also dropped company-only meetings). Counting accounts on one
+    # well-populated region source makes the funnel and its filter coherent.
+    company_meta_rows = (
+        await session.execute(
+            select(Company.id, Company.region, Company.created_at, Company.assigned_to_id, Company.sdr_id)
+        )
+    ).all()
+    funnel_company_region = {row.id: _normalize_geography_key(row.region) for row in company_meta_rows}
+
+    def _funnel_account_in_geo(company_id) -> bool:
+        return (not filter_geographies) or funnel_company_region.get(company_id) in filter_geographies
+
+    # Lead = accounts sourced (company created) in the window; rep filter scopes to
+    # the account's AE/SDR so a rep-filtered funnel shows that rep's accounts.
+    lead_accounts = {
+        row.id
+        for row in company_meta_rows
+        if row.created_at is not None
+        and window_start <= row.created_at <= window_end
+        and _funnel_account_in_geo(row.id)
+        and (not filter_rep_ids or row.assigned_to_id in filter_rep_ids or row.sdr_id in filter_rep_ids)
+    }
+
+    # Proposal / Closed Won = distinct accounts with a deal at the stage, last
+    # updated in the window. Rep-scoped by deal owner, region by the account. Its
+    # own query (rep-filtered only) so it isn't perturbed by the Deal.geography
+    # pre-filter applied to deal_rows for the other dashboard sections.
+    funnel_deal_stmt = select(Deal.id, Deal.company_id, Deal.stage, Deal.updated_at)
+    if filter_rep_ids:
+        funnel_deal_stmt = funnel_deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+    funnel_deal_rows = (await session.execute(funnel_deal_stmt)).all()
+    funnel_deal_company = {row.id: row.company_id for row in funnel_deal_rows}
+    proposal_accounts: set = set()
+    won_accounts: set = set()
+    for row in funnel_deal_rows:
+        cid = row.company_id
+        if cid is None or row.updated_at < window_start or not _funnel_account_in_geo(cid):
+            continue
+        if row.stage in PROPOSAL_STAGES:
+            proposal_accounts.add(cid)
+        if row.stage == "closed_won":
+            won_accounts.add(cid)
+
+    # Meeting = distinct accounts with a qualifying meeting in the window. Dedicated
+    # rep-scoped query (NOT pre-filtered by Deal.geography) so the region filter is
+    # applied by account, matching the other steps; same gating + cross-source dedup
+    # as the rep-activity meeting count.
+    funnel_meeting_rows = (
+        await session.execute(
+            select(
+                Meeting.deal_id, Meeting.company_id, Meeting.owner_user_id, Meeting.scheduled_at,
+                Meeting.created_at, Meeting.status, Meeting.external_source, Meeting.attendees,
+                Meeting.is_internal, Meeting.meeting_type,
+            ).where(
+                Meeting.is_internal.is_(False),
+                or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
+                or_(
+                    (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= window_start) & (Meeting.created_at <= window_end),
+                ),
+            )
+        )
+    ).all()
+    funnel_meeting_candidates = [
+        row
+        for row in funnel_meeting_rows
+        if _is_crm_linked_meeting(row)
+        and row.status != "cancelled"
+        and _meeting_within_sales_funnel(row)
+        and str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES
+    ]
+    meeting_accounts: set = set()
+    for row in _dedupe_meetings_across_sources(funnel_meeting_candidates):
+        cid = row.company_id or funnel_deal_company.get(row.deal_id)
+        if cid is None or not _funnel_account_in_geo(cid):
+            continue
+        if filter_rep_ids:
+            mreps = set(_meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email))
+            if not (mreps & filter_rep_ids):
+                continue
+        meeting_accounts.add(cid)
+
+    leads_count = len(lead_accounts)
+    meetings_count = len(meeting_accounts)
+    proposal_count = len(proposal_accounts)
+    closed_won_count = len(won_accounts)
 
     # Milestone-based deduplicated counts for the selected window
     # Each company counted only once (first time it reached the milestone)
