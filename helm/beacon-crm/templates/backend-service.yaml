@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "beacon.fullname" . }}-backend
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.backend.port }}
+      targetPort: {{ .Values.backend.port }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 4 }}

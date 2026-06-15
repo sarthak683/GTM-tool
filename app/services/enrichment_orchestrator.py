@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company import Company
 from app.services.icp_scorer import score_company
+from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ async def enrich_company(company: Company, session: AsyncSession) -> Company:
             _apply_apollo(company, apollo_data)
             logger.info(f"Apollo enriched {company.domain}")
     except Exception as e:
-        logger.error(f"Apollo enrichment failed for {company.domain}: {e}")
+        logger.error("Apollo enrichment failed for %s: %s", company.domain, safe_error_message(e))
 
     # ── 2. Hunter — email pattern signals + auto-create contacts ─────────────
     try:
@@ -71,7 +72,7 @@ async def enrich_company(company: Company, session: AsyncSession) -> Company:
             await _create_contacts_from_hunter(company, hunter_data.get("contacts", []), session)
             logger.info(f"Hunter enriched {company.domain}")
     except Exception as e:
-        logger.error(f"Hunter enrichment failed for {company.domain}: {e}")
+        logger.error("Hunter enrichment failed for %s: %s", company.domain, safe_error_message(e))
 
     # ── 3. BuiltWith — tech stack ─────────────────────────────────────────────
     try:
@@ -82,7 +83,7 @@ async def enrich_company(company: Company, session: AsyncSession) -> Company:
                 company.tech_stack = builtwith_data["tech_stack"]
             logger.info(f"BuiltWith enriched {company.domain}")
     except Exception as e:
-        logger.error(f"BuiltWith enrichment failed for {company.domain}: {e}")
+        logger.error("BuiltWith enrichment failed for %s: %s", company.domain, safe_error_message(e))
 
     # ── 4. NewsAPI — funding & PR signals ─────────────────────────────────────
     try:
@@ -94,7 +95,7 @@ async def enrich_company(company: Company, session: AsyncSession) -> Company:
                 logger.info(f"Funding signal detected for {company.name}")
             logger.info(f"NewsAPI enriched {company.name}: {news_data['total_articles']} articles found")
     except Exception as e:
-        logger.error(f"NewsAPI enrichment failed for {company.name}: {e}")
+        logger.error("NewsAPI enrichment failed for %s: %s", company.name, safe_error_message(e))
 
     # ── Persist ───────────────────────────────────────────────────────────────
     company.enrichment_sources = enrichment_sources
@@ -116,6 +117,7 @@ async def _create_contacts_from_hunter(
     """Turn Hunter-discovered emails into Contact rows, skipping duplicates."""
     from app.models.contact import Contact
     from app.services.persona_classifier import classify_persona
+    from app.services.prospect_hygiene import is_valid_prospect_candidate
     from sqlmodel import select
 
     for c in contacts:
@@ -137,6 +139,15 @@ async def _create_contacts_from_hunter(
             parts = prefix.replace(".", " ").replace("_", " ").split()
             first = parts[0].capitalize() if parts else prefix
             last = parts[1].capitalize() if len(parts) > 1 else ""
+
+        if not is_valid_prospect_candidate(
+            first_name=first,
+            last_name=last,
+            email=email,
+            title=c.get("title"),
+            linkedin_url=c.get("linkedin_url"),
+        ):
+            continue
 
         contact = Contact(
             first_name=first,

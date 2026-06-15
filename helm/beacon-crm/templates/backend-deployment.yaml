@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beacon.fullname" . }}-backend
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "beacon.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: run-migrations
+          image: {{ include "beacon.image" (dict "image" .Values.backend.image "global" .Values.global) }}
+          command: ["alembic", "upgrade", "head"]
+          # Alembic writes only to the DB, so the migrate step needs no writable fs.
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "beacon.fullname" . }}-secret
+            - configMapRef:
+                name: {{ include "beacon.fullname" . }}-config
+          env:
+            - name: DATABASE_URL
+              value: {{ include "beacon.databaseUrl" . }}
+            - name: SYNC_DATABASE_URL
+              value: {{ include "beacon.syncDatabaseUrl" . }}
+            - name: REDIS_URL
+              value: {{ include "beacon.redisUrl" . }}
+      containers:
+        - name: backend
+          image: {{ include "beacon.image" (dict "image" .Values.backend.image "global" .Values.global) }}
+          command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          # Backend writes uploaded blobs to /tmp before handing them to Celery
+          # (app/api/v1/endpoints/call_recordings.py, app/services/text_extraction.py),
+          # so the root fs stays read-only and /tmp is a writable emptyDir.
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          ports:
+            - containerPort: {{ .Values.backend.port }}
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ include "beacon.fullname" . }}-secret
+            - configMapRef:
+                name: {{ include "beacon.fullname" . }}-config
+          env:
+            - name: DATABASE_URL
+              value: {{ include "beacon.databaseUrl" . }}
+            - name: SYNC_DATABASE_URL
+              value: {{ include "beacon.syncDatabaseUrl" . }}
+            - name: REDIS_URL
+              value: {{ include "beacon.redisUrl" . }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

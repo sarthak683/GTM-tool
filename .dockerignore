@@ -15,3 +15,14 @@ __pycache__
 .env
 dist
 build
+.claude
+docs
+helm
+scripts
+storage
+tests
+tmp
+report.md
+report_simple.md
+oapi_prod.json
+*.log

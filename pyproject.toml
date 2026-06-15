@@ -1,0 +1,50 @@
+# Tooling configuration for the Beacon GTM CRM backend.
+#
+# Scope is intentionally narrow: this file configures pytest and ruff only.
+# It does NOT declare the project as a build target / installable package —
+# the app runs from source inside Docker (see Dockerfile / requirements.txt),
+# so there is no [build-system] or [project] table on purpose. Adding one would
+# make tools try to build/install the repo, which is not how it is deployed.
+
+[tool.pytest.ini_options]
+# `auto` lets us write `async def test_...` without decorating every coroutine
+# test with `@pytest.mark.asyncio`. Provided by pytest-asyncio (pinned in
+# requirements.txt). The current suite is sync, but the app is async-first and
+# new integration tests will be coroutines, so default to auto.
+asyncio_mode = "auto"
+# Only collect from tests/. Stops pytest from wandering into app/, scripts/, or
+# alembic/ and importing modules with heavy import-time side effects.
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# Lint the backend source + tests; never the generated/vendored trees. Alembic
+# migrations are auto-generated and frequently break style rules; the frontend
+# is TypeScript; virtualenvs and caches are not ours to lint.
+extend-exclude = [
+    "alembic",
+    "frontend",
+    "storage",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "__pycache__",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+]
+
+[tool.ruff.lint]
+# Deliberately lenient so `ruff check .` is GREEN on the existing ~211-file
+# codebase while still catching things that are actually broken:
+#   E9  - syntax errors (IndentationError, SyntaxError, ...)
+#   F63 - invalid use in tests / comparisons (e.g. assert on a tuple literal)
+#   F7  - statement-level mistakes (break/continue/return outside a loop/func)
+#   F82 - undefined name (typos, missing imports referenced at runtime)
+# None of these flag style/formatting, so they will not fail CI on legacy code,
+# but they do catch real, runtime-breaking defects in new code.
+select = ["E9", "F63", "F7", "F82"]
+ignore = []

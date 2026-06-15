@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beacon CRM</title>
+    <link rel="icon" type="image/jpeg" href="/beacon-logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html { zoom: 0.8; height: 100%; }
+      body, #root { height: 100%; min-height: 100%; }
+      body {
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        font-feature-settings: 'cv11', 'ss01';
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background: #F8F7F5;
+        color: #1C1917;
+      }
+      /* Tabular numbers for data columns */
+      .tabular { font-variant-numeric: tabular-nums; }
+      /* Custom scrollbar */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #D6D3D1; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-DmY_kjZN.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CdbI8t3n.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

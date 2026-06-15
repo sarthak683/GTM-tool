@@ -1,0 +1,273 @@
+/*
+ * Account Sourcing list + detail visual refresh.
+ * Pure additive overrides — revert by removing the imports.
+ */
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Shared tokens
+ * ─────────────────────────────────────────────────────────────────────── */
+.account-sourcing-page,
+.account-sourcing-detail-page {
+  --as-bg-1:        #f6f8fc;
+  --as-bg-2:        #eef3fa;
+  --as-surface:     #ffffff;
+  --as-border:      #e2eaf5;
+  --as-border-soft: #eef2f8;
+  --as-ink:         #0f1f33;
+  --as-ink-soft:    #4a5b73;
+  --as-ink-mute:    #7d8ea6;
+  --as-primary:     #1d4ed8;
+  --as-primary-soft:#eaf1ff;
+  --as-accent:      #06b6d4;
+  --as-success:     #16a34a;
+  --as-warn:        #d97706;
+  --as-danger:      #dc2626;
+  --as-shadow-sm:   0 1px 2px rgba(15, 23, 42, 0.05);
+  --as-shadow-md:   0 6px 20px rgba(15, 23, 42, 0.08);
+  --as-shadow-lg:   0 24px 48px rgba(15, 23, 42, 0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LIST PAGE
+ * ═══════════════════════════════════════════════════════════════════════ */
+.account-sourcing-page {
+  background:
+    radial-gradient(circle at top right, rgba(29, 78, 216, 0.05), transparent 35%),
+    radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.04), transparent 30%),
+    linear-gradient(180deg, var(--as-bg-1) 0%, var(--as-bg-2) 100%) !important;
+  padding: 18px 16px 56px !important;
+}
+
+/* Widen the wrap — same treatment as prospects detail */
+.account-sourcing-page > div:not([class]),
+.account-sourcing-page > [class]:not(.as-filter-bar):not(.as-hero-card) {
+  max-width: min(1920px, calc(100vw - 24px));
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Hero card */
+.account-sourcing-page .as-hero-card {
+  background: linear-gradient(135deg, #ffffff 0%, #f6fafd 60%, #eef4fb 100%) !important;
+  border: 1px solid var(--as-border) !important;
+  border-radius: 18px !important;
+  box-shadow: var(--as-shadow-md) !important;
+  position: relative;
+  overflow: hidden;
+}
+.account-sourcing-page .as-hero-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--as-primary), var(--as-accent));
+  opacity: 0.9;
+}
+
+/* Summary grid — denser KPIs */
+.account-sourcing-page .as-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+  gap: 10px !important;
+}
+.account-sourcing-page .as-summary-grid > * {
+  border-radius: 14px !important;
+  border: 1px solid var(--as-border) !important;
+  background: var(--as-surface) !important;
+  box-shadow: var(--as-shadow-sm) !important;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  position: relative;
+  overflow: hidden;
+}
+.account-sourcing-page .as-summary-grid > *:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--as-shadow-md) !important;
+  border-color: #cfdaea !important;
+}
+
+/* Filter bar — frosted sticky */
+.account-sourcing-page .as-filter-bar {
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: saturate(180%) blur(10px);
+  -webkit-backdrop-filter: saturate(180%) blur(10px);
+  border-radius: 14px !important;
+  border: 1px solid var(--as-border) !important;
+  box-shadow: var(--as-shadow-sm) !important;
+}
+
+/* Company cards */
+.account-sourcing-page .as-company-card {
+  border-radius: 14px !important;
+  border: 1px solid var(--as-border) !important;
+  background: var(--as-surface) !important;
+  box-shadow: var(--as-shadow-sm) !important;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+  position: relative;
+}
+.account-sourcing-page .as-company-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--as-shadow-md) !important;
+  border-color: #cfdaea !important;
+}
+.account-sourcing-page .as-company-card:hover::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 3px;
+  background: var(--as-primary);
+  border-radius: 0 3px 3px 0;
+}
+
+/* Chips on cards */
+.account-sourcing-page .as-company-card span[style*="border-radius: 999px"],
+.account-sourcing-page .as-company-card-desktop-chips > * {
+  font-weight: 700 !important;
+  letter-spacing: 0.01em !important;
+}
+
+/* Buttons */
+.account-sourcing-page button[class*="primary"],
+.account-sourcing-detail-page button[class*="primary"] {
+  transition: all 0.14s ease;
+}
+.account-sourcing-page button[class*="primary"]:hover,
+.account-sourcing-detail-page button[class*="primary"]:hover {
+  transform: translateY(-1px);
+}
+
+/* Scrollbars */
+.account-sourcing-page *::-webkit-scrollbar,
+.account-sourcing-detail-page *::-webkit-scrollbar { width: 10px; height: 10px; }
+.account-sourcing-page *::-webkit-scrollbar-thumb,
+.account-sourcing-detail-page *::-webkit-scrollbar-thumb {
+  background: #cfdaea;
+  border-radius: 10px;
+  border: 2px solid var(--as-surface);
+}
+.account-sourcing-page *::-webkit-scrollbar-thumb:hover,
+.account-sourcing-detail-page *::-webkit-scrollbar-thumb:hover { background: #a8bbd2; }
+.account-sourcing-page *::-webkit-scrollbar-track,
+.account-sourcing-detail-page *::-webkit-scrollbar-track { background: transparent; }
+
+/* Entrance */
+.account-sourcing-page > * {
+  animation: as-fade-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes as-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * DETAIL PAGE
+ * ═══════════════════════════════════════════════════════════════════════ */
+.account-sourcing-detail-page {
+  background:
+    radial-gradient(circle at top right, rgba(29, 78, 216, 0.05), transparent 35%),
+    radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.04), transparent 30%),
+    linear-gradient(180deg, var(--as-bg-1) 0%, var(--as-bg-2) 100%) !important;
+  padding: 18px 16px 56px !important;
+}
+
+/* Widen wrap */
+.account-sourcing-detail-page .ascd-wrap {
+  max-width: min(1920px, calc(100vw - 24px)) !important;
+  margin: 0 auto !important;
+  gap: 14px !important;
+}
+
+/* Hero card */
+.account-sourcing-detail-page .ascd-hero {
+  background: linear-gradient(135deg, #ffffff 0%, #f6fafd 60%, #eef4fb 100%) !important;
+  border: 1px solid var(--as-border) !important;
+  border-radius: 18px !important;
+  box-shadow: var(--as-shadow-md) !important;
+  position: relative;
+  overflow: hidden;
+}
+.account-sourcing-detail-page .ascd-hero::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--as-primary), var(--as-accent));
+  opacity: 0.9;
+}
+.account-sourcing-detail-page .ascd-hero::after {
+  content: "";
+  position: absolute;
+  right: -80px; top: -80px;
+  width: 260px; height: 260px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(29, 78, 216, 0.08), transparent 70%);
+  pointer-events: none;
+}
+
+/* Main grid — give main column MORE width */
+.account-sourcing-detail-page .ascd-hero-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px) !important;
+  gap: 18px !important;
+}
+
+/* Generic section cards */
+.account-sourcing-detail-page .ascd-section {
+  background: var(--as-surface);
+  border-radius: 14px;
+  border: 1px solid var(--as-border);
+  box-shadow: var(--as-shadow-sm);
+  transition: box-shadow 0.18s ease;
+}
+.account-sourcing-detail-page .ascd-section:hover {
+  box-shadow: var(--as-shadow-md);
+}
+
+/* Wider main-grid on detail */
+.account-sourcing-detail-page .ascd-main-grid {
+  grid-template-columns: minmax(0, 2.4fr) minmax(320px, 1fr) !important;
+  gap: 14px !important;
+  align-items: start !important;
+}
+
+/* Sticky right sidebar on detail */
+.account-sourcing-detail-page .ascd-main-grid > *:nth-child(2) {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+}
+
+/* Buttons soft */
+.account-sourcing-page .crm-button.soft,
+.account-sourcing-detail-page .crm-button.soft {
+  transition: all 0.12s ease;
+}
+.account-sourcing-page .crm-button.soft:hover,
+.account-sourcing-detail-page .crm-button.soft:hover {
+  background: var(--as-primary-soft) !important;
+  border-color: #bfdbfe !important;
+  color: var(--as-primary) !important;
+  transform: translateY(-1px);
+}
+
+/* Entrance */
+.account-sourcing-detail-page .ascd-wrap {
+  animation: as-fade-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Mobile preserves their stacks */
+@media (max-width: 760px) {
+  .account-sourcing-page,
+  .account-sourcing-detail-page {
+    padding: 12px 10px 80px !important;
+  }
+  .account-sourcing-detail-page .ascd-main-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .account-sourcing-detail-page .ascd-main-grid > *:nth-child(2) {
+    position: static !important;
+    max-height: none !important;
+  }
+}
+
+/* Bigger screens — sidebar wider */
+@media (min-width: 1600px) {
+  .account-sourcing-detail-page .ascd-main-grid {
+    grid-template-columns: minmax(0, 2.7fr) minmax(360px, 1fr) !important;
+  }
+}

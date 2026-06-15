@@ -23,7 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.models.sales_resource import (
     SalesResource,
     SalesResourceCreate,
@@ -32,6 +32,7 @@ from app.models.sales_resource import (
 )
 from app.repositories.sales_resource import SalesResourceRepository
 from app.schemas.common import PaginatedResponse
+from app.services.knowledge_context import build_chunks_for_resource
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ VALID_MODULES = [
 @router.post("/upload", response_model=SalesResourceRead, status_code=201)
 async def upload_resource(
     session: DBSession,
+    _user: CurrentUser,
     file: UploadFile = File(...),
     title: str = Form(...),
     category: str = Form(...),
@@ -102,6 +104,8 @@ async def upload_resource(
     if not content.strip():
         raise HTTPException(400, "File appears to be empty — no text could be extracted.")
 
+    chunks = await build_chunks_for_resource(title, description, content)
+
     repo = SalesResourceRepository(session)
     resource = await repo.create({
         "title": title,
@@ -112,6 +116,7 @@ async def upload_resource(
         "file_size": len(file_bytes),
         "tags": tags_list,
         "modules": modules_list,
+        "chunks": chunks,
     })
     return resource
 
@@ -119,7 +124,7 @@ async def upload_resource(
 # ── Create from text ─────────────────────────────────────────────────────────
 
 @router.post("/", response_model=SalesResourceRead, status_code=201)
-async def create_resource(payload: SalesResourceCreate, session: DBSession):
+async def create_resource(payload: SalesResourceCreate, session: DBSession, _user: CurrentUser):
     """Create a resource from pasted text content."""
     if payload.category not in VALID_CATEGORIES:
         raise HTTPException(400, f"Invalid category. Must be one of: {VALID_CATEGORIES}")
@@ -127,8 +132,12 @@ async def create_resource(payload: SalesResourceCreate, session: DBSession):
         if m not in VALID_MODULES:
             raise HTTPException(400, f"Invalid module '{m}'. Must be one of: {VALID_MODULES}")
 
+    data = payload.model_dump()
+    data["chunks"] = await build_chunks_for_resource(
+        payload.title, payload.description, payload.content
+    )
     repo = SalesResourceRepository(session)
-    return await repo.create(payload.model_dump())
+    return await repo.create(data)
 
 
 # ── List / search ────────────────────────────────────────────────────────────
@@ -136,6 +145,7 @@ async def create_resource(payload: SalesResourceCreate, session: DBSession):
 @router.get("/", response_model=PaginatedResponse[SalesResourceRead])
 async def list_resources(
     session: DBSession,
+    _user: CurrentUser,
     pagination: Pagination,
     category: Optional[str] = Query(default=None),
     module: Optional[str] = Query(default=None),
@@ -158,6 +168,7 @@ async def list_resources(
 async def resources_for_module(
     module: str,
     session: DBSession,
+    _user: CurrentUser,
     limit: int = Query(default=5, ge=1, le=20),
 ):
     """Get resources targeted at a specific AI module (for context injection)."""
@@ -170,7 +181,7 @@ async def resources_for_module(
 # ── Meta: available categories & modules ─────────────────────────────────────
 
 @router.get("/meta/options")
-async def get_resource_options():
+async def get_resource_options(_user: CurrentUser):
     """Return valid categories and modules for the frontend."""
     return {
         "categories": VALID_CATEGORIES,
@@ -181,7 +192,7 @@ async def get_resource_options():
 # ── Single resource ──────────────────────────────────────────────────────────
 
 @router.get("/{resource_id}", response_model=SalesResourceRead)
-async def get_resource(resource_id: UUID, session: DBSession):
+async def get_resource(resource_id: UUID, session: DBSession, _user: CurrentUser):
     repo = SalesResourceRepository(session)
     return await repo.get_or_raise(resource_id)
 
@@ -191,6 +202,7 @@ async def get_resource(resource_id: UUID, session: DBSession):
 @router.put("/{resource_id}", response_model=SalesResourceRead)
 async def update_resource(
     resource_id: UUID, payload: SalesResourceUpdate, session: DBSession,
+    _user: CurrentUser,
 ):
     repo = SalesResourceRepository(session)
     resource = await repo.get_or_raise(resource_id)
@@ -201,6 +213,13 @@ async def update_resource(
         for m in update_data["modules"]:
             if m not in VALID_MODULES:
                 raise HTTPException(400, f"Invalid module '{m}'. Must be one of: {VALID_MODULES}")
+    # Re-embed when content-bearing fields change.
+    if any(k in update_data for k in ("content", "title", "description")):
+        update_data["chunks"] = await build_chunks_for_resource(
+            update_data.get("title", resource.title),
+            update_data.get("description", resource.description),
+            update_data.get("content", resource.content),
+        )
     update_data["updated_at"] = datetime.utcnow()
     return await repo.update(resource, update_data)
 
@@ -208,7 +227,7 @@ async def update_resource(
 # ── Delete ───────────────────────────────────────────────────────────────────
 
 @router.delete("/{resource_id}", status_code=204)
-async def delete_resource(resource_id: UUID, session: DBSession):
+async def delete_resource(resource_id: UUID, session: DBSession, _admin: AdminUser):
     repo = SalesResourceRepository(session)
     resource = await repo.get_or_raise(resource_id)
     await repo.delete(resource)

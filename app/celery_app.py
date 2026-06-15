@@ -10,6 +10,17 @@ celery_app = Celery(
     include=[
         "app.tasks.enrichment",
         "app.tasks.health",
+        "app.tasks.email_sync",
+        "app.tasks.tldv_sync",
+        "app.tasks.crm_import",
+        "app.tasks.personal_email_sync",
+        "app.tasks.cadence_scheduler",
+        "app.tasks.sales_reports",
+        "app.tasks.instantly_sync",
+        "app.tasks.pre_meeting_brief",
+        "app.tasks.transcribe_call",
+        "app.tasks.deal_reminders",
+        "app.tasks.prospect_reminders",
     ],
 )
 
@@ -19,11 +30,88 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
+    # Route user-triggered tasks to priority queue so they're never blocked by long-running syncs
+    task_routes={
+        "app.tasks.enrichment.process_sourcing_upload_task": {"queue": "priority"},
+        "app.tasks.enrichment.icp_research_single_task": {"queue": "priority"},
+        "app.tasks.enrichment.icp_research_free_task": {"queue": "priority"},
+        "app.tasks.enrichment.icp_research_batch_task": {"queue": "priority"},
+        # Real-time call transcription — rep is waiting on this in the UI.
+        "app.tasks.transcribe_call.transcribe_call_task": {"queue": "priority"},
+    },
     # Daily deal health recalculation at 02:00 UTC
     beat_schedule={
         "recalculate-deal-health-daily": {
             "task": "app.tasks.health.recalculate_all_deal_health",
             "schedule": crontab(hour=2, minute=0),
         },
+        "reconcile-recent-deal-tasks": {
+            "task": "app.tasks.health.reconcile_recent_deal_tasks",
+            # Every 15 min — paired with batch_size=40 in app.tasks.health to
+            # keep AI-task lag under ~30 min p95. Hourly was producing >24h
+            # lag because throughput (288 deals/day) was below the active
+            # deal count.
+            "schedule": crontab(minute="2,17,32,47"),
+        },
+        "sync-gmail-inbox": {
+            "task": "app.tasks.email_sync.sync_gmail_inbox",
+            "schedule": settings.EMAIL_SYNC_INTERVAL_SECONDS,  # every 3 min
+        },
+        "sync-tldv-meetings": {
+            "task": "app.tasks.tldv_sync.sync_tldv_meetings",
+            "schedule": 300,  # every 5 min — matches tldv_sync_interval_minutes default; task self-throttles internally
+        },
+        "sync-all-personal-inboxes": {
+            "task": "app.tasks.personal_email_sync.sync_all_personal_inboxes",
+            "schedule": 600,  # every 10 minutes — enqueues one task per connected user
+        },
+        # Walk each contact's multichannel sequence plan and create tasks for
+        # non-email steps when their day_offset has arrived. Runs once every
+        # 30 min — tight enough for a call step to appear the same day, loose
+        # enough to avoid thrashing the task table.
+        "advance-multichannel-cadence": {
+            "task": "app.tasks.cadence_scheduler.advance_multichannel_cadence",
+            "schedule": 1800,  # every 30 minutes
+        },
+        "send-us-pod-call-report-daily": {
+            "task": "app.tasks.sales_reports.send_us_pod_call_report",
+            "schedule": crontab(minute="*/15"),
+        },
+        # India pod report — same 15-min cadence; the task self-gates on its own
+        # config block (india_sales_report): enabled flag, send_days, send time,
+        # and dedup key. Default-off until verified, then flip enabled=true.
+        "send-india-pod-call-report-daily": {
+            "task": "app.tasks.sales_reports.send_india_pod_call_report",
+            "schedule": crontab(minute="*/15"),
+        },
+        "sync-instantly-campaigns": {
+            "task": "app.tasks.instantly_sync.sync_active_instantly_campaigns",
+            "schedule": 900,  # every 15 minutes — fallback for webhook delivery gaps
+        },
+        # Auto-send pre-meeting briefs to the assigned rep. Service self-throttles
+        # via meeting.intel_email_sent_at + the workspace settings send_hours_before
+        # window, so running every 30 min only causes work for due meetings.
+        "send-due-pre-meeting-briefs": {
+            "task": "app.tasks.pre_meeting_brief.send_due_pre_meeting_briefs",
+            "schedule": 1800,
+        },
+        # Nudge reps when a deal's next step comes due. Runs every 15 min; the
+        # notification dedup_key keeps each due date to a single reminder.
+        "send-due-next-step-reminders": {
+            "task": "app.tasks.deal_reminders.send_due_next_step_reminders",
+            "schedule": 900,
+        },
+        # SDR equivalent: nudge the owning rep when a prospect follow-up is due.
+        "send-due-prospect-followup-reminders": {
+            "task": "app.tasks.prospect_reminders.send_due_prospect_followup_reminders",
+            "schedule": 900,
+        },
     },
 )
+
+# Connect the job-health signal handlers (import side-effect registers them).
+# Records every beat-scheduled task's last run/status into job_health for the
+# admin System Health panel. Imported here so any worker/beat process that
+# loads the Celery app also wires up tracking.
+from app.tasks import job_health_signals  # noqa: E402,F401

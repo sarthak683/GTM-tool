@@ -80,14 +80,14 @@ def _score_firmographic(company: "Company") -> int:
     emp = company.employee_count or 0
     if 201 <= emp <= 1000:
         score += 30
+    elif 1001 <= emp <= 5000:
+        score += 28
+    elif emp > 5000:
+        score += 24
     elif 51 <= emp <= 200:
         score += 22
-    elif 1001 <= emp <= 5000:
-        score += 18
     elif 11 <= emp <= 50:
         score += 10
-    elif emp > 5000:
-        score += 12
 
     funding = _normalize_text(company.funding_stage)
     late_series = re.search(r"series\s+([b-z])", funding)
@@ -231,7 +231,14 @@ def _score_with_uploaded_context(company: "Company", fallback_score: int) -> int
         return round((fallback_score * 0.45) + (uploaded_score * 0.55))
 
     analyst_score_100 = analyst_score * 10
-    if confidence == "high":
+
+    # When Claude gives a strong score (8+) with high confidence, trust it more
+    classification = _normalize_text(analyst.get("classification") if isinstance(analyst, dict) else None)
+    strong_signal = confidence == "high" and analyst_score >= 8 and classification == "target"
+
+    if strong_signal:
+        analyst_weight, uploaded_weight, fallback_weight = 0.65, 0.20, 0.15
+    elif confidence == "high":
         analyst_weight, uploaded_weight, fallback_weight = 0.55, 0.30, 0.15
     elif confidence == "medium":
         analyst_weight, uploaded_weight, fallback_weight = 0.45, 0.35, 0.20

@@ -1,58 +1,78 @@
-# Beacon CRM — GTM Sales CRM Prototype
+# Claude Code Instructions
 
-## What This Is
-A custom GTM (go-to-market) CRM for Beacon.li — an AI implementation orchestration platform that automates enterprise SaaS deployments. This CRM replaces Clay's orchestration role and connects to external sales/enrichment APIs.
+Read `AGENTS.md` first. It is the canonical repo policy.
 
-## Tech Stack
-- **Backend:** Python 3.12, FastAPI, SQLModel (Pydantic + SQLAlchemy), Alembic
-- **Database:** PostgreSQL 16 (use JSONB columns for flexible metadata)
-- **Task Queue:** Celery + Redis (background enrichment, scheduled jobs)
-- **Frontend:** React 19, Vite, TailwindCSS v4, shadcn/ui components
-- **AI:** Ollama (local, Mistral 7B) for scoring, Claude API for complex reasoning
-- **Infrastructure:** Docker Compose (all services in one command)
+This file only adds Claude Code-specific workflow preferences.
 
-## Architecture
-beacon-crm/
-├── docker-compose.yml
-├── Dockerfile
-├── .env / .env.example
-├── alembic/                  # DB migrations
-├── app/                      # FastAPI backend
-│   ├── main.py               # App entry + CORS + router includes
-│   ├── celery_app.py         # Celery config
-│   ├── config.py             # Pydantic Settings (reads .env)
-│   ├── database.py           # Async engine + session
-│   ├── models/               # SQLModel table classes
-│   ├── routes/               # FastAPI routers (one per resource)
-│   ├── services/             # Business logic (scoring, enrichment, health)
-│   ├── clients/              # External API wrappers (apollo, hunter, etc.)
-│   └── tasks/                # Celery tasks
-└── frontend/                 # React app
-└── src/
-├── pages/
-├── components/
-└── lib/api.ts        # Typed fetch wrappers
+## Default Workflow
 
-## Commands
-- `docker compose up --build` — Start all services
-- `docker compose exec web alembic upgrade head` — Run migrations
-- `docker compose exec web pytest` — Run tests
-- `cd frontend && npm run dev` — Frontend dev server
-- `cd frontend && npm run build` — Production build
+1. Understand the request and inspect the relevant files.
+2. Make the smallest complete implementation.
+3. Run targeted validation.
+4. Rebuild Docker services when required.
+5. Report changed files and exact verification.
 
-## Coding Rules
-- Use async/await for all database operations and API calls
-- Every route returns Pydantic response models (never raw dicts)
-- Use SQLModel for all models (NOT raw SQLAlchemy)
-- JSONB columns for flexible fields: qualification, metadata, enrichment_sources
-- Celery tasks for anything that takes >2 seconds (enrichment, AI calls)
-- All external API calls go through client classes in app/clients/
-- Frontend: functional components, TypeScript, named exports
-- Frontend: use shadcn/ui components, NOT custom component libraries
+Do not stop at a plan when the user clearly asked for implementation.
 
-## IMPORTANT
-- NEVER hardcode API keys. Always use environment variables via app/config.py
-- NEVER skip Alembic migrations. Every model change needs a migration.
-- Always create .env.example with placeholder values when adding new env vars
-- The frontend and backend run on separate ports (3000 and 8000). Configure CORS.
-- Use UUID primary keys everywhere (not auto-increment integers)
+## Local Development
+
+- Frontend URL: `http://localhost:8080`
+- Backend URL: `http://localhost:8000`
+- Use Docker Compose for the app unless the user explicitly asks for Vite/dev-server mode.
+- Rebuild frontend after frontend changes: `docker compose up -d --build frontend`
+- Rebuild backend after backend changes: `docker compose up -d --build backend`
+- Rebuild backend task services after task changes: `docker compose up -d --build backend worker beat`
+
+## Recommended Claude Commands
+
+Use the command files in `.claude/commands/` for repeated workflows:
+
+- `/local-smoke`
+- `/frontend-ui-review`
+- `/backend-change`
+- `/mobile-qa`
+- `/zippy-smoke`
+- `/prod-debug-readonly`
+- `/staging-deploy`
+- `/report-debug`
+
+## Subagents
+
+Use the focused agents in `.claude/agents/` when a task benefits from separation:
+
+- `frontend-ui-reviewer`
+- `backend-api-reviewer`
+- `qa-smoke-tester`
+- `prod-debugger-readonly`
+- `deployment-operator`
+
+## Browser Testing
+
+For UI work, prefer an actual browser against `http://localhost:8080`.
+Check screenshots/DOM after clicking, opening drawers, hovering popovers, and switching viewport sizes.
+
+## Current Docs
+
+Use Context7 when implementing or debugging framework/library-specific code,
+especially React, Vite, Tailwind, FastAPI, SQLAlchemy/SQLModel, Alembic,
+Celery, Recharts, Playwright, and MCP setup.
+
+## Production Safety
+
+Production access defaults to read-only.
+
+Allowed without extra confirmation:
+
+- `kubectl get`
+- `kubectl describe`
+- `kubectl logs`
+- read-only database SELECTs
+
+Requires explicit user instruction:
+
+- deploys
+- Helm upgrades
+- image changes
+- pod deletes
+- rollout restarts
+- database writes

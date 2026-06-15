@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, FileSpreadsheet, RefreshCw, Upload } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, Loader2, RefreshCw, Upload } from "lucide-react";
 import { companiesApi, prospectingApi, type ProspectingBatch } from "../lib/api";
 
 export default function ImportPage() {
@@ -16,6 +16,7 @@ export default function ImportPage() {
   const [dupNames, setDupNames] = useState<Set<string>>(new Set());
   const [dupDomains, setDupDomains] = useState<Set<string>>(new Set());
   const [checkingDups, setCheckingDups] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     if (!polling || !batch?.batch_id) return;
@@ -164,6 +165,7 @@ export default function ImportPage() {
       return;
     }
 
+    setPreviewing(true);
     try {
       await buildPreview(file);
     } catch {
@@ -173,6 +175,8 @@ export default function ImportPage() {
       setPreviewTotalRows(0);
       setPreviewValidRows(0);
       setHasValidColumn(false);
+    } finally {
+      setPreviewing(false);
     }
   };
 
@@ -203,7 +207,7 @@ export default function ImportPage() {
     <div className="import-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <section className="crm-panel p-8 import-main-card" style={{ padding: 32 }}>
         <div className="flex items-start gap-4" style={{ gap: 18 }}>
-          <div className="h-12 w-12 rounded-xl bg-[#fff1ec] border border-[#ffd6c8] grid place-items-center text-[#ff6b35]">
+          <div className="h-12 w-12 rounded-xl bg-[#fff1ec] border border-[#ffd6c8] grid place-items-center text-[#9ace3d]">
             <Upload size={18} />
           </div>
           <div className="min-w-0">
@@ -252,6 +256,13 @@ export default function ImportPage() {
         </div>
       </section>
 
+      {previewing && (
+        <section className="crm-panel" style={{ padding: 24, display: "flex", alignItems: "center", gap: 12, color: "#647a91" }}>
+          <Loader2 size={18} className="animate-spin" />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Uploading and previewing...</span>
+        </section>
+      )}
+
       {previewRows.length > 0 && (
         <section className="crm-panel overflow-hidden" style={{ padding: 0 }}>
           <div className="px-6 py-4 border-b border-[#e3eaf3] bg-[#f9fbfe] flex items-center justify-between gap-3">
@@ -287,11 +298,11 @@ export default function ImportPage() {
                   const isDup = dupNames.has(rowName) || dupDomains.has(rowDomain);
                   return (
                     <tr key={idx} style={isDup ? { background: "#fffbf0" } : undefined}>
-                      <td style={{ width: 28, paddingRight: 0 }}>
+                      <td style={{ width: 28, paddingRight: 0 }} data-label="">
                         {isDup && <AlertTriangle size={13} style={{ color: "#c48a1a" }} />}
                       </td>
                       {previewHeaders.map((h) => (
-                        <td key={`${idx}-${h}`} style={isDup ? { color: "#8a6a1a" } : undefined}>
+                        <td key={`${idx}-${h}`} data-label={h} style={isDup ? { color: "#8a6a1a" } : undefined}>
                           {row[h] || <span className="text-[#96a7ba]">-</span>}
                         </td>
                       ))}

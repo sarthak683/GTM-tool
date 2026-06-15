@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from sqlmodel import select
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.battlecard import Battlecard, BattlecardCreate, BattlecardRead, BattlecardUpdate
 from app.repositories.battlecard import BattlecardRepository
 
@@ -13,13 +13,14 @@ router = APIRouter(prefix="/battlecards", tags=["battlecards"])
 
 
 @router.get("/search", response_model=List[BattlecardRead])
-async def search_battlecards(q: str = Query(..., min_length=2), session: DBSession = None):
+async def search_battlecards(_user: CurrentUser, q: str = Query(..., min_length=2), session: DBSession = None):
     return await BattlecardRepository(session).search(q)
 
 
 @router.get("/", response_model=List[BattlecardRead])
 async def list_battlecards(
     session: DBSession,
+    _user: CurrentUser,
     category: Optional[str] = Query(default=None),
 ):
     repo = BattlecardRepository(session)
@@ -30,17 +31,17 @@ async def list_battlecards(
 
 
 @router.post("/", response_model=BattlecardRead, status_code=201)
-async def create_battlecard(payload: BattlecardCreate, session: DBSession):
+async def create_battlecard(payload: BattlecardCreate, session: DBSession, _user: CurrentUser):
     return await BattlecardRepository(session).create(payload.model_dump())
 
 
 @router.get("/{battlecard_id}", response_model=BattlecardRead)
-async def get_battlecard(battlecard_id: UUID, session: DBSession):
+async def get_battlecard(battlecard_id: UUID, session: DBSession, _user: CurrentUser):
     return await BattlecardRepository(session).get_or_raise(battlecard_id)
 
 
 @router.put("/{battlecard_id}", response_model=BattlecardRead)
-async def update_battlecard(battlecard_id: UUID, payload: BattlecardUpdate, session: DBSession):
+async def update_battlecard(battlecard_id: UUID, payload: BattlecardUpdate, session: DBSession, _user: CurrentUser):
     repo = BattlecardRepository(session)
     card = await repo.get_or_raise(battlecard_id)
     update_data = payload.model_dump(exclude_unset=True)
@@ -49,14 +50,14 @@ async def update_battlecard(battlecard_id: UUID, payload: BattlecardUpdate, sess
 
 
 @router.delete("/{battlecard_id}", status_code=204)
-async def delete_battlecard(battlecard_id: UUID, session: DBSession):
+async def delete_battlecard(battlecard_id: UUID, session: DBSession, _user: CurrentUser):
     repo = BattlecardRepository(session)
     card = await repo.get_or_raise(battlecard_id)
     await repo.delete(card)
 
 
 @router.post("/seed", status_code=201)
-async def seed_battlecards(session: DBSession):
+async def seed_battlecards(session: DBSession, _user: CurrentUser):
     """Seed default Beacon.li battlecards. Safe to run multiple times."""
     defaults = [
         {

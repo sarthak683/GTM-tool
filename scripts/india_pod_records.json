@@ -1,0 +1,1770 @@
+[
+  {
+    "name": "Icertis",
+    "domain": "icertis.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Tradeshift",
+    "domain": "tradeshift.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CargoWise",
+    "domain": "cargowise.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Gentrack",
+    "domain": "gentrack.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Transporeon",
+    "domain": "transporeon.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Hardis Supply Chain",
+    "domain": "hardis-supplychain.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Comarch",
+    "domain": "comarch.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Xero",
+    "domain": "xero.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Guesty",
+    "domain": "guesty.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "MEA"
+  },
+  {
+    "name": "Viewpoint",
+    "domain": "trimble.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "SunTec",
+    "domain": "suntecindia.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "ClearTax",
+    "domain": "cleartax.in",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Papaya Global",
+    "domain": "papayaglobal.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "MEA"
+  },
+  {
+    "name": "Duco",
+    "domain": "du.co",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Paddle",
+    "domain": "paddle.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Douzone",
+    "domain": "en.douzone.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "SafetyCulture",
+    "domain": "care.safetyculture.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Trimble Transport",
+    "domain": "trimbletl.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Collinson Group",
+    "domain": "collinsongroup.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Comarch EDI",
+    "domain": "comarch.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Pleo",
+    "domain": "pleo.io",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CloudPay",
+    "domain": "cloudpay.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "BetterPlace",
+    "domain": "betterplace.co.in",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "MariApps",
+    "domain": "mariapps.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Tally Solutions",
+    "domain": "tallysolutions.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Unifiedpost Group",
+    "domain": "unifiedpostgroup.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Lucanet",
+    "domain": "lucanet.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Nomentia",
+    "domain": "nomentia.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CivitBUILD",
+    "domain": "civitbuild.in",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Focus Softnet",
+    "domain": "focussoftnet.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "enova365",
+    "domain": "enova.pl",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "iAPX",
+    "domain": "intellectdtc.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Multiplier",
+    "domain": "usemultiplier.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Unicommerce",
+    "domain": "unicommerce.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Loylty Rewardz",
+    "domain": "loylty.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Reward360",
+    "domain": "reward360.ai",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Ivy Mobility",
+    "domain": "ivymobility.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "RateGain",
+    "domain": "rategain.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Rydoo",
+    "domain": "rydoo.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Simployer",
+    "domain": "simployer.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Seyfor",
+    "domain": "seyfor.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other"
+  },
+  {
+    "name": "abas ERP",
+    "domain": "abas-erp.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "N2F",
+    "domain": "n2f.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "MobileXpense",
+    "domain": "mobilexpense.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Easi",
+    "domain": "easi.net",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Proceedo",
+    "domain": "proceedo.net",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Amadeus",
+    "domain": "amadeus.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "IRIS",
+    "domain": "irisregtech.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Forterro",
+    "domain": "forterro.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Regnology",
+    "domain": "regnology.net",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Esker",
+    "domain": "esker.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "SD Worx",
+    "domain": "sdworx.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Kerridge Commercial Systems (KCS)",
+    "domain": "kerridgecs.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU / US"
+  },
+  {
+    "name": "Thinkproject",
+    "domain": "thinkproject.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Yaveon",
+    "domain": "yaveon.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Roima Intelligence",
+    "domain": "roimaint.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Basware",
+    "domain": "basware.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Serrala",
+    "domain": "serrala.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "The Access Group",
+    "domain": "theaccessgroup.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Cegid",
+    "domain": "cegid.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "FINEOS",
+    "domain": "fineos.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "IRIS Software Group",
+    "domain": "irisglobal.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "SmartStream Technologies",
+    "domain": "smartstreamtech.in",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "RELEX Solutions",
+    "domain": "relexsolutions.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Planisware",
+    "domain": "planisware.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "VitalEdge Technologies",
+    "domain": "vitaledge.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "US"
+  },
+  {
+    "name": "Eque2 Ltd",
+    "domain": "eque2.co.uk",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Alfa Financial Software",
+    "domain": "alfasystems.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Intellect Design Arena",
+    "domain": "intellectdesign.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India (Global)"
+  },
+  {
+    "name": "ELMO Software",
+    "domain": "elmosoftware.com.au",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC / UK"
+  },
+  {
+    "name": "Proalpha",
+    "domain": "proalpha.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Sage Intacct",
+    "domain": "sage.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "US"
+  },
+  {
+    "name": "SYSPRO",
+    "domain": "syspro.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "Other"
+  },
+  {
+    "name": "AFAS Software",
+    "domain": "afas.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "MHR (MidlandHR)",
+    "domain": "mhrglobal.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Lucanet",
+    "domain": "lucanet.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "RGI Group (KAPIA-RGI)",
+    "domain": "rgigroup.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Cegedim (Cegedim Assurances)",
+    "domain": "cegedim-insurance.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Aareon Group \n(https://www.aareon.com/)",
+    "domain": "aareon.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Objectway",
+    "domain": "objectway.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "LS Retail, an Aptos Company",
+    "domain": "lsretail.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Acturis Limited",
+    "domain": "acturis.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "VERMEG for Banking & Insurance Software",
+    "domain": "vermeg.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "RIB Software",
+    "domain": "rib-software.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "ATOSS Software SE",
+    "domain": "atoss.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "SOFICO",
+    "domain": "sofico.global",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Keylane",
+    "domain": "keylane.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Fenergo",
+    "domain": "fenergo.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Mercans",
+    "domain": "mercans.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Visma PubliTech AB",
+    "domain": "visma.se",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Tinubu (Innoveo)",
+    "domain": "tinubu.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Benifex (Benify)",
+    "domain": "benifex.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "INSTANDA",
+    "domain": "instanda.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Priority Software",
+    "domain": "priority-software.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Sopra HR Software",
+    "domain": "soprahr.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Humanica Public Company Limited",
+    "domain": "humanica.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "OneAdvanced",
+    "domain": "oneadvanced.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Pronto Software",
+    "domain": "pronto.net",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "OverIT",
+    "domain": "overit.ai",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Admicom",
+    "domain": "admicom.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Frontier Software",
+    "domain": "in.frontiersoftware.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Causeway Technologies",
+    "domain": "causeway.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "MYOB",
+    "domain": "myob.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "AU / NZ"
+  },
+  {
+    "name": "Infobric Group",
+    "domain": "infobric.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "zvoove",
+    "domain": "zvoove.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Mews",
+    "domain": "mews.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/Global"
+  },
+  {
+    "name": "VeriPark",
+    "domain": "veripark.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Iptor",
+    "domain": "iptor.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "AutoRek",
+    "domain": "autorek.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "HashMicro",
+    "domain": "hashmicro.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Ciphr",
+    "domain": "ciphr.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Xledger",
+    "domain": "xledger.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Avalara",
+    "domain": "avalara.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "US"
+  },
+  {
+    "name": "Verisk Specialty Business Solutions",
+    "domain": "verisksequel.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Infoniqa",
+    "domain": "infoniqa.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Keyloop",
+    "domain": "keyloop.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Feedzai",
+    "domain": "feedzai.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU / US"
+  },
+  {
+    "name": "Solifi (fka White Clarke Group / IDS)",
+    "domain": "solifi.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "US / EU"
+  },
+  {
+    "name": "Cerillion",
+    "domain": "cerillion.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Europe"
+  },
+  {
+    "name": "Artificial Labs",
+    "domain": "artificial.io",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Nibelis",
+    "domain": "nibelis.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Asolvi",
+    "domain": "unolo.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Humanforce",
+    "domain": "humanforce.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Wizrom Software",
+    "domain": "izrom.ro",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Isah Business Software",
+    "domain": "isah.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Faktor Zehn",
+    "domain": "faktorzehn.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Symfonia",
+    "domain": "mideuropa.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CDL Software",
+    "domain": "cdl.co.uk",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Backbase",
+    "domain": "backbase.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "TimberTec (acquired by Iptor)",
+    "domain": "timbertec.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Exel Computer Systems",
+    "domain": "exel.co.uk",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Deputy",
+    "domain": "deputy.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "Other (AU/US/UK)"
+  },
+  {
+    "name": "In4Velocity Systems",
+    "domain": "in4velocity.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Superl\u00f3gica Tecnologias",
+    "domain": "arburgpincus.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other (Brazil)"
+  },
+  {
+    "name": "eBaoTech",
+    "domain": "ebaotech.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "APAC"
+  },
+  {
+    "name": "Voyado",
+    "domain": "voyado.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "Corilus",
+    "domain": "corilus.be",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "iGTB (Intellect Global Transaction Banking)",
+    "domain": "intellectdesign.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/UK"
+  },
+  {
+    "name": "Alchemy",
+    "domain": "alchemytechs.com (part of ntt data)",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/UK"
+  },
+  {
+    "name": "Cygnet One",
+    "domain": "cygnet.one",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Edenred",
+    "domain": "edenred.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/Global"
+  },
+  {
+    "name": "Equiniti",
+    "domain": "equiniti.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/UK"
+  },
+  {
+    "name": "Netcore Cloud",
+    "domain": "netcorecloud.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India/Global"
+  },
+  {
+    "name": "NovacTech",
+    "domain": "novactech.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Pattern Insurance",
+    "domain": "passportcard.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/UK"
+  },
+  {
+    "name": "Send Technology",
+    "domain": "send.technology",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU/UK"
+  },
+  {
+    "name": "Targa Telematics",
+    "domain": "targatelematics.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "FinIQ Consulting",
+    "domain": "finiq.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "PayMate",
+    "domain": "paymate.in",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Pelatro",
+    "domain": "pelatro.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India/UK"
+  },
+  {
+    "name": "Zaggle",
+    "domain": "zaggle.in",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Sirion Labs",
+    "domain": "sirion.ai",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India/US"
+  },
+  {
+    "name": "Tecnotree",
+    "domain": "tecnotree.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Shipsy",
+    "domain": "shipsy.ai",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "Fareye",
+    "domain": "fareye.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Skuad",
+    "domain": "skuad.io",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Move In Sync",
+    "domain": "moveinsync.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "FreightTiger",
+    "domain": "freighttiger.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Turtlemint",
+    "domain": "turtlemint.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Zopper",
+    "domain": "zopper.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Bizongo",
+    "domain": "bizongo.com",
+    "qualified": false,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "MyndHRX",
+    "domain": "myndsolution.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": ""
+  },
+  {
+    "name": "Credgenics",
+    "domain": "credgenics.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "IBS Software Services",
+    "domain": "ibsplc.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "Kale Logistics Solutions",
+    "domain": "kalelogistics.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "WebEngage",
+    "domain": "ebengage.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Xoxoday",
+    "domain": "xoxoday.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Marg Compusoft",
+    "domain": "margcompusoft.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Neutrinos",
+    "domain": "neutrinos.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Medi Assist",
+    "domain": "mediassist.in",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "ClickPost",
+    "domain": "clickpost.ai",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Riskcovry",
+    "domain": "riskcovry.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "SuperProcure",
+    "domain": "superprocure.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "India"
+  },
+  {
+    "name": "LocoNav",
+    "domain": "loconav.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Uffizio",
+    "domain": "uffizio.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Fleetx",
+    "domain": "fleetx.io",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Blubirch",
+    "domain": "blubirch.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "UrbanPiper",
+    "domain": "urbanpiper.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "India"
+  },
+  {
+    "name": "Iplicit",
+    "domain": "iplicit.ie(borderline revenue)",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Cintra HR & Payroll Services",
+    "domain": "mycintra.co.uk",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "SeamlessHR",
+    "domain": "seamlesshr.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Info-Tech Systems",
+    "domain": "info-tech.com.sg",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "Other (APAC)"
+  },
+  {
+    "name": "IFCA MSC Berhad",
+    "domain": "ifca.asia",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Adrenalin eSystems",
+    "domain": "myadrenalin.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "Agile Financial Technologies",
+    "domain": "agile-ft.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Whitespace Software (by Verisk)",
+    "domain": "verisk.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU / US"
+  },
+  {
+    "name": "R&R Software",
+    "domain": "rrsoftware.eu",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "ETP Group",
+    "domain": "etpgroup.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "Other (APAC)"
+  },
+  {
+    "name": "AccelTree Software Pvt. Ltd",
+    "domain": "acceltree.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "India"
+  },
+  {
+    "name": "PayFit",
+    "domain": "payfit.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Giift",
+    "domain": "giift.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": "Other"
+  },
+  {
+    "name": "Spine Technologies",
+    "domain": "spinetechnologies.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "Other (India)"
+  },
+  {
+    "name": "Expensya",
+    "domain": "expensya.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "AdvantageGo",
+    "domain": "advantagego.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Talon.One",
+    "domain": "talon.one",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Sesame HR",
+    "domain": "sesamehr.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CompuLynx",
+    "domain": "compulynx.com",
+    "qualified": true,
+    "ae": "Bhavya",
+    "sdr": "Annie",
+    "region_raw": "Other"
+  },
+  {
+    "name": "VISUS Health IT",
+    "domain": "visus.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "CompuGroup Medical",
+    "domain": "cgm.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Cleva Solutions",
+    "domain": "cleva-solutions.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "HiBob",
+    "domain": "hibob.com",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Annie",
+    "region_raw": "EU / US"
+  },
+  {
+    "name": "Civica HR & Payroll",
+    "domain": "civica.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Charisma HCM (TotalSoft)",
+    "domain": "totalsoft.ro",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": "EU"
+  },
+  {
+    "name": "Quadient",
+    "domain": "quadient.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Aryza Group",
+    "domain": "aryza.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Quoreka",
+    "domain": "quoreka.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Native Teams",
+    "domain": "nativeteams.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "CommerceIQ",
+    "domain": "commerceiq.ai",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Zenoti",
+    "domain": "zenoti.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "KredX",
+    "domain": "kredx.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "Locus",
+    "domain": "locus.sh",
+    "qualified": true,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": ""
+  },
+  {
+    "name": "Beisen",
+    "domain": "beisenltd.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "DayForce",
+    "domain": "dayforce.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": ""
+  },
+  {
+    "name": "Sprout Solutions",
+    "domain": "sprout.ph",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Employment Hero",
+    "domain": "employmenthero.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": ""
+  },
+  {
+    "name": "JustLogin",
+    "domain": "justlogin.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "SmartHR",
+    "domain": "smarthr.co.in",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Dyuthith",
+    "region_raw": ""
+  },
+  {
+    "name": "stackBOX",
+    "domain": "stackbox.xyz",
+    "qualified": true,
+    "ae": "",
+    "sdr": "",
+    "region_raw": ""
+  },
+  {
+    "name": "VasyERP",
+    "domain": "vasyerp.com",
+    "qualified": true,
+    "ae": "",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "ZeOmega",
+    "domain": "zeomega.com",
+    "qualified": true,
+    "ae": "Sandeep",
+    "sdr": "Annie",
+    "region_raw": ""
+  },
+  {
+    "name": "Factorial HR",
+    "domain": "factorialhr.com",
+    "qualified": false,
+    "ae": "Yashveer",
+    "sdr": "Dyuthith",
+    "region_raw": "EU"
+  }
+]

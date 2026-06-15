@@ -37,6 +37,12 @@ class SalesResource(SQLModel, table=True):
         sa_column=Column(JSONB, server_default="[]"),
     )  # ["pre_meeting", "outreach", "demo_strategy", "account_sourcing", "custom_demo", "prospecting"]
 
+    # RAG: list of {"text": str, "embedding": list[float]} per chunk.
+    chunks: List[Any] = Field(
+        default=[],
+        sa_column=Column(JSONB, server_default="[]"),
+    )
+
     is_active: bool = Field(default=True)
 
     # Timestamps

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: beacon-crm
+description: Beacon CRM — AI-powered GTM sales platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - crm
+  - sales
+  - gtm
+  - fastapi
+  - react
+maintainers:
+  - name: Beacon Team

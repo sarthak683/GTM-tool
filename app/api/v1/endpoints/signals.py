@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.signal import Signal, SignalCreate, SignalRead
 from app.repositories.company import CompanyRepository
 from app.repositories.signal import SignalRepository
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/signals", tags=["signals"])
 
 
 @router.get("/company/{company_id}", response_model=List[SignalRead])
-async def get_company_signals(company_id: UUID, session: DBSession):
+async def get_company_signals(company_id: UUID, session: DBSession, current_user: CurrentUser):
     repo = SignalRepository(session)
     return await repo.list(
         Signal.company_id == company_id,
@@ -21,7 +21,7 @@ async def get_company_signals(company_id: UUID, session: DBSession):
 
 
 @router.post("/company/{company_id}/refresh")
-async def refresh_company_signals(company_id: UUID, session: DBSession):
+async def refresh_company_signals(company_id: UUID, session: DBSession, current_user: CurrentUser):
     """Re-fetch buying signals from Google News RSS. Deduplicates by title."""
     company = await CompanyRepository(session).get_or_raise(company_id)
 
@@ -58,12 +58,12 @@ async def refresh_company_signals(company_id: UUID, session: DBSession):
 
 
 @router.post("/", response_model=SignalRead, status_code=201)
-async def create_signal(payload: SignalCreate, session: DBSession):
+async def create_signal(payload: SignalCreate, session: DBSession, current_user: CurrentUser):
     return await SignalRepository(session).create(payload.model_dump())
 
 
 @router.delete("/{signal_id}", status_code=204)
-async def delete_signal(signal_id: UUID, session: DBSession):
+async def delete_signal(signal_id: UUID, session: DBSession, current_user: CurrentUser):
     repo = SignalRepository(session)
     signal = await repo.get_or_raise(signal_id)
     await repo.delete(signal)

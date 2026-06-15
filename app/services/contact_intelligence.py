@@ -19,12 +19,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.azure_openai import AzureOpenAIClient
+from app.clients.claude import ClaudeClient
 from app.models.contact import Contact
 from app.models.company import Company
 
 logger = logging.getLogger(__name__)
-ai_client = AzureOpenAIClient()
+ai_client = ClaudeClient()
 
 
 async def generate_contact_brief(contact_id: UUID, session: AsyncSession) -> dict:
