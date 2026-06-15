@@ -23,7 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
-from app.core.dependencies import DBSession, Pagination
+from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.models.sales_resource import (
     SalesResource,
     SalesResourceCreate,
@@ -53,6 +53,7 @@ VALID_MODULES = [
 @router.post("/upload", response_model=SalesResourceRead, status_code=201)
 async def upload_resource(
     session: DBSession,
+    _user: CurrentUser,
     file: UploadFile = File(...),
     title: str = Form(...),
     category: str = Form(...),
@@ -119,7 +120,7 @@ async def upload_resource(
 # ── Create from text ─────────────────────────────────────────────────────────
 
 @router.post("/", response_model=SalesResourceRead, status_code=201)
-async def create_resource(payload: SalesResourceCreate, session: DBSession):
+async def create_resource(payload: SalesResourceCreate, session: DBSession, _user: CurrentUser):
     """Create a resource from pasted text content."""
     if payload.category not in VALID_CATEGORIES:
         raise HTTPException(400, f"Invalid category. Must be one of: {VALID_CATEGORIES}")
@@ -136,6 +137,7 @@ async def create_resource(payload: SalesResourceCreate, session: DBSession):
 @router.get("/", response_model=PaginatedResponse[SalesResourceRead])
 async def list_resources(
     session: DBSession,
+    _user: CurrentUser,
     pagination: Pagination,
     category: Optional[str] = Query(default=None),
     module: Optional[str] = Query(default=None),
@@ -158,6 +160,7 @@ async def list_resources(
 async def resources_for_module(
     module: str,
     session: DBSession,
+    _user: CurrentUser,
     limit: int = Query(default=5, ge=1, le=20),
 ):
     """Get resources targeted at a specific AI module (for context injection)."""
@@ -170,7 +173,7 @@ async def resources_for_module(
 # ── Meta: available categories & modules ─────────────────────────────────────
 
 @router.get("/meta/options")
-async def get_resource_options():
+async def get_resource_options(_user: CurrentUser):
     """Return valid categories and modules for the frontend."""
     return {
         "categories": VALID_CATEGORIES,
@@ -181,7 +184,7 @@ async def get_resource_options():
 # ── Single resource ──────────────────────────────────────────────────────────
 
 @router.get("/{resource_id}", response_model=SalesResourceRead)
-async def get_resource(resource_id: UUID, session: DBSession):
+async def get_resource(resource_id: UUID, session: DBSession, _user: CurrentUser):
     repo = SalesResourceRepository(session)
     return await repo.get_or_raise(resource_id)
 
@@ -191,6 +194,7 @@ async def get_resource(resource_id: UUID, session: DBSession):
 @router.put("/{resource_id}", response_model=SalesResourceRead)
 async def update_resource(
     resource_id: UUID, payload: SalesResourceUpdate, session: DBSession,
+    _user: CurrentUser,
 ):
     repo = SalesResourceRepository(session)
     resource = await repo.get_or_raise(resource_id)
@@ -208,7 +212,7 @@ async def update_resource(
 # ── Delete ───────────────────────────────────────────────────────────────────
 
 @router.delete("/{resource_id}", status_code=204)
-async def delete_resource(resource_id: UUID, session: DBSession):
+async def delete_resource(resource_id: UUID, session: DBSession, _admin: AdminUser):
     repo = SalesResourceRepository(session)
     resource = await repo.get_or_raise(resource_id)
     await repo.delete(resource)

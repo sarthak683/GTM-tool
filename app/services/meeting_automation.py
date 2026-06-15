@@ -1,0 +1,674 @@
+from __future__ import annotations
+
+import html
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Any
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.clients.gmail_sender import send_gmail_email
+from app.clients.resend_client import send_email
+from app.config import settings
+from app.database import AsyncSessionLocal
+from app.models.activity import Activity
+from app.models.company import Company
+from app.models.contact import Contact
+from app.models.deal import Deal
+from app.models.meeting import Meeting
+from app.models.settings import WorkspaceSettings
+from app.models.user import User
+from app.models.user_email_connection import UserEmailConnection
+from app.services.gmail_oauth import GMAIL_SEND_SCOPE
+from app.services.internal_domains import get_internal_domains, is_internal_only
+from app.services.pre_meeting_intelligence import generate_meeting_demo_strategy, run_pre_meeting_intelligence
+
+
+async def _personal_send_token_for_user(
+    session: AsyncSession, user_id: UUID
+) -> tuple[str, dict] | None:
+    """Return (email_address, token_data) for a rep whose connected Gmail can send.
+
+    Used by the pre-meeting brief sender so the brief lands in the rep's own
+    inbox from their own address — feels native and shows up in their
+    threading, instead of a workspace-wide service account.
+    """
+    conn = (
+        await session.execute(
+            select(UserEmailConnection).where(
+                UserEmailConnection.user_id == user_id,
+                UserEmailConnection.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalars().first()
+    if not conn or not isinstance(conn.token_data, dict):
+        return None
+    scopes = conn.token_data.get("scopes") or []
+    scope_strs = [str(s) for s in (scopes if isinstance(scopes, list) else [scopes])]
+    if not any(GMAIL_SEND_SCOPE in s for s in scope_strs):
+        return None
+    return conn.email_address, conn.token_data
+
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS = {
+    "enabled": True,
+    # send_mode controls *when* briefs go out:
+    #   "hours_before" — per meeting, send_hours_before hours ahead (original behavior)
+    #   "daily_time"   — once a day at send_time (workspace timezone), covering all
+    #                    upcoming meetings within the send_hours_before lookahead
+    "send_mode": "hours_before",
+    "send_time": "07:00",
+    "timezone": "UTC",
+    "send_hours_before": 12,
+    "generate_hours_before": 48,
+    "auto_generate_if_missing": True,
+}
+
+_SEND_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _normalize_send_time(value: Any) -> str:
+    match = _SEND_TIME_RE.match(str(value or "").strip())
+    if not match:
+        return DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_time"]
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+def _normalize_timezone(value: Any) -> str:
+    tz = str(value or "").strip() or "UTC"
+    try:
+        ZoneInfo(tz)
+    except Exception:
+        return "UTC"
+    return tz
+
+
+def normalize_pre_meeting_settings(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    send_hours_before = int(raw.get("send_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_hours_before"]))
+    generate_hours_before = int(raw.get("generate_hours_before", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["generate_hours_before"]))
+    send_hours_before = max(1, min(send_hours_before, 168))
+    generate_hours_before = max(send_hours_before, min(generate_hours_before, 168))
+    send_mode = raw.get("send_mode", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_mode"])
+    if send_mode not in ("hours_before", "daily_time"):
+        send_mode = DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["send_mode"]
+    return {
+        "enabled": bool(raw.get("enabled", DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["enabled"])),
+        "send_mode": send_mode,
+        "send_time": _normalize_send_time(raw.get("send_time")),
+        "timezone": _normalize_timezone(raw.get("timezone")),
+        "send_hours_before": send_hours_before,
+        "generate_hours_before": generate_hours_before,
+        "auto_generate_if_missing": bool(
+            raw.get(
+                "auto_generate_if_missing",
+                DEFAULT_PRE_MEETING_AUTOMATION_SETTINGS["auto_generate_if_missing"],
+            )
+        ),
+    }
+
+
+async def _get_or_create_settings(session: AsyncSession) -> WorkspaceSettings:
+    row = await session.get(WorkspaceSettings, 1)
+    if row is None:
+        row = WorkspaceSettings(id=1)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+async def _is_open_pipeline_meeting(
+    session: AsyncSession, meeting: Meeting, closed_stage_ids: set[str]
+) -> bool:
+    """True only when the meeting belongs to an account still in the open pipeline.
+
+    Pre-meeting intel is for live sales motions. Accounts that are already
+    customers (closed_won) run recurring daily/weekly syncs (the Darwinbox case)
+    that don't need a freshly-generated buyer brief every morning, so we skip any
+    meeting whose deal is closed — or, for a company-only meeting, any account
+    whose deals are ALL closed. A company with no deal yet is treated as an open
+    prospect (keep), as is a meeting with no CRM link at all.
+    """
+    if meeting.deal_id:
+        deal = await session.get(Deal, meeting.deal_id)
+        if deal and (deal.stage or "").strip().lower() in closed_stage_ids:
+            return False
+        return True
+    if meeting.company_id:
+        stages = (
+            await session.execute(
+                select(Deal.stage).where(Deal.company_id == meeting.company_id)
+            )
+        ).all()
+        if not stages:
+            return True  # no deal yet → fresh prospect, keep
+        return any((s.stage or "").strip().lower() not in closed_stage_ids for s in stages)
+    return True
+
+
+# Title patterns for meetings that are NOT live sales motions — recurring
+# internal/customer cadences, 1:1s, all-hands, and recruiting interviews — which
+# should never get a buyer-facing pre-meeting brief. Tuned to the over-generation
+# seen in prod (Darwinbox Daily Cadence, Beacon Daily Connect, "Discussion for
+# SDR ...", weekly syncs). Deliberately matches sync-type words rather than bare
+# "daily"/"weekly" so a prospect named e.g. "Daily Pay" isn't excluded.
+_NON_SALES_TITLE_RE = re.compile(
+    r"""(?ix)
+    \b(
+        cadence | huddle | scrum | stand[\s-]?up | retro(spective)? |
+        (daily|weekly|bi[\s-]?weekly|monthly)\s+(sync|connect|cadence|standup|update|catch[\s-]?up|check[\s-]?in) |
+        sync[\s-]?up | catch[\s-]?up | check[\s-]?in |
+        1[:\-]1 | one[\s-]on[\s-]one | all[\s-]hands |
+        team\s+(sync|meeting|standup|huddle) |
+        # recruiting / interviews
+        interview | hiring | candidate | screening | discussion\s+for\s+sdr |
+        sdr\s+(us|india|emea|apac|interview|hiring) | round\s+[12]
+    )\b
+    | [\s\-|]r[12]\b   # "... - R1" / "| R2" interview rounds
+    """,
+)
+
+
+_SALES_INTENT_RE = re.compile(
+    r"""(?ix)
+    \b(
+        introduction | intro | discovery | demo | poc | pov |
+        kick[\s-]?off | proposal | pricing | negotiation | eval(uation)? |
+        onboarding | deep[\s-]?dive | walkthrough | presentation | pilot |
+        business\s+case
+    )\b
+    """,
+)
+
+
+def _is_non_sales_title(title: str | None) -> bool:
+    """True for recurring cadence / 1:1 / all-hands / recruiting meeting titles.
+
+    A clear sales-intent keyword (intro / demo / POC / kickoff / …) overrides,
+    so a genuine meeting such as "Acme — Introduction (Catch up with Igor)" is
+    NOT treated as non-sales just because it also contains a cadence word.
+    Kept in sync with meetings.py's prep-view filter.
+    """
+    if not title:
+        return False
+    return bool(_NON_SALES_TITLE_RE.search(title)) and not _SALES_INTENT_RE.search(title)
+
+
+async def _should_generate_intel(
+    session: AsyncSession,
+    meeting: Meeting,
+    closed_stage_ids: set[str],
+    internal_domains: set[str],
+) -> tuple[bool, str]:
+    """Single eligibility gate for pre-meeting intel. Returns (eligible, reason).
+
+    Intel is for live, buyer-facing sales meetings on open accounts. We skip:
+      • internal-only meetings (no external attendee),
+      • recurring cadences / 1:1s / all-hands / recruiting interviews (by title),
+      • meetings on closed/customer accounts (existing open-pipeline gate).
+    """
+    if meeting.is_internal:
+        return False, "internal"
+    if _is_non_sales_title(meeting.title):
+        return False, "non_sales_title"
+    # Catch all-internal calendar meetings the sync didn't flag (is_internal is
+    # only reliably set on tl;dv rows). Empty/garbled attendees → don't block.
+    try:
+        if meeting.attendees and is_internal_only(meeting.attendees, internal_domains):
+            return False, "all_internal_attendees"
+    except Exception:  # never let attendee-shape edge cases skip a real meeting
+        pass
+    if not await _is_open_pipeline_meeting(session, meeting, closed_stage_ids):
+        return False, "closed_pipeline"
+    return True, "ok"
+
+
+async def _collect_recipient_ids(session: AsyncSession, meeting: Meeting) -> list[UUID]:
+    """
+    Send pre-meeting intel to the most accountable rep we can identify.
+    Prefer deal owner, then company owner, then meeting owner/sync owner.
+    """
+    recipient_ids: list[UUID] = []
+    seen: set[UUID] = set()
+
+    def push(value: UUID | None) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            recipient_ids.append(value)
+
+    deal = await session.get(Deal, meeting.deal_id) if meeting.deal_id else None
+
+    if deal and deal.assigned_to_id:
+        # Primary: the AE/rep assigned to this specific deal
+        push(deal.assigned_to_id)
+    elif meeting.company_id:
+        # Fallback: company assigned rep (only if no deal assigned)
+        company = await session.get(Company, meeting.company_id)
+        if company:
+            push(company.assigned_to_id)
+
+    push(meeting.owner_user_id)
+    push(meeting.synced_by_user_id)
+
+    return recipient_ids
+
+
+def _markdown_to_html(md: str) -> str:
+    """Minimal markdown -> HTML for the executive briefing: headings, bold/italic,
+    bullets, paragraphs. Not a full parser — just the subset the brief uses."""
+    out: list[str] = []
+    in_list = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    def inline(text: str) -> str:
+        text = html.escape(text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)", r"<em>\1</em>", text)
+        return text
+
+    for raw in (md or "").split("\n"):
+        stripped = raw.strip()
+        if not stripped:
+            close_list()
+            continue
+        if stripped.startswith("### "):
+            close_list()
+            out.append(f'<h4 style="margin:14px 0 4px;font-size:13px;color:#1f2a37;">{inline(stripped[4:])}</h4>')
+        elif stripped.startswith("## "):
+            close_list()
+            out.append(
+                '<h3 style="margin:18px 0 6px;font-size:14px;color:#175089;font-weight:800;'
+                f'border-bottom:1px solid #e8eef5;padding-bottom:4px;">{inline(stripped[3:])}</h3>'
+            )
+        elif stripped.startswith("# "):
+            close_list()
+            out.append(f'<h3 style="margin:18px 0 6px;font-size:15px;color:#0f1f33;">{inline(stripped[2:])}</h3>')
+        elif stripped[:2] in ("- ", "* "):
+            if not in_list:
+                out.append('<ul style="margin:4px 0;padding-left:20px;">')
+                in_list = True
+            out.append(f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{inline(stripped[2:])}</li>')
+        else:
+            close_list()
+            out.append(f'<p style="margin:6px 0;font-size:13px;color:#33414f;line-height:1.55;">{inline(stripped)}</p>')
+    close_list()
+    return "\n".join(out)
+
+
+def _build_meeting_intel_email(meeting: Meeting) -> tuple[str, str, str]:
+    """
+    Build a focused pre-meeting intel email. Returns (subject, text_body, html_body).
+    Sends the full executive briefing so the rep has everything they need without
+    opening the CRM; the HTML body renders it as a clean, sectioned brief.
+    """
+    research = meeting.research_data if isinstance(meeting.research_data, dict) else {}
+    executive_briefing = str(research.get("executive_briefing") or meeting.pre_brief or "").strip()
+    recommendations = research.get("meeting_recommendations") if isinstance(research.get("meeting_recommendations"), list) else []
+    why_now_signals = research.get("why_now_signals") if isinstance(research.get("why_now_signals"), list) else []
+    crm_signals = research.get("crm_signals") if isinstance(research.get("crm_signals"), dict) else {}
+    attendee_cards = (
+        ((research.get("attendee_intelligence") or {}).get("stakeholder_cards"))
+        if isinstance(research.get("attendee_intelligence"), dict)
+        else []
+    ) or []
+    company_profile = research.get("company_profile") or {}
+
+    frontend_base = (settings.FRONTEND_URL or "http://localhost:8080").rstrip("/")
+    meeting_link = f"{frontend_base}/meetings/{meeting.id}"
+    scheduled_label = meeting.scheduled_at.strftime("%b %d, %Y at %I:%M %p UTC") if meeting.scheduled_at else "TBD"
+    meeting_number = crm_signals.get("meeting_number", 1)
+
+    subject = f"Meeting #{meeting_number} prep: {meeting.title} — {scheduled_label}"
+
+    # ── Plain text body ───────────────────────────────────────────────────────
+    lines = [
+        f"PRE-MEETING INTEL — {meeting.title}",
+        f"Scheduled: {scheduled_label} | Meeting #{meeting_number}",
+        f"Type: {meeting.meeting_type.upper() if meeting.meeting_type else 'Meeting'}",
+        "",
+    ]
+
+    if company_profile:
+        lines += [
+            "ACCOUNT",
+            f"  {company_profile.get('name', '')} | {company_profile.get('domain', '')}",
+            f"  {company_profile.get('industry', '')} | {company_profile.get('employee_count', '?')} employees | {company_profile.get('funding_stage', '')}",
+            f"  ICP: {company_profile.get('icp_tier', '?')} (score {company_profile.get('icp_score', '?')})",
+            "",
+        ]
+
+    if executive_briefing:
+        lines += [
+            "─" * 60,
+            "FULL INTEL BRIEF",
+            "─" * 60,
+            executive_briefing,
+            "",
+        ]
+    else:
+        # Fallback sections when briefing wasn't generated
+        if why_now_signals:
+            lines += ["WHY NOW"]
+            for item in why_now_signals[:3]:
+                detail = str((item or {}).get("detail") or "").strip()
+                if detail:
+                    lines.append(f"  • {detail}")
+            lines.append("")
+
+        if attendee_cards:
+            lines += ["KEY PEOPLE IN THIS MEETING"]
+            for card in attendee_cards[:4]:
+                name = str(card.get("name") or "Stakeholder").strip()
+                title = str(card.get("title") or card.get("role_label") or "").strip()
+                focus = str(card.get("likely_focus") or "").strip()
+                line = f"  • {name}"
+                if title:
+                    line += f" | {title}"
+                if focus:
+                    line += f"\n    Focus: {focus}"
+                lines.append(line)
+            lines.append("")
+
+        if recommendations:
+            lines += ["GAME PLAN FOR THIS MEETING"]
+            for item in recommendations[:4]:
+                if isinstance(item, str) and item.strip():
+                    lines.append(f"  • {item.strip()}")
+            lines.append("")
+
+    lines += [
+        "─" * 60,
+        f"Full prep page: {meeting_link}",
+        "",
+        "Beacon generated this from account data, prior meetings, email threads, and call history.",
+    ]
+    text_body = "\n".join(lines).strip()
+
+    # ── HTML body (proper UI) ──────────────────────────────────────────────────
+    tier = str(company_profile.get("icp_tier") or "").lower()
+    tier_color = {"hot": "#c0392b", "warm": "#b9770e", "cold": "#5b6b7d"}.get(tier, "#175089")
+    type_label = (meeting.meeting_type or "Meeting").upper()
+
+    acct_html = ""
+    if company_profile:
+        acct_html = f"""
+        <div style="border:1px solid #e3ebf3;border-radius:12px;padding:14px 16px;margin:0 0 16px;background:#f8fbff;">
+          <div style="font-size:15px;font-weight:800;color:#0f1f33;">{html.escape(str(company_profile.get('name','') or ''))}
+            <span style="font-weight:600;color:#6f8297;font-size:13px;">&nbsp;{html.escape(str(company_profile.get('domain','') or ''))}</span></div>
+          <div style="font-size:12.5px;color:#5b6b7d;margin-top:4px;">{html.escape(str(company_profile.get('industry','') or ''))} · {html.escape(str(company_profile.get('employee_count','?')))} employees · {html.escape(str(company_profile.get('funding_stage','') or ''))}</div>
+          <span style="display:inline-block;margin-top:8px;background:{tier_color};color:#fff;font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;text-transform:uppercase;">ICP {html.escape(str(company_profile.get('icp_tier','?')))} · {html.escape(str(company_profile.get('icp_score','?')))}</span>
+        </div>"""
+
+    if executive_briefing:
+        brief_html = _markdown_to_html(executive_briefing)
+    else:
+        chunks: list[str] = []
+        if why_now_signals:
+            items = "".join(
+                f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{html.escape(str((i or {}).get("detail") or ""))}</li>'
+                for i in why_now_signals[:3] if (i or {}).get("detail")
+            )
+            if items:
+                chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Why now</h3><ul style="margin:4px 0;padding-left:20px;">' + items + "</ul>")
+        if attendee_cards:
+            ppl = ""
+            for card in attendee_cards[:4]:
+                nm = html.escape(str(card.get("name") or "Stakeholder"))
+                ttl = html.escape(str(card.get("title") or card.get("role_label") or ""))
+                focus = html.escape(str(card.get("likely_focus") or ""))
+                ttl_html = f" — {ttl}" if ttl else ""
+                focus_html = f'<br><span style="color:#6f8297;">{focus}</span>' if focus else ""
+                ppl += f'<li style="margin:5px 0;font-size:13px;color:#33414f;line-height:1.5;"><strong>{nm}</strong>{ttl_html}{focus_html}</li>'
+            chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Who is in the meeting</h3><ul style="margin:4px 0;padding-left:20px;">' + ppl + "</ul>")
+        if recommendations:
+            recs = "".join(
+                f'<li style="margin:3px 0;font-size:13px;color:#33414f;line-height:1.5;">{html.escape(str(r))}</li>'
+                for r in recommendations[:4] if isinstance(r, str) and r.strip()
+            )
+            if recs:
+                chunks.append('<h3 style="margin:14px 0 6px;font-size:14px;color:#175089;font-weight:800;">Game plan</h3><ul style="margin:4px 0;padding-left:20px;">' + recs + "</ul>")
+        brief_html = "".join(chunks) or '<p style="font-size:13px;color:#6f8297;">Intel brief not generated yet.</p>'
+
+    html_body = f"""
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:680px;margin:0 auto;color:#1f2a37;">
+      <div style="background:#0f1f33;color:#fff;padding:16px 18px;border-radius:12px 12px 0 0;">
+        <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#9fb4cc;font-weight:700;">Pre-meeting intel · Meeting #{meeting_number} · {html.escape(type_label)}</div>
+        <div style="font-size:18px;font-weight:800;margin-top:4px;">{html.escape(meeting.title or 'Meeting')}</div>
+        <div style="font-size:12.5px;color:#c7d6e6;margin-top:3px;">{html.escape(scheduled_label)}</div>
+      </div>
+      <div style="border:1px solid #e3ebf3;border-top:none;border-radius:0 0 12px 12px;padding:18px;background:#fff;">
+        {acct_html}
+        {brief_html}
+        <div style="margin-top:18px;text-align:center;">
+          <a href="{html.escape(meeting_link)}" style="display:inline-block;background:#175089;color:#fff;text-decoration:none;font-weight:800;font-size:13px;padding:10px 22px;border-radius:10px;">Open full prep page →</a>
+        </div>
+        <p style="margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;">Beacon generated this from account data, prior meetings, email threads, and call history.</p>
+      </div>
+    </div>""".strip()
+
+    return subject, text_body, html_body
+
+
+async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, int]:
+    """Generate + send due pre-meeting briefs.
+
+    force_time=True bypasses the daily-time window (used by the manual
+    "Run now" admin action so it sends immediately regardless of clock time).
+    The `enabled` flag is always respected.
+    """
+    async with AsyncSessionLocal() as session:
+        settings_row = await _get_or_create_settings(session)
+        config = normalize_pre_meeting_settings(settings_row.pre_meeting_automation_settings)
+        if not config["enabled"]:
+            return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+
+        # Daily-time mode: only dispatch during a ~1h window starting at the
+        # configured local send_time. Beat runs every 30 min, so one or two
+        # ticks land in the window; per-meeting intel_email_sent_at dedup keeps
+        # each brief single-send even if both ticks fire.
+        if config["send_mode"] == "daily_time" and not force_time:
+            try:
+                tz = ZoneInfo(config["timezone"])
+            except Exception:
+                tz = ZoneInfo("UTC")
+            now_local = datetime.now(tz)
+            hour, minute = (int(part) for part in config["send_time"].split(":"))
+            send_at = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if not (send_at <= now_local < send_at + timedelta(hours=1)):
+                return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+
+        now = datetime.utcnow()
+        generate_window_end = now + timedelta(hours=config["generate_hours_before"])
+        send_window_end = now + timedelta(hours=config["send_hours_before"])
+        meetings = (
+            await session.execute(
+                select(Meeting).where(
+                    Meeting.status == "scheduled",
+                    Meeting.scheduled_at.is_not(None),
+                    Meeting.scheduled_at > now,
+                    Meeting.scheduled_at <= generate_window_end,
+                )
+            )
+        ).scalars().all()
+
+        # Open-pipeline gate: skip meetings for closed/customer accounts (e.g.
+        # closed_won doing daily syncs). Derived from the configured stage groups.
+        from app.services.deal_stages import get_configured_deal_stages
+        _stage_settings = await get_configured_deal_stages(session)
+        closed_stage_ids = {
+            str(s["id"]).strip().lower()
+            for s in _stage_settings
+            if s.get("group") == "closed"
+        }
+        internal_domains = await get_internal_domains(session)
+
+        checked = len(meetings)
+        generated = 0
+        emailed = 0
+        skipped = 0
+
+        def _research_is_empty(rd) -> bool:
+            """Treat JSONB null, empty dict, empty string, and None all as 'no brief yet'."""
+            if rd is None:
+                return True
+            if isinstance(rd, dict) and not rd:
+                return True
+            if isinstance(rd, str) and rd.strip().lower() in ("", "null", "{}"):
+                return True
+            return False
+
+        for meeting in meetings:
+            try:
+                # Only spend generation/email budget on live, buyer-facing sales
+                # meetings — skip internal-only, recurring cadences/1:1s/all-hands,
+                # recruiting interviews, and closed/customer accounts.
+                eligible, skip_reason = await _should_generate_intel(
+                    session, meeting, closed_stage_ids, internal_domains
+                )
+                if not eligible:
+                    logger.info(
+                        "pre_meeting_intel: skip meeting %s (%s) — %s",
+                        meeting.id, (meeting.title or "")[:60], skip_reason,
+                    )
+                    skipped += 1
+                    continue
+
+                if config["auto_generate_if_missing"] and _research_is_empty(meeting.research_data):
+                    await run_pre_meeting_intelligence(meeting.id, session)
+                    generated += 1
+                    meeting = await session.get(Meeting, meeting.id)
+
+                if config["auto_generate_if_missing"] and meeting and not meeting.demo_strategy:
+                    await generate_meeting_demo_strategy(meeting.id, session)
+                    meeting = await session.get(Meeting, meeting.id)
+
+                if not meeting:
+                    skipped += 1
+                    continue
+
+                if meeting.intel_email_sent_at or not meeting.scheduled_at or meeting.scheduled_at > send_window_end:
+                    continue
+
+                recipient_ids = await _collect_recipient_ids(session, meeting)
+                if not recipient_ids:
+                    skipped += 1
+                    continue
+
+                users = (
+                    await session.execute(select(User).where(User.id.in_(recipient_ids)))
+                ).scalars().all()
+                recipients = [user for user in users if user.is_active and user.email]
+                if not recipients:
+                    skipped += 1
+                    continue
+
+                subject, text_body, html_body = _build_meeting_intel_email(meeting)
+                gmail_token_data = (
+                    settings_row.report_sender_token_data
+                    if settings_row.report_sender_email
+                    and settings_row.report_sender_connected_email
+                    and settings_row.report_sender_token_data
+                    and settings_row.report_sender_email.lower() == settings_row.report_sender_connected_email.lower()
+                    else None
+                )
+                sent_any = False
+                for recipient in recipients:
+                    # Prefer the rep's own connected Gmail when it has send scope.
+                    # That way the brief lands as "From: themselves" in their
+                    # inbox, which threads naturally and doesn't look like a
+                    # service-account blast. Falls back to the workspace report
+                    # sender, then to plain SMTP via Resend.
+                    personal = await _personal_send_token_for_user(session, recipient.id)
+                    if personal is not None:
+                        personal_email, personal_token = personal
+                        result, personal_token = await send_gmail_email(
+                            token_data=personal_token,
+                            from_email=personal_email,
+                            to=recipient.email,
+                            subject=subject,
+                            body=text_body,
+                            html_body=html_body,
+                            from_name=recipient.name or "Beacon Meeting Intel",
+                        )
+                        # Persist any refreshed token back to the rep's connection
+                        if result.get("status") == "sent":
+                            conn = (
+                                await session.execute(
+                                    select(UserEmailConnection).where(
+                                        UserEmailConnection.user_id == recipient.id
+                                    )
+                                )
+                            ).scalars().first()
+                            if conn and personal_token != conn.token_data:
+                                conn.token_data = personal_token
+                                conn.updated_at = datetime.utcnow()
+                                session.add(conn)
+                    elif gmail_token_data:
+                        result, gmail_token_data = await send_gmail_email(
+                            token_data=gmail_token_data,
+                            from_email=settings_row.report_sender_email,
+                            to=recipient.email,
+                            subject=subject,
+                            body=text_body,
+                            html_body=html_body,
+                            from_name="Beacon Meeting Intel",
+                        )
+                    else:
+                        result = await send_email(
+                            recipient.email,
+                            subject,
+                            text_body,
+                            from_name="Beacon Meeting Intel",
+                        )
+                    if result.get("status") == "sent":
+                        sent_any = True
+                    elif gmail_token_data:
+                        settings_row.report_sender_last_error = str(
+                            result.get("error") or "Gmail send failed"
+                        )[:500]
+
+                if gmail_token_data and gmail_token_data != settings_row.report_sender_token_data:
+                    settings_row.report_sender_token_data = gmail_token_data
+
+                if not sent_any:
+                    skipped += 1
+                    continue
+
+                if gmail_token_data:
+                    settings_row.report_sender_last_error = None
+                meeting.intel_email_sent_at = datetime.utcnow()
+                meeting.updated_at = datetime.utcnow()
+                session.add(meeting)
+                if meeting.deal_id:
+                    session.add(
+                        Activity(
+                            deal_id=meeting.deal_id,
+                            type="note",
+                            source="pre_meeting_automation",
+                            content=f"Pre-meeting intel email sent for '{meeting.title}'",
+                        )
+                    )
+                emailed += 1
+            except Exception:
+                logger.exception("Pre-meeting automation failed for meeting %s", meeting.id)
+                skipped += 1
+
+        await session.commit()
+        return {
+            "checked": checked,
+            "generated": generated,
+            "emailed": emailed,
+            "skipped": skipped,
+        }

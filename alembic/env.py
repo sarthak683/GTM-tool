@@ -13,6 +13,21 @@ from app.models.company import Company  # noqa: F401
 from app.models.contact import Contact  # noqa: F401
 from app.models.deal import Deal  # noqa: F401
 from app.models.activity import Activity  # noqa: F401
+from app.models.assignment_update import AssignmentUpdate  # noqa: F401
+from app.models.sourcing_batch import SourcingBatch  # noqa: F401
+from app.models.user import User  # noqa: F401
+from app.models.outreach import OutreachSequence  # noqa: F401
+from app.models.signal import Signal  # noqa: F401
+from app.models.meeting import Meeting  # noqa: F401
+from app.models.battlecard import Battlecard  # noqa: F401
+from app.models.custom_demo import CustomDemo  # noqa: F401
+from app.models.sales_resource import SalesResource  # noqa: F401
+from app.models.company_stage_milestone import CompanyStageMilestone  # noqa: F401
+from app.models.angel import AngelInvestor, AngelMapping  # noqa: F401
+from app.models.task import Task, TaskComment  # noqa: F401
+from app.models.reminder import Reminder  # noqa: F401
+from app.models.settings import WorkspaceSettings  # noqa: F401
+from app.models.push_subscription import PushSubscription  # noqa: F401
 
 config = context.config
 

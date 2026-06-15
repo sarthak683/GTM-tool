@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beacon.fullname" . }}-worker
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "worker") | nindent 4 }}
+spec:
+  {{- if not (and .Values.autoscaling.enabled .Values.autoscaling.worker.enabled) }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "beacon.selectorLabels" (dict "context" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "beacon.selectorLabels" (dict "context" . "component" "worker") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "beacon.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: worker
+          image: {{ include "beacon.image" (dict "image" .Values.worker.image "global" .Values.global) }}
+          # Default worker consumes ONLY the "celery" queue. User-triggered work is
+          # routed to "priority" (app/celery_app.py task_routes) and is handled by the
+          # separate priority-worker deployment, so long syncs here never block it.
+          command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo", "-Q", "{{ .Values.worker.queues }}"]
+          # Transcription/extraction tasks write scratch files to /tmp
+          # (app/tasks/transcribe_call.py, app/services/text_extraction.py).
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "beacon.fullname" . }}-secret
+            - configMapRef:
+                name: {{ include "beacon.fullname" . }}-config
+          env:
+            - name: DATABASE_URL
+              value: {{ include "beacon.databaseUrl" . }}
+            - name: SYNC_DATABASE_URL
+              value: {{ include "beacon.syncDatabaseUrl" . }}
+            - name: REDIS_URL
+              value: {{ include "beacon.redisUrl" . }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

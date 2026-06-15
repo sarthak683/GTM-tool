@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import UnifiedTimeline from "../components/UnifiedTimeline";
 import {
   companiesApi,
   contactsApi,
@@ -24,8 +25,16 @@ import {
   Users,
   X,
 } from "lucide-react";
+import {
+  getProspectTrackingScore,
+  getProspectTrackingStage,
+  getProspectTrackingSummary,
+  getProspectTrackingTone,
+} from "../lib/prospectTracking";
+import { useAuth } from "../lib/AuthContext";
 import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
+import { SkeletonList } from "../components/ui/Skeleton";
 
 const TIER_STYLE: Record<string, CSSProperties> = {
   hot: { color: "#8f2f11", background: "#ffe4d9", border: "1px solid #ffc5b3" },
@@ -101,6 +110,7 @@ function CompanySection({
 }
 
 export default function CompanyDetail() {
+  const { isAdmin } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [company, setCompany] = useState<Company | null>(null);
@@ -264,7 +274,7 @@ export default function CompanyDetail() {
     }
   };
 
-  if (loading) return <div className="crm-panel p-14 text-center crm-muted">Loading company profile...</div>;
+  if (loading) return <div className="crm-panel p-14"><SkeletonList rows={5} /></div>;
   if (!company) return <div className="crm-panel p-14 text-center crm-muted">Company not found.</div>;
 
   const techStack = company.tech_stack as Record<string, string> | null;
@@ -288,28 +298,30 @@ export default function CompanyDetail() {
     <>
       <div className="crm-page company-detail-page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="flex flex-wrap items-center justify-between gap-3 company-detail-top-actions">
-          <button onClick={() => navigate("/companies")} className="crm-button soft">
+          <button onClick={() => navigate(-1)} className="crm-button soft">
             <ArrowLeft className="h-3.5 w-3.5" />
-            Back to Companies
+            Back
           </button>
           <div className="flex flex-wrap items-center gap-2">
-            {enrichMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{enrichMsg}</span>}
+            {enrichMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{enrichMsg}</span>}
             <button className="crm-button soft" onClick={handleEnrich} disabled={enriching}>
               <RefreshCw className={`h-3.5 w-3.5 ${enriching ? "animate-spin" : ""}`} />
               {enriching ? "Enriching..." : "Re-enrich"}
             </button>
-            <button
-              className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
-              onClick={async () => {
-                if (!company) return;
-                if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
-                await companiesApi.delete(company.id);
-                navigate("/companies");
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
+            {isAdmin ? (
+              <button
+                className="crm-button soft text-[#c0392b] border-[#fcc] hover:bg-[#fff5f5]"
+                onClick={async () => {
+                  if (!company) return;
+                  if (!window.confirm(`Delete "${company.name}"? This will remove all associated contacts and deals.`)) return;
+                  await companiesApi.delete(company.id);
+                  navigate("/companies");
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -331,7 +343,7 @@ export default function CompanyDetail() {
                   <p className="text-[11px] uppercase tracking-[0.12em] text-[#7c8ea1] font-semibold">Account Overview</p>
                   <h2 className="text-[34px] leading-tight font-extrabold tracking-tight text-[#1f2d3d] mt-2">{company.name}</h2>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-[14px] text-[#61788f]">
-                    <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-[#ff6b35]">
+                    <a href={`https://${company.domain}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-[#9ace3d]">
                       {company.domain}
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -358,7 +370,7 @@ export default function CompanyDetail() {
                   <Sparkles className="h-3.5 w-3.5" />
                   {bulkGenerating ? "Generating..." : "Generate Outreach For All"}
                 </button>
-                {bulkMsg && <p className="text-[12px] text-[#ff6b35]">{bulkMsg}</p>}
+                {bulkMsg && <p className="text-[12px] text-[#9ace3d]">{bulkMsg}</p>}
               </div>
             </div>
 
@@ -395,7 +407,7 @@ export default function CompanyDetail() {
                   <p className="text-[12px] font-semibold text-[#516779]">{company.icp_score}% match to ICP</p>
                 </div>
                 <div className="h-2.5 rounded-full bg-[#eaf0f6] overflow-hidden">
-                  <div className="h-2.5 rounded-full bg-[#ff6b35]" style={{ width: `${company.icp_score}%` }} />
+                  <div className="h-2.5 rounded-full bg-[#9ace3d]" style={{ width: `${company.icp_score}%` }} />
                 </div>
               </div>
             )}
@@ -431,11 +443,18 @@ export default function CompanyDetail() {
               )}
             </CompanySection>
 
+            <CompanySection title="Account activity">
+              <UnifiedTimeline
+                scope={{ type: "company", id: company.id }}
+                emptyMessage="No activity logged for this account yet."
+              />
+            </CompanySection>
+
             <CompanySection
               title={`Stakeholders (${contacts.length})`}
               action={
                 <div className="flex items-center gap-2">
-                  {discoverMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{discoverMsg}</span>}
+                  {discoverMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{discoverMsg}</span>}
                   <button className="crm-button soft" onClick={handleDiscoverContacts} disabled={discoveringContacts}>
                     <Users className={`h-3.5 w-3.5 ${discoveringContacts ? "animate-pulse" : ""}`} />
                     {discoveringContacts ? "Searching..." : "Find Contacts"}
@@ -451,8 +470,9 @@ export default function CompanyDetail() {
                 <div className="grid gap-4">
                   {contacts.map((c) => {
                     const persona = canonicalPersona(c.persona, c.persona_type);
+                    const trackingTone = getProspectTrackingTone(c);
                     return (
-                      <div key={c.id} className="rounded-2xl border border-[#e0e8f1] bg-white p-5">
+                      <div key={c.id} className="crm-hover-lift rounded-2xl border border-[#e0e8f1] bg-white p-5">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex items-start gap-3 min-w-0">
                             <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
@@ -464,7 +484,7 @@ export default function CompanyDetail() {
                               <div className="flex flex-wrap items-center gap-2 mt-3 text-[12px] text-[#688097]">
                                 {c.email && <span className="rounded-full bg-[#f2f6fa] px-2.5 py-1">{c.email}</span>}
                                 {c.linkedin_url && (
-                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#ff6b35]">
+                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#9ace3d]">
                                     LinkedIn
                                   </a>
                                 )}
@@ -473,6 +493,12 @@ export default function CompanyDetail() {
                           </div>
 
                           <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span
+                              className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold"
+                              style={{ background: trackingTone.background, color: trackingTone.color, border: `1px solid ${trackingTone.border}` }}
+                            >
+                              {getProspectTrackingStage(c)}
+                            </span>
                             <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[persona]}>
                               {PERSONA_SHORT[persona]}
                             </span>
@@ -498,6 +524,21 @@ export default function CompanyDetail() {
                           </div>
                         </div>
 
+                        <div
+                          className="mt-4 rounded-xl px-4 py-3"
+                          style={{ background: trackingTone.soft, border: `1px solid ${trackingTone.border}` }}
+                        >
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-bold">
+                              Automated progress
+                            </span>
+                            <span style={{ color: trackingTone.color }} className="text-[12px] font-extrabold">
+                              {getProspectTrackingScore(c)}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-[13px] leading-6 text-[#2d4258]">{getProspectTrackingSummary(c)}</p>
+                        </div>
+
                         {contactBriefs[c.id] && (
                           <div className="rounded-xl border border-[#dce6f0] bg-[#f8fbff] px-4 py-3 mt-4 space-y-1.5">
                             {contactBriefs[c.id]
@@ -519,7 +560,7 @@ export default function CompanyDetail() {
               title="Signals"
               action={
                 <div className="flex items-center gap-2">
-                  {signalsMsg && <span className="text-[12px] text-[#ff6b35] font-semibold">{signalsMsg}</span>}
+                  {signalsMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{signalsMsg}</span>}
                   <button className="crm-button soft h-10 px-3" onClick={handleRefreshSignals} disabled={signalsRefreshing}>
                     <RefreshCw className={`h-3.5 w-3.5 ${signalsRefreshing ? "animate-spin" : ""}`} />
                     Refresh
@@ -534,7 +575,7 @@ export default function CompanyDetail() {
               ) : (
                 <div className="grid gap-3">
                   {signals.slice(0, 6).map((s) => (
-                    <div key={s.id} className="rounded-2xl border border-[#e3eaf3] bg-[#fbfdff] p-4">
+                    <div key={s.id} className="crm-hover-lift rounded-2xl border border-[#e3eaf3] bg-[#fbfdff] p-4">
                       <div className="flex items-center gap-2 text-[12px] font-semibold text-[#6f8399] capitalize">
                         <span
                           className="h-2.5 w-2.5 rounded-full"
@@ -598,7 +639,7 @@ export default function CompanyDetail() {
             >
               <div className="rounded-2xl border border-[#e5edf5] bg-[#fbfdff] p-4 mb-4">
                 <div className="flex items-start gap-3">
-                  <div className="rounded-xl bg-[#fff1eb] p-2 text-[#ff6b35]">
+                  <div className="rounded-xl bg-[#fff1eb] p-2 text-[#9ace3d]">
                     <Target className="h-4 w-4" />
                   </div>
                   <div>
@@ -617,7 +658,7 @@ export default function CompanyDetail() {
                   {companyDeals.map((d) => (
                     <div key={d.id} className="rounded-xl border border-[#e3eaf3] bg-[#fbfdff] px-4 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <Link to={`/deals/${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#ff6b35]">
+                        <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#9ace3d]">
                           {d.name}
                         </Link>
                         <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>
@@ -699,7 +740,7 @@ export default function CompanyDetail() {
         <>
           <div className="fixed inset-0 bg-black/25 z-40" onClick={() => setShowDealModal(false)} />
           <div className="fixed inset-0 z-50 grid place-items-center p-4">
-            <div className="crm-panel w-full max-w-lg p-6 space-y-4">
+            <div className="beacon-pop crm-panel w-full max-w-lg p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-[18px] font-bold">Create Deal</h3>
                 <button className="text-[#7a8ea4] hover:text-[#31465f]" onClick={() => setShowDealModal(false)}>

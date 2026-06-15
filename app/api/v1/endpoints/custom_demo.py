@@ -20,6 +20,7 @@ Polling / delivery:
   DELETE /custom-demos/{id}       — delete a demo
 """
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
@@ -29,7 +30,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlmodel import col
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.custom_demo import CustomDemo
 from app.services.demo_generator import (
     extract_pdf_text,
@@ -38,6 +39,7 @@ from app.services.demo_generator import (
 )
 from app.clients.demo_ai import is_valid_demo_html, repair_demo_html
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/custom-demos", tags=["custom-demos"])
 
 
@@ -171,7 +173,7 @@ def _demo_to_out(d: CustomDemo) -> DemoOut:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[DemoOut])
-async def list_demos(session: DBSession):
+async def list_demos(session: DBSession, _user: CurrentUser):
     rows = (await session.execute(
         select(CustomDemo).order_by(CustomDemo.created_at.desc())
     )).scalars().all()
@@ -182,6 +184,7 @@ async def list_demos(session: DBSession):
 async def generate_from_file(
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
     file: UploadFile = File(...),
     title: str = Form(...),
     client_name: str = Form(default=""),
@@ -198,13 +201,15 @@ async def generate_from_file(
     if filename.endswith(".pdf") or "pdf" in content_type:
         try:
             source_text = extract_pdf_text(raw)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Failed to read PDF: {e}")
+        except Exception:
+            logger.exception("Failed to read PDF upload for custom demo")
+            raise HTTPException(status_code=422, detail="Failed to read PDF")
     elif filename.endswith(".docx") or "word" in content_type:
         try:
             source_text = extract_docx_text(raw)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Failed to read DOCX: {e}")
+        except Exception:
+            logger.exception("Failed to read DOCX upload for custom demo")
+            raise HTTPException(status_code=422, detail="Failed to read DOCX")
     else:
         raise HTTPException(status_code=422, detail="Only PDF and DOCX files are supported.")
 
@@ -236,6 +241,7 @@ async def generate_from_editor(
     payload: EditorPayload,
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
 ):
     """Submit a scene list built in the in-app editor."""
     editor_content = [s.model_dump() for s in payload.scenes]
@@ -264,6 +270,7 @@ async def generate_from_brief(
     payload: BriefPayload,
     background_tasks: BackgroundTasks,
     session: DBSession,
+    _user: CurrentUser,
 ):
     """Generate demo HTML from a structured company/demo brief."""
     source_text = _brief_payload_to_source_text(payload)
@@ -289,7 +296,7 @@ async def generate_from_brief(
 
 
 @router.get("/{demo_id}/status", response_model=DemoStatusOut)
-async def demo_status(demo_id: UUID, session: DBSession):
+async def demo_status(demo_id: UUID, session: DBSession, _user: CurrentUser):
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -297,7 +304,7 @@ async def demo_status(demo_id: UUID, session: DBSession):
 
 
 @router.get("/{demo_id}/html")
-async def demo_html(demo_id: UUID, session: DBSession):
+async def demo_html(demo_id: UUID, session: DBSession, _user: CurrentUser):
     """Return the raw HTML content."""
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
@@ -313,12 +320,13 @@ async def demo_html(demo_id: UUID, session: DBSession):
                 timeout=25,
             )
             html = repaired
-        except Exception as exc:
+        except Exception:
+            logger.exception("Demo HTML repair failed for demo %s", demo_id)
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Demo HTML is invalid and automatic repair failed. "
-                    f"Please regenerate or revise this demo. Details: {exc}"
+                    "Please regenerate or revise this demo."
                 ),
             )
 
@@ -337,6 +345,7 @@ async def revise_demo(
     demo_id: UUID,
     payload: RevisePayload,
     background_tasks: BackgroundTasks,
+    _user: CurrentUser,
     session: DBSession,
 ):
     """Revise the generated HTML with a natural-language instruction."""
@@ -367,7 +376,7 @@ async def revise_demo(
 
 
 @router.delete("/{demo_id}", status_code=204)
-async def delete_demo(demo_id: UUID, session: DBSession):
+async def delete_demo(demo_id: UUID, session: DBSession, _user: CurrentUser):
     demo = await session.get(CustomDemo, demo_id)
     if not demo:
         raise HTTPException(status_code=404, detail="Demo not found")

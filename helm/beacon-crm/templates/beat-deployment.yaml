@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beacon.fullname" . }}-beat
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "beat") | nindent 4 }}
+spec:
+  replicas: {{ .Values.beat.replicas }}
+  selector:
+    matchLabels:
+      {{- include "beacon.selectorLabels" (dict "context" . "component" "beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "beacon.selectorLabels" (dict "context" . "component" "beat") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "beacon.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: beat
+          image: {{ include "beacon.image" (dict "image" .Values.beat.image "global" .Values.global) }}
+          # Celery's default PersistentScheduler writes a celerybeat-schedule shelve
+          # file relative to the workdir (/app). Redirect it into the writable /tmp
+          # emptyDir so the rest of the root filesystem can stay read-only.
+          command: ["celery", "-A", "app.celery_app.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "beacon.fullname" . }}-secret
+            - configMapRef:
+                name: {{ include "beacon.fullname" . }}-config
+          env:
+            - name: DATABASE_URL
+              value: {{ include "beacon.databaseUrl" . }}
+            - name: SYNC_DATABASE_URL
+              value: {{ include "beacon.syncDatabaseUrl" . }}
+            - name: REDIS_URL
+              value: {{ include "beacon.redisUrl" . }}
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

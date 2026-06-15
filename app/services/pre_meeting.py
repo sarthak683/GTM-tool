@@ -23,7 +23,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.clients.azure_openai import AzureOpenAIClient
+from app.clients.claude import ClaudeClient
 from app.clients.web_search import WebSearchClient
 from app.models.company import Company
 from app.models.contact import Contact
@@ -36,7 +36,7 @@ from app.services.pre_meeting_intelligence import (
 
 logger = logging.getLogger(__name__)
 
-ai_client = AzureOpenAIClient()
+ai_client = ClaudeClient()
 web_client = WebSearchClient()
 
 
@@ -85,65 +85,6 @@ def _signal_to_dict(signal: Signal) -> dict[str, Any]:
     }
 
 
-def _fallback_brief(
-    *,
-    company: Company,
-    company_profile: dict[str, Any],
-    why_now_signals: list[dict[str, Any]],
-    stakeholder_cards: list[dict[str, Any]],
-    missing_roles: list[dict[str, Any]],
-    priorities: list[str],
-) -> str:
-    lines: list[str] = []
-
-    lines.append("## Snapshot")
-    lines.append(
-        f"- {company.name} operates in {company.industry or 'its category'}"
-        + (
-            f" with approximately {company.employee_count:,} employees."
-            if company.employee_count
-            else "."
-        )
-    )
-    if company_profile.get("funding_stage"):
-        lines.append(f"- Funding stage: {company_profile['funding_stage']}.")
-
-    lines.append("")
-    lines.append("## Why Now")
-    if why_now_signals:
-        for item in why_now_signals[:3]:
-            lines.append(f"- {item.get('detail')}")
-    else:
-        lines.append("- No strong timing signal is captured yet; validate urgency live.")
-
-    lines.append("")
-    lines.append("## Who To Engage")
-    if stakeholder_cards:
-        for card in stakeholder_cards[:3]:
-            lines.append(
-                f"- {card.get('name')} ({card.get('title') or card.get('role_label') or 'Stakeholder'}): "
-                f"{card.get('likely_focus') or 'Clarify their role in the buying process.'}"
-            )
-    else:
-        lines.append("- No mapped stakeholders yet; find a champion and implementation owner first.")
-
-    lines.append("")
-    lines.append("## Angle For Beacon")
-    if priorities:
-        for item in priorities[:3]:
-            lines.append(f"- {item}")
-    else:
-        lines.append("- Lead with Beacon's ability to reduce rollout coordination friction and speed time-to-value.")
-
-    lines.append("")
-    lines.append("## Risks / Gaps")
-    if missing_roles:
-        labels = ", ".join(item.get("label", "Unknown role") for item in missing_roles[:3])
-        lines.append(f"- Missing committee coverage: {labels}.")
-    else:
-        lines.append("- Committee coverage looks healthy enough to progress discovery.")
-
-    return "\n".join(lines)
 
 
 async def _generate_sales_ready_brief(
@@ -159,14 +100,8 @@ async def _generate_sales_ready_brief(
     priorities: list[str],
 ) -> str:
     if ai_client.mock:
-        return _fallback_brief(
-            company=company,
-            company_profile=company_profile,
-            why_now_signals=why_now_signals,
-            stakeholder_cards=stakeholder_cards,
-            missing_roles=committee_coverage.get("missing_roles", []),
-            priorities=priorities,
-        )
+        logger.warning("AI client not configured — skipping account brief generation for %s", company.name)
+        return None
 
     signal_lines = "\n".join(
         f"- {item.get('title')}: {item.get('summary') or item.get('detail') or ''}".strip()
@@ -253,16 +188,9 @@ Prospecting Priorities:
         if response:
             return response
     except Exception as exc:
-        logger.warning("Account brief generation failed, using fallback: %s", exc)
+        logger.warning("Account brief generation failed: %s", exc)
 
-    return _fallback_brief(
-        company=company,
-        company_profile=company_profile,
-        why_now_signals=why_now_signals,
-        stakeholder_cards=stakeholder_cards,
-        missing_roles=committee_coverage.get("missing_roles", []),
-        priorities=priorities,
-    )
+    return None
 
 
 async def generate_account_brief(company_id: UUID, session: AsyncSession) -> dict[str, Any]:

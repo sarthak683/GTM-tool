@@ -27,17 +27,15 @@ services:
         sync: false
       - key: NEWS_API_KEY
         sync: false
-      - key: AZURE_OPENAI_API_KEY
-        sync: false
-      - key: AZURE_OPENAI_ENDPOINT
-        sync: false
-      - key: AZURE_OPENAI_DEPLOYMENT
-        sync: false
-      - key: AZURE_OPENAI_API_VERSION
-        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL_SIMPLE
+        sync: false
+      - key: CLAUDE_MODEL_STANDARD
+        sync: false
+      - key: CLAUDE_MODEL_COMPLEX
         sync: false
       - key: RESEND_API_KEY
         sync: false

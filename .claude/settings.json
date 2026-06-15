@@ -3,7 +3,39 @@
     "allow": [
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(curl -s http://localhost:8000/api/v1/meetings/70a7227a-79a5-48ea-8883-ffa736602062/demo-strategy -X POST -H \"Content-Type: application/json\")",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(python -c \"from app.clients.web_search import WebSearchClient; print\\(''web_search OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''c:/gtm-prototype/app/services/icp_intelligence.py''\\).read\\(\\)\\); print\\(''icp_intelligence.py: OK''\\)\")",
+      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/companies?size=100)",
+      "Bash(curl -s http://localhost:8000/api/v1/account-sourcing/batches)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl logs *)",
+      "Bash(kubectl rollout status *)",
+      "Bash(kubectl --kubeconfig * get *)",
+      "Bash(kubectl --kubeconfig * describe *)",
+      "Bash(kubectl --kubeconfig * logs *)",
+      "Bash(kubectl --kubeconfig * rollout status *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "PowerShell(kubectl --kubeconfig $KCFG -n gtm-prod set image deploy/gtm-frontend-deployment copilot=beacon.azurecr.io/gtm-fe:v0.12-5d6b501 2>&1)",
+      "PowerShell(kubectl --kubeconfig $KCFG -n gtm-prod rollout status deploy/gtm-frontend-deployment --timeout=240s 2>&1)",
+      "PowerShell($KCFG=\"C:\\\\gtm-prototype\\\\tmp\\\\beacon-test-kubeconfig.yaml\")",
+      "Bash(curl -sS \"https://gtm.beacon.li/assets/index-DWFF5oI_.js\")",
+      "Bash(curl -sS \"https://gtm.beacon.li/assets/index-BNTxCQHY.css\")"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f graphify-out/graph.json ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}' || true"
+          }
+        ]
+      }
     ]
   }
 }

@@ -29,11 +29,15 @@ dist/
 # Logs and runtime files
 *.log
 celerybeat-schedule
+tmp/
 
 # Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Deployment handoff files
+MAC_DEPLOY_HANDOFF.md
 
 # Editor and OS files
 .vscode/

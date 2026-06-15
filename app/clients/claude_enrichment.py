@@ -75,13 +75,14 @@ async def summarize_company(
     company_name: str,
     domain: str,
     upload_context: dict[str, Any] | None = None,
-) -> dict:
+) -> dict | None:
     """
     Single-turn Claude call to synthesize all collected data into a comprehensive
     sales intelligence report for a company.
     """
     if not settings.claude_api_key:
-        return _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
+        logger.warning("Claude API key not configured — skipping summarization for %s", company_name)
+        return None
 
     client = _get_client()
 
@@ -141,24 +142,23 @@ async def summarize_company(
         response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=2000,
-            system=system,
+            # Cache the static system prompt: account-sourcing processes companies
+            # in batches, so the identical prefix is reused within the 5-min cache
+            # window. Below the model's cache threshold it's a silent no-op.
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_data}],
         )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
         text = "\n".join(text_blocks).strip() if text_blocks else ""
         payload = _extract_json_object(text)
         if payload is None:
-            logger.warning(f"Claude summarization returned non-JSON payload for {company_name}; using fallback")
-            fallback = _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
-            fallback["_error"] = "non_json_response"
-            return fallback
+            logger.warning(f"Claude summarization returned non-JSON payload for {company_name}")
+            return None
         payload.setdefault("_source", "claude")
         return payload
     except Exception as e:
         logger.error(f"Claude summarization failed for {company_name}: {e}")
-        fallback = _fallback_summary(scraped_data, apollo_data, company_name, upload_context)
-        fallback["_error"] = str(e)
-        return fallback
+        return None
 
 
 async def classify_contact_persona(
@@ -175,7 +175,9 @@ async def classify_contact_persona(
 
     try:
         response = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
+            # One-word persona classification — Haiku is ~20x cheaper than Sonnet
+            # and accurate enough here; _rule_based_persona backstops any miss.
+            model=settings.CLAUDE_MODEL_SIMPLE,
             max_tokens=50,
             system=(
                 "Classify this B2B contact into exactly one role for a SaaS implementation sale. "
@@ -194,58 +196,6 @@ async def classify_contact_persona(
     except Exception:
         return _rule_based_persona(title, seniority)
 
-
-# ── Fallbacks ──────────────────────────────────────────────────────────────────
-
-def _fallback_summary(
-    scraped_data: dict,
-    apollo_data: dict | None,
-    company_name: str,
-    upload_context: dict[str, Any] | None = None,
-) -> dict:
-    """Rule-based summary when Claude API is unavailable."""
-    desc = ""
-    if scraped_data.get("text"):
-        # Take first meaningful sentence from scraped text
-        for line in scraped_data["text"].split("."):
-            line = line.strip()
-            if len(line) > 30 and company_name.lower().split()[0] in line.lower():
-                desc = line + "."
-                break
-    if not desc and apollo_data:
-        desc = f"{company_name} is a {apollo_data.get('industry', 'technology')} company."
-    if not desc and upload_context:
-        desc = (
-            str(upload_context.get("description") or "").strip()
-            or str(upload_context.get("core_focus") or "").strip()
-            or str(upload_context.get("account_thesis") or "").strip()
-        )
-
-    return {
-        "description": desc or f"{company_name} — description pending enrichment.",
-        "icp_fit_reasoning": (
-            str((upload_context or {}).get("icp_why") or "").strip()
-            or str((upload_context or {}).get("intent_why") or "").strip()
-            or "Automated analysis unavailable — review manually."
-        ),
-        "industry": (apollo_data or {}).get("industry") or str((upload_context or {}).get("industry") or "Unknown"),
-        "intent_signals_summary": (
-            str((upload_context or {}).get("intent_why") or "").strip()
-            or "No AI analysis available."
-        ),
-        "recommended_approach": str((upload_context or {}).get("beacon_angle") or "").strip(),
-        "talking_points": [
-            value
-            for value in [
-                str((upload_context or {}).get("why_now") or "").strip(),
-                str((upload_context or {}).get("recommended_outreach_strategy") or "").strip(),
-                str((upload_context or {}).get("account_thesis") or "").strip(),
-            ]
-            if value
-        ][:4],
-        "confidence": 20,
-        "_source": "fallback",
-    }
 
 
 def _rule_based_persona(title: str, seniority: str | None) -> str:

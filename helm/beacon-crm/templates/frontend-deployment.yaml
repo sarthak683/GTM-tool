@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beacon.fullname" . }}-frontend
+  labels:
+    {{- include "beacon.labels" . | nindent 4 }}
+    {{- include "beacon.selectorLabels" (dict "context" . "component" "frontend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "beacon.selectorLabels" (dict "context" . "component" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "beacon.selectorLabels" (dict "context" . "component" "frontend") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Frontend runs as the nginx-unprivileged user (uid/gid 101), which differs
+      # from the backend's appuser (10001), so it uses a component-specific uid.
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.frontend.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.frontend.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.frontend.fsGroup }}
+      containers:
+        - name: frontend
+          image: {{ include "beacon.image" (dict "image" .Values.frontend.image "global" .Values.global) }}
+          # nginx-unprivileged writes its pid + client/proxy temp dirs under /tmp,
+          # so the root fs is read-only with /tmp provided as an emptyDir.
+          {{- include "beacon.containerSecurityContext" (dict "context" . "readOnlyRootFilesystem" true) | nindent 10 }}
+          ports:
+            - containerPort: {{ .Values.frontend.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

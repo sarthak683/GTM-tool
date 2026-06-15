@@ -1,21 +1,23 @@
 """
-Web research client — company website scraping + DuckDuckGo.
+Web research client — company website scraping + Serper search.
 
-Sources (all free, no API key):
+Sources:
   - Company's own website: fetches homepage + /about, extracts key text,
     then uses GPT-4o to produce a clean company background summary.
-  - DuckDuckGo: free text search for recent news and milestones.
+  - Serper: Google-backed search API for recent news and milestones.
 
 Used by the pre-meeting intelligence pipeline.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import Optional
 
 import httpx
+
+from app.config import settings
+from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -31,31 +33,48 @@ _SCRAPE_HEADERS = {
 
 
 class WebSearchClient:
-    # ── DuckDuckGo ────────────────────────────────────────────────────────────
+    # ── Serper ────────────────────────────────────────────────────────────────
 
     async def search(self, query: str, max_results: int = 5) -> list[dict]:
         """
-        DuckDuckGo web search. Runs the synchronous DDGS library in a thread
-        pool to avoid blocking the async event loop.
+        Serper web search.
         Returns list of {title, url, snippet}.
         """
+        api_key = settings.SERPER_API_KEY.strip()
+        if not api_key:
+            logger.warning("Serper search requested but SERPER_API_KEY is empty")
+            return []
+
         try:
-            from duckduckgo_search import DDGS
-
-            def _run() -> list[dict]:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(
+                    "https://google.serper.dev/search",
+                    headers={
+                        "X-API-KEY": api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "q": query,
+                        "num": max_results,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                organic = payload.get("organic", [])
                 results = []
-                with DDGS() as ddgs:
-                    for r in ddgs.text(query, max_results=max_results):
-                        results.append({
-                            "title": r.get("title", ""),
-                            "url": r.get("href", ""),
-                            "snippet": r.get("body", ""),
-                        })
+                for item in organic[:max_results]:
+                    if not isinstance(item, dict):
+                        continue
+                    results.append(
+                        {
+                            "title": item.get("title", ""),
+                            "url": item.get("link", ""),
+                            "snippet": item.get("snippet", ""),
+                        }
+                    )
                 return results
-
-            return await asyncio.to_thread(_run)
         except Exception as e:
-            logger.warning(f"DuckDuckGo search failed for '{query}': {e}")
+            logger.warning("Serper search failed for '%s': %s", query, safe_error_message(e))
             return []
 
     async def recent_news(self, company_name: str, domain: str) -> list[dict]:
@@ -78,26 +97,41 @@ class WebSearchClient:
 
     async def search_intent_signals(self, company_name: str, domain: str) -> dict:
         """
-        Targeted searches for buying intent signals:
-        hiring, funding, product launches, tech adoption, pain points.
-        Returns structured dict of detected signals.
+        Single Serper call to detect buying intent signals, then classify
+        results locally into hiring/funding/product buckets via keyword matching.
+        Previously used 3 separate API calls — now uses 1 (saves ~66% Serper credits).
         """
         signals: dict = {"hiring": [], "funding": [], "product": [], "tech": [], "raw_results": []}
         domain_hint = f" {domain}" if domain and not domain.endswith(".unknown") else ""
 
-        # Hiring signals (expanding team = budget available)
-        hiring = await self.search(f'"{company_name}"{domain_hint} hiring OR recruiting OR "open positions" 2025 2026', max_results=3)
-        signals["hiring"] = [{"title": r["title"], "snippet": r["snippet"]} for r in hiring]
+        # One broad query covering all intent signal types
+        results = await self.search(
+            f'"{company_name}"{domain_hint} hiring OR funding OR raised OR launch OR '
+            f'expansion OR partnership OR recruiting OR series 2025 OR 2026',
+            max_results=10,
+        )
+        if not results:
+            return signals
 
-        # Funding signals (fresh capital = buying power)
-        funding = await self.search(f'"{company_name}"{domain_hint} funding OR raised OR investment OR series 2025 2026', max_results=3)
-        signals["funding"] = [{"title": r["title"], "snippet": r["snippet"]} for r in funding]
+        # Classify each result by keyword matching
+        _hiring_kw = {"hiring", "recruiting", "open positions", "job", "careers", "we're hiring", "team"}
+        _funding_kw = {"funding", "raised", "investment", "series", "valuation", "capital", "ipo", "acquisition"}
+        _product_kw = {"launch", "expansion", "partnership", "new product", "release", "growth", "customers"}
 
-        # Product/growth signals
-        product = await self.search(f'"{company_name}"{domain_hint} launch OR expansion OR partnership OR new product 2025 2026', max_results=3)
-        signals["product"] = [{"title": r["title"], "snippet": r["snippet"]} for r in product]
+        for r in results:
+            text = f"{r.get('title', '')} {r.get('snippet', '')}".lower()
+            entry = {"title": r.get("title", ""), "snippet": r.get("snippet", "")}
 
-        signals["raw_results"] = hiring + funding + product
+            if any(kw in text for kw in _hiring_kw):
+                signals["hiring"].append(entry)
+            elif any(kw in text for kw in _funding_kw):
+                signals["funding"].append(entry)
+            elif any(kw in text for kw in _product_kw):
+                signals["product"].append(entry)
+            else:
+                signals["product"].append(entry)  # default bucket
+
+        signals["raw_results"] = results
         return signals
 
     async def scrape_company_pages(self, domain: str) -> dict:
@@ -122,6 +156,7 @@ class WebSearchClient:
 
         raw_text = ""
         pages_scraped = 0
+        urls_scraped: list[str] = []
 
         async with httpx.AsyncClient(
             timeout=12,
@@ -133,10 +168,11 @@ class WebSearchClient:
                 if text and len(text) > 100:
                     raw_text += f"\n\n[{url}]\n{text}"
                     pages_scraped += 1
+                    urls_scraped.append(url)
                     if len(raw_text) > 6000:
                         break
 
-        return {"text": raw_text[:8000], "pages_scraped": pages_scraped}
+        return {"text": raw_text[:8000], "pages_scraped": pages_scraped, "urls_scraped": urls_scraped}
 
     # ── Company website scraping + GPT-4o summary ─────────────────────────────
 
@@ -199,7 +235,7 @@ class WebSearchClient:
                 return None
             return _parse_ai_company_profile(response, company_name, source_url)
         except Exception as e:
-            logger.warning(f"GPT-4o company summary failed for {domain}: {e}")
+            logger.warning("GPT-4o company summary failed for %s: %s", domain, safe_error_message(e))
             return None
 
 

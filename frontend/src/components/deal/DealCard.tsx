@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
@@ -16,7 +17,7 @@ interface DealCardProps {
   companyName?: string;
 }
 
-export default function DealCard({ deal, companyName }: DealCardProps) {
+function DealCard({ deal, companyName }: DealCardProps) {
   const navigate = useNavigate();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: deal.id });
 
@@ -47,8 +48,8 @@ export default function DealCard({ deal, companyName }: DealCardProps) {
             <span>{deal.days_in_stage ?? 0}d</span>
           </div>
           <button
-            onClick={() => navigate(`/deals/${deal.id}`)}
-            className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[12px] font-semibold text-[#ff6b35]"
+            onClick={() => navigate(`/pipeline?deal=${deal.id}`)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[12px] font-semibold text-[#9ace3d]"
           >
             Open <ArrowRight className="h-3 w-3" />
           </button>
@@ -57,3 +58,8 @@ export default function DealCard({ deal, companyName }: DealCardProps) {
     </div>
   );
 }
+
+// Memoized so unrelated Pipeline state changes (drag, filters, the 1s import
+// timer) don't repaint every card. Props are `deal` (stable ref per board load)
+// and the primitive `companyName`, so the default shallow comparison is correct.
+export default memo(DealCard);
