@@ -32,6 +32,7 @@ from app.models.sales_resource import (
 )
 from app.repositories.sales_resource import SalesResourceRepository
 from app.schemas.common import PaginatedResponse
+from app.services.knowledge_context import build_chunks_for_resource
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,8 @@ async def upload_resource(
     if not content.strip():
         raise HTTPException(400, "File appears to be empty — no text could be extracted.")
 
+    chunks = await build_chunks_for_resource(title, description, content)
+
     repo = SalesResourceRepository(session)
     resource = await repo.create({
         "title": title,
@@ -113,6 +116,7 @@ async def upload_resource(
         "file_size": len(file_bytes),
         "tags": tags_list,
         "modules": modules_list,
+        "chunks": chunks,
     })
     return resource
 
@@ -128,8 +132,12 @@ async def create_resource(payload: SalesResourceCreate, session: DBSession, _use
         if m not in VALID_MODULES:
             raise HTTPException(400, f"Invalid module '{m}'. Must be one of: {VALID_MODULES}")
 
+    data = payload.model_dump()
+    data["chunks"] = await build_chunks_for_resource(
+        payload.title, payload.description, payload.content
+    )
     repo = SalesResourceRepository(session)
-    return await repo.create(payload.model_dump())
+    return await repo.create(data)
 
 
 # ── List / search ────────────────────────────────────────────────────────────
@@ -205,6 +213,13 @@ async def update_resource(
         for m in update_data["modules"]:
             if m not in VALID_MODULES:
                 raise HTTPException(400, f"Invalid module '{m}'. Must be one of: {VALID_MODULES}")
+    # Re-embed when content-bearing fields change.
+    if any(k in update_data for k in ("content", "title", "description")):
+        update_data["chunks"] = await build_chunks_for_resource(
+            update_data.get("title", resource.title),
+            update_data.get("description", resource.description),
+            update_data.get("content", resource.content),
+        )
     update_data["updated_at"] = datetime.utcnow()
     return await repo.update(resource, update_data)
 

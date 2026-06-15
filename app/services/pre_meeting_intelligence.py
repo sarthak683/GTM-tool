@@ -968,7 +968,16 @@ async def run_pre_meeting_intelligence(
 
     # ── 11. Knowledge base context ─────────────────────────────────────────────
     from app.services.knowledge_context import get_knowledge_context
-    kb_context = await get_knowledge_context(session, "pre_meeting", limit=5)
+    kb_query = " ".join(filter(None, [
+        (company_profile or {}).get("name"),
+        (company_profile or {}).get("industry"),
+        (company_profile or {}).get("vertical"),
+        meeting.meeting_type,
+        (company_profile or {}).get("dap_tool"),
+    ]))
+    kb_context = await get_knowledge_context(
+        session, "pre_meeting", query=kb_query, limit=5
+    )
 
     # ── 12. GPT-4o executive briefing ─────────────────────────────────────────
     executive_briefing: str | None = None
@@ -1111,7 +1120,15 @@ async def generate_meeting_demo_strategy(
             }
 
     from app.services.knowledge_context import get_knowledge_context as _get_kb
-    kb_context = await _get_kb(session, "demo_strategy", limit=4, max_total_chars=2000)
+    demo_query = " ".join(filter(None, [
+        (company_profile or {}).get("name"),
+        (company_profile or {}).get("industry"),
+        (company_profile or {}).get("dap_tool"),
+        meeting.meeting_type,
+    ]))
+    kb_context = await _get_kb(
+        session, "demo_strategy", query=demo_query, limit=4, max_total_chars=2000
+    )
 
     demo_strategy = await _generate_demo_strategy(
         ai=ai,
