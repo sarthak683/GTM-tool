@@ -49,6 +49,15 @@ def _safe_int(value) -> int:
 _SENDING_CAMPAIGN_STATUSES = {1, 2, 4}  # active, paused, running-subsequences
 
 
+# Campaign IDs Instantly returns 404 for — deleted in the Instantly UI while a
+# sequence still references them. They never come back, so we cache them per
+# worker process to stop re-GETting a known-gone campaign every sync cycle (and
+# to log the deletion once as INFO rather than a WARNING+traceback every 15 min).
+# Intentionally process-local: a worker restart clears it, self-healing the rare
+# case of a transient/incorrect 404.
+_DEAD_CAMPAIGN_IDS: set[str] = set()
+
+
 async def _ensure_campaign_open_tracking(client: InstantlyClient, campaign_id: str) -> bool:
     """Guarantee an actively-sending campaign reports email opens.
 
@@ -66,6 +75,21 @@ async def _ensure_campaign_open_tracking(client: InstantlyClient, campaign_id: s
     """
     try:
         camp = await client.get_campaign(campaign_id)
+    except InstantlyError as exc:
+        if exc.status_code == 404:
+            # Campaign was deleted in the Instantly UI but a sequence still
+            # points at it. It will never return, so record it once (clean INFO,
+            # not a WARNING+traceback) and cache the id so later cycles skip it.
+            if campaign_id not in _DEAD_CAMPAIGN_IDS:
+                _DEAD_CAMPAIGN_IDS.add(campaign_id)
+                logger.info(
+                    "instantly_sync: campaign %s no longer exists on Instantly "
+                    "(deleted upstream) — skipping it from now on",
+                    campaign_id,
+                )
+            return False
+        logger.warning("open_tracking reconcile: get_campaign failed for %s", campaign_id, exc_info=True)
+        return False
     except Exception:
         logger.warning("open_tracking reconcile: get_campaign failed for %s", campaign_id, exc_info=True)
         return False
@@ -373,6 +397,11 @@ async def _async_sync_active_campaigns() -> dict:
         for seq in sequences:
             try:
                 campaign_id = seq.instantly_campaign_id
+
+                # Campaign was deleted on Instantly in a prior cycle — nothing
+                # left to reconcile or sync, so skip without another API call.
+                if campaign_id and campaign_id in _DEAD_CAMPAIGN_IDS:
+                    continue
 
                 # Safety-net: UI-created campaigns linked to our sequences are
                 # born with open tracking off. Flip it on once per campaign so
