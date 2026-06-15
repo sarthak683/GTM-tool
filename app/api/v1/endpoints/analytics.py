@@ -1745,7 +1745,19 @@ async def sales_dashboard(
             region_key = _normalize_geography_key(company_region_for_demo.get(row.company_id))
             if region_key not in filter_geographies:
                 continue
-        is_done = str(row.status or "").strip().lower() == "completed"
+        # A demo counts as "done" when explicitly completed/scored, OR when its
+        # scheduled time has already passed and it wasn't cancelled. Reps almost
+        # never flip status to "completed" (prod: ~41 demo/scheduled vs ~6
+        # demo/completed), so requiring the manual flag left demos_done ~0
+        # board-wide. Time-based inference treats a past, non-cancelled demo as
+        # held. Trade-off: a no-show left in "scheduled" is counted as done.
+        status_norm = str(row.status or "").strip().lower()
+        if status_norm in {"completed", "scored"}:
+            is_done = True
+        elif status_norm == "cancelled":
+            is_done = False
+        else:
+            is_done = row.scheduled_at is not None and row.scheduled_at <= now
         is_converted = bool(row.company_id and row.company_id in converted_company_ids)
         bump_demo(company_sdr.get(row.company_id), done=is_done, converted=is_converted)
 
