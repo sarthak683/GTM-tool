@@ -39,6 +39,7 @@ backend:
     # Recotap targets the prod tenant; the key is injected via secrets.recotapProdApiKey
     # at deploy time. An empty key makes the integration inert (no-op), not fatal.
     RECOTAP_ENVIRONMENT: prod
+    QDRANT_URL: "http://qdrant.qdrant.svc.cluster.local:6333"
 
 # -- Celery Worker (default queue only)
 worker:
@@ -182,6 +183,8 @@ secrets:
   # a secrets values file. Empty = integration inert. (Legacy env name RECOTAP_API_KEY
   # is still accepted by the app for backward compatibility.)
   recotapProdApiKey: ""
+  # OpenAI API key for embeddings / Zippy RAG (PR #5). Empty = mock zero-vectors.
+  openaiApiKey: ""
 
 # -- Pod/container hardening (applied to backend, worker, priority-worker, beat,
 # and frontend deployments). runAsUser/runAsGroup/fsGroup 10001 must match the
