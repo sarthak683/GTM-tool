@@ -3,110 +3,123 @@ import { ZippyPanel } from "./ZippyPanel";
 import { useZippy } from "./ZippyContext";
 
 // Floating launcher. Draggable with pointer capture + direct DOM updates (no
-// React re-render per frame → tracks the cursor 1:1), animates a snap to the
-// nearest corner on release, and rests anchored to that corner via CSS edges so
-// it stays pinned to the real viewport edge. The resting corner persists.
+// React re-render per frame → tracks the cursor 1:1) and it STAYS exactly where
+// you drop it (free placement, persisted). Defaults to the bottom-right corner
+// until moved. Open/closed lives in ZippyContext.
 //
-// IMPORTANT: <html> has `zoom: 0.8` app-wide. With CSS zoom, getBoundingClientRect
-// returns VISUAL (zoomed) px while pointer clientX/Y are LAYOUT (un-zoomed) px.
-// All drag math is done in LAYOUT space; rect values are divided by the zoom to
-// convert. (`style.left`/`top` and `clientX`/`innerWidth`/`MARGIN`/`BTN` are all
-// layout space already.)
+// NOTE: <html> has app-wide `zoom: 0.8`. With CSS zoom, getBoundingClientRect
+// returns VISUAL (zoomed) px while pointer clientX/Y are LAYOUT (un-zoomed) px,
+// and the fixed-positioning viewport in layout space is innerWidth/zoom. All
+// drag math is done in LAYOUT space so the grab point stays under the cursor.
 const BTN = 56; // button size (layout px)
-const MARGIN = 28; // inset from the corner at rest
-const EDGE = 12; // min gap from the edge while dragging
+const MARGIN = 28; // default inset from the bottom-right corner
+const EDGE = 12; // min gap kept from any edge
 const DRAG_THRESHOLD = 6; // px before a press counts as a drag (vs a click)
-const SNAP_MS = 200;
-const STORAGE_KEY = "zippy-launcher-corner";
-const LEGACY_KEY = "zippy-launcher-pos"; // old absolute-pos format — cleaned up
+const STORAGE_KEY = "zippy-launcher-xy";
+const LEGACY_KEYS = ["zippy-launcher-pos", "zippy-launcher-corner"]; // cleaned up
 
-type Corner = "br" | "bl" | "tr" | "tl";
-
-const isLeft = (c: Corner) => c === "bl" || c === "tl";
-const isTop = (c: Corner) => c === "tl" || c === "tr";
+type Pos = { x: number; y: number };
 
 function getZoom(): number {
   const z = parseFloat(getComputedStyle(document.documentElement).zoom || "1");
   return z && isFinite(z) && z > 0 ? z : 1;
 }
 
-// Layout-space top-left of the button, regardless of how it's currently styled.
-function layoutLeftTop(btn: HTMLElement) {
-  const z = getZoom();
-  const r = btn.getBoundingClientRect();
-  return { x: r.left / z, y: r.top / z };
-}
-
-// Pin to a corner via CSS edges — browser keeps it on the live viewport edge.
-function applyCornerAnchor(btn: HTMLElement, c: Corner) {
-  btn.style.transition = "";
-  btn.style.left = isLeft(c) ? `${MARGIN}px` : "auto";
-  btn.style.right = isLeft(c) ? "auto" : `${MARGIN}px`;
-  btn.style.top = isTop(c) ? `${MARGIN}px` : "auto";
-  btn.style.bottom = isTop(c) ? "auto" : `${MARGIN}px`;
-}
-
-// Layout-space viewport: under CSS `zoom`, the fixed-positioning containing
-// block (and the clientX range) is innerWidth/zoom, NOT innerWidth. Using this
-// makes the snap target match where the CSS edge-anchor actually lands (no jump).
+// Layout-space viewport (innerWidth/zoom under CSS zoom).
 function layoutViewport() {
   const z = getZoom();
   return { w: window.innerWidth / z, h: window.innerHeight / z };
 }
 
-function cornerTargetPx(c: Corner) {
+// Layout-space top-left of the button regardless of how it's currently styled.
+function layoutLeftTop(btn: HTMLElement): Pos {
+  const z = getZoom();
+  const r = btn.getBoundingClientRect();
+  return { x: r.left / z, y: r.top / z };
+}
+
+function clampPos(p: Pos): Pos {
   const { w, h } = layoutViewport();
   return {
-    x: isLeft(c) ? MARGIN : w - BTN - MARGIN,
-    y: isTop(c) ? MARGIN : h - BTN - MARGIN,
+    x: Math.min(Math.max(p.x, EDGE), w - BTN - EDGE),
+    y: Math.min(Math.max(p.y, EDGE), h - BTN - EDGE),
   };
 }
 
-function nearestCorner(cx: number, cy: number): Corner {
-  const { w, h } = layoutViewport();
-  const left = cx < w / 2;
-  const top = cy < h / 2;
-  return top ? (left ? "tl" : "tr") : left ? "bl" : "br";
+// Free placement: explicit left/top.
+function applyPos(btn: HTMLElement, p: Pos) {
+  btn.style.transition = "";
+  btn.style.left = `${p.x}px`;
+  btn.style.top = `${p.y}px`;
+  btn.style.right = "auto";
+  btn.style.bottom = "auto";
 }
 
-function loadCorner(): Corner {
+// Default: bottom-right via CSS edges (browser keeps it pinned to the edge).
+function applyDefaultCorner(btn: HTMLElement) {
+  btn.style.transition = "";
+  btn.style.left = "auto";
+  btn.style.top = "auto";
+  btn.style.right = `${MARGIN}px`;
+  btn.style.bottom = `${MARGIN}px`;
+}
+
+function loadPos(): Pos | null {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s === "br" || s === "bl" || s === "tr" || s === "tl") return s;
+    if (s) {
+      const p = JSON.parse(s);
+      if (typeof p?.x === "number" && typeof p?.y === "number") return { x: p.x, y: p.y };
+    }
   } catch {
     /* ignore */
   }
-  return "br";
+  return null;
 }
 
 export function ZippyLauncher() {
   const { open, setOpen } = useZippy();
   const btnRef = useRef<HTMLButtonElement>(null);
-  const cornerRef = useRef<Corner>(loadCorner());
+  const posRef = useRef<Pos | null>(loadPos());
   const drag = useRef<{ id: number; startX: number; startY: number; grabX: number; grabY: number; moved: boolean } | null>(null);
 
-  // Place at the saved corner before first paint. Positioning is fully
-  // imperative, so the React style prop only carries size and re-renders never
-  // fight the drag/snap styles.
+  // Initial placement before first paint; clean up legacy keys.
   useLayoutEffect(() => {
     const btn = btnRef.current;
-    if (btn) applyCornerAnchor(btn, cornerRef.current);
-    try {
-      localStorage.removeItem(LEGACY_KEY);
-    } catch {
-      /* ignore */
+    if (btn) {
+      if (posRef.current) {
+        posRef.current = clampPos(posRef.current);
+        applyPos(btn, posRef.current);
+      } else {
+        applyDefaultCorner(btn);
+      }
+    }
+    for (const k of LEGACY_KEYS) {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
     }
   }, []);
 
+  // Keep it on-screen if the window is resized (re-clamp the saved spot).
   useEffect(() => {
     function onResize() {
       const btn = btnRef.current;
-      if (btn && !drag.current) applyCornerAnchor(btn, cornerRef.current);
+      if (!btn || drag.current) return;
+      if (posRef.current) {
+        posRef.current = clampPos(posRef.current);
+        applyPos(btn, posRef.current);
+      } else {
+        applyDefaultCorner(btn);
+      }
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // ⌘/Ctrl+J toggles, Esc closes.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
@@ -123,12 +136,12 @@ export function ZippyLauncher() {
     if (e.button !== 0) return;
     const btn = btnRef.current;
     if (!btn) return;
-    const lt = layoutLeftTop(btn); // layout-space current position
+    const lt = layoutLeftTop(btn);
     drag.current = {
       id: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      grabX: e.clientX - lt.x, // grab offset, in layout space
+      grabX: e.clientX - lt.x, // grab offset, layout space
       grabY: e.clientY - lt.y,
       moved: false,
     };
@@ -150,7 +163,6 @@ export function ZippyLauncher() {
       btn.style.cursor = "grabbing";
       btn.style.willChange = "left, top";
     }
-    // layout-space top-left = cursor − grab offset; grab point stays under cursor.
     const { w, h } = layoutViewport();
     const x = Math.min(Math.max(e.clientX - d.grabX, EDGE), w - BTN - EDGE);
     const y = Math.min(Math.max(e.clientY - d.grabY, EDGE), h - BTN - EDGE);
@@ -178,38 +190,15 @@ export function ZippyLauncher() {
         setOpen(true); // plain click
         return;
       }
-
-      const cur = layoutLeftTop(btn); // layout space
-      const c = nearestCorner(cur.x + BTN / 2, cur.y + BTN / 2);
-      cornerRef.current = c;
+      // Stay exactly where it was dropped; persist it.
+      const cur = clampPos(layoutLeftTop(btn));
+      posRef.current = cur;
+      applyPos(btn, cur);
       try {
-        localStorage.setItem(STORAGE_KEY, c);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cur));
       } catch {
         /* ignore */
       }
-      const target = cornerTargetPx(c);
-      if (Math.abs(cur.x - target.x) < 1 && Math.abs(cur.y - target.y) < 1) {
-        applyCornerAnchor(btn, c);
-        return;
-      }
-      // Glide (layout space) to the corner, then settle to CSS edge-anchoring.
-      btn.style.left = `${cur.x}px`;
-      btn.style.top = `${cur.y}px`;
-      btn.style.right = "auto";
-      btn.style.bottom = "auto";
-      void btn.offsetWidth;
-      btn.style.transition = `left ${SNAP_MS}ms cubic-bezier(0.22,1,0.36,1), top ${SNAP_MS}ms cubic-bezier(0.22,1,0.36,1)`;
-      btn.style.left = `${target.x}px`;
-      btn.style.top = `${target.y}px`;
-      let settled = false;
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        btn.removeEventListener("transitionend", settle);
-        applyCornerAnchor(btn, c);
-      };
-      btn.addEventListener("transitionend", settle);
-      window.setTimeout(settle, SNAP_MS + 80);
     },
     [setOpen],
   );
@@ -222,7 +211,7 @@ export function ZippyLauncher() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        title="Ask Zippy (⌘J) · drag to a corner"
+        title="Ask Zippy (⌘J) · drag to move"
         aria-label="Open Zippy"
         className="group fixed z-40 flex cursor-grab touch-none select-none items-center justify-center rounded-full bg-gradient-to-br from-violet-600 via-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-500/30 hover:shadow-violet-500/50 active:opacity-90"
         style={{ width: BTN, height: BTN }}
