@@ -390,13 +390,19 @@ export default function Meetings() {
         return [];
       })));
 
+      // Split the "Unassigned" sentinel out of the UUID list: the backend takes
+      // real user IDs in assignee_id and a separate assignee_unassigned boolean.
+      const assigneeUserIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+      const assigneeUnassigned = assigneeFilter.includes("__unassigned__");
+
       const pageResp = await meetingsApi.listPaginated({
         skip: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE,
         status: apiStatusFilter,
         temporalStatus: temporalStatusFilter,
         meetingType: typeFilter,
-        assigneeId: assigneeFilter,
+        assigneeId: assigneeUserIds,
+        assigneeUnassigned,
         linkState: linkFilter,
         q: debouncedSearch || undefined,
         syncedAfter: syncedAfterIso,
@@ -630,7 +636,12 @@ export default function Meetings() {
           />
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
-              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              options={[
+                // Sentinel for meetings with no assignee (deal AE + meeting
+                // owner both null) so nothing slips through unowned.
+                { value: "__unassigned__", label: "Unassigned" },
+                ...visibleUsers.map((u) => ({ value: u.id, label: u.name })),
+              ]}
               selected={assigneeFilter}
               onChange={setAssigneeFilter}
               placeholder="All reps"

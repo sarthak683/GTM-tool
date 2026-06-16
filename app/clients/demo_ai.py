@@ -355,7 +355,10 @@ async def generate_demo_html(
         production_guide, client_name, client_domain, brand_data,
     )
 
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    # max_retries=0: _call_model already retries transient errors with its own
+    # backoff/logging; the SDK's default max_retries=2 would multiply that into
+    # up to 12 HTTP attempts of a 30K-max_tokens request. One retry layer total.
+    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
 
     logger.info(
         "[demo_ai] starting generation — client=%s model=%s "
@@ -426,7 +429,8 @@ async def repair_demo_html(existing_html: str, client_name: str = "Client") -> s
     if not api_key:
         raise RuntimeError("Claude API key is not configured.")
 
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    # max_retries=0 — _call_model owns retries (see generate_demo_html).
+    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
 
     repair_prompt = f"""The following HTML demo is broken or truncated.
 Fix it into a complete, valid, self-contained interactive HTML document.

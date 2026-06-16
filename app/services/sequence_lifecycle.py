@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
@@ -230,11 +230,24 @@ def _reconcile_email_step(
     open_activities: list[Activity] = []
     click_activities: list[Activity] = []
     if fired_at:
-        # Find opens/clicks/replies/bounces that happened after this send
-        # but before the next step's sent (caller won't pass future ones).
+        # Find opens/clicks/replies/bounces that happened after this send but
+        # before the NEXT send. The caller passes the contact's full email
+        # history (sorted asc), so without this bound step 1 would absorb
+        # every later step's opens/clicks and a reply to step 3 would mark
+        # step 1 as replied.
+        next_sent_at: Optional[datetime] = None
         for activity in email_activities:
             if activity.created_at <= fired_at:
                 continue
+            nmeta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
+            if str(nmeta.get("event_type") or "").lower() == "email_sent":
+                next_sent_at = activity.created_at
+                break
+        for activity in email_activities:
+            if activity.created_at <= fired_at:
+                continue
+            if next_sent_at and activity.created_at >= next_sent_at:
+                break
             meta = activity.event_metadata if isinstance(activity.event_metadata, dict) else {}
             event_type = str(meta.get("event_type") or "").lower()
             if event_type == "email_opened":
@@ -410,51 +423,47 @@ def _categorize_activity(activity: Activity) -> str | None:
     return None
 
 
-async def build_sequence_lifecycle(
-    session: AsyncSession, contact_id: UUID
-) -> dict[str, Any]:
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        return {"error": "Contact not found"}
-
-    seq = (
-        await session.execute(
-            select(OutreachSequence).where(OutreachSequence.contact_id == contact_id)
-        )
-    ).scalars().first()
-
+def _no_sequence_payload(contact_id: UUID) -> dict[str, Any]:
     # No sequence at all — report so the rep can generate one.
-    if not seq:
-        return {
-            "contact_id": str(contact_id),
-            "status": "never_launched",
-            "sequence": None,
-            "launched_at": None,
-            "days_since_launch": None,
-            "current_step_index": None,
-            "total_steps": 0,
-            "steps": [],
-            "issues": [
-                {
-                    "severity": "info",
-                    "code": "no_sequence_generated",
-                    "message": "No outreach sequence has been generated for this prospect yet.",
-                }
-            ],
-        }
+    return {
+        "contact_id": str(contact_id),
+        "status": "never_launched",
+        "sequence": None,
+        "launched_at": None,
+        "days_since_launch": None,
+        "current_step_index": None,
+        "total_steps": 0,
+        "steps": [],
+        "issues": [
+            {
+                "severity": "info",
+                "code": "no_sequence_generated",
+                "message": "No outreach sequence has been generated for this prospect yet.",
+            }
+        ],
+    }
 
-    # Pick the plan. Prefer the rich contact-level plan (includes non-email
-    # steps). Fall back to OutreachStep rows (email-only).
-    plan = _plan_from_contact(contact)
-    if not plan:
-        step_rows = (
-            await session.execute(
-                select(OutreachStep).where(OutreachStep.sequence_id == seq.id)
-            )
-        ).scalars().all()
-        if step_rows:
-            plan = _steps_from_outreach(list(step_rows), seq.launched_at)
 
+async def _assemble_lifecycle(
+    session: AsyncSession,
+    contact: Contact,
+    seq: OutreachSequence,
+    plan: list[dict[str, Any]],
+    activities: list[Activity],
+    *,
+    now: datetime,
+    resolve_user_labels: bool,
+) -> dict[str, Any]:
+    """Reconcile a single contact's cadence from already-loaded rows.
+
+    Shared by ``build_sequence_lifecycle`` (drawer — passes full Activity rows
+    and ``resolve_user_labels=True`` so embedded event payloads carry the rep
+    name) and ``build_sequence_lifecycle_summaries`` (list view — passes a
+    reduced column set and ``resolve_user_labels=False`` since it only reads
+    the lightweight rollup fields). The reconcile/rollup logic below never
+    depends on the rich payload columns, so the summary output is identical
+    whichever caller invokes it."""
+    contact_id = contact.id
     launched_at = seq.launched_at
 
     if not launched_at:
@@ -480,8 +489,6 @@ async def build_sequence_lifecycle(
             ],
         }
 
-    now = datetime.utcnow()
-    activities = await _load_activities(session, contact_id)
     # Claim tracker (mutates activities in place — we only use this request
     # scope).
     for a in activities:
@@ -510,28 +517,16 @@ async def build_sequence_lifecycle(
     # Post-pass: resolve created_by_id → display name on every embedded
     # event payload so the drawer can render "by Sarthak" without an extra
     # round trip. Single cache so a rep who logged 5 steps only triggers
-    # one User lookup.
-    user_cache: dict[UUID, str] = {}
-    event_keys = ("send_event", "open_event", "click_event", "reply_event", "bounce_event", "call_event", "linkedin_event")
-    event_list_keys = ("open_events", "click_events")
-    for row in reconciled:
-        for k in event_keys:
-            ev = row.get(k)
-            if not ev:
-                continue
-            uid_raw = ev.get("created_by_id")
-            if uid_raw:
-                try:
-                    label = await _resolve_user_label(session, UUID(uid_raw), user_cache)
-                    ev["created_by_name"] = label
-                except (ValueError, TypeError):
-                    pass
-        for k in event_list_keys:
-            events = row.get(k) or []
-            if not isinstance(events, list):
-                continue
-            for ev in events:
-                if not isinstance(ev, dict):
+    # one User lookup. Skipped for list-view summaries, which discard the
+    # event payloads — so it can't affect their output.
+    if resolve_user_labels:
+        user_cache: dict[UUID, str] = {}
+        event_keys = ("send_event", "open_event", "click_event", "reply_event", "bounce_event", "call_event", "linkedin_event")
+        event_list_keys = ("open_events", "click_events")
+        for row in reconciled:
+            for k in event_keys:
+                ev = row.get(k)
+                if not ev:
                     continue
                 uid_raw = ev.get("created_by_id")
                 if uid_raw:
@@ -540,6 +535,20 @@ async def build_sequence_lifecycle(
                         ev["created_by_name"] = label
                     except (ValueError, TypeError):
                         pass
+            for k in event_list_keys:
+                events = row.get(k) or []
+                if not isinstance(events, list):
+                    continue
+                for ev in events:
+                    if not isinstance(ev, dict):
+                        continue
+                    uid_raw = ev.get("created_by_id")
+                    if uid_raw:
+                        try:
+                            label = await _resolve_user_label(session, UUID(uid_raw), user_cache)
+                            ev["created_by_name"] = label
+                        except (ValueError, TypeError):
+                            pass
 
     # If the prospect replied or booked, mark remaining email steps skipped.
     contact_status = (contact.sequence_status or "").lower()
@@ -641,16 +650,223 @@ async def build_sequence_lifecycle(
     }
 
 
+async def build_sequence_lifecycle(
+    session: AsyncSession, contact_id: UUID
+) -> dict[str, Any]:
+    contact = await session.get(Contact, contact_id)
+    if not contact:
+        return {"error": "Contact not found"}
+
+    seq = (
+        await session.execute(
+            select(OutreachSequence).where(OutreachSequence.contact_id == contact_id)
+        )
+    ).scalars().first()
+
+    # No sequence at all — report so the rep can generate one.
+    if not seq:
+        return _no_sequence_payload(contact_id)
+
+    # Pick the plan. Prefer the rich contact-level plan (includes non-email
+    # steps). Fall back to OutreachStep rows (email-only).
+    plan = _plan_from_contact(contact)
+    if not plan:
+        step_rows = (
+            await session.execute(
+                select(OutreachStep).where(OutreachStep.sequence_id == seq.id)
+            )
+        ).scalars().all()
+        if step_rows:
+            plan = _steps_from_outreach(list(step_rows), seq.launched_at)
+
+    # Drawer path: full Activity rows so embedded event payloads render the
+    # complete body / envelope / recording, and resolve rep display names.
+    activities = await _load_activities(session, contact_id) if seq.launched_at else []
+    return await _assemble_lifecycle(
+        session,
+        contact,
+        seq,
+        plan,
+        activities,
+        now=datetime.utcnow(),
+        resolve_user_labels=True,
+    )
+
+
+class _LiteActivity:
+    """Minimal stand-in for an Activity row in the batched summaries path.
+
+    Carries only the columns the reconcile/categorize/rollup logic reads to
+    derive step state and the top-level status; the rich per-event payload
+    columns are intentionally absent (None) because list-view summaries
+    discard those payloads. Mutable so the reconcilers can set ``_claimed``.
+    """
+
+    __slots__ = (
+        "created_at", "type", "source", "medium", "event_metadata",
+        "email_subject", "ai_summary", "content", "call_outcome",
+        "email_from", "email_to", "email_cc", "id", "external_source",
+        "external_source_id", "call_duration", "recording_url",
+        "aircall_user_name", "call_id", "created_by_id", "_claimed",
+    )
+
+    def __init__(self, created_at, type_, source, medium, event_type):
+        self.created_at = created_at
+        self.type = type_
+        self.source = source
+        self.medium = medium
+        # Reconstruct the only metadata key the reconcilers consult so
+        # ``meta.get("event_type")`` behaves identically to a full row.
+        self.event_metadata = {"event_type": event_type} if event_type else None
+        # Payload-only columns the summaries never serialize.
+        self.email_subject = None
+        self.ai_summary = None
+        self.content = None
+        self.call_outcome = None
+        self.email_from = None
+        self.email_to = None
+        self.email_cc = None
+        self.id = None
+        self.external_source = None
+        self.external_source_id = None
+        self.call_duration = None
+        self.recording_url = None
+        self.aircall_user_name = None
+        self.call_id = None
+        self.created_by_id = None
+        self._claimed = False
+
+
 async def build_sequence_lifecycle_summaries(
     session: AsyncSession, contact_ids: list[UUID]
 ) -> dict[UUID, dict[str, Any]]:
     """Compact summary used for list views: {status, done_count, total_steps,
-    current_channel, overdue_count}. One query per contact is fine for the
-    typical list page size (≤ 50)."""
+    current_channel, overdue_count}.
+
+    Batched: instead of N×(get Contact + select sequence + maybe select steps
+    + load up to 200 full Activity rows) — ~150-200 sequential queries and MBs
+    of metadata JSONB per page — preload contacts, sequences and steps with
+    three ``IN (:ids)`` queries and the per-contact activities the reconciler
+    actually needs with a single windowed query that selects only the scalar
+    columns driving step state (event_type extracted in SQL, not the full
+    blob). The existing reconcile logic then runs in memory per contact, so the
+    output is byte-identical to the per-contact path."""
     out: dict[UUID, dict[str, Any]] = {}
+    ids = [cid for cid in contact_ids if cid is not None]
+    if not ids:
+        return out
+
+    now = datetime.utcnow()
+
+    contacts = (
+        await session.execute(
+            select(Contact).where(Contact.id.in_(ids))
+        )
+    ).scalars().all()
+    contacts_by_id: dict[UUID, Contact] = {c.id: c for c in contacts}
+
+    sequences = (
+        await session.execute(
+            select(OutreachSequence).where(OutreachSequence.contact_id.in_(ids))
+        )
+    ).scalars().all()
+    # Mirror per-contact `.first()`: keep the first sequence seen per contact.
+    seq_by_contact: dict[UUID, OutreachSequence] = {}
+    for s in sequences:
+        seq_by_contact.setdefault(s.contact_id, s)
+
+    # Steps only matter for sequences whose contact lacks an enrichment plan;
+    # batch-load them all up front and group by sequence_id.
+    seq_ids = [s.id for s in seq_by_contact.values() if s.id]
+    steps_by_seq: dict[UUID, list[OutreachStep]] = {}
+    if seq_ids:
+        step_rows = (
+            await session.execute(
+                select(OutreachStep).where(OutreachStep.sequence_id.in_(seq_ids))
+            )
+        ).scalars().all()
+        for st in step_rows:
+            steps_by_seq.setdefault(st.sequence_id, []).append(st)
+
+    # Only launched sequences consult activities. Cap per-contact at 200 (the
+    # per-contact LIMIT) via row_number() in ascending created_at order — the
+    # same window/order _load_activities uses — and select only the scalar
+    # columns the reconciler reads, with event_type pulled out of the JSONB so
+    # we never ship the ~28KB metadata blobs.
+    launched_contact_ids = [
+        cid for cid, s in seq_by_contact.items()
+        if s.launched_at and cid in contacts_by_id
+    ]
+    acts_by_contact: dict[UUID, list[_LiteActivity]] = {}
+    if launched_contact_ids:
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=Activity.contact_id,
+                order_by=Activity.created_at.asc(),
+            )
+            .label("rn")
+        )
+        event_type = Activity.event_metadata["event_type"].astext.label("event_type")
+        ranked = (
+            select(
+                Activity.contact_id.label("contact_id"),
+                Activity.created_at.label("created_at"),
+                Activity.type.label("type"),
+                Activity.source.label("source"),
+                Activity.medium.label("medium"),
+                event_type,
+                rn,
+            )
+            .where(Activity.contact_id.in_(launched_contact_ids))
+            .subquery()
+        )
+        act_rows = (
+            await session.execute(
+                select(
+                    ranked.c.contact_id,
+                    ranked.c.created_at,
+                    ranked.c.type,
+                    ranked.c.source,
+                    ranked.c.medium,
+                    ranked.c.event_type,
+                )
+                .where(ranked.c.rn <= 200)
+                .order_by(ranked.c.contact_id, ranked.c.created_at.asc())
+            )
+        ).all()
+        for r in act_rows:
+            acts_by_contact.setdefault(r.contact_id, []).append(
+                _LiteActivity(r.created_at, r.type, r.source, r.medium, r.event_type)
+            )
+
     for cid in contact_ids:
+        contact = contacts_by_id.get(cid)
+        if not contact:
+            continue
+        seq = seq_by_contact.get(cid)
         try:
-            full = await build_sequence_lifecycle(session, cid)
+            if not seq:
+                # Per-contact path returns a never_launched payload here; the
+                # original summaries loop kept it (no "error" key), so do the
+                # same.
+                full = _no_sequence_payload(cid)
+            else:
+                plan = _plan_from_contact(contact)
+                if not plan:
+                    step_rows = steps_by_seq.get(seq.id) or []
+                    if step_rows:
+                        plan = _steps_from_outreach(list(step_rows), seq.launched_at)
+                activities = acts_by_contact.get(cid, []) if seq.launched_at else []
+                full = await _assemble_lifecycle(
+                    session,
+                    contact,
+                    seq,
+                    plan,
+                    activities,
+                    now=now,
+                    resolve_user_labels=False,
+                )
         except Exception:
             continue
         if full.get("error"):

@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to this file so it works regardless of CWD
@@ -88,8 +89,18 @@ class Settings(BaseSettings):
     CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-6"
     CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
 
+    # Master switch for ALL system-generated tasks. Default is OFF: the product
+    # is "manual tasks only" — the task list contains only human-created
+    # (task_type="manual") tasks. Every automated generator is short-circuited
+    # at the single chokepoint (refresh_system_tasks_for_entity) — AI emitter,
+    # deterministic critical rules, stage playbook, contact/company hygiene, and
+    # personal-email-sync. The generator code stays in-tree and dormant, so
+    # auto-tasks can be re-enabled by setting this back to true (env override).
+    ENABLE_SYSTEM_TASKS: bool = False
+
     # AI task emitter — the 5 LLM-gated codes (T-STAGE, T-AMOUNT, T-CLOSE,
     # T-MEDPICC, T-CONTACT). T-CRITICAL always runs (deterministic rules).
+    # Finer sub-gate: only relevant when ENABLE_SYSTEM_TASKS is true.
     ENABLE_AI_TASK_EMITTER: bool = True
 
     # Demo generation tuning
@@ -176,6 +187,27 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str = ""   # base64url-encoded uncompressed P-256 public key
     VAPID_PRIVATE_KEY: str = ""  # base64url-encoded P-256 private key (never commit)
     VAPID_SUBJECT: str = "mailto:admin@beacon.li"  # mailto: or https: contact for push services
+
+    # Recotap (ABM / account intelligence) — sandbox + prod share an X-Api-Key
+    # auth. Mind the hyphen: sandbox is reco-tap.com, prod is recotap.com.
+    RECOTAP_ENVIRONMENT: str = "sandbox"  # "sandbox" | "prod"
+    RECOTAP_SANDBOX_API_KEY: str = ""
+    # Prod X-Api-Key. Accept both RECOTAP_PROD_API_KEY (symmetric with the sandbox
+    # var, preferred) and the legacy RECOTAP_API_KEY so existing envs keep working.
+    RECOTAP_PROD_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("RECOTAP_PROD_API_KEY", "RECOTAP_API_KEY"),
+    )
+    RECOTAP_SANDBOX_BASE_URL: str = "https://sandboxapi.reco-tap.com/api/v1"
+    RECOTAP_PROD_BASE_URL: str = "https://eapi.recotap.com/api/v1"
+
+    @property
+    def recotap_base_url(self) -> str:
+        return self.RECOTAP_PROD_BASE_URL if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_BASE_URL
+
+    @property
+    def recotap_api_key(self) -> str:
+        return self.RECOTAP_PROD_API_KEY if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_API_KEY
 
     # Aircall
     AIRCALL_API_ID: str = ""

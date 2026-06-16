@@ -138,8 +138,6 @@ export default function CompanyDetail() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [contactBriefs, setContactBriefs] = useState<Record<string, string>>({});
   const [contactBriefLoading, setContactBriefLoading] = useState<Record<string, boolean>>({});
-  const [discoveringContacts, setDiscoveringContacts] = useState(false);
-  const [discoverMsg, setDiscoverMsg] = useState("");
 
   const loadCompanyContext = async (companyId: string) => {
     const [c, cs, ds, sig] = await Promise.all([
@@ -239,26 +237,6 @@ export default function CompanyDetail() {
       setDealError(e instanceof Error ? e.message : "Failed to create deal");
     } finally {
       setCreatingDeal(false);
-    }
-  };
-
-  const handleDiscoverContacts = async () => {
-    if (!company) return;
-    setDiscoveringContacts(true);
-    setDiscoverMsg("Searching Hunter…");
-    try {
-      const found = await contactsApi.discover(company.id);
-      if (found.length === 0) {
-        setDiscoverMsg("No new contacts found");
-      } else {
-        setContacts((prev) => [...prev, ...found]);
-        setDiscoverMsg(`${found.length} contact${found.length !== 1 ? "s" : ""} added`);
-      }
-      setTimeout(() => setDiscoverMsg(""), 4000);
-    } catch {
-      setDiscoverMsg("Discovery failed");
-    } finally {
-      setDiscoveringContacts(false);
     }
   };
 
@@ -452,15 +430,6 @@ export default function CompanyDetail() {
 
             <CompanySection
               title={`Stakeholders (${contacts.length})`}
-              action={
-                <div className="flex items-center gap-2">
-                  {discoverMsg && <span className="text-[12px] text-[#9ace3d] font-semibold">{discoverMsg}</span>}
-                  <button className="crm-button soft" onClick={handleDiscoverContacts} disabled={discoveringContacts}>
-                    <Users className={`h-3.5 w-3.5 ${discoveringContacts ? "animate-pulse" : ""}`} />
-                    {discoveringContacts ? "Searching..." : "Find Contacts"}
-                  </button>
-                </div>
-              }
             >
               {contacts.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-[#d5e2ee] bg-[#fbfdff] p-5">

@@ -37,8 +37,15 @@ async def build_outreach_overview(
     launched_q = select(func.count(OutreachSequence.id)).where(and_(*seq_filters))
     launched = (await session.execute(launched_q)).scalar() or 0
 
-    contacts_in_window_q = select(Contact).where(and_(*contact_filters))
-    contacts_in_window = (await session.execute(contacts_in_window_q)).scalars().all()
+    # Only the four columns the counters below read — select(Contact) dragged
+    # enrichment_data/talking_points JSONB for every contact in the window.
+    contacts_in_window_q = select(
+        Contact.email_open_count,
+        Contact.email_click_count,
+        Contact.sequence_status,
+        Contact.instantly_status,
+    ).where(and_(*contact_filters))
+    contacts_in_window = (await session.execute(contacts_in_window_q)).all()
 
     sent = sum(1 for c in contacts_in_window if (c.email_open_count or 0) > 0 or (c.sequence_status or "") in {
         "queued_instantly", "active", "interested", "not_interested", "meeting_booked", "bounced", "unsubscribed"

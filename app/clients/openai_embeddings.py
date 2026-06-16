@@ -26,7 +26,7 @@ _MODEL_DIMS = {
 
 
 def _dims() -> int:
-    return _MODEL_DIMS.get(settings.OPENAI_EMBEDDING_MODEL, 1536)
+    return _MODEL_DIMS.get(settings.OPENAI_EMBED_MODEL, 1536)
 
 
 def _get_client():
@@ -37,7 +37,7 @@ def _get_client():
 class OpenAIEmbeddingsClient:
     def __init__(self) -> None:
         self.api_key = settings.OPENAI_API_KEY
-        self.model = settings.OPENAI_EMBEDDING_MODEL
+        self.model = settings.OPENAI_EMBED_MODEL
         self.mock = not self.api_key
 
     async def embed(self, text: str) -> list[float]:

@@ -118,20 +118,31 @@ async def global_search(
         )
     ).all()
 
-    meeting_rows = (
-        await session.execute(
-            select(Meeting, Company.name.label("company_name"))
-            .outerjoin(Company, Meeting.company_id == Company.id)
-            .where(
-                or_(
-                    Meeting.title.ilike(pattern),
-                    Meeting.meeting_type.ilike(pattern),
-                    Company.name.ilike(pattern),
-                )
+    meeting_stmt = (
+        select(Meeting, Company.name.label("company_name"))
+        .outerjoin(Company, Meeting.company_id == Company.id)
+        .where(
+            or_(
+                Meeting.title.ilike(pattern),
+                Meeting.meeting_type.ilike(pattern),
+                Company.name.ilike(pattern),
             )
-            .order_by(Meeting.updated_at.desc())
-            .limit(4)
         )
+    )
+    # Mirror GET /meetings visibility: non-admins must not surface other
+    # reps' meetings through search — only their own (owned/synced) or those
+    # on their deals/accounts.
+    if current_user.role != "admin":
+        meeting_stmt = meeting_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id).where(
+            or_(
+                Meeting.owner_user_id == current_user.id,
+                Meeting.synced_by_user_id == current_user.id,
+                Deal.assigned_to_id == current_user.id,
+                Company.assigned_to_id == current_user.id,
+            )
+        )
+    meeting_rows = (
+        await session.execute(meeting_stmt.order_by(Meeting.updated_at.desc()).limit(4))
     ).all()
 
     task_rows = (

@@ -2,9 +2,12 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+from app.models.meeting import to_naive_utc
 
 
 TASK_ENTITY_TYPES = {"company", "contact", "deal"}
@@ -81,6 +84,11 @@ class TaskCreate(SQLModel):
     assigned_role: Optional[str] = None
     assigned_to_id: Optional[UUID] = None
 
+    @field_validator("due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
+
 
 class TaskUpdate(SQLModel):
     title: Optional[str] = None
@@ -90,6 +98,11 @@ class TaskUpdate(SQLModel):
     status: Optional[str] = None
     assigned_role: Optional[str] = None
     assigned_to_id: Optional[UUID] = None
+
+    @field_validator("due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
 
 
 class TaskRead(TaskBase):

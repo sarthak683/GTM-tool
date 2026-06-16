@@ -324,6 +324,7 @@ export type SalesRepActivityRow = {
   key: string;
   user_id?: string | null;
   rep_name: string;
+  role?: string | null;
   calls: number;
   connected_calls: number;
   live_calls: number;
@@ -335,6 +336,9 @@ export type SalesRepActivityRow = {
   total: number;
   active_deals: number;
   pipeline_amount: number;
+  demos_scheduled: number;
+  demos_done: number;
+  demos_converted: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -456,7 +460,14 @@ export type SalesDashboard = {
   forecast_granularity?: "week" | "month";
   conversion_funnel: SalesFunnelStep[];
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
+  accounts_by_status?: SalesAccountStatusRow[];
   quota: SalesQuotaState;
+};
+
+export type SalesAccountStatusRow = {
+  key: string;
+  label: string;
+  count: number;
 };
 
 export type SalesActivityDrilldownRow = {

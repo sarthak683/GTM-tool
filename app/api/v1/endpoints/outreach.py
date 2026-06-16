@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -24,6 +25,7 @@ from app.repositories.outreach import OutreachRepository
 from app.services.outreach_generator import generate_sequence
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/instantly/campaigns")
@@ -36,6 +38,9 @@ async def list_instantly_campaigns(_user: CurrentUser):
     try:
         campaigns = await InstantlyClient().list_campaigns(limit=200)
     except Exception:
+        # Degrade to an empty list rather than 500, but log it — a silent except
+        # here once masked a 400 ("limit must be <= 100") as "no campaigns found".
+        logger.exception("list_instantly_campaigns: failed to fetch Instantly campaigns")
         return {"campaigns": []}
     slim = []
     for c in campaigns or []:

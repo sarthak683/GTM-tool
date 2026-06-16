@@ -23,6 +23,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -54,6 +55,14 @@ from app.services.data_reset import (
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.icp_scorer import score_company
+from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
+from app.services.recotap import (
+    normalize_domain as recotap_domain,
+    pull_into_db as recotap_pull,
+    push_crm_status as recotap_push_status,
+    seed_mock_signals as recotap_seed,
+    signals_by_domain as recotap_signals,
+)
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
 
@@ -709,7 +718,12 @@ async def _process_uploaded_rows(
                 else:
                     attached_existing += 1
             else:
-                company = Company(**fields, sourcing_batch_id=batch_id)
+                company = Company(
+                    **fields,
+                    sourcing_batch_id=batch_id,
+                    created_by_id=UUID(admin_payload["id"]) if admin_payload.get("id") else None,
+                    created_by_name=admin_payload.get("name"),
+                )
                 append_company_activity_log(
                     company,
                     action="company_created",
@@ -1131,9 +1145,11 @@ async def list_sourced_companies(
     q: str | None = Query(default=None),
     icp_tier: str | None = Query(default=None),
     disposition: str | None = Query(default=None),
+    account_status: str | None = Query(default=None, description="One or more account_status values (comma-separated). Use 'unset' for accounts with no status."),
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage."),
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
@@ -1155,21 +1171,73 @@ async def list_sourced_companies(
         )
     stmt = _apply_text_multi_filter(stmt, Company.icp_tier, icp_tier)
     stmt = _apply_text_multi_filter(stmt, Company.disposition, disposition)
+    if account_status:
+        status_tokens = [t.strip().lower() for t in str(account_status).split(",") if t.strip()]
+        status_clauses = []
+        real_statuses = [t for t in status_tokens if t != "unset"]
+        if real_statuses:
+            status_clauses.append(Company.account_status.in_(real_statuses))
+        if "unset" in status_tokens:
+            status_clauses.append(or_(Company.account_status.is_(None), Company.account_status == ""))
+        if status_clauses:
+            stmt = stmt.where(or_(*status_clauses))
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, recommended_outreach_lane)
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
         owner_uuids: list[UUID] = []
+        owner_unassigned = False
         for raw in str(owner_id).split(","):
             raw = raw.strip()
             if not raw:
+                continue
+            # Mirror the contacts repository: a "__unassigned__" sentinel means
+            # "no owner" (both ownership slots null), OR-ed in alongside any real
+            # owner ids so reps can surface accounts that slipped through.
+            if raw == "__unassigned__":
+                owner_unassigned = True
                 continue
             try:
                 owner_uuids.append(UUID(raw))
             except ValueError:
                 continue
+        owner_clauses = []
         if owner_uuids:
-            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+        if owner_unassigned:
+            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
+        if owner_clauses:
+            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+
+    # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
+    # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
+    # accounts with no Recotap row or an empty/null stage.
+    if journey_stage:
+        stages = [s.strip() for s in str(journey_stage).split(",") if s.strip()]
+        want_not_scored = "not_scored" in stages
+        real_stages = [s for s in stages if s != "not_scored"]
+        journey_clauses = []
+        if real_stages:
+            journey_clauses.append(
+                Company.id.in_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.in_(real_stages),
+                    )
+                )
+            )
+        if want_not_scored:
+            journey_clauses.append(
+                Company.id.notin_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.is_not(None),
+                        RecotapAccount.journey_stage != "",
+                    )
+                )
+            )
+        if journey_clauses:
+            stmt = stmt.where(or_(*journey_clauses) if len(journey_clauses) > 1 else journey_clauses[0])
 
     # Advanced filter: prospects (contacts) per account. We materialise a
     # per-company count via a correlated subquery and apply >= / <= bounds.
@@ -1200,7 +1268,11 @@ async def list_sourced_companies(
             .limit(page.limit)
         )
     ).scalars().all()
-    return PaginatedResponse.build(items=items, total=total, skip=page.skip, limit=page.limit)
+    reads = [CompanyRead.model_validate(company) for company in items]
+    sig = await recotap_signals(session, [company.domain for company in items])
+    for read, company in zip(reads, items):
+        read.recotap = sig.get(recotap_domain(company.domain))
+    return PaginatedResponse.build(items=reads, total=total, skip=page.skip, limit=page.limit)
 
 
 @router.get("/summary", response_model=CompanySourcingSummary)
@@ -1215,17 +1287,50 @@ async def get_sourced_company_summary(
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
         owner_uuids: list[UUID] = []
+        owner_unassigned = False
         for raw in str(owner_id).split(","):
             raw = raw.strip()
             if not raw:
+                continue
+            # Mirror the contacts repository: a "__unassigned__" sentinel means
+            # "no owner" (both ownership slots null), OR-ed in alongside any real
+            # owner ids so reps can surface accounts that slipped through.
+            if raw == "__unassigned__":
+                owner_unassigned = True
                 continue
             try:
                 owner_uuids.append(UUID(raw))
             except ValueError:
                 continue
+        owner_clauses = []
         if owner_uuids:
-            stmt = stmt.where(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+        if owner_unassigned:
+            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
+        if owner_clauses:
+            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
 
+    # The summary only inspects a handful of columns per company (the counters
+    # below + the JSONB keys account_priority_snapshot / _icp_analysis read).
+    # Load just those and skip the heavy unused blobs (enrichment_sources,
+    # tech_stack) and the long Text columns, so computing ~12 counters no longer
+    # drags the whole companies table — including columns this handler never
+    # touches — into memory. Behavior and response shape are unchanged.
+    stmt = stmt.options(
+        load_only(
+            Company.icp_tier,
+            Company.disposition,
+            Company.domain,
+            Company.enriched_at,
+            Company.outreach_plan,
+            Company.enrichment_cache,
+            Company.intent_signals,
+            Company.prospecting_profile,
+            Company.recommended_outreach_lane,
+            Company.outreach_status,
+            Company.icp_score,
+        )
+    )
     companies = (await session.execute(stmt)).scalars().all()
 
     hot_count = 0
@@ -1296,7 +1401,7 @@ async def create_manual_company(
 
     filename = f"Manual entry - {name}"
     domain = (payload.domain or "").strip()
-    normalized_domain = domain.lower().replace("https://", "").replace("http://", "").lstrip("www.").split("/")[0] if domain else ""
+    normalized_domain = domain.lower().replace("https://", "").replace("http://", "").removeprefix("www.").split("/")[0] if domain else ""
     fake_row = {"company name": name}
     if normalized_domain:
         fake_row["domain"] = normalized_domain
@@ -1372,7 +1477,12 @@ async def create_manual_company(
         company, created = await get_or_create_company_by_domain(
             session,
             fields["domain"],
-            defaults={**create_fields, "sourcing_batch_id": batch.id},
+            defaults={
+                **create_fields,
+                "sourcing_batch_id": batch.id,
+                "created_by_id": current_user.id,
+                "created_by_name": current_user.name,
+            },
         )
         if created:
             append_company_activity_log(
@@ -1395,7 +1505,7 @@ async def create_manual_company(
                 metadata={"batch_id": str(batch.id)},
             )
     else:
-        company = Company(**fields, sourcing_batch_id=batch.id)
+        company = Company(**fields, sourcing_batch_id=batch.id, created_by_id=current_user.id, created_by_name=current_user.name)
         append_company_activity_log(
             company,
             action="manual_company_created",
@@ -1456,7 +1566,79 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
     cache = dict(read.enrichment_cache or {})
     cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)
     read.enrichment_cache = cache
+    sig = await recotap_signals(session, [company.domain])
+    read.recotap = sig.get(recotap_domain(company.domain))
     return read
+
+
+@router.post("/recotap/refresh")
+async def refresh_recotap_signals(
+    _user: CurrentUser,
+    session: DBSession = None,
+    seed: bool | None = None,
+    overwrite: bool = False,
+):
+    """Pull live Recotap account signals into recotap_accounts.
+
+    Mock seeding (deterministic journey-stage/score signals for every sourced
+    company) defaults ON for the sandbox — which scores asynchronously, so the UI
+    needs something to render — and OFF for prod, where real pulled data exists and
+    fabricated signals would pollute it. An explicit ?seed=true/false always wins.
+    """
+    from app.config import settings
+
+    is_prod = settings.RECOTAP_ENVIRONMENT.strip().lower() == "prod"
+    do_seed = (not is_prod) if seed is None else seed
+    pulled = await recotap_pull(session)
+    seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
+    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed}
+
+
+@router.get("/recotap/summary")
+async def recotap_summary(_user: CurrentUser, session: DBSession = None):
+    """Journey-stage + engagement counts across sourced accounts — powers the
+    Account Sourcing journey funnel + filter chips."""
+    total = (
+        await session.execute(select(func.count(Company.id)).where(_account_sourcing_visibility_filter()))
+    ).scalar_one()
+    stage_rows = (
+        await session.execute(
+            select(RecotapAccount.journey_stage, func.count())
+            .where(RecotapAccount.company_id.is_not(None))
+            .group_by(RecotapAccount.journey_stage)
+        )
+    ).all()
+    stages = {s: 0 for s in RECOTAP_JOURNEY_STAGES}
+    scored = 0
+    for stage, cnt in stage_rows:
+        if stage and stage in stages:
+            stages[stage] = cnt
+            scored += cnt
+    eng_rows = (
+        await session.execute(
+            select(RecotapAccount.engagement, func.count())
+            .where(RecotapAccount.company_id.is_not(None))
+            .group_by(RecotapAccount.engagement)
+        )
+    ).all()
+    engagement = {e: 0 for e in RECOTAP_ENGAGEMENT_LEVELS}
+    for eng, cnt in eng_rows:
+        if eng and eng in engagement:
+            engagement[eng] = cnt
+    return {
+        "stages": stages,
+        "engagement": engagement,
+        "scored": scored,
+        "not_scored": max(0, total - scored),
+        "total": total,
+    }
+
+
+@router.post("/recotap/push")
+async def push_recotap_crm_status(_user: CurrentUser, session: DBSession = None, limit: int | None = None):
+    """Push Beacon CRM deal-stage status to Recotap as account tags
+    (Customer / POC / Negotiation / ...). `limit` caps the number pushed (test runs)."""
+    return await recotap_push_status(session, limit=limit)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)

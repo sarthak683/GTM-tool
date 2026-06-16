@@ -302,8 +302,13 @@ async def _find_open_system_task(
             Task.task_type == "system",
             Task.status == "open",
         )
+        # Concurrent refreshers can race in duplicate open rows (no unique
+        # constraint); pick the oldest deterministically instead of raising
+        # MultipleResultsFound and 500ing every task refresh thereafter.
+        .order_by(Task.created_at.asc())
+        .limit(1)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def _recent_system_task_exists(
@@ -3715,6 +3720,13 @@ async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) ->
 
 
 async def refresh_system_tasks_for_entity(session: AsyncSession, entity_type: str, entity_id: UUID) -> None:
+    # Single chokepoint for every automated task generator. When system tasks
+    # are disabled the whole product is "manual tasks only" — return before any
+    # generator (incl. the Opus-calling deal interpreter + AI emitter) runs, so
+    # all ~12 callers (webhooks, activity logging, meeting/email sync, call
+    # dispositions, the task-list load, the Celery health job) become no-ops.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return
     if entity_type == "company":
         await _refresh_company_tasks(session, entity_id)
     elif entity_type == "contact":

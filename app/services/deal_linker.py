@@ -78,12 +78,20 @@ def _name_from(name: str, email: str) -> tuple[str, str]:
 
 
 async def reconcile_deal_stakeholders(
-    session, deal: Deal, *, create_from_signals: bool = True
+    session,
+    deal: Deal,
+    *,
+    create_from_signals: bool = True,
+    internal_domains: set[str] | None = None,
 ) -> dict:
     """Attach stakeholders to a deal from its own account + meetings + emails.
 
     Returns {"linked": n, "created": n}. No-ops on a deal with no company_id
     (can't anchor a contact to an account).
+
+    `internal_domains` lets batch callers (the nightly health task) fetch the
+    workspace's internal-domain set once instead of once per deal; when None
+    it is fetched here exactly as before.
     """
     if not deal.company_id:
         return {"linked": 0, "created": 0}
@@ -106,14 +114,17 @@ async def reconcile_deal_stakeholders(
         linked += 1
 
     # 1) The account's existing contacts — link any not already on the deal.
-    by_email: dict[str, Contact] = {}
+    # Only id + email are used downstream, so don't load full Contact rows.
+    by_email: dict[str, UUID] = {}
     company_contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == deal.company_id))
-    ).scalars().all()
-    for contact in company_contacts:
-        if contact.email:
-            by_email[contact.email.strip().lower()] = contact
-        await _link(contact.id)
+        await session.execute(
+            select(Contact.id, Contact.email).where(Contact.company_id == deal.company_id)
+        )
+    ).all()
+    for contact_id, contact_email in company_contacts:
+        if contact_email:
+            by_email[contact_email.strip().lower()] = contact_id
+        await _link(contact_id)
 
     if not create_from_signals:
         return {"linked": linked, "created": created}
@@ -128,18 +139,19 @@ async def reconcile_deal_stakeholders(
     if not company_domain or company_domain.endswith(".unknown"):
         return {"linked": linked, "created": created}
 
-    internal_domains = await get_internal_domains(session)
+    if internal_domains is None:
+        internal_domains = await get_internal_domains(session)
 
     def _is_company_stakeholder(email: str) -> bool:
         return _candidate_ok(email, internal_domains) and email.rsplit("@", 1)[1] == company_domain
 
     # Gather stakeholder emails from the deal's own meetings + emails (domain-matched).
     candidates: dict[str, dict] = {}  # email -> {name, title}
-    meetings = (
-        await session.execute(select(Meeting).where(Meeting.deal_id == deal.id))
+    meeting_attendees = (
+        await session.execute(select(Meeting.attendees).where(Meeting.deal_id == deal.id))
     ).scalars().all()
-    for meeting in meetings:
-        for attendee in meeting.attendees if isinstance(meeting.attendees, list) else []:
+    for attendees in meeting_attendees:
+        for attendee in attendees if isinstance(attendees, list) else []:
             if not isinstance(attendee, dict):
                 continue
             email = _clean_email(attendee.get("email"))
@@ -148,11 +160,13 @@ async def reconcile_deal_stakeholders(
 
     email_acts = (
         await session.execute(
-            select(Activity).where(Activity.deal_id == deal.id, func.lower(Activity.type) == "email")
+            select(Activity.email_from, Activity.email_to).where(
+                Activity.deal_id == deal.id, func.lower(Activity.type) == "email"
+            )
         )
-    ).scalars().all()
-    for act in email_acts:
-        for raw in [act.email_from, *(_split_addrs(act.email_to))]:
+    ).all()
+    for email_from, email_to in email_acts:
+        for raw in [email_from, *(_split_addrs(email_to))]:
             email = _clean_email(raw)
             if _is_company_stakeholder(email):
                 candidates.setdefault(email, {"name": "", "title": ""})
@@ -161,13 +175,13 @@ async def reconcile_deal_stakeholders(
         if created >= _MAX_NEW_PER_DEAL:
             break
         if email in by_email:
-            await _link(by_email[email].id)
+            await _link(by_email[email])
             continue
         existing = (
             await session.execute(select(Contact).where(func.lower(Contact.email) == email))
         ).scalars().first()
         if existing:
-            by_email[email] = existing
+            by_email[email] = existing.id
             await _link(existing.id)
             continue
         first, last = _name_from(meta["name"], email)
@@ -180,7 +194,7 @@ async def reconcile_deal_stakeholders(
         )
         session.add(contact)
         await session.flush()
-        by_email[email] = contact
+        by_email[email] = contact.id
         await _link(contact.id)
         created += 1
 

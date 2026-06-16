@@ -11,21 +11,32 @@ Maps to: green (70+) | yellow (40–69) | red (0–39)
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from app.models.activity import Activity
     from app.models.deal import Deal
 
 
-def compute_health(deal: "Deal", activities: List["Activity"]) -> tuple[int, str]:
-    """Return (health_score 0-100, health str) for a deal."""
+def compute_health(
+    deal: "Deal",
+    activities: List["Activity"],
+    *,
+    last_activity_at: Optional[datetime] = None,
+) -> tuple[int, str]:
+    """Return (health_score 0-100, health str) for a deal.
+
+    Only the LATEST activity timestamp feeds the score. Batch callers can
+    pass it via `last_activity_at` (one grouped max() query for all deals)
+    instead of materializing every Activity row per deal.
+    """
     score = 0
 
     # 1. Engagement recency (40 pts)
-    if activities:
-        last = max(activities, key=lambda a: a.created_at)
-        days_since = (datetime.utcnow() - last.created_at).days
+    if last_activity_at is None and activities:
+        last_activity_at = max(activities, key=lambda a: a.created_at).created_at
+    if last_activity_at is not None:
+        days_since = (datetime.utcnow() - last_activity_at).days
         if days_since <= 3:
             score += 40
         elif days_since <= 7:

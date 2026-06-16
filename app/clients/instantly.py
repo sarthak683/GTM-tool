@@ -224,11 +224,29 @@ class InstantlyClient:
         return await self._request("GET", f"/campaigns/{campaign_id}")
 
     async def list_campaigns(self, limit: int = 100) -> list[dict]:
-        """List all workspace campaigns."""
-        result = await self._request("GET", "/campaigns", params={"limit": limit})
-        if result is None:
-            return []
-        return result if isinstance(result, list) else result.get("items", [])
+        """List all workspace campaigns.
+
+        Instantly caps the page size at 100 — passing more returns HTTP 400
+        ("querystring/limit must be <= 100"), which previously surfaced to the UI
+        as a misleading "No campaigns found". Clamp the page size to 100 and follow
+        the `starting_after` cursor so every campaign loads regardless of count.
+        """
+        per_page = min(max(1, limit), 100)
+        out: list[dict] = []
+        cursor: Optional[str] = None
+        for _ in range(50):  # safety cap (~5000 campaigns)
+            params: dict[str, Any] = {"limit": per_page}
+            if cursor:
+                params["starting_after"] = cursor
+            result = await self._request("GET", "/campaigns", params=params)
+            if not result:
+                break
+            page = result if isinstance(result, list) else result.get("items", [])
+            out.extend(page)
+            cursor = result.get("next_starting_after") if isinstance(result, dict) else None
+            if not cursor or not page:
+                break
+        return out
 
     async def activate_campaign(self, campaign_id: str) -> dict | None:
         """Activate (launch) a campaign."""

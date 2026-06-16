@@ -81,7 +81,7 @@ const QUICK_ACTIONS: QuickAction[] = [
   {
     id: "tasks",
     title: "Open Tasks",
-    subtitle: "Work Beacon recommendations and manual follow-ups.",
+    subtitle: "Work your manual follow-ups and assigned tasks.",
     meta: "Quick Actions",
     link: "/tasks",
     keywords: "tasks to do next actions queue",

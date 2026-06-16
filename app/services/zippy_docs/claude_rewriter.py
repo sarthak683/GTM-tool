@@ -554,9 +554,17 @@ async def _rewrite_batch(
     """
     batch_indices = [b["block_index"] for b in batch]
 
-    user_msg = (
+    # Prompt caching: the sequential batch calls of one generation share the
+    # doc-type context, the FULL outline, the user inputs, the doc-type
+    # instructions, and the output-format rules — only the batch header and
+    # the batch slice vary. Put all the stable text in a FIRST content block
+    # marked with cache_control so batch 1 writes the prefix cache and
+    # batches 2..n read it (the old single-string message put the volatile
+    # "Batch i of n" header at byte ~30, which defeated prefix caching).
+    # Total information sent is unchanged — stable content is merely moved
+    # ahead of the per-batch content.
+    stable_msg = (
         f"Document type: {doc_type}\n"
-        f"Batch {batch_idx + 1} of {total_batches}.\n\n"
         "Here is the FULL document outline (read-only context, every "
         "block in the document):\n"
         f"{json.dumps(full_compact, ensure_ascii=False)}\n\n"
@@ -570,9 +578,6 @@ async def _rewrite_batch(
         "block ABOVE it in the FULL outline — that heading tells you "
         "what belongs in the slot. Only return empty string when the "
         "user inputs genuinely contain nothing for that section.\n\n"
-        f"Batch to rewrite (indices {batch_indices[0]}–"
-        f"{batch_indices[-1]}, {len(batch)} blocks):\n"
-        f"{json.dumps(batch, ensure_ascii=False)}\n\n"
         f"User inputs:\n{json.dumps(user_inputs, ensure_ascii=False)}\n\n"
         f"Instructions for {doc_type}: {instructions}\n\n"
         "Return a JSON array containing ONLY the blocks in this batch — "
@@ -591,13 +596,31 @@ async def _rewrite_batch(
         "never smart/curly quotes.\n"
         "  • No trailing commas before ] or }."
     )
+    batch_msg = (
+        f"Batch {batch_idx + 1} of {total_batches}.\n\n"
+        f"Batch to rewrite (indices {batch_indices[0]}–"
+        f"{batch_indices[-1]}, {len(batch)} blocks):\n"
+        f"{json.dumps(batch, ensure_ascii=False)}\n\n"
+    )
 
     try:
         response = await client.messages.create(
             model=model,
             max_tokens=_MAX_TOKENS,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": stable_msg,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": batch_msg},
+                    ],
+                }
+            ],
         )
         raw = "".join(
             block.text

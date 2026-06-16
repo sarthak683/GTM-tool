@@ -271,3 +271,38 @@
     grid-template-columns: minmax(0, 2.7fr) minmax(360px, 1fr) !important;
   }
 }
+
+/* Recotap buying-journey funnel: 5 stage tiles on desktop, wraps on mobile. */
+.as-journey-funnel {
+  grid-template-columns: repeat(5, 1fr);
+}
+@media (max-width: 640px) {
+  .as-journey-funnel {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Recotap-style account table: aligned columns (desktop), stacked (mobile).
+   Only the Account column flexes; the rest are fixed so the header row and
+   every card row resolve to identical column tracks and line up. */
+.account-sourcing-page .as-company-row,
+.account-sourcing-page .as-company-table-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(260px, 300px);
+  align-items: center;
+  column-gap: 16px;
+}
+.account-sourcing-page .as-company-table-header {
+  border: 1px solid transparent; /* match the card's 1px border for alignment */
+}
+@media (max-width: 980px) {
+  .account-sourcing-page .as-company-table-header { display: none; }
+  .account-sourcing-page .as-company-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  /* On mobile the owner chips left-align beneath the account + signals stack. */
+  .account-sourcing-page .as-company-row .as-col-owners { justify-content: flex-start !important; }
+}
