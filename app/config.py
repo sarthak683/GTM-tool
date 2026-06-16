@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     NDA_TEMPLATE_DRIVE_ID_US: str = ""
     NDA_TEMPLATE_DRIVE_ID_SINGAPORE: str = ""
     # Zippy agent tuning
-    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MODEL: str = "claude-sonnet-4-6"
     ZIPPY_MAX_TOKENS: int = 4000
     ZIPPY_TOP_K: int = 8
     ZIPPY_CHUNK_SIZE: int = 1200

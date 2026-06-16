@@ -11,9 +11,157 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 //   - User: dark bubble right-aligned + timestamp inside
 // The markdown renderer is intentionally simple — we render bold / italic /
 // code / links and split double-newlines into paragraphs.
-export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
+// Field → emoji icon for the deal-update confirmation card.
+const DEAL_FIELD_ICONS: Record<string, string> = {
+  next_step: "📝",
+  next_step_due_at: "📅",
+  stage: "🔄",
+  value: "💰",
+  close_date_est: "📆",
+  description: "📄",
+  tags: "🏷️",
+};
+
+interface ProposedChange {
+  field: string;
+  label: string;
+  value: string;
+}
+
+function formatDue(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffH = (d.getTime() - now.getTime()) / 3600000;
+    if (diffH < 24) return `Today ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    if (diffH < 48) return `Tomorrow ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    return d.toLocaleDateString([], { day: "numeric", month: "short" });
+  } catch { return iso; }
+}
+
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+}
+
+// Extract a confirm_deal_update or confirm_task_create artifact that Claude
+// sometimes embeds directly in message.content as a JSON block rather than
+// (or in addition to) the message.artifacts array.
+//
+// Claude writes it as a single JSON object, either pretty-printed or
+// compact. We need greedy brace-balanced extraction because the object
+// contains nested arrays (proposed_changes), which means a non-greedy
+// regex stops at the wrong closing brace.
+function extractArtifact(content: string): {
+  artifact: any | null;
+  cleanText: string;
+} {
+  // Quick pre-check — skip the expensive scan if neither type is present.
+  if (
+    !content.includes('"confirm_deal_update"') &&
+    !content.includes('"confirm_task_create"')
+  ) {
+    return { artifact: null, cleanText: content };
+  }
+
+  // Walk the string to find the outermost { ... } that contains one of
+  // our known type strings. Handles nested braces/brackets correctly.
+  const start = content.indexOf("{");
+  if (start === -1) return { artifact: null, cleanText: content };
+
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < content.length; i++) {
+    if (content[i] === "{") depth++;
+    else if (content[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end === -1) return { artifact: null, cleanText: content };
+
+  const candidate = content.slice(start, end + 1);
+  try {
+    const artifact = JSON.parse(candidate);
+    if (
+      artifact?.type === "confirm_deal_update" ||
+      artifact?.type === "confirm_task_create"
+    ) {
+      // Also strip any ```json ... ``` code-fence wrapper that Claude emits
+      // around the JSON block so it doesn't leak into the displayed text.
+      let cleanText = (content.slice(0, start) + content.slice(end + 1)).trim();
+      cleanText = cleanText
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
+      return { artifact, cleanText };
+    }
+  } catch {
+    // Not valid JSON — fall through.
+  }
+  return { artifact: null, cleanText: content };
+}
+
+// Pretty-print a task due date: "Today, 18:00" / "Tomorrow, 09:00" /
+// "07 Jun 2026, 09:00". Falls back to the raw string if unparseable.
+function formatTaskDue(iso: string): string {
+  if (!iso) return "No due date";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (sameDay(d, now)) return `Today, ${time}`;
+  if (sameDay(d, tomorrow)) return `Tomorrow, ${time}`;
+  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  return `${date}, ${time}`;
+}
+
+export function ZippyMessageBubble({
+  message,
+  onQuickReply,
+}: {
+  message: ZippyMessage;
+  onQuickReply?: (text: string) => void;
+}) {
   const isUser = message.role === "user";
   const timestamp = formatClock(message.created_at);
+
+  // Split artifacts: file-style ones (have a url) render as link chips;
+  // confirm_deal_update / confirm_task_create render as interactive cards.
+  // Claude sometimes embeds these as JSON inside message.content instead of
+  // (or in addition to) message.artifacts — handle both sources.
+  const allArtifacts = (message.artifacts as any[] | null | undefined) ?? [];
+  const fileArtifacts = allArtifacts.filter((a) => a?.url);
+
+  const artifactFromArray = allArtifacts.find(
+    (a) => a?.type === "confirm_deal_update" || a?.type === "confirm_task_create",
+  );
+  const parsed = !isUser ? extractArtifact(message.content ?? "") : { artifact: null, cleanText: message.content ?? "" };
+  const inlineArtifact = parsed.artifact;
+
+  // Prefer the structured artifact from the array; fall back to inline parse.
+  const confirmArtifact =
+    (artifactFromArray?.type === "confirm_deal_update" ? artifactFromArray : null) ??
+    (inlineArtifact?.type === "confirm_deal_update" ? inlineArtifact : null);
+  const confirmTaskArtifact =
+    (artifactFromArray?.type === "confirm_task_create" ? artifactFromArray : null) ??
+    (inlineArtifact?.type === "confirm_task_create" ? inlineArtifact : null);
+
+  // Strip the raw JSON from what the user sees — only when it came from inline content.
+  const displayText = artifactFromArray ? (message.content ?? "") : parsed.cleanText;
+
+  // Success artifacts — rendered as summary cards after the tool completes.
+  const taskCreatedArtifact = allArtifacts.find((a) => a?.type === "task_created");
+  const dealUpdatedArtifact = allArtifacts.find((a) => a?.type === "deal_updated");
 
   if (isUser) {
     return (
@@ -22,7 +170,7 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
           className="max-w-[78%] rounded-2xl rounded-br-sm bg-stone-900 text-white shadow-sm"
           style={{ padding: "10px 14px", fontSize: 15, lineHeight: 1.55 }}
         >
-          <AssistantContent content={message.content} />
+          <AssistantContent content={displayText} />
           {timestamp && (
             <div
               className="text-right text-stone-300"
@@ -47,11 +195,11 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
         className="min-w-0 max-w-[88%] flex-1 rounded-2xl rounded-tl-sm border border-stone-200 bg-white text-stone-800 shadow-sm"
         style={{ padding: "14px 18px", fontSize: 15, lineHeight: 1.65 }}
       >
-        <AssistantContent content={message.content} />
+        <AssistantContent content={displayText} />
 
-        {message.artifacts && message.artifacts.length > 0 && (
+        {fileArtifacts.length > 0 && (
           <div className="mt-3 flex w-full min-w-0 flex-col gap-2 border-t border-stone-100 pt-3">
-            {message.artifacts.map((artifact) => (
+            {fileArtifacts.map((artifact) => (
               <a
                 key={artifact.url}
                 // Prefer the absolute Google Docs link when the doc has been
@@ -141,7 +289,313 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
           </div>
         )}
 
-        {message.citations && message.citations.length > 0 && (
+        {confirmArtifact && (
+          <div
+            style={{
+              border: "0.5px solid var(--color-border-tertiary, #e5e7eb)",
+              borderRadius: "var(--border-radius-lg, 12px)",
+              background: "var(--color-background-secondary, #f9fafb)",
+              padding: "12px 14px",
+              marginTop: 8,
+            }}
+          >
+            <div
+              className="font-semibold text-stone-800"
+              style={{ fontSize: 13.5, marginBottom: 8 }}
+            >
+              Updating {confirmArtifact.deal_name || "deal"}
+            </div>
+            <div
+              style={{
+                borderTop: "1px solid #e5e7eb",
+                paddingTop: 8,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              {((confirmArtifact.proposed_changes as ProposedChange[]) || []).map(
+                (chg, i) => (
+                  <div
+                    key={`${chg.field}-${i}`}
+                    className="flex items-center text-stone-700"
+                    style={{ fontSize: 13, gap: 6 }}
+                  >
+                    <span>{DEAL_FIELD_ICONS[chg.field] || "•"}</span>
+                    <span className="text-stone-500">{chg.label || chg.field}</span>
+                    <span className="text-stone-400">→</span>
+                    <span className="font-medium text-stone-800">{chg.value}</span>
+                  </div>
+                ),
+              )}
+            </div>
+            <div
+              style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "8px" }}
+            >
+              <button
+                type="button"
+                onClick={() => onQuickReply?.("Yes, go ahead")}
+                style={{
+                  width: "100%",
+                  padding: "11px",
+                  borderRadius: "var(--border-radius-md, 8px)",
+                  background: "#7F77DD",
+                  color: "white",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 16, height: 16 }}>
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+                Yes, update
+              </button>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => onQuickReply?.("I want to modify the changes")}
+                  style={{
+                    padding: "10px",
+                    borderRadius: "var(--border-radius-md, 8px)",
+                    background: "var(--color-background-secondary, #f9fafb)",
+                    border: "0.5px solid var(--color-border-secondary, #d1d5db)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "var(--color-text-primary, #111827)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                  Modify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onQuickReply?.("Cancel, don't update")}
+                  style={{
+                    padding: "10px",
+                    borderRadius: "var(--border-radius-md, 8px)",
+                    background: "var(--color-background-secondary, #f9fafb)",
+                    border: "0.5px solid var(--color-border-secondary, #d1d5db)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "#ef4444",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+        {confirmTaskArtifact && (
+          <div
+            style={{
+              border: "0.5px solid var(--color-border-tertiary, #e5e7eb)",
+              borderRadius: "var(--border-radius-lg, 12px)",
+              background: "var(--color-background-secondary, #f9fafb)",
+              padding: "12px 14px",
+              marginTop: 8,
+            }}
+          >
+            <div
+              className="font-semibold text-stone-800"
+              style={{ fontSize: 13.5, marginBottom: 8 }}
+            >
+              New Task
+            </div>
+            <div
+              style={{
+                borderTop: "1px solid #e5e7eb",
+                paddingTop: 8,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              <div className="flex items-center text-stone-700" style={{ fontSize: 13, gap: 6 }}>
+                <span>📋</span>
+                <span className="text-stone-500">Title</span>
+                <span className="text-stone-400">→</span>
+                <span className="font-medium text-stone-800">{confirmTaskArtifact.title}</span>
+              </div>
+              <div className="flex items-center text-stone-700" style={{ fontSize: 13, gap: 6 }}>
+                <span>🔗</span>
+                <span className="text-stone-500">Linked to</span>
+                <span className="text-stone-400">→</span>
+                <span className="font-medium text-stone-800">
+                  {confirmTaskArtifact.entity_name}
+                  {confirmTaskArtifact.entity_type ? ` (${confirmTaskArtifact.entity_type})` : ""}
+                </span>
+              </div>
+              <div className="flex items-center text-stone-700" style={{ fontSize: 13, gap: 6 }}>
+                <span>📅</span>
+                <span className="text-stone-500">Due</span>
+                <span className="text-stone-400">→</span>
+                <span className="font-medium text-stone-800">
+                  {formatTaskDue(confirmTaskArtifact.due_at || "")}
+                </span>
+              </div>
+              <div className="flex items-center text-stone-700" style={{ fontSize: 13, gap: 6 }}>
+                <span>⚡</span>
+                <span className="text-stone-500">Priority</span>
+                <span className="text-stone-400">→</span>
+                <span className="font-medium text-stone-800" style={{ textTransform: "capitalize" }}>
+                  {confirmTaskArtifact.priority || "medium"}
+                </span>
+              </div>
+              {confirmTaskArtifact.description && (
+                <div className="flex items-center text-stone-700" style={{ fontSize: 13, gap: 6 }}>
+                  <span>📄</span>
+                  <span className="text-stone-500">Notes</span>
+                  <span className="text-stone-400">→</span>
+                  <span className="font-medium text-stone-800">{confirmTaskArtifact.description}</span>
+                </div>
+              )}
+            </div>
+            <div
+              style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "8px" }}
+            >
+              <button
+                type="button"
+                onClick={() => onQuickReply?.("Yes, go ahead")}
+                style={{
+                  width: "100%",
+                  padding: "11px",
+                  borderRadius: "var(--border-radius-md, 8px)",
+                  background: "#7F77DD",
+                  color: "white",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 16, height: 16 }}>
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+                Yes, create
+              </button>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => onQuickReply?.("I want to modify the task")}
+                  style={{
+                    padding: "10px",
+                    borderRadius: "var(--border-radius-md, 8px)",
+                    background: "var(--color-background-secondary, #f9fafb)",
+                    border: "0.5px solid var(--color-border-secondary, #d1d5db)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "var(--color-text-primary, #111827)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                  Modify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onQuickReply?.("Cancel, don't create")}
+                  style={{
+                    padding: "10px",
+                    borderRadius: "var(--border-radius-md, 8px)",
+                    background: "var(--color-background-secondary, #f9fafb)",
+                    border: "0.5px solid var(--color-border-secondary, #d1d5db)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "#ef4444",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+        {taskCreatedArtifact && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: "12px 14px",
+              background: "var(--color-background-secondary, #f9fafb)",
+              borderRadius: "var(--border-radius-lg, 12px)",
+              border: "0.5px solid var(--color-border-tertiary, #e5e7eb)",
+            }}
+          >
+            <p style={{ fontSize: 13, fontWeight: 500, margin: "0 0 4px", color: "var(--color-text-primary, #111827)" }}>
+              ✅ Task created: {taskCreatedArtifact.title}
+            </p>
+            <p style={{ fontSize: 12, color: "var(--color-text-secondary, #6b7280)", margin: 0 }}>
+              {taskCreatedArtifact.due_at
+                ? `Due ${formatDue(taskCreatedArtifact.due_at)} · ${capitalize(taskCreatedArtifact.priority)} priority`
+                : `${capitalize(taskCreatedArtifact.priority)} priority`}
+            </p>
+          </div>
+        )}
+
+        {dealUpdatedArtifact && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: "12px 14px",
+              background: "var(--color-background-secondary, #f9fafb)",
+              borderRadius: "var(--border-radius-lg, 12px)",
+              border: "0.5px solid var(--color-border-tertiary, #e5e7eb)",
+            }}
+          >
+            <p style={{ fontSize: 13, fontWeight: 500, margin: 0, color: "var(--color-text-primary, #111827)" }}>
+              ✅ Deal updated
+            </p>
+          </div>
+        )}
+
+        {message.citations && message.citations.length > 0 &&
+          !confirmArtifact && !confirmTaskArtifact && !taskCreatedArtifact && !dealUpdatedArtifact &&
+          !(message.content?.toLowerCase().includes('task') || message.content?.toLowerCase().includes('deal')) && (
           <div className="mt-5 border-t border-stone-100 pt-3">
             <div
               className="font-semibold uppercase tracking-wide text-stone-500"

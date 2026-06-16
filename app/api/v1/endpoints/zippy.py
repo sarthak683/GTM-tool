@@ -314,3 +314,18 @@ async def delete_conversation(
     await session.delete(convo)
     await session.commit()
     return Response(status_code=204)
+
+
+@router.get("/companies", response_model=list[str])
+async def list_company_names(
+    session: DBSession,
+    current_user: CurrentUser,
+) -> list[str]:
+    """Return all company names for fuzzy matching in the Zippy composer."""
+    from app.models.company import Company
+
+    result = await session.execute(
+        sm_select(Company.name).order_by(Company.name)
+    )
+    names = [row[0] for row in result.all() if row[0]]
+    return names

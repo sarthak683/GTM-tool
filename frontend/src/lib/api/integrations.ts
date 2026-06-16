@@ -274,6 +274,8 @@ export const zippyApi = {
     ),
   delete: (id: string) =>
     request<void>(`/api/v1/zippy/conversations/${id}`, { method: "DELETE" }),
+  getCompanies: (): Promise<string[]> =>
+    request<string[]>(`/api/v1/zippy/companies`).catch(() => []),
 };
 
 export interface IndexedFile {

@@ -27,6 +27,7 @@ backend:
     CLAUDE_MODEL_STANDARD: claude-sonnet-4-20250514
     CLAUDE_MODEL_COMPLEX: claude-opus-4-6
     RESEND_FROM_EMAIL: onboarding@resend.dev
+    QDRANT_URL: "http://qdrant.qdrant.svc.cluster.local:6333"
 
 # -- Celery Worker
 worker:
@@ -138,3 +139,4 @@ secrets:
   anthropicApiKey: ""
   claudeApiKey: ""
   resendApiKey: ""
+  openaiApiKey: ""
