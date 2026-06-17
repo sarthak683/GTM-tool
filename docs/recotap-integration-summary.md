@@ -36,6 +36,29 @@ computed Journey Stage isn't settable and custom-field keys are rejected, we
 convey our CRM deal status as **account tags** (e.g. `CRM: Customer`, `CRM: POC`,
 `CRM: Demo`, `CRM: Qualified`). We only push real public domains.
 
+## Fields & examples
+
+**Fields we exchange**
+
+| Direction | Fields |
+|---|---|
+| Read (`GET /accounts`) | `rtp_aid`, `domain`, `name`, `externalId`, `rtp_journey_stage`, `rtp_account_score`, the four intent sub-scores (advertising / website / G2 / Bombora), `rtp_last_account_date` |
+| Write (`POST` / `PUT`) | `domain`, `name`, `externalId` (our CRM company id), `tags` |
+
+**`GET /accounts`** — trimmed response
+```json
+{ "data": { "data": [
+  { "rtp_aid": "abc123", "domain": "acme.com", "name": "Acme",
+    "rtp_journey_stage": "Consideration", "rtp_account_score": 72 }
+], "hasNextPage": false, "nextCursor": "..." } }
+```
+
+**`POST /accounts`** — request → response
+```json
+{ "accounts": [ { "domain": "acme.com", "externalId": "<crm-company-id>", "tags": ["CRM: POC"] } ] }
+→ { "data": { "results": [ { "domain": "acme.com", "status": "created", "rtp_aid": "abc123" } ] } }
+```
+
 ## Observations & questions for the Recotap team
 
 These are minor things we worked around — flagging in case they're easy wins or
