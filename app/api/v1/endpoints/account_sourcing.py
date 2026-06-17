@@ -62,6 +62,7 @@ from app.services.recotap import (
     push_crm_status as recotap_push_status,
     seed_mock_signals as recotap_seed,
     signals_by_domain as recotap_signals,
+    sync_crm_journey as recotap_crm_sync,
 )
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
@@ -1591,7 +1592,10 @@ async def refresh_recotap_signals(
     do_seed = (not is_prod) if seed is None else seed
     pulled = await recotap_pull(session)
     seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
-    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed}
+    # Always derive journey stage from CRM deal progress LAST, so it wins over
+    # Recotap's intent stage for accounts with an active deal.
+    crm = await recotap_crm_sync(session)
+    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed, "crm_journey": crm}
 
 
 @router.get("/recotap/summary")

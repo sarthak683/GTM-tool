@@ -143,7 +143,7 @@ async def seed_mock_signals(session: AsyncSession, *, overwrite: bool = False) -
         # Preserve rows that carry real pulled data (pull sets pulled_at); only
         # those should be left untouched. Newly-created or seed rows have no
         # pulled_at, so they get (re)populated.
-        if row.pulled_at is not None and not overwrite:
+        if (row.pulled_at is not None or row.source == "crm") and not overwrite:
             row.company_id = row.company_id or company.id
             continue
         score = 20 + _stable(domain + "score", 80)  # 20-99
@@ -283,3 +283,76 @@ async def push_crm_status(
             break
     await session.commit()
     return {"configured": 1, "pushed": pushed, "skipped_invalid_domain": skipped_invalid, "results": results}
+
+
+# ── CRM deal stage → Recotap journey stage (for Account Sourcing display) ─────
+# Recotap's own journey_stage is intent-derived (ads/web/G2/Bombora) and, on
+# prod, empty. Once a deal exists the CRM knows the real position, so we DERIVE a
+# journey stage from the deal's most-advanced stage and prefer it over Recotap's.
+# Confirmed mapping (2026-06): demo_* / qualified_lead → Aware; poc_* →
+# Consideration; negotiation / workshop / msa_review → Opportunity; won → Customer.
+_CRM_JOURNEY_BY_STAGE = {
+    "demo_scheduled": "Aware", "demo_done": "Aware", "qualified_lead": "Aware",
+    "poc_agreed": "Consideration", "poc_wip": "Consideration", "poc_done": "Consideration",
+    "commercial_negotiation": "Opportunity", "workshop": "Opportunity", "msa_review": "Opportunity",
+    "closed_won": "Customer",
+}
+# Canonical pipeline order (low → high) so we pick the MOST advanced live stage.
+_CRM_STAGE_RANK = {
+    s: i for i, s in enumerate([
+        "reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed",
+        "poc_wip", "poc_done", "commercial_negotiation", "workshop", "msa_review", "closed_won",
+    ])
+}
+
+
+def crm_journey_stage(stages: list[str]) -> Optional[str]:
+    """Map a company's deal stages → a Recotap journey stage using the most
+    advanced stage. None when nothing maps (no deal, or only terminal/holding
+    stages like closed_lost / not_a_fit / churned / on_hold / cold / nurture)."""
+    ranked = [(_CRM_STAGE_RANK[s], s) for s in stages if s in _CRM_STAGE_RANK]
+    if not ranked:
+        return None
+    _, top = max(ranked)
+    return _CRM_JOURNEY_BY_STAGE.get(top)
+
+
+async def sync_crm_journey(session: AsyncSession) -> dict[str, int]:
+    """Write each company's deal-derived journey stage onto its recotap_accounts
+    row (preferred over Recotap's intent stage; marks source='crm'). Creates a
+    row by domain when none exists, so the Buying Journey band reflects real deal
+    progress even where Recotap has no data. Clears a stale CRM-derived stage
+    when a company no longer has a mappable deal."""
+    deal_rows = (
+        await session.execute(select(Deal.company_id, Deal.stage).where(Deal.company_id.is_not(None)))
+    ).all()
+    stages_by_company: dict = {}
+    for cid, stage in deal_rows:
+        stages_by_company.setdefault(cid, []).append(str(stage or "").strip().lower())
+    companies = (await session.execute(select(Company.id, Company.domain, Company.name))).all()
+    set_count = 0
+    cleared = 0
+    for cid, domain_raw, name in companies:
+        domain = normalize_domain(domain_raw)
+        if not domain:
+            continue
+        js = crm_journey_stage(stages_by_company.get(cid, []))
+        if js is None:
+            # Reset only previously CRM-derived rows; leave Recotap/seed rows be.
+            existing = (
+                await session.execute(select(RecotapAccount).where(RecotapAccount.domain == domain))
+            ).scalar_one_or_none()
+            if existing is not None and existing.source == "crm":
+                existing.journey_stage = None
+                existing.updated_at = datetime.utcnow()
+                cleared += 1
+            continue
+        row = await _get_or_create_row(session, domain)
+        row.journey_stage = js
+        row.source = "crm"
+        row.company_id = row.company_id or cid
+        row.name = row.name or name
+        row.updated_at = datetime.utcnow()
+        set_count += 1
+    await session.commit()
+    return {"crm_journey_set": set_count, "crm_journey_cleared": cleared}
