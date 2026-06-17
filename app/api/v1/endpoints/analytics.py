@@ -487,16 +487,59 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
     return "unassigned", None, "Unassigned"
 
 
+# Our outbound email-sending identities: the primary domain plus the Instantly
+# cold-outreach lookalike domains. A rep shares one local-part across all of them
+# (annie@beacon.li == annie@beaconli.com == annie@beaconli.co), so an outbound
+# email is mapped to its rep by local-part, not by the full address.
+BEACON_SENDING_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+
+
+def _beacon_sender_local(email_from) -> "str | None":
+    """Local-part of ``email_from`` when it is one of OUR sending identities,
+    else None (received mail or a non-rep sender)."""
+    local, _, domain = str(email_from or "").strip().lower().partition("@")
+    if not local or not domain:
+        return None
+    if domain in BEACON_SENDING_DOMAINS or domain.startswith("beaconli."):
+        return local
+    return None
+
+
+def _email_event_kind(row) -> "str | None":
+    """Classify an email Activity: 'send' | 'open' | 'reply' | None. Only sends
+    count toward the ``emails`` metric; opens/replies feed open/reply-rate;
+    other Instantly events (bounce, campaign_completed, lead_*) are ignored."""
+    meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+    et = str(meta.get("event_type") or "").strip().lower()
+    if et == "email_opened":
+        return "open"
+    if et == "reply_received" or str(row.source or "").strip().lower() == "email_reply":
+        return "reply"
+    if et in {"email_sent", ""}:
+        return "send"
+    return None
+
+
 def _activity_rep_id(
     row,
     *,
     deal_owner: dict[UUID, UUID | None],
     contact_owner: dict[UUID, UUID | None],
+    rep_id_by_local: "dict[str, UUID] | None" = None,
 ) -> UUID | None:
     source = str(row.source or "").strip().lower()
     medium = str(row.medium or "").strip().lower()
     kind = str(row.type or "").strip().lower()
     metadata = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+
+    # Email SENDS credit the actual sender — the rep whose address is in
+    # email_from across our primary + outreach domains — NOT the deal/contact
+    # owner. Received mail / non-rep senders return None so inbound is excluded.
+    # Opens and replies are engagement events and keep owner-based attribution.
+    if rep_id_by_local is not None and (medium == "email" or kind == "email"):
+        if _email_event_kind(row) == "send":
+            local = _beacon_sender_local(row.email_from)
+            return rep_id_by_local.get(local) if local else None
 
     # Manually logged calls/LinkedIn touches should credit the rep who logged
     # the action, even when the contacted person is assigned to a different rep.
@@ -767,6 +810,8 @@ async def sales_activity_drilldown(
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # email_from local-part -> rep id, for sender-based attribution of email sends.
+    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
     # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
@@ -826,7 +871,14 @@ async def sales_activity_drilldown(
             .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
             .where(activity_metric_filter())
         )
-        if rep_id:
+        if rep_id and metric == "emails":
+            # Emails are sender-based: fetch this rep's OUTBOUND sends across all
+            # our sending domains (beacon.li + outreach lookalikes), not emails
+            # that merely sit on deals/contacts they own.
+            rep_local = (user_emails.get(rep_id) or "").split("@")[0]
+            rep_from = {f"{rep_local}@{d}" for d in BEACON_SENDING_DOMAINS} if rep_local else set()
+            activity_stmt = activity_stmt.where(func.lower(Activity.email_from).in_(rep_from or {"__none__"}))
+        elif rep_id:
             activity_stmt = activity_stmt.where(
                 or_(
                     Activity.created_by_id == rep_id,
@@ -897,17 +949,26 @@ async def sales_activity_drilldown(
             }
 
         for activity in activity_page:
-            if not activity.contact_id and not activity.deal_id:
+            is_email = str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email"
+            if metric == "emails":
+                # The emails metric is sender-based and SENDS only — independent
+                # of contact/deal linkage; opens/replies and inbound are excluded.
+                if _email_event_kind(activity) != "send":
+                    continue
+            elif not activity.contact_id and not activity.deal_id:
                 continue
-            row_rep_id = _activity_rep_id(activity, deal_owner=deal_owner, contact_owner=contact_owner)
+            row_rep_id = _activity_rep_id(
+                activity, deal_owner=deal_owner, contact_owner=contact_owner, rep_id_by_local=rep_id_by_local
+            )
             if not _is_rep(row_rep_id, rep_user_ids):
                 continue
             if rep_id and row_rep_id != rep_id:
                 continue
             rep_email = user_emails.get(row_rep_id) if row_rep_id else None
             direction = None
-            if str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email":
-                direction = "outbound" if rep_email and str(activity.email_from or "").strip().lower() == rep_email else "inbound"
+            if is_email:
+                # outbound iff it came from one of OUR sending identities.
+                direction = "outbound" if _beacon_sender_local(activity.email_from) else "inbound"
             company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
             activity_type = str(activity.type or activity.medium or "activity").strip().lower() or "activity"
             source = activity.source
@@ -1179,6 +1240,8 @@ async def sales_dashboard(
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_roles = {row.id: str(row.role or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # email_from local-part -> rep id, for sender-based attribution of email sends.
+    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
     # Only ae/sdr users are reps; admin activity must not inflate rep metrics
     # or create an admin rep row (the "Rakesh 419 emails" leak).
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
@@ -1205,7 +1268,7 @@ async def sales_dashboard(
     if filter_rep_ids:
         activity_rows = [
             row for row in activity_rows
-            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner) in filter_rep_ids
+            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner, rep_id_by_local=rep_id_by_local) in filter_rep_ids
         ]
     if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
@@ -1436,6 +1499,7 @@ async def sales_dashboard(
             row,
             deal_owner=deal_owner,
             contact_owner=contact_owner,
+            rep_id_by_local=rep_id_by_local,
         )
         if not _is_rep(row_rep_id, rep_user_ids):
             continue
@@ -1509,6 +1573,11 @@ async def sales_dashboard(
             # opens/replies separately so the cards can show open/reply rate
             # over emails sent. Personal-sync rows carry no event_type → treated
             # as sent (they ARE real sent/received emails).
+            # Email attribution is SENDER-based (see _activity_rep_id): for a
+            # SEND, row_rep_id is the rep who actually sent it (across our
+            # primary + outreach domains), and inbound / non-rep senders were
+            # already dropped by the _is_rep guard above. Opens/replies keep
+            # owner attribution and feed the open/reply-rate cards only.
             meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
             event_type = str(meta.get("event_type") or "").strip().lower()
             src = str(row.source or "").strip().lower()
@@ -1516,22 +1585,11 @@ async def sales_dashboard(
                 activity_bucket["email_opens"] = activity_bucket.get("email_opens", 0) + 1
             elif event_type == "reply_received" or src == "email_reply":
                 activity_bucket["email_replies"] = activity_bucket.get("email_replies", 0) + 1
-            elif event_type == "email_sent":
-                # Instantly campaign send — always outbound.
+            elif event_type in {"email_sent", ""}:
+                # Outbound send by this rep (inbound already excluded upstream).
                 activity_bucket["emails"] += 1
                 if week_counts is not None:
                     week_counts["emails"] += 1
-            elif event_type == "":
-                # Personal-sync (gmail) row carries no event_type and can be a
-                # SENT or a RECEIVED email. Per the "outbound only" rule, count it
-                # only when the attributed rep is the sender; received mail is not
-                # a rep touch. (Same direction signal the drilldown uses.)
-                rep_email = user_emails.get(row_rep_id, "")
-                sender = str(row.email_from or "").strip().lower()
-                if rep_email and sender == rep_email:
-                    activity_bucket["emails"] += 1
-                    if week_counts is not None:
-                        week_counts["emails"] += 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
