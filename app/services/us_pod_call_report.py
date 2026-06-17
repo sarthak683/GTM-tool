@@ -54,6 +54,7 @@ INDIA_POD_REPS = [
     {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
     {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},
     {"name": "Sandeep Sinha", "email": "sandeep@beacon.li", "aliases": ["sandeep"]},
+    {"name": "Sipra Sonali Palta", "email": "sipra@beacon.li", "aliases": ["sipra"]},
 ]
 
 INDIA_POD_REPORT_RECIPIENTS = [
@@ -62,6 +63,7 @@ INDIA_POD_REPORT_RECIPIENTS = [
     "yash@beacon.li",
     "bhavya@beacon.li",
     "sandeep@beacon.li",
+    "sipra@beacon.li",
     "rakesh@beacon.li",  # boss
     "sarthak@beacon.li",
 ]

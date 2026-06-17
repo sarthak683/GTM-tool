@@ -34,6 +34,7 @@ POD_DEFINITIONS: dict[str, dict[str, Any]] = {
             {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
             {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},
             {"name": "Sandeep Sinha", "email": "sandeep@beacon.li", "aliases": ["sandeep"]},
+            {"name": "Sipra Sonali Palta", "email": "sipra@beacon.li", "aliases": ["sipra"]},
         ],
         "ae_emails": ["yash@beacon.li", "bhavya@beacon.li", "sandeep@beacon.li"],
     },
