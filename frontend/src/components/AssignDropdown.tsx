@@ -57,13 +57,11 @@ export default function AssignDropdown({
     }
   }, [open, users.length]);
 
-  // Per Pulkit's request 2026-05-07: non-admin reps couldn't see or edit AE/SDR
-  // on accounts they were viewing. Backend now allows self-claim / self-release
-  // for the rep's own role; surface that here as a single-action button so the
-  // rep can claim an unassigned slot or release their own without admin help.
-  const isOwnRoleSlot = currentUser?.role === role;
-  const canSelfClaim = !isAdmin && isOwnRoleSlot && !currentAssignedId;
-  const canSelfRelease = !isAdmin && isOwnRoleSlot && currentAssignedId === currentUser?.id;
+  // Per Annie 2026-06-17: any AE or SDR (not just admins) can assign the AE/SDR
+  // for an account, so the full picker is shown to every sales-team member. The
+  // backend enforces the same rule; roles outside the sales team stay read-only.
+  const canAssign =
+    isAdmin || currentUser?.role === "ae" || currentUser?.role === "sdr";
 
   const handleAssign = async (userId: string | null) => {
     setLoading(true);
@@ -83,62 +81,8 @@ export default function AssignDropdown({
     }
   };
 
-  if (!isAdmin) {
-    if (canSelfClaim) {
-      // Slot is empty and matches their role — give them a one-click claim.
-      return (
-        <button
-          type="button"
-          onClick={() => currentUser && handleAssign(currentUser.id)}
-          disabled={loading}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: compact ? "3px 8px" : "5px 12px",
-            fontSize: compact ? "11px" : "13px",
-            borderRadius: "6px",
-            border: "1px solid #bfdbfe",
-            background: "#eff6ff",
-            color: "#1d4ed8",
-            cursor: "pointer",
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-          }}
-        >
-          <UserPlus size={compact ? 12 : 14} />
-          {loading ? "..." : `Claim ${role.toUpperCase()}`}
-        </button>
-      );
-    }
-    if (canSelfRelease) {
-      // They're the current assignee — let them release without admin help.
-      return (
-        <button
-          type="button"
-          onClick={() => handleAssign(null)}
-          disabled={loading}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: compact ? "3px 8px" : "5px 12px",
-            fontSize: compact ? "11px" : "13px",
-            borderRadius: "6px",
-            border: "1px solid #d9e1ec",
-            background: "#e8f0ff",
-            color: "#1f6feb",
-            cursor: "pointer",
-            fontWeight: 500,
-            whiteSpace: "nowrap",
-          }}
-          title="Release this assignment"
-        >
-          {loading ? "..." : `${currentAssignedName ?? "You"} · release`}
-        </button>
-      );
-    }
-    // Slot held by someone else, or not the rep's role — read-only label.
+  if (!canAssign) {
+    // Roles outside the sales team get a read-only label.
     return currentAssignedName ? (
       <span
         style={{

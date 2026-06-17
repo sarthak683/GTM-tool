@@ -505,6 +505,19 @@ def _beacon_sender_local(email_from) -> "str | None":
     return None
 
 
+def _beacon_recipient_local(row) -> "str | None":
+    """Local-part of the first OUR-domain address in email_to/email_cc — the rep
+    who RECEIVED this mail (i.e. sent the outreach it replies to). The inbound
+    mirror of _beacon_sender_local; used to credit a reply to the rep whose
+    outreach earned it."""
+    for field in (getattr(row, "email_to", None), getattr(row, "email_cc", None)):
+        for addr in str(field or "").split(","):
+            local = _beacon_sender_local(addr)
+            if local:
+                return local
+    return None
+
+
 def _email_event_kind(row) -> "str | None":
     """Classify an email Activity: 'send' | 'open' | 'reply' | None. Only sends
     count toward the ``emails`` metric; opens/replies feed open/reply-rate;
@@ -537,9 +550,18 @@ def _activity_rep_id(
     # owner. Received mail / non-rep senders return None so inbound is excluded.
     # Opens and replies are engagement events and keep owner-based attribution.
     if rep_id_by_local is not None and (medium == "email" or kind == "email"):
-        if _email_event_kind(row) == "send":
+        email_kind = _email_event_kind(row)
+        if email_kind == "send":
             local = _beacon_sender_local(row.email_from)
             return rep_id_by_local.get(local) if local else None
+        if email_kind == "reply":
+            # A reply credits the rep whose outreach earned it — the beacon
+            # address it was sent TO (recipient-based; the mirror of the send
+            # rule). Falls through to owner attribution when no rep recipient is
+            # found, so nothing that counted before is lost.
+            rlocal = _beacon_recipient_local(row)
+            if rlocal and rlocal in rep_id_by_local:
+                return rep_id_by_local[rlocal]
 
     # Manually logged calls/LinkedIn touches should credit the rep who logged
     # the action, even when the contacted person is assigned to a different rep.
@@ -1573,11 +1595,12 @@ async def sales_dashboard(
             # opens/replies separately so the cards can show open/reply rate
             # over emails sent. Personal-sync rows carry no event_type → treated
             # as sent (they ARE real sent/received emails).
-            # Email attribution is SENDER-based (see _activity_rep_id): for a
-            # SEND, row_rep_id is the rep who actually sent it (across our
-            # primary + outreach domains), and inbound / non-rep senders were
-            # already dropped by the _is_rep guard above. Opens/replies keep
-            # owner attribution and feed the open/reply-rate cards only.
+            # Email attribution (see _activity_rep_id): a SEND credits the rep
+            # who sent it (sender-based across our primary + outreach domains;
+            # inbound / non-rep senders are dropped by the _is_rep guard above).
+            # A REPLY credits the rep it was sent TO (recipient-based) — i.e. the
+            # rep whose outreach earned it; that count is the "Emails In" metric.
+            # Opens keep owner attribution and feed the open-rate card only.
             meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
             event_type = str(meta.get("event_type") or "").strip().lower()
             src = str(row.source or "").strip().lower()

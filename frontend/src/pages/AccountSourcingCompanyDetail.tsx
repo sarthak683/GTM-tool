@@ -135,6 +135,8 @@ function RecotapSignalsPanel({ rtp }: { rtp?: RecotapSignals | null }) {
 
 function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () => void }) {
   const [re, setRe] = useState(false);
+  const navigate = useNavigate();
+  const openProspect = () => navigate(`/account-sourcing/contacts/${contact.id}`);
 
   const persona = canonicalPersona(contact.persona, contact.persona_type);
   const talkingPoints = Array.isArray(contact.talking_points) ? contact.talking_points : [];
@@ -144,12 +146,22 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
   const trackingTone = getProspectTrackingTone(contact);
 
   return (
-    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
+    <div
+      onClick={openProspect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter") openProspect(); }}
+      title="Open prospect"
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 3px 14px rgba(30,55,95,0.10)"; e.currentTarget.style.borderColor = colors.primary; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = colors.border; }}
+      style={{ border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px", background: "#fbfdff", cursor: "pointer", transition: "box-shadow 0.14s, border-color 0.14s" }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
           <Link
             to={`/account-sourcing/contacts/${contact.id}`}
-            style={{ color: colors.text, fontWeight: 800, fontSize: 15, textDecoration: "none" }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ color: colors.primary, fontWeight: 800, fontSize: 15, textDecoration: "none" }}
           >
             {contact.first_name} {contact.last_name}
           </Link>
@@ -233,7 +245,7 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
           ) : null}
         </div>
 
-        <div style={{ display: "grid", justifyItems: "end", alignContent: "start", gap: 8 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ display: "grid", justifyItems: "end", alignContent: "start", gap: 8, cursor: "default" }}>
           {persona !== "unknown" ? (
             <span style={{ ...PERSONA_STYLE[persona], borderRadius: 999, fontSize: 11, padding: "4px 9px", fontWeight: 700 }}>
               {PERSONA_LABEL[persona]}

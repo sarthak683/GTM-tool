@@ -873,17 +873,19 @@ function RepActivityTable({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
             <StatPill
-              label="Emails"
+              label="Emails Out"
               value={row.emails}
               tone="#eefbf2"
               text="#2f8d5d"
-              sub={
-                <>
-                  <span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% reply</span>
-                  <span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>
-                </>
-              }
+              sub={<span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>}
               onClick={() => onOpenMetric(row, "emails")}
+            />
+            <StatPill
+              label="Emails In"
+              value={row.email_replies}
+              tone="#f3eaff"
+              text="#7c3aed"
+              sub={<span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% of sent</span>}
             />
             <StatPill
               label="Calls"

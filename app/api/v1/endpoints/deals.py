@@ -108,6 +108,11 @@ async def list_deals(
 async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUser):
     data = payload.model_dump()
 
+    # Company is mandatory — every deal must be linked to an account so pipeline,
+    # analytics and stakeholder linking have an anchor (Annie 2026-06-17).
+    if not data.get("company_id"):
+        raise ValidationError("A company is required to create a deal.")
+
     # Default stage based on pipeline type
     if not data.get("stage"):
         data["stage"] = await get_configured_default_deal_stage(session) if data.get("pipeline_type", "deal") == "deal" else "cold_account"
