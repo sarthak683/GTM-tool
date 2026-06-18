@@ -382,6 +382,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
+  const hasIcp = !!company.icp_tier;  // unscored accounts must not masquerade as "cold"
   const disposition = company.disposition || "";
   const statusOption = accountStatusOption(company.account_status);
   const rtp = company.recotap;
@@ -420,7 +421,9 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           rest (status, disposition, Recotap journey/engagement, HQ) appear only
           when set. Wraps to a second line on dense rows. */}
       <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 0 }}>
-        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>{tier.toUpperCase()}</span>
+        {hasIcp ? (
+          <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
+        ) : null}
         {statusOption ? (
           <span style={{ background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{statusOption.label}</span>
         ) : null}
@@ -431,7 +434,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
         ) : null}
         {rtp?.engagement ? (
-          <span title="Recotap engagement" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{rtp.engagement}</span>
+          <span title="Recotap buying intent (engagement, from account score)" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>Intent · {rtp.engagement}</span>
         ) : null}
         {rtp?.hq_location ? (
           <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{rtp.hq_location}</span>
