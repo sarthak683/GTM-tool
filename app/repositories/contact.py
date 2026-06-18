@@ -159,9 +159,10 @@ def contact_visibility_filter(user_id: UUID):
     """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
 
     A non-admin may see a contact if they own it in either slot, OR they are the
-    AE on the contact's COMPANY (account-scoped: an AE sees every prospect inside
-    the accounts they own, including ones an SDR sourced and hasn't handed over
-    yet), OR they own a DEAL on the contact's company (an AE running a demo/POC
+    AE **or SDR** on the contact's COMPANY (account-scoped: whoever owns the
+    account sees every prospect inside it, including ones a teammate is assigned
+    at the prospect level — e.g. the account SDR sees prospects the AE holds),
+    OR they own a DEAL on the contact's company (an AE running a demo/POC
     sees the prospects at that account even when the company/contacts are still
     held by the sourcing SDR or another company AE), OR it is fully unassigned
     (both slots NULL — an unclaimed lead anyone may pick up). This is the SINGLE
@@ -176,6 +177,9 @@ def contact_visibility_filter(user_id: UUID):
         Contact.sdr_id == user_id,
         Contact.company_id.in_(
             select(Company.id).where(Company.assigned_to_id == user_id)
+        ),
+        Contact.company_id.in_(
+            select(Company.id).where(Company.sdr_id == user_id)
         ),
         Contact.company_id.in_(
             select(Deal.company_id).where(
@@ -561,6 +565,11 @@ class ContactRepository(BaseRepository[Contact]):
                 Contact.sdr_id.in_(restrict_ids),
                 Contact.company_id.in_(
                     select(Company.id).where(Company.assigned_to_id.in_(restrict_ids))
+                ),
+                # Account SDR sees every prospect on accounts they own, even ones
+                # the AE holds at the prospect level. Lockstep with contact_visibility_filter().
+                Contact.company_id.in_(
+                    select(Company.id).where(Company.sdr_id.in_(restrict_ids))
                 ),
                 # Deal owner (e.g. the AE running the demo/POC) sees the account's
                 # prospects even when the company/contacts sit with the sourcing
