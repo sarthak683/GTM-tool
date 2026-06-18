@@ -27,6 +27,9 @@ class RecotapClient:
         # Strip stray whitespace/newlines — a space or CR pasted into the env/secret
         # would otherwise produce an "Illegal header value" on the X-Api-Key header.
         self.api_key = (api_key or settings.recotap_api_key or "").strip()
+        # Set from the latest GET /accounts response so callers can persist it and
+        # request only changes next time (incremental pull via lastSync).
+        self.last_sync_timestamp: Optional[str] = None
 
     def configured(self) -> bool:
         return bool(self.api_key)
@@ -68,6 +71,10 @@ class RecotapClient:
                 params["lastSync"] = last_sync
             body = await self._get("/accounts", params=params)
             data = (body or {}).get("data") or {}
+            # Recotap stamps every page with an "as of" marker; keep the latest so
+            # the caller can store it and pull incrementally next time.
+            if data.get("syncTimestamp"):
+                self.last_sync_timestamp = data.get("syncTimestamp")
             rows = data.get("data") or []
             out.extend([r for r in rows if isinstance(r, dict)])
             if not data.get("hasNextPage"):

@@ -1578,6 +1578,7 @@ async def refresh_recotap_signals(
     session: DBSession = None,
     seed: bool | None = None,
     overwrite: bool = False,
+    full: bool = False,
 ):
     """Pull live Recotap account signals into recotap_accounts.
 
@@ -1590,7 +1591,9 @@ async def refresh_recotap_signals(
 
     is_prod = settings.RECOTAP_ENVIRONMENT.strip().lower() == "prod"
     do_seed = (not is_prod) if seed is None else seed
-    pulled = await recotap_pull(session)
+    # Incremental by default (only changed accounts); ?full=true forces a complete
+    # re-pull (useful as a periodic safety net since lastSync omits deletions).
+    pulled = await recotap_pull(session, incremental=not full)
     seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
     # Always derive journey stage from CRM deal progress LAST, so it wins over
     # Recotap's intent stage for accounts with an active deal.
@@ -1639,10 +1642,17 @@ async def recotap_summary(_user: CurrentUser, session: DBSession = None):
 
 
 @router.post("/recotap/push")
-async def push_recotap_crm_status(_user: CurrentUser, session: DBSession = None, limit: int | None = None):
-    """Push Beacon CRM deal-stage status to Recotap as account tags
-    (Customer / POC / Negotiation / ...). `limit` caps the number pushed (test runs)."""
-    return await recotap_push_status(session, limit=limit)
+async def push_recotap_crm_status(
+    _user: CurrentUser,
+    session: DBSession = None,
+    limit: int | None = None,
+    dry_run: bool = False,
+):
+    """Push Beacon CRM deal-stage status to Recotap (a custom field when configured,
+    else the legacy 'CRM: ...' tag) via upsert. `limit` caps the number pushed
+    (test runs); `dry_run=true` returns the exact payloads it WOULD send WITHOUT
+    writing anything to Recotap."""
+    return await recotap_push_status(session, limit=limit, dry_run=dry_run)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)
