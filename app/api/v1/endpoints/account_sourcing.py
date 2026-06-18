@@ -1967,10 +1967,11 @@ async def icp_research_company(company_id: UUID, _user: CurrentUser, session: DB
 async def get_company_contacts(company_id: UUID, session: DBSession, current_user: CurrentUser):
     """Get the contacts for a company, scoped to what the caller may see.
 
-    Visibility is identical to the prospects list: a non-admin sees only the
-    company's contacts they own (either slot) plus unassigned ones. Without this,
-    clicking a prospect's company name exposed every rep's contacts at that
-    account (the prospect-visibility leak).
+    A non-admin normally sees only the company's contacts they own (either slot)
+    plus unassigned ones — this prevents the cross-rep prospect-visibility leak.
+    The one exception: if the caller OWNS this account (its AE or SDR slot), they
+    see ALL of its prospects (owning the account means seeing everyone worked
+    there, even prospects a teammate is assigned at the prospect level).
     """
     company = await session.get(Company, company_id)
     if not company:
@@ -1982,7 +1983,13 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
         .order_by(Contact.created_at.desc())
     )
     restriction = await visible_contact_restriction(session, current_user)
-    if restriction is not None:
+    # Owning the account (its AE or SDR slot) grants visibility to ALL of that
+    # account's prospects — even ones a teammate is assigned at the prospect level.
+    # Without this, an account owner saw only prospects assigned directly to them
+    # (e.g. Dynamo Software's account SDR could see just 1 of 7 prospects, the rest
+    # being co-owned by the account AE).
+    owns_account = current_user.id is not None and current_user.id in {company.assigned_to_id, company.sdr_id}
+    if restriction is not None and not owns_account:
         stmt = stmt.where(restriction)
     result = await session.execute(stmt)
     all_contacts = result.scalars().all()
