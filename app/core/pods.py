@@ -29,7 +29,6 @@ POD_DEFINITIONS: dict[str, dict[str, Any]] = {
         "key": "india",
         "label": "India Pod",
         "reps": [
-            {"name": "Annie Gupta", "email": "annie@beacon.li", "aliases": ["annie"]},
             {"name": "Dyuthith Din", "email": "dyuthith@beacon.li", "aliases": ["dyuthith"]},
             {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
             {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},

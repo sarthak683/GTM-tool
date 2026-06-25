@@ -15,6 +15,7 @@ Endpoints:
 """
 import csv
 import io
+import logging
 import re
 from datetime import datetime
 from uuid import UUID
@@ -66,6 +67,8 @@ from app.services.recotap import (
 )
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
+
+logger = logging.getLogger(__name__)
 
 
 class ManualCompanyCreate(BaseModel):
@@ -620,26 +623,44 @@ async def _process_uploaded_rows(
     errors: list[dict[str, str]] = []
 
     all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
-    _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
-    _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
-    _user_by_first_name: dict[str, list[User]] = {}
+    _user_by_email: dict[str, User] = {u.email.strip().lower(): u for u in all_users if u.email}
+    # Full-name index: map each normalized full name to the matching users. A name
+    # is only trusted when it resolves to EXACTLY ONE active user — ambiguous or
+    # unknown names fall through to "unassigned" rather than risk a mis-match.
+    _users_by_full_name: dict[str, list[User]] = {}
     for user in all_users:
-        first = (user.name or "").strip().split(" ", 1)[0].lower()
-        if first:
-            _user_by_first_name.setdefault(first, []).append(user)
+        full = (user.name or "").strip().lower()
+        if full:
+            _users_by_full_name.setdefault(full, []).append(user)
 
     def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
+        """Resolve an uploaded AE/SDR cell to an active user.
+
+        Matching is strict to prevent the wrong rep being assigned from a CSV:
+          - exact, normalized email match wins;
+          - otherwise an exact, normalized FULL-name match, but only when it is
+            unambiguous (exactly one active user with that name);
+          - NO first-name / fuzzy matching. A first-name fallback previously let
+            a name fragment collide with an unrelated rep (e.g. the sheet said
+            one SDR but the account was assigned to a different same-first-name
+            user). When nothing resolves, leave the slot unassigned and log it.
+        """
         found: User | None = None
         if rep_email:
             found = _user_by_email.get(rep_email.strip().lower())
         if not found and rep_name:
-            normalized_name = rep_name.strip().lower()
-            found = _user_by_name.get(normalized_name)
-            if not found:
-                first_matches = _user_by_first_name.get(normalized_name) or []
-                if len(first_matches) == 1:
-                    found = first_matches[0]
+            matches = _users_by_full_name.get(rep_name.strip().lower()) or []
+            if len(matches) == 1:
+                found = matches[0]
         if not found:
+            if rep_email or rep_name:
+                logger.warning(
+                    "Sourcing import could not resolve owner cell to an active "
+                    "user; leaving unassigned (email=%r name=%r batch=%s)",
+                    rep_email,
+                    rep_name,
+                    batch_id,
+                )
             return None
         return {
             "id": str(found.id),
@@ -1393,7 +1414,7 @@ async def get_sourced_company_summary(
 @router.post("/companies/manual", response_model=SourcingBatchRead, status_code=202)
 async def create_manual_company(
     payload: ManualCompanyCreate,
-    current_user: CurrentUser,
+    current_user: AdminUser,
     session: DBSession = None,
 ):
     name = _clean_company_name(payload.name or "")

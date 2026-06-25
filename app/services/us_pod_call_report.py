@@ -49,7 +49,6 @@ US_POD_REPORT_RECIPIENTS = [
 # shared pod registry. The same call-report machinery is reused, just pointed at
 # this roster + its own config block (`india_sales_report`) and schedule.
 INDIA_POD_REPS = [
-    {"name": "Annie Gupta", "email": "annie@beacon.li", "aliases": ["annie"]},
     {"name": "Dyuthith Din", "email": "dyuthith@beacon.li", "aliases": ["dyuthith"]},
     {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
     {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},

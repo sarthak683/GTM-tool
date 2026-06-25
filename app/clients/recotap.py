@@ -88,10 +88,14 @@ class RecotapClient:
         self,
         accounts: list[dict[str, Any]],
         segment_id: Optional[str] = None,
+        upsert: bool = True,
     ) -> dict[str, Any]:
-        """POST /accounts — insert-only; per-item status created/failed. HTTP is 200
-        even when items fail, so callers must read summary/results."""
-        payload: dict[str, Any] = {"accounts": accounts}
+        """POST /accounts with ``upsert: true`` so an account that already exists
+        (matched by domain) is UPDATED rather than rejected. Verified 2026-06-23:
+        without the flag Recotap returns status=failed ("Account with domain ...
+        already exists ... set upsert: true to update via this endpoint"). HTTP is
+        200 even when items fail, so callers must read summary/results."""
+        payload: dict[str, Any] = {"accounts": accounts, "upsert": upsert}
         if segment_id:
             payload["segmentId"] = segment_id
         async with httpx.AsyncClient(timeout=_TIMEOUT) as http:

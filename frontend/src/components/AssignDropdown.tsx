@@ -41,7 +41,7 @@ export default function AssignDropdown({
   // member can hold either. So admins (e.g. Shahruk) appear in both pickers, and
   // AEs show up in the SDR picker (and vice-versa). The selected user with the
   // matching role is sorted first so the common case stays one tap away.
-  const ASSIGNABLE_ROLES = new Set(["ae", "sdr", "admin"]);
+  const ASSIGNABLE_ROLES = new Set(["ae", "sdr", "admin", "agency"]);
   const eligibleUsers = users
     .filter((user) => ASSIGNABLE_ROLES.has((user.role || "").toLowerCase()))
     .sort((a, b) => {

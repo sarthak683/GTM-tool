@@ -385,6 +385,11 @@ class SalesActivityDrilldownRow(BaseModel):
     contact_email: Optional[str] = None
     company_name: Optional[str] = None
     deal_name: Optional[str] = None
+    # Optional entity ids so a drilldown row can navigate to a deal/company.
+    # Populated cheaply (pass-through of ids already on the row); we do not run
+    # extra lookups just to fill these for activity rows.
+    deal_id: Optional[str] = None
+    company_id: Optional[str] = None
 
 
 class SalesActivityDrilldownRead(BaseModel):
@@ -814,7 +819,10 @@ async def sales_activity_drilldown(
     session: DBSession,
     _user: CurrentUser,
     metric: Annotated[
-        Literal["emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "meetings", "total"],
+        Literal[
+            "emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts",
+            "meetings", "total", "demos_scheduled", "demos_done", "demos_converted",
+        ],
         Query(description="Activity metric to inspect"),
     ],
     window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
@@ -887,7 +895,9 @@ async def sales_activity_drilldown(
         )
 
     rows: list[SalesActivityDrilldownRow] = []
-    if metric != "meetings":
+    # Demo-funnel metrics are NOT activity-table backed; the activity stream must
+    # only run for the activity metrics (and "total", which merges in meetings).
+    if metric in {"emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "total"}:
         activity_stmt = (
             select(Activity)
             .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
@@ -1015,6 +1025,8 @@ async def sales_activity_drilldown(
                     contact_email=contact_emails.get(activity.contact_id),
                     company_name=company_names.get(company_id),
                     deal_name=deal_names.get(activity.deal_id),
+                    deal_id=str(activity.deal_id) if activity.deal_id else None,
+                    company_id=str(company_id) if company_id else None,
                 )
             )
 
@@ -1121,8 +1133,134 @@ async def sales_activity_drilldown(
                     subject=meeting.title,
                     company_name=company_names.get(company_id),
                     deal_name=deal_names.get(meeting.deal_id),
+                    deal_id=str(meeting.deal_id) if meeting.deal_id else None,
+                    company_id=str(company_id) if company_id else None,
                 )
             )
+
+    demo_has_more = False
+    if metric in {"demos_scheduled", "demos_done", "demos_converted"}:
+        # SDR demo funnel drilldown — mirrors the sales-dashboard funnel exactly
+        # (see "SDR demo funnel" in sales_dashboard). Demos are attributed to the
+        # ACCOUNT'S SDR (Company.sdr_id), so this is rep-scoped: with no rep_id
+        # there is nobody to attribute to, return empty like other rep-only paths.
+        if rep_id:
+            now = _utcnow()
+            demo_meeting_rows = (
+                await session.execute(
+                    select(Meeting).where(
+                        Meeting.is_internal.is_(False),
+                        func.lower(func.coalesce(Meeting.meeting_type, "")) == "demo",
+                        Meeting.company_id.isnot(None),
+                        or_(
+                            (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                            Meeting.scheduled_at.is_(None)
+                            & (Meeting.created_at >= window_start)
+                            & (Meeting.created_at <= window_end),
+                        ),
+                    )
+                )
+            ).scalars().all()
+            deduped_demos = _dedupe_meetings_across_sources(
+                [m for m in demo_meeting_rows if str(m.external_source or "").strip().lower() in REAL_MEETING_SOURCES]
+            )
+            demo_company_ids = {m.company_id for m in deduped_demos if m.company_id}
+
+            company_sdr: dict[UUID, UUID | None] = {}
+            company_region_for_demo: dict[UUID, str | None] = {}
+            company_names: dict[UUID, str] = {}
+            converted_company_ids: set[UUID] = set()
+            # Resolve each company's single deal (when exactly one exists) so a
+            # demo whose meeting has no deal_id can still navigate to a deal —
+            # same "exactly one deal" rule used by tldv_sync's auto-link.
+            company_single_deal_id: dict[UUID, UUID] = {}
+            company_single_deal_name: dict[UUID, str | None] = {}
+            deal_name_by_id: dict[UUID, str | None] = {}
+            if demo_company_ids:
+                comp_rows = (
+                    await session.execute(
+                        select(Company.id, Company.name, Company.sdr_id, Company.region).where(
+                            Company.id.in_(demo_company_ids)
+                        )
+                    )
+                ).all()
+                company_sdr = {r.id: r.sdr_id for r in comp_rows}
+                company_region_for_demo = {r.id: r.region for r in comp_rows}
+                company_names = {r.id: r.name for r in comp_rows}
+                deal_rows = (
+                    await session.execute(
+                        select(Deal.id, Deal.name, Deal.company_id, Deal.stage).where(
+                            Deal.company_id.in_(demo_company_ids)
+                        )
+                    )
+                ).all()
+                deals_by_company: dict[UUID, list] = defaultdict(list)
+                for dr in deal_rows:
+                    deal_name_by_id[dr.id] = dr.name
+                    if dr.company_id:
+                        deals_by_company[dr.company_id].append(dr)
+                    if dr.company_id and str(dr.stage or "").strip().lower() in CONVERTED_DEAL_STAGES:
+                        converted_company_ids.add(dr.company_id)
+                for cid, dl in deals_by_company.items():
+                    if len(dl) == 1:
+                        company_single_deal_id[cid] = dl[0].id
+                        company_single_deal_name[cid] = dl[0].name
+
+            demo_entries = []
+            for meeting in deduped_demos:
+                cid = meeting.company_id
+                # Attribution: the account's SDR must be the requested rep.
+                if company_sdr.get(cid) != rep_id:
+                    continue
+                # Geography filter, consistent with the rest of the endpoint and
+                # with the dashboard funnel (region lookup, normalized in Python).
+                if filter_geographies:
+                    region_key = _normalize_geography_key(company_region_for_demo.get(cid))
+                    if region_key not in filter_geographies:
+                        continue
+                status_norm = str(meeting.status or "").strip().lower()
+                if status_norm in {"completed", "scored"}:
+                    is_done = True
+                elif status_norm == "cancelled":
+                    is_done = False
+                else:
+                    is_done = meeting.scheduled_at is not None and meeting.scheduled_at <= now
+                is_converted = bool(cid and cid in converted_company_ids)
+                if metric == "demos_done" and not is_done:
+                    continue
+                if metric == "demos_converted" and not (is_done and is_converted):
+                    continue
+                demo_entries.append(meeting)
+
+            demo_entries.sort(
+                key=lambda m: (m.scheduled_at is None, m.scheduled_at or m.created_at),
+                reverse=True,
+            )
+            demo_has_more = len(demo_entries) > offset + limit
+            for meeting in demo_entries[offset:offset + limit]:
+                cid = meeting.company_id
+                resolved_deal_id = meeting.deal_id or company_single_deal_id.get(cid)
+                resolved_deal_name = (
+                    deal_name_by_id.get(meeting.deal_id)
+                    if meeting.deal_id
+                    else company_single_deal_name.get(cid)
+                )
+                rows.append(
+                    SalesActivityDrilldownRow(
+                        id=meeting.id,
+                        kind="meeting",
+                        activity_type="demo",
+                        occurred_at=meeting.scheduled_at or meeting.created_at,
+                        rep_user_id=rep_id,
+                        rep_name=_label_for_rep(rep_id, users)[2],
+                        source=meeting.external_source,
+                        subject=meeting.title,
+                        company_name=company_names.get(cid),
+                        deal_name=resolved_deal_name,
+                        deal_id=str(resolved_deal_id) if resolved_deal_id else None,
+                        company_id=str(cid) if cid else None,
+                    )
+                )
 
     rows.sort(key=lambda row: row.occurred_at, reverse=True)
     selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
@@ -1135,6 +1273,8 @@ async def sales_activity_drilldown(
         rows = rows[offset:offset + limit]
     elif metric == "meetings":
         has_more = meeting_has_more
+    elif metric in {"demos_scheduled", "demos_done", "demos_converted"}:
+        has_more = demo_has_more
     else:
         has_more = len(locals().get("activities", [])) > limit
     return SalesActivityDrilldownRead(

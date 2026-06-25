@@ -326,6 +326,24 @@ export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  // Filter hydration source. URL params WIN when present (bookmarks/shared
+  // links keep working); otherwise fall back to the last-saved filters in
+  // localStorage so returning via the left-nav link or a detail "back" button
+  // (which land on the BARE path with no query string) restores the view
+  // instead of resetting everything. Computed once at mount.
+  const initParams = useMemo(() => {
+    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "call", "li", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
+    const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
+    if (hasAny) return searchParams;
+    try {
+      const saved = localStorage.getItem("crm.prospecting.filters");
+      if (saved) return new URLSearchParams(saved);
+    } catch {
+      /* ignore */
+    }
+    return searchParams;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { isAdmin, user } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
@@ -333,12 +351,12 @@ export default function Contacts() {
 
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [searchScope, setSearchScope] = useState<string>(() => searchParams.get("qf") ?? "all");
+  const [search, setSearch] = useState(() => initParams.get("q") ?? "");
+  const [searchScope, setSearchScope] = useState<string>(() => initParams.get("qf") ?? "all");
   // Match mode for scoped/bulk search: "contains" treats each pasted entry as
   // a substring; "exact" requires whole-cell equality (case-insensitive).
   // URL-persisted as `qm`; only sent when scope !== "all".
-  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (searchParams.get("qm") === "exact" ? "exact" : "contains"));
+  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (initParams.get("qm") === "exact" ? "exact" : "contains"));
   // Explicit sort. Server-side so it covers the full dataset, not just the
   // visible page. URL-persisted as `sb`/`sd` so deep-linked alphabetised
   // views survive navigation.
@@ -351,7 +369,7 @@ export default function Contacts() {
     { value: "company_desc", label: "Company Z → A" },
   ];
   const [prospectSort, setProspectSort] = useState<ProspectSortKey>(() => {
-    const raw = searchParams.get("sb") ?? "recent";
+    const raw = initParams.get("sb") ?? "recent";
     return (PROSPECT_SORT_OPTIONS.some((o) => o.value === raw) ? raw : "recent") as ProspectSortKey;
   });
   const sortToApi = (s: ProspectSortKey): { sortBy?: "name" | "company"; sortDir?: "asc" | "desc" } => {
@@ -366,26 +384,26 @@ export default function Contacts() {
     // filters — otherwise users would have to hunt for the toggle to discover
     // why the list is narrowed.
     return Boolean(
-      searchParams.get("seq") || searchParams.get("call") || searchParams.get("ae") ||
-      searchParams.get("sdr") || searchParams.get("own") || searchParams.get("tz") ||
-      searchParams.get("co") || searchParams.get("owner") === "mine" ||
-      searchParams.get("cc") || searchParams.get("ec") || searchParams.get("ca") ||
-      searchParams.get("fcmin") || searchParams.get("fcmax") ||
-      searchParams.get("nfa") || searchParams.get("nfb") ||
-      searchParams.get("cla") || searchParams.get("clb")
+      initParams.get("seq") || initParams.get("call") || initParams.get("ae") ||
+      initParams.get("sdr") || initParams.get("own") || initParams.get("tz") ||
+      initParams.get("co") || initParams.get("owner") === "mine" ||
+      initParams.get("cc") || initParams.get("ec") || initParams.get("ca") ||
+      initParams.get("fcmin") || initParams.get("fcmax") ||
+      initParams.get("nfa") || initParams.get("nfb") ||
+      initParams.get("cla") || initParams.get("clb")
     );
   });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
-  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
-  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
-  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("li")));
+  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
+  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("call")));
+  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("li")));
   // Progress-dot color filters. Map 1:1 to the dot colors rendered by
   // `ProgressCell`. URL keys: `cc` (call color), `ec` (email color), `ca`
   // (call attempts bucket). The backend translates colors to disposition /
   // sequence_status / count buckets — see app/repositories/contact.py.
-  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("cc")));
-  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ec")));
-  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ca")));
+  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("cc")));
+  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ec")));
+  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ca")));
   // Follow-up count range (calls logged). URL keys: `fcmin` / `fcmax`. Either
   // bound may be null (open-ended). Backend maps these to call_attempt_min/max.
   const parseCountParam = (raw: string | null): number | null => {
@@ -393,45 +411,45 @@ export default function Contacts() {
     const n = Number(raw);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
   };
-  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(searchParams.get("fcmin")));
-  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(searchParams.get("fcmax")));
+  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(initParams.get("fcmin")));
+  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(initParams.get("fcmax")));
   // Date-range filters. `nextFollowupRange` filters on the rep-scheduled
   // callback (next_followup_at); `callLastRange` on the last call (call_last_at).
   // Values are `YYYY-MM-DD`; "" means unbounded. URL keys: nfa/nfb, cla/clb.
   const [nextFollowupRange, setNextFollowupRange] = useState<DateRangeValue>(() => ({
-    from: searchParams.get("nfa") ?? "",
-    to: searchParams.get("nfb") ?? "",
+    from: initParams.get("nfa") ?? "",
+    to: initParams.get("nfb") ?? "",
   }));
   const [callLastRange, setCallLastRange] = useState<DateRangeValue>(() => ({
-    from: searchParams.get("cla") ?? "",
-    to: searchParams.get("clb") ?? "",
+    from: initParams.get("cla") ?? "",
+    to: initParams.get("clb") ?? "",
   }));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   // Client-side filter wired to the engagement KPI tiles. Clicking a tile
   // narrows the already-loaded prospect page to the matching population —
   // the same scope the tiles count. null = show everyone.
   const [cardFilter, setCardFilter] = useState<"calls_today" | "emails" | "linkedin" | "meetings" | null>(null);
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
-  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
-  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (initParams.get("owner") === "mine" ? "mine" : "all"));
+  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ae")));
+  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
   // Owner filter — multi-select that matches AE OR SDR ownership for any
   // selected user. Different from ownerScope (binary "mine vs all") and from
   // aeFilter/sdrFilter (role-specific). Sent to backend via owner_id +
   // scope_any_match=true so a single user_id matches contacts they own as
   // either AE or SDR.
-  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
   // Timezone filter — values are short labels (IST, PST, etc.). When sent to
   // the backend they're expanded to include matching IANA names from
   // TIMEZONE_LABELS so a contact stored as "Asia/Kolkata" matches "IST".
-  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tz")));
+  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tz")));
   // Company filter — optional narrowing to a single company's prospects.
   // Backend's contacts list already accepts `company_id`; this just wires a
   // dropdown to it. Value is a single company UUID (or "" for all).
-  const [companyFilter, setCompanyFilter] = useState<string>(() => searchParams.get("co") ?? "");
+  const [companyFilter, setCompanyFilter] = useState<string>(() => initParams.get("co") ?? "");
   const [companyOptions, setCompanyOptions] = useState<Company[]>([]);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
-  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
+  const [debouncedSearch, setDebouncedSearch] = useState(() => initParams.get("q") ?? "");
+  const [page, setPage] = useState(() => parseInt(initParams.get("pg") ?? "1", 10) || 1);
   const [contactsTotal, setContactsTotal] = useState(0);
   const [contactsPages, setContactsPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -921,6 +939,16 @@ export default function Contacts() {
       timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
       companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      // The active "tab" here is route-driven (angel-mapping is its own route),
+      // so the route itself already persists which view is shown — we only
+      // persist the prospect-list filters. Persist the same params to
+      // localStorage so a bare-path return (left-nav / detail back button) can
+      // rehydrate them via initParams. URL still wins when present.
+      try {
+        localStorage.setItem("crm.prospecting.filters", next.toString());
+      } catch {
+        /* ignore */
+      }
       return next;
     }, { replace: true });
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);

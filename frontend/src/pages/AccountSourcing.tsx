@@ -472,19 +472,37 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 export default function AccountSourcing() {
   const pageSize = 40;
   const [searchParams, setSearchParams] = useSearchParams();
+  // Filter hydration source. URL params WIN when present (bookmarks/shared
+  // links keep working); otherwise fall back to the last-saved filters in
+  // localStorage so returning via the left-nav link or a detail "back" button
+  // (which land on the BARE path with no query string) restores the view
+  // instead of resetting everything. Computed once at mount.
+  const initParams = useMemo(() => {
+    const FILTER_KEYS = ["q", "pmin", "pmax", "journey", "owner", "own", "tier", "disp", "status", "lane", "sort", "pg", "tab"];
+    const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
+    if (hasAny) return searchParams;
+    try {
+      const saved = localStorage.getItem("crm.accountSourcing.filters");
+      if (saved) return new URLSearchParams(saved);
+    } catch {
+      /* ignore */
+    }
+    return searchParams;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [summary, setSummary] = useState<AccountSourcingSummary | null>(null);
   const [batches, setBatches] = useState<SourcingBatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [search, setSearch] = useState(() => initParams.get("q") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => initParams.get("q") ?? "");
   // Advanced filter — single rule "prospects {op} {value}" against the
   // contact count per account. URL-persisted as `pmin` / `pmax` so navigating
   // back into the page restores the filter. The op+value pair is derived
   // from the bounds when the modal opens.
   type ProspectOp = "gt" | "lt" | "eq" | "between";
-  const initialPMin = searchParams.get("pmin");
-  const initialPMax = searchParams.get("pmax");
+  const initialPMin = initParams.get("pmin");
+  const initialPMax = initParams.get("pmax");
   const [prospectsMin, setProspectsMin] = useState<number | undefined>(initialPMin !== null ? Number(initialPMin) : undefined);
   const [prospectsMax, setProspectsMax] = useState<number | undefined>(initialPMax !== null ? Number(initialPMax) : undefined);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
@@ -493,27 +511,27 @@ export default function AccountSourcing() {
   const [advValue2, setAdvValue2] = useState("");
   const [downloadingFiltered, setDownloadingFiltered] = useState(false);
   // Recotap journey-stage filter + the funnel counts that power the ABM band.
-  const [journeyFilter, setJourneyFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("journey")));
+  const [journeyFilter, setJourneyFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("journey")));
   const [journeySummary, setJourneySummary] = useState<RecotapSummary | null>(null);
   const [syncingRecotap, setSyncingRecotap] = useState(false);
   const hasAdvancedFilter = prospectsMin !== undefined || prospectsMax !== undefined;
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (initParams.get("owner") === "mine" ? "mine" : "all"));
   // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
   // selected user. Different from ownerScope (binary mine vs all).
-  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
-  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
-  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("status")));
-  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
-  const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(searchParams.get("sort")));
-  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
+  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tier")));
+  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("disp")));
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("status")));
+  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("lane")));
+  const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(initParams.get("sort")));
+  const [page, setPage] = useState(() => parseInt(initParams.get("pg") ?? "1", 10) || 1);
   const [companyTotal, setCompanyTotal] = useState(0);
   const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
-  const [activeTab, setActiveTab] = useState<"accounts" | "imports">("accounts");
+  const [activeTab, setActiveTab] = useState<"accounts" | "imports">(() => (initParams.get("tab") === "imports" ? "imports" : "accounts"));
   const [dismissedBatchIds, setDismissedBatchIds] = useState<string[]>(() => {
     try {
       const raw = window.localStorage.getItem("account-sourcing-dismissed-batches");
@@ -660,9 +678,17 @@ export default function AccountSourcing() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       prospectsMin !== undefined ? next.set("pmin", String(prospectsMin)) : next.delete("pmin");
       prospectsMax !== undefined ? next.set("pmax", String(prospectsMax)) : next.delete("pmax");
+      activeTab !== "accounts" ? next.set("tab", activeTab) : next.delete("tab");
+      // Persist the same params to localStorage so a bare-path return (left-nav
+      // / detail back button) can rehydrate them via initParams. URL still wins.
+      try {
+        localStorage.setItem("crm.accountSourcing.filters", next.toString());
+      } catch {
+        /* ignore */
+      }
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [activeTab, laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -896,24 +922,26 @@ export default function AccountSourcing() {
               </div>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                style={{
-                  border: 0,
-                  background: "#6fae27",
-                  color: "#fff",
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                <Plus size={15} />
-                Add Accounts
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  style={{
+                    border: 0,
+                    background: "#6fae27",
+                    color: "#fff",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Plus size={15} />
+                  Add Accounts
+                </button>
+              )}
               {isAdmin && (
                 <>
                   <button

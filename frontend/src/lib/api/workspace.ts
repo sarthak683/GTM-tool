@@ -489,6 +489,8 @@ export type SalesActivityDrilldownRow = {
   contact_email?: string | null;
   company_name?: string | null;
   deal_name?: string | null;
+  deal_id?: string | null;
+  company_id?: string | null;
 };
 
 export type SalesActivityDrilldown = {

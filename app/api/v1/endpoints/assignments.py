@@ -40,7 +40,7 @@ def _validate_assignment_user(user: User, *, role: str) -> None:
     # team member (admin/ae/sdr) may hold either slot. This lets admins (e.g.
     # Shahruk) own prospects as AE *or* SDR, and lets AEs cover the SDR slot.
     # We only reject genuinely non-assignable accounts.
-    assignable = {"admin", "ae", "sdr"}
+    assignable = {"admin", "ae", "sdr", "agency"}
     if (user.role or "").lower() not in assignable:
         raise ValidationError(
             f"Cannot assign {user.name} ({(user.role or 'unknown').upper()}) — not an assignable team member"
