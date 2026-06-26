@@ -425,7 +425,13 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
         ) : null}
         {statusOption ? (
-          <span style={{ background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{statusOption.label}</span>
+          // Status is the primary at-a-glance signal, so it gets a SOLID filled
+          // pill (colored background + white text) rather than the soft tint used
+          // by the neighboring chips — this makes it pop in a dense row. Colors
+          // reuse accountStatusOption() so they stay in lockstep with the detail
+          // page and analytics. (Matches the "active" status badge on the
+          // company detail page.)
+          <span title={`Account status · ${statusOption.label}`} style={{ background: statusOption.color, color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.02em", whiteSpace: "nowrap", boxShadow: `0 1px 3px ${statusOption.color}55` }}>{statusOption.label}</span>
         ) : null}
         {disposition ? (
           <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>

@@ -34,7 +34,7 @@ from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.user import User
-from app.repositories.company import CompanyRepository
+from app.repositories.company import CompanyRepository, company_visibility_filter
 from app.repositories.contact import visible_contact_restriction
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
@@ -113,6 +113,20 @@ def _account_sourcing_visibility_filter():
             select(Deal.id).where(Deal.company_id == Company.id).exists(),
         ),
     )
+
+
+def _can_see_company(company: Company, user) -> bool:
+    """Python mirror of ``company_visibility_filter`` for single-object guards.
+
+    Admins see every company (including ``not_a_fit``); a non-admin only sees a
+    company they own (AE or SDR) that is not flagged ``not_a_fit``. Use on
+    single-company detail/update routes to 404 a company the caller can't see
+    (so existence isn't leaked).
+    """
+    if user.role == "admin":
+        return True
+    owns = company.assigned_to_id == user.id or company.sdr_id == user.id
+    return owns and company.account_status != "not_a_fit"
 
 
 async def _auto_create_angel_records(
@@ -1150,6 +1164,7 @@ async def get_batch_companies(batch_id: UUID, _user: CurrentUser, session: DBSes
     result = await session.execute(
         select(Company)
         .where(Company.sourcing_batch_id == batch_id)
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
         .offset(page.skip)
         .limit(page.limit)
         .order_by(Company.created_at.desc())
@@ -1176,7 +1191,11 @@ async def list_sourced_companies(
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
-    stmt = select(Company).where(_account_sourcing_visibility_filter())
+    stmt = (
+        select(Company)
+        .where(_account_sourcing_visibility_filter())
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+    )
     search_term = (q or "").strip()
     if search_term:
         like = f"%{search_term}%"
@@ -1304,7 +1323,11 @@ async def get_sourced_company_summary(
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
 ):
-    stmt = select(Company).where(_account_sourcing_visibility_filter())
+    stmt = (
+        select(Company)
+        .where(_account_sourcing_visibility_filter())
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+    )
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
@@ -1582,7 +1605,8 @@ async def create_manual_company(
 async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Get a single sourced company with full enrichment data (including cache)."""
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not _can_see_company(company, _user):
+        # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
     read = CompanyRead.model_validate(company)
     cache = dict(read.enrichment_cache or {})
@@ -1681,6 +1705,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     """Update sourced company workflow fields like owner, disposition, and rep feedback."""
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
+    if not _can_see_company(company, current_user):
+        raise HTTPException(status_code=404, detail="Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
     changed_fields = {
@@ -1756,7 +1782,12 @@ async def export_sourced_companies(
     endpoint so the user can "download the filtered list" without the
     frontend having to enumerate every visible company id.
     """
-    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None)).order_by(Company.created_at.desc())
+    stmt = (
+        select(Company)
+        .where(Company.sourcing_batch_id.isnot(None))
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+        .order_by(Company.created_at.desc())
+    )
     if assigned_rep:
         stmt = stmt.where(Company.assigned_rep == assigned_rep)
     if assigned_rep_email:

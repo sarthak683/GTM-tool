@@ -7,7 +7,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -22,6 +22,26 @@ from app.models.deal import (
 from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.services.deal_flags import compute_deal_flags
+
+
+def deal_visibility_filter(user_id: UUID, is_admin: bool):
+    """SQLAlchemy predicate enforcing deal visibility for ONE user.
+
+    SINGLE SOURCE OF TRUTH for the deal-level visibility rule — reuse it on every
+    deal-browse surface so access can never diverge between endpoints.
+
+    - Admins (``is_admin``) see ALL deals. Returns ``true()`` — a no-op in
+      ``.where()``.
+    - A non-admin sees a deal ONLY if they own it in either slot
+      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR). Unassigned deals are NOT
+      visible to non-admins.
+    """
+    if is_admin:
+        return true()
+    return or_(
+        Deal.assigned_to_id == user_id,
+        Deal.sdr_id == user_id,
+    )
 
 
 # Local-part tokens that mark a non-human / marketing / transactional sender.
@@ -519,8 +539,20 @@ class DealRepository(BaseRepository[Deal]):
 
     # ── Board query ──────────────────────────────────────────────────────────
 
-    async def board(self, pipeline_type: str = "deal") -> dict[str, list[DealRead]]:
-        """Return deals grouped by stage, with company_name, assigned_rep_name, contact_count."""
+    async def board(
+        self,
+        pipeline_type: str = "deal",
+        *,
+        user_id: UUID | None = None,
+        is_admin: bool = True,
+    ) -> dict[str, list[DealRead]]:
+        """Return deals grouped by stage, with company_name, assigned_rep_name, contact_count.
+
+        Scoped by ``deal_visibility_filter``: a non-admin only sees deals they
+        own (AE or SDR). ``is_admin=True`` (the default) is an unscoped no-op so
+        callers that already gate access can opt out; request handlers MUST pass
+        the real ``user_id`` and ``is_admin``.
+        """
         contact_count_sub = (
             select(
                 DealContact.deal_id,
@@ -541,6 +573,7 @@ class DealRepository(BaseRepository[Deal]):
             .outerjoin(User, Deal.assigned_to_id == User.id)
             .outerjoin(contact_count_sub, Deal.id == contact_count_sub.c.deal_id)
             .where(Deal.pipeline_type == pipeline_type)
+            .where(deal_visibility_filter(user_id, is_admin))
             .order_by(Deal.close_date_est.asc().nulls_last(), Deal.created_at.desc())
         )
 
@@ -574,7 +607,20 @@ class DealRepository(BaseRepository[Deal]):
 
     # ── Single deal with joins ───────────────────────────────────────────────
 
-    async def get_with_joins(self, deal_id: UUID) -> Optional[DealRead]:
+    async def get_with_joins(
+        self,
+        deal_id: UUID,
+        *,
+        user_id: UUID | None = None,
+        is_admin: bool = True,
+    ) -> Optional[DealRead]:
+        """Single deal with joins, scoped by ``deal_visibility_filter``.
+
+        Returns ``None`` when the deal does not exist OR the non-admin caller may
+        not see it, so the route raises 404 without leaking existence.
+        ``is_admin=True`` (default) is an unscoped no-op for internal callers that
+        already gate access; request handlers MUST pass the real user context.
+        """
         contact_count_sub = (
             select(
                 DealContact.deal_id,
@@ -596,6 +642,7 @@ class DealRepository(BaseRepository[Deal]):
             .outerjoin(User, Deal.assigned_to_id == User.id)
             .outerjoin(contact_count_sub, Deal.id == contact_count_sub.c.deal_id)
             .where(Deal.id == deal_id)
+            .where(deal_visibility_filter(user_id, is_admin))
         )
 
         row = (await self.session.execute(stmt)).first()

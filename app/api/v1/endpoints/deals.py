@@ -17,7 +17,7 @@ from app.models.deal import (
     Deal, DealContactCreate, DealContactRead, DealCreate, DealRead, DealUpdate,
 )
 from app.models.user import User
-from app.repositories.deal import DealRepository
+from app.repositories.deal import DealRepository, deal_visibility_filter
 from app.schemas.common import PaginatedResponse
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import record_stage_transition
@@ -32,6 +32,18 @@ router = APIRouter(prefix="/deals", tags=["deals"])
 
 async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
     return frozenset(await get_configured_deal_stage_ids(session)) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
+
+
+def _can_see_deal(deal: Deal, user: User) -> bool:
+    """Python mirror of ``deal_visibility_filter`` for single-object guards.
+
+    Admins see every deal; a non-admin only sees deals they own (AE or SDR).
+    Use on single-deal mutation routes to 404 a deal the caller can't see (so
+    existence isn't leaked).
+    """
+    if user.role == "admin":
+        return True
+    return deal.assigned_to_id == user.id or deal.sdr_id == user.id
 
 
 def _normalize_optional_text(value: object) -> str | None:
@@ -71,7 +83,11 @@ async def deal_board(
     pipeline_type: str = Query(default="deal"),
 ):
     """Return deals grouped by stage for kanban board display."""
-    return await DealRepository(session).board(pipeline_type)
+    return await DealRepository(session).board(
+        pipeline_type,
+        user_id=_user.id,
+        is_admin=_user.role == "admin",
+    )
 
 
 # ── List (paginated, backward-compatible) ────────────────────────────────────
@@ -86,7 +102,9 @@ async def list_deals(
     pipeline_type: Optional[str] = Query(default=None),
 ):
     repo = DealRepository(session)
-    filters = []
+    # Scope to deals the caller may see (admins see all). Keep first so it ANDs
+    # with every other filter.
+    filters = [deal_visibility_filter(_user.id, _user.role == "admin")]
     if company_id:
         filters.append(Deal.company_id == company_id)
     if stage:
@@ -198,11 +216,20 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
     valid_cache: dict[str, frozenset[str]] = {}
     updated = 0
 
-    # One IN() fetch instead of up-to-200 session.get round trips.
+    # One IN() fetch instead of up-to-200 session.get round trips. Scope the
+    # fetch to deals the caller may see so a non-admin can't mutate deals they
+    # don't own; ids they can't see are simply absent from the map and the loop
+    # skips them (no error — same as a missing id, so a mixed batch still
+    # applies to the visible deals).
     deals_by_id = {
         deal.id: deal
         for deal in (
-            await session.execute(select(Deal).where(Deal.id.in_(payload.deal_ids)))
+            await session.execute(
+                select(Deal).where(
+                    Deal.id.in_(payload.deal_ids),
+                    deal_visibility_filter(_user.id, _user.role == "admin"),
+                )
+            )
         ).scalars()
     }
 
@@ -271,8 +298,11 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
 
 @router.get("/{deal_id}", response_model=DealRead)
 async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
-    result = await DealRepository(session).get_with_joins(deal_id)
+    result = await DealRepository(session).get_with_joins(
+        deal_id, user_id=_user.id, is_admin=_user.role == "admin"
+    )
     if not result:
+        # 404 (not 403) so a non-admin can't probe which deal ids exist.
         raise NotFoundError(f"Deal {deal_id} not found")
     return result
 
@@ -283,6 +313,8 @@ async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
+    if not _can_see_deal(deal, _user):
+        raise NotFoundError(f"Deal {deal_id} not found")
     update_data = payload.model_dump(exclude_unset=True)
     stage_changed = False
     previous_stage = deal.stage
@@ -436,6 +468,8 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
 
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
+    if not _can_see_deal(deal, _user):
+        raise NotFoundError(f"Deal {deal_id} not found")
 
     valid = await _valid_stages(session, deal.pipeline_type)
     if new_stage not in valid:
