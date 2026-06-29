@@ -33,7 +33,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
 
 # Emails that always get admin role regardless of signup order.
-SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "maithili@beacon.li"}
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "maithili@beacon.li", "annie@beacon.li"}
 
 
 # ── Google OAuth flow ────────────────────────────────────────────────────────
