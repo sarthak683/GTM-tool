@@ -65,6 +65,7 @@ class Contact(ContactBase, table=True):
 
 class ContactCreate(ContactBase):
     company_id: Optional[UUID] = None
+    additional_phones: Optional[Any] = None
     persona_type: Optional[str] = None
 
 

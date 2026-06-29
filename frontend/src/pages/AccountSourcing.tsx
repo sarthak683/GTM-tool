@@ -23,7 +23,8 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi } from "../lib/api";
+import { accountSourcingApi, assignmentsApi } from "../lib/api";
+import { useToast } from "../lib/ToastContext";
 import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
 import type { RecotapSummary } from "../lib/api/prospecting";
 import { getCachedUsers } from "../lib/cachedFetch";
@@ -367,10 +368,27 @@ function prettyRepName(name?: string | null, email?: string | null): string | nu
   return e || null;
 }
 
-function CompanyTableHeader() {
+function CompanyTableHeader({
+  selectable,
+  allSelected,
+  onToggleAll,
+}: {
+  selectable?: boolean;
+  allSelected?: boolean;
+  onToggleAll?: () => void;
+} = {}) {
   const cell: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div className="as-company-table-header" style={{ padding: "2px 18px 8px" }}>
+    <div className={`as-company-table-header${selectable ? " as-selectable" : ""}`} style={{ padding: "2px 18px 8px" }}>
+      {selectable && (
+        <input
+          type="checkbox"
+          checked={!!allSelected}
+          onChange={onToggleAll}
+          aria-label="Select all visible accounts"
+          style={{ width: 16, height: 16, accentColor: colors.primary, cursor: "pointer", justifySelf: "center" }}
+        />
+      )}
       <span style={cell}>Account</span>
       <span style={cell}>Signals</span>
       <span style={{ ...cell, textAlign: "right" }}>AE · SDR</span>
@@ -378,7 +396,19 @@ function CompanyTableHeader() {
   );
 }
 
-function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (userId: string | null, userName: string | null) => void }) {
+function CompanyCard({
+  company,
+  onAssigned,
+  selectable,
+  selected,
+  onToggleSelect,
+}: {
+  company: Company;
+  onAssigned: (userId: string | null, userName: string | null) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (companyId: string) => void;
+}) {
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
@@ -392,7 +422,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 
   return (
     <div
-      className="as-company-card as-company-row crm-hover-lift"
+      className={`as-company-card as-company-row crm-hover-lift${selectable ? " as-selectable" : ""}${selected ? " as-selected" : ""}`}
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
@@ -401,10 +431,26 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
         padding: "11px 18px",
         cursor: "pointer",
         transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background 0.15s",
+        ...(selected ? { background: "#f3f9ea", borderColor: "#cfe89a" } : null),
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#f8fbff"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = selected ? "#f3f9ea" : "#ffffff"; }}
     >
+      {selectable && (
+        <div
+          className="as-col-select"
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect?.(company.id)}
+            aria-label={`Select ${company.name}`}
+            style={{ width: 16, height: 16, accentColor: colors.primary, cursor: "pointer" }}
+          />
+        </div>
+      )}
       {/* Account */}
       <div className="as-col-account" style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
         <CompanyAvatar name={company.name} />
@@ -557,7 +603,13 @@ export default function AccountSourcing() {
   const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
   const [bulkIcpRunning, setBulkIcpRunning] = useState(false);
   const [bulkIcpResult, setBulkIcpResult] = useState<string | null>(null);
+  // Admin row-level multi-select → bulk-assign AE/SDR for the selected accounts.
+  // Mirrors the prospect multi-select pattern in Contacts.tsx.
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(() => new Set());
+  const [bulkAssigningAe, setBulkAssigningAe] = useState(false);
+  const [bulkAssigningSdr, setBulkAssigningSdr] = useState(false);
   const { isAdmin, user } = useAuth();
+  const toast = useToast();
 
   useEffect(() => {
     if (searchParams.get("new") !== "company") return;
@@ -750,6 +802,65 @@ export default function AccountSourcing() {
     return withIndex.map((item) => item.company);
   }, [companies, sortBy]);
 
+  // Row-level multi-select (admin bulk-assign). Only admins get the controls,
+  // mirroring the prospect bulk-assign gating in Contacts.tsx.
+  const canSelectAccounts = isAdmin;
+  const allVisibleSelected =
+    sortedCompanies.length > 0 && sortedCompanies.every((c) => selectedCompanyIds.has(c.id));
+
+  const toggleCompanySelection = useCallback((companyId: string) => {
+    setSelectedCompanyIds((current) => {
+      const next = new Set(current);
+      if (next.has(companyId)) next.delete(companyId);
+      else next.add(companyId);
+      return next;
+    });
+  }, []);
+
+  const toggleVisibleCompanySelection = useCallback(() => {
+    setSelectedCompanyIds((current) => {
+      if (sortedCompanies.length > 0 && sortedCompanies.every((c) => current.has(c.id))) {
+        // All visible already selected → clear just the visible ones.
+        const next = new Set(current);
+        for (const c of sortedCompanies) next.delete(c.id);
+        return next;
+      }
+      const next = new Set(current);
+      for (const c of sortedCompanies) next.add(c.id);
+      return next;
+    });
+  }, [sortedCompanies]);
+
+  const clearCompanySelection = useCallback(() => setSelectedCompanyIds(new Set()), []);
+
+  // Admin: bulk-assign the selected accounts' AE or SDR. After success, clear
+  // the selection and reload so the rows reflect the new owners.
+  const bulkAssignSelectedCompanies = useCallback(
+    async (role: "ae" | "sdr", userId: string) => {
+      if (!userId || selectedCompanyIds.size === 0) return;
+      const setBusy = role === "sdr" ? setBulkAssigningSdr : setBulkAssigningAe;
+      setBusy(true);
+      try {
+        const result = await assignmentsApi.bulkAssignCompanies(Array.from(selectedCompanyIds), userId, role);
+        const who = teamUsers.find((u) => u.id === userId)?.name || role.toUpperCase();
+        toast.success(
+          `${result.updated} account${result.updated === 1 ? "" : "s"} assigned to ${who}${result.skipped ? `, ${result.skipped} skipped` : ""}.`,
+          `${role.toUpperCase()} reassigned`,
+        );
+        clearCompanySelection();
+        await load();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to assign selected accounts.",
+          "Assign failed",
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selectedCompanyIds, teamUsers, toast, clearCompanySelection, load],
+  );
+
   const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
@@ -828,6 +939,22 @@ export default function AccountSourcing() {
     setDismissedBatchIds((current) => current.filter((id) => id !== batch.id));
     void load();
   }, [load]);
+
+  // Prune selected IDs that are no longer in the loaded list (after paging or
+  // filtering) so a bulk-assign never touches an account the admin can't see.
+  useEffect(() => {
+    setSelectedCompanyIds((current) => {
+      if (current.size === 0) return current;
+      const visible = new Set(companies.map((c) => c.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [companies]);
 
   const handleCreateCompany = useCallback(async () => {
     const entries = parseManualCompanyLines(createForm.companiesText);
@@ -1865,9 +1992,126 @@ export default function AccountSourcing() {
           </div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            <CompanyTableHeader />
+            {canSelectAccounts && selectedCompanyIds.size > 0 && (
+              <div
+                className="as-selection-bar"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  border: "1px solid #cfe89a",
+                  background: "#f7fbef",
+                  borderRadius: 14,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>
+                    {selectedCompanyIds.size} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleVisibleCompanySelection}
+                    style={{
+                      height: 34,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {allVisibleSelected ? "Clear page" : "Select visible page"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearCompanySelection}
+                    style={{
+                      height: 34,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.sub,
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 750,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <select
+                    value=""
+                    disabled={bulkAssigningAe || bulkAssigningSdr}
+                    onChange={(e) => { if (e.target.value) void bulkAssignSelectedCompanies("ae", e.target.value); e.currentTarget.value = ""; }}
+                    title="Assign selected accounts' AE"
+                    style={{
+                      height: 36,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 11,
+                      padding: "0 12px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: bulkAssigningAe || bulkAssigningSdr ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <option value="">{bulkAssigningAe ? "Assigning…" : "Assign AE →"}</option>
+                    {teamUsers
+                      .filter((u) => ["sdr", "ae", "admin", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email} ({(u.role || "").toUpperCase()})</option>
+                      ))}
+                  </select>
+                  <select
+                    value=""
+                    disabled={bulkAssigningAe || bulkAssigningSdr}
+                    onChange={(e) => { if (e.target.value) void bulkAssignSelectedCompanies("sdr", e.target.value); e.currentTarget.value = ""; }}
+                    title="Assign selected accounts' SDR"
+                    style={{
+                      height: 36,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 11,
+                      padding: "0 12px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: bulkAssigningAe || bulkAssigningSdr ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <option value="">{bulkAssigningSdr ? "Assigning…" : "Assign SDR →"}</option>
+                    {teamUsers
+                      .filter((u) => ["sdr", "ae", "admin", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email} ({(u.role || "").toUpperCase()})</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            )}
+            <CompanyTableHeader
+              selectable={canSelectAccounts}
+              allSelected={allVisibleSelected}
+              onToggleAll={toggleVisibleCompanySelection}
+            />
             {sortedCompanies.map((c) => (
-              <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
+              <CompanyCard
+                key={c.id}
+                company={c}
+                onAssigned={() => load()}
+                selectable={canSelectAccounts}
+                selected={selectedCompanyIds.has(c.id)}
+                onToggleSelect={toggleCompanySelection}
+              />
             ))}
             <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ color: colors.sub, fontSize: 13 }}>
