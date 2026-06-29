@@ -742,6 +742,13 @@ async def import_contacts_csv(
 ):
     await require_workspace_permission(session, current_user, "prospect_migration")
 
+    # AEs/SDRs can add prospects but NOT accounts: only admins may auto-create
+    # companies during a prospect import. For non-admins, unmatched rows are
+    # flagged as missing-company (an admin adds the account, then maps the
+    # prospect to it) rather than silently spawning new accounts.
+    if auto_create_companies and (current_user.role or "").lower() != "admin":
+        auto_create_companies = False
+
     lower_name = (file.filename or "").lower()
     if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
         raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")

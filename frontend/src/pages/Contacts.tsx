@@ -779,7 +779,7 @@ export default function Contacts() {
     try {
       const result = await contactsApi.importCsv(
         file,
-        true, // accounts are always auto-created on import (no enrichment queued)
+        isAdmin, // only admins auto-create accounts on import; AE/SDR add prospects only — unmatched rows are flagged for an admin to add the account
         (phase, percent) => setUploadProgress({ phase, percent }),
       );
       setImportSummary(result);
