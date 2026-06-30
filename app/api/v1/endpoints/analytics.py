@@ -820,8 +820,9 @@ async def sales_activity_drilldown(
     _user: CurrentUser,
     metric: Annotated[
         Literal[
-            "emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts",
-            "meetings", "total", "demos_scheduled", "demos_done", "demos_converted",
+            "emails", "email_replies", "calls", "connected_calls", "live_calls",
+            "linkedin_reachouts", "meetings", "total", "demos_scheduled", "demos_done",
+            "demos_converted",
         ],
         Query(description="Activity metric to inspect"),
     ],
@@ -878,7 +879,7 @@ async def sales_activity_drilldown(
     def activity_metric_filter():
         type_lower = func.lower(Activity.type)
         medium_lower = func.lower(Activity.medium)
-        if metric == "emails":
+        if metric in {"emails", "email_replies"}:
             return or_(type_lower == "email", medium_lower == "email")
         if metric in {"calls", "connected_calls", "live_calls"}:
             base = or_(type_lower == "call", medium_lower == "call")
@@ -897,7 +898,7 @@ async def sales_activity_drilldown(
     rows: list[SalesActivityDrilldownRow] = []
     # Demo-funnel metrics are NOT activity-table backed; the activity stream must
     # only run for the activity metrics (and "total", which merges in meetings).
-    if metric in {"emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "total"}:
+    if metric in {"emails", "email_replies", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "total"}:
         activity_stmt = (
             select(Activity)
             .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
@@ -910,6 +911,16 @@ async def sales_activity_drilldown(
             rep_local = (user_emails.get(rep_id) or "").split("@")[0]
             rep_from = {f"{rep_local}@{d}" for d in BEACON_SENDING_DOMAINS} if rep_local else set()
             activity_stmt = activity_stmt.where(func.lower(Activity.email_from).in_(rep_from or {"__none__"}))
+        elif rep_id and metric == "email_replies":
+            # Replies are credited recipient-based (the beacon address the
+            # outreach was sent TO), with an owner fallback — NOT by who the row
+            # sits on. A reply can therefore belong to the rep via the beacon
+            # recipient local-part even when its deal/contact is owned elsewhere,
+            # so narrowing in SQL by owner/created_by would drop rows the
+            # dashboard's email_replies count includes. We fetch the full email
+            # window and attribute in Python with the SAME _activity_rep_id the
+            # dashboard uses, exactly like _meeting_rep_ids does for meetings.
+            pass
         elif rep_id:
             activity_stmt = activity_stmt.where(
                 or_(
@@ -928,12 +939,62 @@ async def sales_activity_drilldown(
         # For metric="total" the activity and meeting streams are merged and
         # paginated ONCE on the combined list below, so we must NOT pre-offset
         # this stream — fetch from the top through offset+limit (+1 sentinel).
+        # metric="email_replies" is reply-vs-send + recipient-credited and cannot
+        # be expressed in SQL, so it is filtered in Python and paginated on the
+        # filtered list below — it likewise must fetch the whole email window
+        # un-offset (no SQL limit, since SQL rows are pre-filter).
         # Other metrics paginate this stream alone, so keep the SQL offset.
         if metric == "total":
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).limit(offset + limit + 1)
+        elif metric == "email_replies":
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc())
         else:
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
         activities = (await session.execute(activity_stmt)).scalars().all()
+
+        # email_replies: keep only inbound replies credited to the requested rep,
+        # using the SAME _email_event_kind/_activity_rep_id the dashboard uses, so
+        # the row set == the dashboard email_replies count. Owner maps for
+        # attribution are built below; replies fall back to owner attribution only
+        # when no beacon recipient is found, matching the dashboard exactly. The
+        # filtered list is paginated (offset/limit + sentinel) before row-building.
+        reply_has_more = False
+        if metric == "email_replies":
+            reply_deal_ids = {a.deal_id for a in activities if a.deal_id}
+            reply_contact_ids = {a.contact_id for a in activities if a.contact_id}
+            reply_deal_owner: dict[UUID, UUID | None] = {row.id: row.assigned_to_id for row in scoped_deal_rows}
+            reply_contact_owner: dict[UUID, UUID | None] = {row.id: row.assigned_to_id for row in scoped_contact_rows}
+            if reply_deal_ids:
+                for row in (
+                    await session.execute(
+                        select(Deal.id, Deal.assigned_to_id).where(Deal.id.in_(reply_deal_ids))
+                    )
+                ).all():
+                    reply_deal_owner[row.id] = row.assigned_to_id
+            if reply_contact_ids:
+                for row in (
+                    await session.execute(
+                        select(Contact.id, Contact.assigned_to_id).where(Contact.id.in_(reply_contact_ids))
+                    )
+                ).all():
+                    reply_contact_owner[row.id] = row.assigned_to_id
+            reply_filtered = []
+            for activity in activities:
+                if _email_event_kind(activity) != "reply":
+                    continue
+                row_rep_id = _activity_rep_id(
+                    activity,
+                    deal_owner=reply_deal_owner,
+                    contact_owner=reply_contact_owner,
+                    rep_id_by_local=rep_id_by_local,
+                )
+                if not _is_rep(row_rep_id, rep_user_ids):
+                    continue
+                if rep_id and row_rep_id != rep_id:
+                    continue
+                reply_filtered.append(activity)
+            reply_has_more = len(reply_filtered) > offset + limit
+            activities = reply_filtered[offset:offset + limit + 1]
 
         # total merges globally, so every fetched activity must participate;
         # single-metric pages are already the final slice (cap at limit).
@@ -987,6 +1048,13 @@ async def sales_activity_drilldown(
                 # of contact/deal linkage; opens/replies and inbound are excluded.
                 if _email_event_kind(activity) != "send":
                     continue
+            elif metric == "email_replies":
+                # Replies were already classified, credited and rep-matched (and
+                # the page already paginated) above — independent of contact/deal
+                # linkage, exactly like the dashboard email_replies count. Do not
+                # re-gate on contact/deal here or beacon-recipient-credited
+                # replies with no linked deal/contact would be dropped.
+                pass
             elif not activity.contact_id and not activity.deal_id:
                 continue
             row_rep_id = _activity_rep_id(
@@ -998,7 +1066,11 @@ async def sales_activity_drilldown(
                 continue
             rep_email = user_emails.get(row_rep_id) if row_rep_id else None
             direction = None
-            if is_email:
+            if metric == "email_replies":
+                # Inbound by definition — the prospect (email_from) is the
+                # counterparty; the beacon rep is the recipient.
+                direction = "inbound"
+            elif is_email:
                 # outbound iff it came from one of OUR sending identities.
                 direction = "outbound" if _beacon_sender_local(activity.email_from) else "inbound"
             company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
@@ -1273,6 +1345,10 @@ async def sales_activity_drilldown(
         rows = rows[offset:offset + limit]
     elif metric == "meetings":
         has_more = meeting_has_more
+    elif metric == "email_replies":
+        # Pagination happened on the Python-filtered reply list (offset/limit +
+        # sentinel), so use that list's overflow flag, not the SQL page size.
+        has_more = locals().get("reply_has_more", False)
     elif metric in {"demos_scheduled", "demos_done", "demos_converted"}:
         has_more = demo_has_more
     else:

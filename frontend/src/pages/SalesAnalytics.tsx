@@ -79,7 +79,7 @@ const windowPresetLabel = (days: number): string =>
   WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
-type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted";
+type SalesActivityMetric = "emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted";
 
 // Brand-green chart palette. Kept here so every Recharts surface on this page
 // pulls from one source of truth instead of scattering hex literals. The funnel
@@ -896,6 +896,7 @@ function RepActivityTable({
               tone="#f3eaff"
               text="#7c3aed"
               sub={<span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% of sent</span>}
+              onClick={() => onOpenMetric(row, "email_replies")}
             />
             <StatPill
               label="Calls"
@@ -2011,6 +2012,7 @@ export default function SalesAnalytics() {
   const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
     const labelByMetric: Record<SalesActivityMetric, string> = {
       emails: "Emails",
+      email_replies: "Emails In",
       calls: "Calls",
       connected_calls: "Connected calls",
       live_calls: "Live calls",
