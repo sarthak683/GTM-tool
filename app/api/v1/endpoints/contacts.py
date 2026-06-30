@@ -281,6 +281,7 @@ async def list_contacts(
         None if await can_view_all_prospects(session, current_user) else str(current_user.id)
     )
     items, total = await repo.list_with_company_name(
+        restrict_to_role=current_user.role,
         company_id=company_id,
         q=q,
         q_field=q_field,

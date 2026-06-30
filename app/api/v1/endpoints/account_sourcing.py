@@ -2040,7 +2040,16 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
     # Without this, an account owner saw only prospects assigned directly to them
     # (e.g. Dynamo Software's account SDR could see just 1 of 7 prospects, the rest
     # being co-owned by the account AE).
-    owns_account = current_user.id is not None and current_user.id in {company.assigned_to_id, company.sdr_id}
+    #
+    # SDRs are EXCLUDED from this account-owner bypass: they are hard-restricted to
+    # their OWN prospects everywhere, so even on an account they own they see only
+    # prospects in their own slots — never an AE-held teammate's prospect.
+    is_sdr = (current_user.role or "").lower() == "sdr"
+    owns_account = (
+        not is_sdr
+        and current_user.id is not None
+        and current_user.id in {company.assigned_to_id, company.sdr_id}
+    )
     if restriction is not None and not owns_account:
         stmt = stmt.where(restriction)
     result = await session.execute(stmt)

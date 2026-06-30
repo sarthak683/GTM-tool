@@ -23,6 +23,7 @@ from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
+from app.services.permissions import can_view_all_deals
 from app.services.timeline import build_deal_timeline
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,14 @@ async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
     return frozenset(await get_configured_deal_stage_ids(session)) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
 
 
-def _can_see_deal(deal: Deal, user: User) -> bool:
+def _can_see_deal(deal: Deal, user: User, view_all: bool = False) -> bool:
     """Python mirror of ``deal_visibility_filter`` for single-object guards.
 
-    Admins see every deal; a non-admin only sees deals they own (AE or SDR).
-    Use on single-deal mutation routes to 404 a deal the caller can't see (so
-    existence isn't leaked).
+    Admins (and view-all grantees, via ``view_all``) see every deal; any other
+    non-admin only sees deals they own (AE or SDR). Use on single-deal mutation
+    routes to 404 a deal the caller can't see (so existence isn't leaked).
     """
-    if user.role == "admin":
+    if view_all or user.role == "admin":
         return True
     return deal.assigned_to_id == user.id or deal.sdr_id == user.id
 
@@ -83,10 +84,11 @@ async def deal_board(
     pipeline_type: str = Query(default="deal"),
 ):
     """Return deals grouped by stage for kanban board display."""
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
     return await DealRepository(session).board(
         pipeline_type,
         user_id=_user.id,
-        is_admin=_user.role == "admin",
+        is_admin=view_all,
     )
 
 
@@ -102,9 +104,10 @@ async def list_deals(
     pipeline_type: Optional[str] = Query(default=None),
 ):
     repo = DealRepository(session)
-    # Scope to deals the caller may see (admins see all). Keep first so it ANDs
-    # with every other filter.
-    filters = [deal_visibility_filter(_user.id, _user.role == "admin")]
+    # Scope to deals the caller may see (admins + view-all grantees see all).
+    # Keep first so it ANDs with every other filter.
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    filters = [deal_visibility_filter(_user.id, view_all)]
     if company_id:
         filters.append(Deal.company_id == company_id)
     if stage:
@@ -215,6 +218,7 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
     now = datetime.utcnow()
     valid_cache: dict[str, frozenset[str]] = {}
     updated = 0
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
 
     # One IN() fetch instead of up-to-200 session.get round trips. Scope the
     # fetch to deals the caller may see so a non-admin can't mutate deals they
@@ -227,7 +231,7 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
             await session.execute(
                 select(Deal).where(
                     Deal.id.in_(payload.deal_ids),
-                    deal_visibility_filter(_user.id, _user.role == "admin"),
+                    deal_visibility_filter(_user.id, view_all),
                 )
             )
         ).scalars()
@@ -298,8 +302,9 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
 
 @router.get("/{deal_id}", response_model=DealRead)
 async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
     result = await DealRepository(session).get_with_joins(
-        deal_id, user_id=_user.id, is_admin=_user.role == "admin"
+        deal_id, user_id=_user.id, is_admin=view_all
     )
     if not result:
         # 404 (not 403) so a non-admin can't probe which deal ids exist.
@@ -313,7 +318,8 @@ async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
-    if not _can_see_deal(deal, _user):
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    if not _can_see_deal(deal, _user, view_all):
         raise NotFoundError(f"Deal {deal_id} not found")
     update_data = payload.model_dump(exclude_unset=True)
     stage_changed = False
@@ -468,7 +474,8 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
 
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
-    if not _can_see_deal(deal, _user):
+    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    if not _can_see_deal(deal, _user, view_all):
         raise NotFoundError(f"Deal {deal_id} not found")
 
     valid = await _valid_stages(session, deal.pipeline_type)

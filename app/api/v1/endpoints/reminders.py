@@ -61,7 +61,9 @@ async def list_reminders(
     """
     stmt = select(Reminder)
     if not await can_view_all_prospects(session, current_user):
-        visible_contact_ids = select(Contact.id).where(contact_visibility_filter(current_user.id))
+        visible_contact_ids = select(Contact.id).where(
+            contact_visibility_filter(current_user.id, current_user.role)
+        )
         stmt = stmt.where(
             or_(
                 Reminder.assigned_to_id == current_user.id,

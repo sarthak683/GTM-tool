@@ -345,6 +345,11 @@ export default function Contacts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const { isAdmin, user } = useAuth();
+  // SDRs are scoped to their own prospects everywhere (backend now returns only
+  // own-assigned for this role). The owner-scope control's "All reps" /
+  // "Unassigned" views would be misleading (they'd return only the SDR's own),
+  // so for non-admin SDRs we force scope to "mine" and lock the toggle.
+  const isSdrLocked = !isAdmin && user?.role === "sdr";
   const toast = useToast();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
@@ -429,7 +434,11 @@ export default function Contacts() {
   // narrows the already-loaded prospect page to the matching population —
   // the same scope the tiles count. null = show everyone.
   const [cardFilter, setCardFilter] = useState<"calls_today" | "emails" | "linkedin" | "meetings" | null>(null);
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (initParams.get("owner") === "mine" ? "mine" : "all"));
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() =>
+    // SDRs only ever see their own prospects — force "mine" on load regardless
+    // of any persisted ?owner= param.
+    isSdrLocked || initParams.get("owner") === "mine" ? "mine" : "all"
+  );
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
   // Owner filter — multi-select that matches AE OR SDR ownership for any
@@ -913,6 +922,13 @@ export default function Contacts() {
   }, [location.pathname]);
 
   // Sync all filter state into URL so navigating away and back restores position
+  // Guard: SDRs are scoped to their own prospects everywhere. Snap the
+  // owner-scope back to "mine" if anything (stale URL/localStorage param,
+  // future code path) ever sets it to "all" for a locked SDR.
+  useEffect(() => {
+    if (isSdrLocked && ownerScope !== "mine") setOwnerScope("mine");
+  }, [isSdrLocked, ownerScope]);
+
   useEffect(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -2223,6 +2239,26 @@ export default function Contacts() {
                         {contactsTotal} total · {myCallsTodayCount} calls today
                       </div>
                     </div>
+                    {isSdrLocked ? (
+                      // SDRs only see their own prospects — show a static label,
+                      // no toggle to team-wide / unassigned views.
+                      <div
+                        style={{
+                          height: 36,
+                          padding: "0 12px",
+                          borderRadius: 12,
+                          border: "1px solid #ffb995",
+                          background: "#f3fbe3",
+                          color: "#4d7c0f",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        My prospects
+                      </div>
+                    ) : (
                     <button
                       type="button"
                       onClick={() => setOwnerScope(ownerScope === "mine" ? "all" : "mine")}
@@ -2239,6 +2275,7 @@ export default function Contacts() {
                     >
                       {ownerScope === "mine" ? "My list" : isAdmin ? "All reps" : "Mine + unassigned"}
                     </button>
+                    )}
                   </div>
                   <div style={{ position: "relative" }}>
                     <Search size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#6f8297", pointerEvents: "none" }} />
@@ -2529,10 +2566,12 @@ export default function Contacts() {
                     active: followupCountMin === 3 && followupCountMax == null,
                     apply: () => { setFollowupCountMin(3); setFollowupCountMax(null); },
                     clear: () => { setFollowupCountMin(null); setFollowupCountMax(null); } },
-                  { key: "mine", label: "My prospects", icon: Users,
+                  // SDRs are locked to their own prospects — the toggle would be
+                  // a no-op (and "clear" → "all" must not be reachable), so omit it.
+                  ...(isSdrLocked ? [] : [{ key: "mine", label: "My prospects", icon: Users,
                     active: ownerScope === "mine",
                     apply: () => setOwnerScope("mine"),
-                    clear: () => setOwnerScope("all") },
+                    clear: () => setOwnerScope("all") }]),
                 ];
                 return views.map((v) => {
                   const Icon = v.icon;
@@ -2562,7 +2601,9 @@ export default function Contacts() {
                 filters so they can see what's narrowing the list. */}
             {showFilters && (() => {
               const hasFilters = !!(
-                ownerScope === "mine" ||
+                // For locked SDRs "mine" is the permanent baseline, not an
+                // active filter — don't let it force the Reset / panel state.
+                (!isSdrLocked && ownerScope === "mine") ||
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
                 linkedinStatusFilter.length ||
@@ -2602,8 +2643,28 @@ export default function Contacts() {
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Prospects</span>
                     <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
-                  {/* View — all vs mine */}
+                  {/* View — all vs mine. SDRs are locked to their own prospects,
+                      so render a static label instead of an interactive select. */}
                   <div style={{ display: "flex", flexDirection: "column" }}>
+                    {isSdrLocked ? (
+                      <div
+                        style={{
+                          height: 42,
+                          padding: "0 14px",
+                          borderRadius: 12,
+                          border: "1.5px solid #9ace3d",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: "#4d7c0f",
+                          background: "#f3fbe3",
+                          minWidth: 150,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        My prospects
+                      </div>
+                    ) : (
                     <select
                       value={ownerScope}
                       onChange={(e) => setOwnerScope(e.target.value === "mine" ? "mine" : "all")}
@@ -2623,6 +2684,7 @@ export default function Contacts() {
                       <option value="all">All prospects</option>
                       <option value="mine">My prospects</option>
                     </select>
+                    )}
                   </div>
                   {/* Company */}
                   <div style={{ display: "flex", flexDirection: "column" }}>
@@ -2923,7 +2985,8 @@ export default function Contacts() {
                       type="button"
                       onClick={() => {
                         setSearch("");
-                        setOwnerScope("all");
+                        // SDRs stay locked to their own prospects on reset.
+                        setOwnerScope(isSdrLocked ? "mine" : "all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setLinkedinStatusFilter([]);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
