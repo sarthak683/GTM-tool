@@ -396,6 +396,21 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
 
     contact = Contact(**payload.model_dump())
 
+    # Auto-tag a new prospect to its ACCOUNT's owners: when it's added under a
+    # company, inherit that company's SDR and AE so the prospect lands with the
+    # reps who own the account (e.g. a BillTrust prospect -> BillTrust's SDR + AE).
+    # Only fills a slot the caller didn't explicitly set; the creator-fallback
+    # below still covers any slot the company itself leaves empty.
+    if contact.company_id and (not contact.sdr_id or not contact.assigned_to_id):
+        company = await session.get(Company, contact.company_id)
+        if company:
+            if not contact.sdr_id and company.sdr_id:
+                contact.sdr_id = company.sdr_id
+                contact.sdr_name = company.sdr_name
+            if not contact.assigned_to_id and company.assigned_to_id:
+                contact.assigned_to_id = company.assigned_to_id
+                contact.assigned_rep_email = company.assigned_rep_email
+
     # Auto-assign to the creator (unless already set) so a rep who manually
     # adds a prospect actually sees it in their scoped list. Admins creating
     # contacts on behalf of someone else can leave it unassigned.
