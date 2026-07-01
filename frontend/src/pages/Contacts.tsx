@@ -479,6 +479,14 @@ export default function Contacts() {
   const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [startingCampaign, setStartingCampaign] = useState(false);
+  // Bulk "add follow-up" — set a per-contact Reminder on every selected
+  // prospect so it surfaces on each of their detail pages. `bulkFollowupAt` is
+  // a naive datetime-local string (rep's local time); `bulkFollowupNote` is an
+  // optional note stored on each reminder.
+  const [bulkFollowupOpen, setBulkFollowupOpen] = useState(false);
+  const [bulkFollowupAt, setBulkFollowupAt] = useState("");
+  const [bulkFollowupNote, setBulkFollowupNote] = useState("");
+  const [bulkFollowupSaving, setBulkFollowupSaving] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
   // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
   // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
@@ -497,6 +505,13 @@ export default function Contacts() {
   // Monotonic request id for loadContacts: only the latest in-flight request
   // is allowed to write state (see loadContacts for the race it guards).
   const loadSeqRef = useRef(0);
+  // Guards the "reset to page 1 on filter change" effect so it does NOT fire on
+  // the initial mount. Without this, returning from a prospect detail (remount)
+  // would clobber the `pg` restored from the URL/localStorage back to page 1 —
+  // the rep lands on a different slice of prospects and the list appears to
+  // "shuffle". We only want to reset the page for genuine post-mount filter
+  // changes, so the very first run (mount) is skipped.
+  const pageResetMountedRef = useRef(false);
   // Angel-mapping data is fetched lazily the first time that tab opens.
   const angelsLoadedRef = useRef(false);
   const [callDisposition, setCallDisposition] = useState("");
@@ -977,6 +992,13 @@ export default function Contacts() {
   }, [search]);
 
   useEffect(() => {
+    // Skip the mount run so the page restored from the URL/localStorage (`pg`)
+    // survives a navigate-back from a prospect detail. Only reset to page 1 on
+    // real filter/sort changes made after mount.
+    if (!pageResetMountedRef.current) {
+      pageResetMountedRef.current = true;
+      return;
+    }
     setPage(1);
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
@@ -1725,6 +1747,56 @@ export default function Contacts() {
     }
   };
 
+  // Bulk follow-up: open the dialog pre-seeded with the same "tomorrow at
+  // 10:00 AM PST" default the single call-follow-up uses.
+  const openBulkFollowup = () => {
+    if (selectedContactIds.size === 0) return;
+    setBulkFollowupAt(defaultFollowupLocalString());
+    setBulkFollowupNote("");
+    setBulkFollowupOpen(true);
+  };
+
+  // Create one Reminder per selected prospect. The datetime-local value is
+  // naive (rep's local time); `new Date(...)` interprets an unsuffixed string
+  // as local, then we send ISO/UTC — mirrors the single-reminder create at
+  // saveCallDisposition. Each reminder is per-contact, so it surfaces on that
+  // prospect's detail page automatically (no backend change needed).
+  const submitBulkFollowup = async () => {
+    if (selectedContactIds.size === 0 || !bulkFollowupAt) return;
+    const due = new Date(bulkFollowupAt);
+    if (Number.isNaN(due.getTime())) {
+      toast.error("Enter a valid follow-up date and time.", "Invalid date");
+      return;
+    }
+    const dueIso = due.toISOString();
+    const note = bulkFollowupNote.trim() || "Follow-up";
+    const ids = Array.from(selectedContactIds);
+    // Map contact id → company id from the loaded list so each reminder carries
+    // its company (same field the single-reminder path sets).
+    const companyById = new Map(contacts.map((c) => [c.id, c.company_id]));
+    setBulkFollowupSaving(true);
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          remindersApi.create({
+            contact_id: id,
+            company_id: companyById.get(id) || undefined,
+            note,
+            due_at: dueIso,
+            assigned_to_id: user?.id,
+          })
+        )
+      );
+      toast.success(`Follow-up set for ${ids.length} prospect${ids.length === 1 ? "" : "s"}.`, "Reminders set");
+      setBulkFollowupOpen(false);
+      setSelectedContactIds(new Set());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to set follow-up reminders.", "Error");
+    } finally {
+      setBulkFollowupSaving(false);
+    }
+  };
+
   const handleDeleteInvestor = async (id: string) => {
     if (!confirm("Delete this investor and all their mappings?")) return;
     try {
@@ -2352,6 +2424,14 @@ export default function Contacts() {
                         style={{ height: 34, border: "1px solid #f0c2c2", borderRadius: 10, background: selectedContactIds.size ? "#fff1f1" : "#f6f8fb", color: selectedContactIds.size ? "#b3261e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                       >
                         <Trash2 size={13} /> {deletingContacts ? "Deleting..." : "Delete selected"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openBulkFollowup}
+                        disabled={selectedContactIds.size === 0}
+                        style={{ height: 34, border: "1px solid #f5d77a", borderRadius: 10, background: selectedContactIds.size ? "#fffbeb" : "#f6f8fb", color: selectedContactIds.size ? "#92400e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                      >
+                        <Clock size={13} /> Add follow-up
                       </button>
                       {user?.role === "sdr" && (
                         <div style={{ display: "flex", gap: 8 }}>
@@ -3139,6 +3219,27 @@ export default function Contacts() {
                     }}
                   >
                     <Send size={14} /> Start campaign
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openBulkFollowup}
+                    disabled={selectedContactIds.size === 0}
+                    style={{
+                      height: 36,
+                      border: "1px solid #f5d77a",
+                      background: selectedContactIds.size ? "#fffbeb" : "#f6f8fb",
+                      color: selectedContactIds.size ? "#92400e" : "#9aa8b7",
+                      borderRadius: 11,
+                      padding: "0 14px",
+                      fontSize: 13,
+                      fontWeight: 850,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: selectedContactIds.size ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    <Clock size={14} /> Add follow-up
                   </button>
                   {user?.role === "sdr" && (
                     <button
@@ -4973,6 +5074,72 @@ export default function Contacts() {
           </div>
         </div>
       )}
+      {bulkFollowupOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setBulkFollowupOpen(false)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 440, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#f59e0b,#d97706)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Clock size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Add follow-up</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{selectedContactIds.size} prospect{selectedContactIds.size === 1 ? "" : "s"} selected</div>
+                </div>
+              </div>
+              <button onClick={() => setBulkFollowupOpen(false)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Due date &amp; time *</label>
+                <input
+                  type="datetime-local"
+                  value={bulkFollowupAt}
+                  onChange={(e) => setBulkFollowupAt(e.target.value)}
+                  style={{ width: "100%", height: 42, border: "1px solid #c8d9e8", borderRadius: 10, padding: "0 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", fontFamily: "inherit" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Note (optional)</label>
+                <textarea
+                  value={bulkFollowupNote}
+                  onChange={(e) => setBulkFollowupNote(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Follow up on pricing conversation"
+                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "10px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", fontFamily: "inherit", resize: "vertical" }}
+                />
+                <p className="crm-muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
+                  A reminder is created on each selected prospect and shows on their detail page.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setBulkFollowupOpen(false)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void submitBulkFollowup()}
+                  disabled={bulkFollowupSaving || !bulkFollowupAt}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: bulkFollowupAt ? "linear-gradient(135deg,#f59e0b,#d97706)" : "#c7d2dd", color: "#fff", fontSize: 14, fontWeight: 700, cursor: bulkFollowupAt && !bulkFollowupSaving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {bulkFollowupSaving ? <Loader2 size={15} className="animate-spin" /> : <Clock size={15} />}
+                  {bulkFollowupSaving ? "Setting…" : "Set follow-up"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {campaignModalOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setCampaignModalOpen(false)}

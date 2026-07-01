@@ -140,6 +140,29 @@ export function NotificationBell() {
     }
   };
 
+  // Row click → open the thing the notification is about. Meeting-booked
+  // suggestions are excluded here (their Accept/Create-deal button owns the
+  // navigation); everything else resolves a target from action_payload.
+  const handleOpen = (n: AppNotification) => {
+    const payload = (n.action_payload ?? {}) as {
+      contact_id?: unknown;
+      deal_id?: unknown;
+      url?: unknown;
+    };
+    let target: string | null = null;
+    if (typeof payload.contact_id === "string" && payload.contact_id) {
+      target = `/contacts/${payload.contact_id}`;
+    } else if (typeof payload.deal_id === "string" && payload.deal_id) {
+      target = `/pipeline?deal=${payload.deal_id}`;
+    } else if (typeof payload.url === "string" && payload.url) {
+      target = payload.url;
+    }
+    if (!target) return; // nothing actionable to open — leave the popover as-is
+    void handleMarkRead(n); // fire-and-forget; navigation shouldn't wait on it
+    setOpen(false);
+    navigate(target);
+  };
+
   const handleAccept = async (n: AppNotification) => {
     setBusyId(n.id);
     try {
@@ -261,6 +284,7 @@ export function NotificationBell() {
                     onMarkRead={() => handleMarkRead(n)}
                     onAccept={() => handleAccept(n)}
                     onDismiss={() => handleDismiss(n)}
+                    onOpen={() => handleOpen(n)}
                   />
                 ))}
               </div>
@@ -286,12 +310,14 @@ function NotificationRow({
   onMarkRead,
   onAccept,
   onDismiss,
+  onOpen,
 }: {
   notification: AppNotification;
   busy: boolean;
   onMarkRead: () => void;
   onAccept: () => void;
   onDismiss: () => void;
+  onOpen: () => void;
 }) {
   // Mark-read on first view. Tiny effect so it fires once when the row mounts.
   useEffect(() => {
@@ -314,6 +340,25 @@ function NotificationRow({
       ? "Open deal"
       : "Create deal";
 
+  // Whether clicking the row body navigates anywhere. Mirrors the resolver
+  // in handleOpen so we only show the pointer/hover affordance when there's
+  // actually a target — and never on meeting_booked_suggest_deal (its button
+  // owns navigation, so the body is inert to avoid a competing click target).
+  const payload = (n.action_payload ?? {}) as {
+    contact_id?: unknown;
+    deal_id?: unknown;
+    url?: unknown;
+  };
+  const openable =
+    n.type !== "meeting_booked_suggest_deal" &&
+    (typeof payload.contact_id === "string" && payload.contact_id
+      ? true
+      : typeof payload.deal_id === "string" && payload.deal_id
+        ? true
+        : typeof payload.url === "string" && payload.url
+          ? true
+          : false);
+
   return (
     <div style={{
       padding: "12px 14px",
@@ -322,7 +367,38 @@ function NotificationRow({
       display: "grid", gap: 8,
       transition: "background-color 200ms ease",
     }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <div
+        role={openable ? "button" : undefined}
+        tabIndex={openable ? 0 : undefined}
+        onClick={openable ? onOpen : undefined}
+        onKeyDown={
+          openable
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpen();
+                }
+              }
+            : undefined
+        }
+        title={openable ? "Open" : undefined}
+        style={{
+          display: "flex", alignItems: "flex-start", gap: 10,
+          margin: "-4px", padding: 4, borderRadius: 8,
+          cursor: openable ? "pointer" : "default",
+          transition: "background-color 150ms ease",
+        }}
+        onMouseEnter={
+          openable
+            ? (e) => { e.currentTarget.style.backgroundColor = "rgba(29,78,216,0.06)"; }
+            : undefined
+        }
+        onMouseLeave={
+          openable
+            ? (e) => { e.currentTarget.style.backgroundColor = "transparent"; }
+            : undefined
+        }
+      >
         <span style={{
           width: 26, height: 26, borderRadius: 8,
           background: unread ? "#1d4ed8" : "#cbd5e1",
@@ -355,7 +431,7 @@ function NotificationRow({
         {canAccept ? (
           <button
             type="button"
-            onClick={onAccept}
+            onClick={(e) => { e.stopPropagation(); onAccept(); }}
             disabled={busy}
             style={{
               display: "inline-flex", alignItems: "center", gap: 6,
@@ -372,7 +448,7 @@ function NotificationRow({
         {!n.dismissed_at ? (
           <button
             type="button"
-            onClick={onDismiss}
+            onClick={(e) => { e.stopPropagation(); onDismiss(); }}
             disabled={busy}
             style={{
               display: "inline-flex", alignItems: "center", gap: 6,
