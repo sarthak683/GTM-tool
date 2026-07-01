@@ -1777,17 +1777,23 @@ export default function Contacts() {
     setBulkFollowupSaving(true);
     try {
       await Promise.all(
-        ids.map((id) =>
+        ids.flatMap((id) => [
+          // next_followup_at is the mechanism reps actually SEE (follow-up badge
+          // on the prospect) and get REMINDED by (fires the "Follow-up due" bell
+          // alert via prospect_reminders). Set it on every selected prospect.
+          contactsApi.update(id, { next_followup_at: dueIso } as Partial<Contact>),
+          // Also keep the Reminder record (carries the note) — mirrors the
+          // single-reminder disposition path.
           remindersApi.create({
             contact_id: id,
             company_id: companyById.get(id) || undefined,
             note,
             due_at: dueIso,
             assigned_to_id: user?.id,
-          })
-        )
+          }),
+        ])
       );
-      toast.success(`Follow-up set for ${ids.length} prospect${ids.length === 1 ? "" : "s"}.`, "Reminders set");
+      toast.success(`Follow-up set for ${ids.length} prospect${ids.length === 1 ? "" : "s"}.`, "Follow-up scheduled");
       setBulkFollowupOpen(false);
       setSelectedContactIds(new Set());
     } catch (e) {
