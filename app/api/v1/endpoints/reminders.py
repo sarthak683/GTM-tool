@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, DBSession
@@ -13,6 +13,8 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
 from app.models.user import User
+from app.repositories.contact import contact_visibility_filter
+from app.services.permissions import can_view_all_prospects
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
 
@@ -45,14 +47,28 @@ async def _to_read(session: AsyncSession, r: Reminder) -> ReminderRead:
 @router.get("/", response_model=list[ReminderRead])
 async def list_reminders(
     session: DBSession,
-    _user: CurrentUser,
+    current_user: CurrentUser,
     contact_id: Optional[UUID] = Query(default=None),
     company_id: Optional[UUID] = Query(default=None),
     status: Optional[str] = Query(default=None),
     assigned_to_id: Optional[UUID] = Query(default=None),
 ):
-    """List reminders with optional filters."""
+    """List reminders with optional filters.
+
+    Each reminder hydrates the linked contact's name, so a non-admin must only
+    see reminders that are theirs (assigned to them, no contact, or about a
+    contact they may view) — otherwise the list leaked every rep's prospect names.
+    """
     stmt = select(Reminder)
+    if not await can_view_all_prospects(session, current_user):
+        visible_contact_ids = select(Contact.id).where(contact_visibility_filter(current_user.id))
+        stmt = stmt.where(
+            or_(
+                Reminder.assigned_to_id == current_user.id,
+                Reminder.contact_id.is_(None),
+                Reminder.contact_id.in_(visible_contact_ids),
+            )
+        )
     if contact_id:
         stmt = stmt.where(Reminder.contact_id == contact_id)
     if company_id:

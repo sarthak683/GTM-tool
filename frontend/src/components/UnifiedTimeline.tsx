@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
 import {
-  Mail, Phone, Linkedin, CalendarDays, FileText, MessageSquare,
+  Mail, Phone, Linkedin, CalendarDays, FileText, MessageSquare, MessageCircle,
   ArrowRightLeft, Sparkles, Edit3, Link2, RefreshCw, ExternalLink,
 } from "lucide-react";
 import { timelineApi, type TimelineEvent } from "../lib/api";
 import { formatDate } from "../lib/utils";
 
 interface Props {
-  scope: { type: "contact" | "deal"; id: string };
+  scope: { type: "contact" | "deal" | "company"; id: string };
   limit?: number;
   emptyMessage?: string;
 }
 
-type Filter = "all" | "email" | "call" | "meeting" | "linkedin" | "notes" | "system";
+type Filter = "all" | "email" | "call" | "meeting" | "linkedin" | "whatsapp" | "notes" | "system";
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
@@ -20,6 +20,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "call", label: "Calls" },
   { value: "meeting", label: "Meetings" },
   { value: "linkedin", label: "LinkedIn" },
+  { value: "whatsapp", label: "WhatsApp" },
   { value: "notes", label: "Notes" },
   { value: "system", label: "System" },
 ];
@@ -34,6 +35,7 @@ function matchesFilter(kind: string, filter: Filter): boolean {
   if (filter === "email") return kind === "email";
   if (filter === "meeting") return kind === "meeting" || kind === "transcript";
   if (filter === "linkedin") return kind === "linkedin";
+  if (filter === "whatsapp") return kind === "whatsapp";
   return false;
 }
 
@@ -42,6 +44,7 @@ function iconFor(kind: string): { Icon: typeof Mail; color: string } {
     case "email": return { Icon: Mail, color: "#9ace3d" };
     case "call": return { Icon: Phone, color: "#16a34a" };
     case "linkedin": return { Icon: Linkedin, color: "#0a66c2" };
+    case "whatsapp": return { Icon: MessageCircle, color: "#25D366" };
     case "meeting": return { Icon: CalendarDays, color: "#7c3aed" };
     case "transcript": return { Icon: FileText, color: "#0891b2" };
     case "note":
@@ -65,9 +68,12 @@ export default function UnifiedTimeline({ scope, limit, emptyMessage }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const items = scope.type === "contact"
-        ? await timelineApi.forContact(scope.id, limit)
-        : await timelineApi.forDeal(scope.id, limit);
+      const items =
+        scope.type === "contact"
+          ? await timelineApi.forContact(scope.id, limit)
+          : scope.type === "company"
+            ? await timelineApi.forCompany(scope.id, limit)
+            : await timelineApi.forDeal(scope.id, limit);
       setEvents(items);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load timeline");

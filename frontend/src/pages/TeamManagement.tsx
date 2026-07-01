@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Shield, User, UserPlus, Loader2, CheckCircle2 } from "lucide-react";
-import { authApi, settingsApi } from "../lib/api";
+import { authApi } from "../lib/api";
+import { getCachedRolePermissions, getCachedUsers, invalidateUsersCache } from "../lib/cachedFetch";
 import { SkeletonList } from "../components/ui/Skeleton";
 import { useAuth } from "../lib/AuthContext";
 import type { User as UserType } from "../types";
@@ -46,8 +47,7 @@ export default function TeamManagement() {
       setCanManageTeam(false);
       return;
     }
-    settingsApi
-      .getRolePermissions()
+    getCachedRolePermissions()
       .then((permissions) =>
         setCanManageTeam(currentUser.role === "admin" ? true : Boolean(permissions[currentUser.role]?.manage_team))
       )
@@ -56,7 +56,7 @@ export default function TeamManagement() {
 
   useEffect(() => {
     setLoading(true);
-    const loader = canManageTeam ? authApi.listUsers() : authApi.listAllUsers();
+    const loader = canManageTeam ? authApi.listUsers() : getCachedUsers();
     loader.then((u) => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
   }, [canManageTeam]);
 
@@ -64,6 +64,7 @@ export default function TeamManagement() {
     setUpdating(userId);
     try {
       const updated = await authApi.updateUser(userId, { role: newRole });
+      invalidateUsersCache();
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to update role");
@@ -76,6 +77,7 @@ export default function TeamManagement() {
     setUpdating(userId);
     try {
       const updated = await authApi.updateUser(userId, { is_active: isActive });
+      invalidateUsersCache();
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to update status");
@@ -91,6 +93,7 @@ export default function TeamManagement() {
     setUpdating(userId);
     try {
       await authApi.deleteUser(userId);
+      invalidateUsersCache();
       setUsers((prev) => prev.filter((u) => u.id !== userId));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete user");
@@ -121,8 +124,9 @@ export default function TeamManagement() {
     setSeeding(true);
     try {
       const result = await authApi.seedUsers(BEACON_TEAM);
+      invalidateUsersCache();
       alert(`Created ${result.created} new team members (${result.skipped} already existed)`);
-      const loader = canManageTeam ? authApi.listUsers() : authApi.listAllUsers();
+      const loader = canManageTeam ? authApi.listUsers() : getCachedUsers();
       setUsers(await loader);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to seed team");

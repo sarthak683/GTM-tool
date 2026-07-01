@@ -31,7 +31,8 @@ import {
   AlertCircle,
   X,
 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
+import { activitiesApi, companiesApi, dealsApi, meetingsApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Deal, Meeting, MeetingPrepMonitor, User as UserType } from "../types/index";
 import { formatOptionalDate, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
@@ -589,6 +590,9 @@ export default function PreMeetingAssistance() {
   const [meetingPages, setMeetingPages] = useState(1);
   const [summary, setSummary] = useState({ total: 0, upcoming: 0, hasIntel: 0, noIntel: 0 });
   const [prepMonitor, setPrepMonitor] = useState<MeetingPrepMonitor | null>(null);
+  // Rapid filter changes fire overlapping loadData()s; the sequence counter
+  // lets only the latest response write state (same pattern as Contacts).
+  const loadSeqRef = useRef(0);
   const hideDeveloper = isDeveloperUser(user);
 
   useEffect(() => {
@@ -597,6 +601,7 @@ export default function PreMeetingAssistance() {
   }, [user?.id]);
 
   const loadData = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const hasIntelFilter =
@@ -625,6 +630,12 @@ export default function PreMeetingAssistance() {
       // e.g. a closed_won customer's daily syncs don't clutter the prep list.
       const isPrepView = !statusFilter.some((s) => s === "past" || s === "completed");
 
+      // "__unassigned__" can't ride inside assignee_id (typed list[UUID] on the
+      // server); split it into the dedicated assignee_unassigned flag, exactly
+      // like the Meetings page does.
+      const assigneeUserIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+      const assigneeUnassigned = assigneeFilter.includes("__unassigned__");
+
       const [pageResp, totalResp, upcomingResp, hasIntelResp, noIntelResp] = await Promise.all([
         meetingsApi.listPaginated({
           skip: (page - 1) * 25,
@@ -632,7 +643,7 @@ export default function PreMeetingAssistance() {
           status: apiStatusFilter,
           temporalStatus: temporalStatusFilter,
           meetingType: typeFilter,
-          assigneeId: assigneeFilter,
+          assigneeId: assigneeUserIds, assigneeUnassigned,
           linkState: linkFilter,
           hasIntel: hasIntelFilter,
           order: statusFilter.length === 1 && (statusFilter[0] === "completed" || statusFilter[0] === "past") ? "desc" : "asc",
@@ -640,11 +651,13 @@ export default function PreMeetingAssistance() {
           internalScope: showInternal ? "only" : "exclude",
           excludeClosedPipeline: isPrepView,
         }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude" }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
-        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeFilter, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude" }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: true, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
+        meetingsApi.listPaginated({ skip: 0, limit: 1, status: ["scheduled"], temporalStatus: ["upcoming"], hasIntel: false, assigneeId: assigneeUserIds, assigneeUnassigned, internalScope: showInternal ? "only" : "exclude", excludeClosedPipeline: true }),
       ]);
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       const ms = pageResp.items;
 
       // Empty-set fallback: if default "my upcoming" returns zero, broaden
@@ -677,6 +690,7 @@ export default function PreMeetingAssistance() {
         noIntel: noIntelResp.total,
       });
       const monitor = await meetingsApi.prepMonitor(24).catch(() => null);
+      if (seq !== loadSeqRef.current) return;
       setPrepMonitor(monitor);
 
       const companyIds = Array.from(new Set(ms.map((m) => m.company_id).filter(Boolean))) as string[];
@@ -688,11 +702,12 @@ export default function PreMeetingAssistance() {
         Promise.all(dealIds.map((id) => activitiesApi.list(id).catch(() => [] as Activity[]))),
       ]);
 
+      if (seq !== loadSeqRef.current) return;
       setCompanies(companyResults.filter((item): item is Company => Boolean(item)));
       setDeals(dealResults.filter((item): item is Deal => Boolean(item)));
       setActivities(activityResults.flat());
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
@@ -701,7 +716,7 @@ export default function PreMeetingAssistance() {
       setUsers([]);
       return;
     }
-    authApi.listAllUsers().then(setUsers).catch(() => setUsers([]));
+    getCachedUsers().then(setUsers).catch(() => setUsers([]));
   }, [isAdmin]);
 
   useEffect(() => {
@@ -852,11 +867,14 @@ export default function PreMeetingAssistance() {
         if (!intelFilter.includes(intelState)) return false;
       }
       if (typeFilter.length > 0 && !typeFilter.includes(m.meeting_type)) return false;
-      if (assigneeFilter.length > 0 && m.deal_id) {
-        const assignee = dealAssigneeMap.get(m.deal_id);
-        if (!assignee || !assigneeFilter.includes(assignee.id)) return false;
-      } else if (assigneeFilter.length > 0 && !m.deal_id) {
-        return false;
+      if (assigneeFilter.length > 0) {
+        // "Unassigned" = no linked deal, or a deal with no AE assigned.
+        const wantUnassigned = assigneeFilter.includes("__unassigned__");
+        const userIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+        const assignee = m.deal_id ? dealAssigneeMap.get(m.deal_id) : undefined;
+        const matchesUser = !!assignee && userIds.includes(assignee.id);
+        const matchesUnassigned = wantUnassigned && !assignee;
+        if (!matchesUser && !matchesUnassigned) return false;
       }
       if (linkFilter.length > 0) {
         const linkState = !m.company_id || !m.deal_id ? "needs_review" : "linked";
@@ -1086,7 +1104,10 @@ export default function PreMeetingAssistance() {
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
               label="Rep"
-              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              options={[
+                { value: "__unassigned__", label: "Unassigned" },
+                ...visibleUsers.map((u) => ({ value: u.id, label: u.name })),
+              ]}
               selected={assigneeFilter}
               onChange={setAssigneeFilter}
               placeholder="All reps"

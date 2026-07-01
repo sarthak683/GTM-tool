@@ -10,9 +10,12 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
-from app.repositories.contact import ContactRepository
+from app.models.meeting import to_naive_utc
+from app.repositories.contact import ContactRepository, get_or_create_contact_by_email
 from app.schemas.common import PaginatedResponse
+from app.models.user import User
 from app.services.account_sourcing import (
+    _find,
     load_workspace_sequence_schedule,
     parse_prospect_upload_file,
     refresh_company_prospecting_fields,
@@ -26,20 +29,24 @@ from app.services.disposition_effects import (
     apply_linkedin_status_effects,
 )
 from app.services.timeline import build_contact_timeline
-from app.services.permissions import require_workspace_permission
+from app.services.permissions import can_view_all_prospects, require_workspace_permission
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
 
-def _authorize_contact_edit(contact, user) -> None:
+async def _authorize_contact_edit(contact, user, session) -> None:
     """Ownership gate for editing a prospect (SDR/AE model).
 
     Admins edit anything. A rep may edit a prospect they own (AE via
     assigned_to_id, SDR via sdr_id). If the slot for the rep's role is empty,
-    editing CLAIMS it to them (auto-claim) and proceeds. Otherwise the prospect
-    is owned by someone else and the rep can only view it -> 403.
+    editing CLAIMS it to them (auto-claim) and proceeds. A rep who owns a DEAL on
+    the prospect's company may also edit it (the AE running a demo/POC works that
+    account's prospects, even when the company/contacts sit with the sourcing
+    SDR) — this mirrors the read-side ``contact_visibility_filter`` deal clause so
+    "can see but can't act" can't happen. Otherwise the prospect is owned by
+    someone else and the rep can only view it -> 403.
     """
     role = (user.role or "").lower()
     if role == "admin":
@@ -53,6 +60,20 @@ def _authorize_contact_edit(contact, user) -> None:
     elif contact.assigned_to_id is None:
         contact.assigned_to_id = user.id
         return
+    # Deal owner on this prospect's company may edit (no auto-claim — the SDR/AE
+    # of record stay intact). Lockstep with contact_visibility_filter().
+    if contact.company_id is not None:
+        from app.models.deal import Deal
+
+        owns_deal = (
+            await session.execute(
+                select(Deal.id)
+                .where(Deal.company_id == contact.company_id, Deal.assigned_to_id == user.id)
+                .limit(1)
+            )
+        ).first()
+        if owns_deal:
+            return
     raise HTTPException(
         status_code=403,
         detail="You can only edit prospects assigned to you. Claim an unassigned one, or ask an admin to reassign this prospect.",
@@ -172,15 +193,23 @@ async def _get_or_create_uploaded_placeholder_company(
         "pending_icp_review": True,
     }
 
-    company = Company(
-        name=name,
-        domain=domain,
-        enrichment_sources=enrichment_sources,
-        sourcing_batch_id=sourcing_batch_id,
+    # Route the insert through the domain-keyed get-or-create so a racing/repeat
+    # upload of the same domain collapses onto the existing company (under the
+    # lower(domain) unique index) instead of aborting the import. The 3-layer
+    # matcher above already missed, so created=True is the normal case here.
+    from app.repositories.company import get_or_create_company_by_domain
+
+    company, created = await get_or_create_company_by_domain(
+        session,
+        domain,
+        defaults={
+            "name": name,
+            "enrichment_sources": enrichment_sources,
+            "sourcing_batch_id": sourcing_batch_id,
+        },
     )
-    session.add(company)
     await session.flush()  # populate company.id before the caller links contacts
-    return company, True
+    return company, created
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])
@@ -196,6 +225,7 @@ async def list_contacts(
     sequence_status: Optional[str] = Query(default=None),
     call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions"),
     email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
+    linkedin_status: Optional[str] = Query(default=None, description="Filter by one or more LinkedIn statuses: sent | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted"),
     sort_by: Optional[str] = Query(default=None, description="Sort key: name | first_name | last_name | company | email | title | created_at."),
     sort_dir: Optional[str] = Query(default=None, description="Sort direction: asc | desc. Defaults to asc."),
     ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs"),
@@ -238,14 +268,18 @@ async def list_contacts(
     """
     Returns contacts with company_name populated via a single SQL JOIN.
 
-    Visibility: every authenticated user sees every contact in the workspace.
-    Assignment (`sdr_id` / `assigned_to_id`) is a label for ownership, NOT a
-    visibility filter — this keeps the team on a shared view of the pipeline.
-    Any per-rep filtering happens via the `ae_id` / `sdr_id` query params,
-    which are driven by explicit user selection in the UI, not by the
-    caller's own role.
+    Visibility (default): a non-admin sees only prospects they own — in either
+    the `sdr_id` or `assigned_to_id` slot — plus unassigned ones (both slots
+    empty). Admins see every prospect (needed to reassign and audit). This is a
+    hard server-side gate: query params like `owner_id` can only narrow within
+    what the caller may already see, never widen it.
     """
     repo = ContactRepository(session)
+    # Hard visibility gate. None = full visibility (admins + admin-granted
+    # users); otherwise restrict to this user's own + unassigned prospects.
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, current_user) else str(current_user.id)
+    )
     items, total = await repo.list_with_company_name(
         company_id=company_id,
         q=q,
@@ -255,11 +289,13 @@ async def list_contacts(
         sequence_status=sequence_status,
         call_disposition=call_disposition,
         email_state=email_state,
+        linkedin_status=linkedin_status,
         sort_by=sort_by,
         sort_dir=sort_dir,
         ae_id=ae_id,
         sdr_id=sdr_id,
         owner_id=owner_id,
+        restrict_to_owner_id=restrict_to_owner_id,
         scope_any_match=scope_any_match,
         prospect_only=prospect_only,
         timezone=timezone,
@@ -348,6 +384,16 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     ]):
         raise HTTPException(status_code=422, detail="Provide at least a name, email, title, or LinkedIn URL.")
 
+    # Case-insensitive dedup so manually adding an existing email returns a clean
+    # 409 instead of a 500 under the partial unique index on lower(email).
+    email_val = (payload.email or "").strip()
+    if email_val:
+        existing_dupe = (await session.execute(
+            select(Contact).where(func.lower(Contact.email) == email_val.lower()).limit(1)
+        )).scalar_one_or_none()
+        if existing_dupe:
+            raise HTTPException(status_code=409, detail="A contact with this email already exists.")
+
     contact = Contact(**payload.model_dump())
 
     # Auto-assign to the creator (unless already set) so a rep who manually
@@ -415,7 +461,7 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
-async def get_contact(contact_id: UUID, session: DBSession):
+async def get_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     contact = await ContactRepository(session).get_or_raise(contact_id)
     return await to_contact_read(session, contact)
 
@@ -424,13 +470,15 @@ async def get_contact(contact_id: UUID, session: DBSession):
 async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await repo.get_or_raise(contact_id)
-    # Reps may only edit prospects they own; editing an unassigned one claims it.
-    _authorize_contact_edit(contact, _user)
+    # Reps may only edit prospects they own (or own a deal on the company);
+    # editing an unassigned one claims it.
+    await _authorize_contact_edit(contact, _user, session)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
-        # Strip timezone info so asyncpg doesn't mix aware/naive datetimes
+        # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
+        # (replace() alone would keep the foreign wall-clock time)
         if isinstance(value, datetime) and value.tzinfo is not None:
-            value = value.replace(tzinfo=None)
+            value = to_naive_utc(value)
         setattr(contact, key, value)
     if "title" in update_data or "seniority" in update_data:
         contact.persona = classify_persona(contact)
@@ -642,72 +690,47 @@ async def enrich_contact(contact_id: UUID, session: DBSession, _user: CurrentUse
 @router.post("/discover/{company_id}", response_model=list[ContactRead], status_code=201)
 async def discover_contacts(company_id: UUID, session: DBSession, _user: CurrentUser):
     """
-    Call Hunter domain-search for the given company and create any new contacts found.
-    Skips duplicates by email. Returns the newly created contacts.
+    DISABLED — prospects are added only by CSV upload on the Account Sourcing or
+    Prospecting pages. Automated Hunter/Apollo contact discovery has been removed
+    so account enrichment never silently pulls in contacts. Kept as an explicit
+    410 (rather than deleting the route) so any stale client gets a clear signal
+    instead of a confusing 404.
     """
-    from app.repositories.company import CompanyRepository
-    from app.clients.hunter import HunterClient
-    from app.services.persona_classifier import classify_persona
-    from sqlmodel import select
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Contact discovery has been disabled. Add prospects by uploading a CSV "
+            "on the Account Sourcing or Prospecting page."
+        ),
+    )
 
-    company = await CompanyRepository(session).get_or_raise(company_id)
 
-    # If the company was imported without a real domain, try to resolve it via AI first
-    if company.domain.endswith(".unknown"):
-        from app.services.domain_resolver import resolve_and_update_domain
-        resolved = await resolve_and_update_domain(company, session)
-        if not resolved:
-            return []  # Can't search Hunter without a real domain
+async def _resolve_upload_owner(session, raw: str, cache: dict):
+    """Resolve an uploaded SDR/AE cell (email or name) to an active User, or None.
 
-    hunter = HunterClient()
-    hunter_data = await hunter.domain_search(company.domain)
-    raw_contacts = (hunter_data or {}).get("contacts", [])
-
-    created: list[Contact] = []
-    for c in raw_contacts:
-        email = (c.get("email") or "").strip()
-        if not email:
-            continue
-        # Use first-row existence check to tolerate historical duplicate rows.
-        existing = await session.execute(
-            select(Contact).where(Contact.email == email).limit(1)
-        )
-        if existing.scalars().first():
-            continue
-        first = (c.get("first_name") or "").strip()
-        last = (c.get("last_name") or "").strip()
-        if not first and not last:
-            prefix = email.split("@")[0]
-            parts = prefix.replace(".", " ").replace("_", " ").split()
-            first = parts[0].capitalize() if parts else prefix
-            last = parts[1].capitalize() if len(parts) > 1 else ""
-        if not is_valid_prospect_candidate(
-            first_name=first,
-            last_name=last,
-            email=email,
-            title=c.get("title"),
-            linkedin_url=c.get("linkedin_url"),
-        ):
-            continue
-        contact = Contact(
-            first_name=first,
-            last_name=last,
-            email=email,
-            title=c.get("title"),
-            linkedin_url=c.get("linkedin_url"),
-            company_id=company.id,
-        )
-        contact.persona = classify_persona(contact)
-        session.add(contact)
-        created.append(contact)
-
-    await session.commit()
-    for c in created:
-        await session.refresh(c)
-
-    reads = [ContactRead.model_validate(c) for c in created]
-    await apply_contact_tracking(session, reads)
-    return reads
+    Email matches exactly; a name matches only when exactly one active user has
+    it (ambiguous/unknown names fall through to the uploader/company fallback
+    rather than risk mis-assigning). Cached per-upload so 200 rows that share an
+    SDR don't hit the DB 200 times.
+    """
+    key = (raw or "").strip().lower()
+    if not key:
+        return None
+    if key in cache:
+        return cache[key]
+    user = None
+    if "@" in key:
+        user = (await session.execute(
+            select(User).where(func.lower(User.email) == key, User.is_active == True)  # noqa: E712
+        )).scalars().first()
+    else:
+        matches = (await session.execute(
+            select(User).where(func.lower(User.name) == key, User.is_active == True).limit(2)  # noqa: E712
+        )).scalars().all()
+        if len(matches) == 1:
+            user = matches[0]
+    cache[key] = user
+    return user
 
 
 @router.post("/import-csv", response_model=ProspectImportResponse, status_code=201)
@@ -752,6 +775,17 @@ async def import_contacts_csv(
     from app.models.sourcing_batch import SourcingBatch
 
     auto_create_batch: SourcingBatch | None = None
+    # Cache for resolving SDR/AE column values (name|email) -> User across rows.
+    owner_cache: dict = {}
+    # CSV-internal dedup: the partial unique index is on lower(email), so two
+    # rows in the SAME file sharing an address must not both insert (the second
+    # would abort the batch commit). We remember each lower(email) we've already
+    # materialised this upload and fold a later duplicate into that same row
+    # instead of minting a second pending Contact. Maps lower(email) -> Contact.
+    seen_emails: dict[str, Contact] = {}
+    # Uploader fallback target slot: an SDR uploader owns their uploads in the SDR
+    # slot, an AE uploader in the AE slot, an admin owns neither (-> unassigned).
+    uploader_role = (current_user.role or "").lower()
 
     async def _ensure_auto_create_batch() -> UUID | None:
         nonlocal auto_create_batch
@@ -851,11 +885,15 @@ async def import_contacts_csv(
 
         if company:
             touched_company_ids.add(company.id)
-            contact_fields["assigned_to_id"] = contact_fields.get("assigned_to_id") or company.assigned_to_id
-            contact_fields["assigned_rep_email"] = contact_fields.get("assigned_rep_email") or company.assigned_rep_email
-            contact_fields["sdr_id"] = contact_fields.get("sdr_id") or company.sdr_id
-            contact_fields["sdr_name"] = contact_fields.get("sdr_name") or company.sdr_name
             contact_fields["company_id"] = company.id
+        # Ownership is assigned EXPLICITLY below (not via the generic field loop)
+        # so re-uploads don't reassign via the uploader fallback and a blank file
+        # cell never wipes an existing owner. Resolve the file's SDR/AE columns
+        # to real users first (file value is authoritative, incl. on re-upload).
+        for _own_key in ("sdr_id", "sdr_name", "assigned_to_id", "assigned_rep_email", "assigned_rep_name"):
+            contact_fields.pop(_own_key, None)
+        file_sdr = await _resolve_upload_owner(session, _find(row, "sdr"), owner_cache)
+        file_ae = await _resolve_upload_owner(session, _find(row, "ae"), owner_cache)
 
         raw_enrichment = contact_fields.get("enrichment_data") if isinstance(contact_fields.get("enrichment_data"), dict) else {}
         raw_enrichment["source"] = "prospect_csv_upload"
@@ -869,9 +907,17 @@ async def import_contacts_csv(
 
         existing = None
         if email:
-            existing = (
-                await session.execute(select(Contact).where(Contact.email == email).limit(1))
-            ).scalars().first()
+            # First honor a row we already created earlier in THIS upload for the
+            # same address (case-insensitive) — otherwise the second duplicate
+            # row would try to insert a colliding lower(email) and abort the
+            # whole import at commit.
+            existing = seen_emails.get(email)
+            if existing is None:
+                existing = (
+                    await session.execute(
+                        select(Contact).where(func.lower(Contact.email) == email).limit(1)
+                    )
+                ).scalars().first()
         if not existing and first_name and last_name:
             name_match_filters = [
                 Contact.first_name == first_name,
@@ -904,6 +950,17 @@ async def import_contacts_csv(
                 if getattr(existing, key, None) != value:
                     setattr(existing, key, value)
                     changed = True
+            # Re-upload ownership: ONLY an explicit, resolved file value overwrites
+            # (so changing the SDR/AE in the file re-assigns). A blank cell leaves
+            # the existing owner untouched — no uploader fallback, no wipe.
+            if file_sdr and existing.sdr_id != file_sdr.id:
+                existing.sdr_id = file_sdr.id
+                existing.sdr_name = file_sdr.name
+                changed = True
+            if file_ae and existing.assigned_to_id != file_ae.id:
+                existing.assigned_to_id = file_ae.id
+                existing.assigned_rep_email = file_ae.email
+                changed = True
             if changed or not existing.persona:
                 existing.persona = classify_persona(existing)
                 existing.updated_at = datetime.utcnow()
@@ -913,13 +970,79 @@ async def import_contacts_csv(
                 updated_count += 1
             else:
                 skipped_count += 1
+            # Remember this row so a later duplicate (same lower(email)) in the
+            # same file folds onto it instead of re-querying / re-inserting.
+            if email:
+                seen_emails[email] = existing
         else:
-            contact = Contact(**contact_fields)
-            contact.persona = classify_persona(contact)
-            if company:
-                refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+            # New-contact ownership precedence per slot:
+            #   SDR slot: file SDR -> uploader (if SDR) -> company SDR -> none
+            #   AE slot:  file AE  -> uploader (if AE)  -> company AE  -> none
+            # Admin uploaders match neither role fallback, so blank cells stay
+            # unassigned (per the agreed rule).
+            sdr_user = file_sdr or (current_user if uploader_role == "sdr" else None)
+            ae_user = file_ae or (current_user if uploader_role == "ae" else None)
+            # MIRROR — a prospect must never be left half-owned. If exactly one
+            # role resolved to a real rep AND nothing else (file/uploader/the
+            # company) will fill the other slot, that same rep covers both until
+            # someone reassigns: an SDR who sources an account is its interim AE,
+            # and vice-versa. This only fills a slot that would otherwise be
+            # orphaned — it never overrides a company's real SDR/AE, and a
+            # both-empty admin bulk upload still stays fully unassigned.
+            company_has_sdr = bool(company and company.sdr_id)
+            company_has_ae = bool(company and company.assigned_to_id)
+            if sdr_user and not ae_user and not company_has_ae:
+                ae_user = sdr_user
+            elif ae_user and not sdr_user and not company_has_sdr:
+                sdr_user = ae_user
+            if sdr_user:
+                contact_fields["sdr_id"] = sdr_user.id
+                contact_fields["sdr_name"] = sdr_user.name
+            elif company and company.sdr_id:
+                contact_fields["sdr_id"] = company.sdr_id
+                contact_fields["sdr_name"] = company.sdr_name
+            if ae_user:
+                contact_fields["assigned_to_id"] = ae_user.id
+                contact_fields["assigned_rep_email"] = ae_user.email
+            elif company and company.assigned_to_id:
+                contact_fields["assigned_to_id"] = company.assigned_to_id
+                contact_fields["assigned_rep_email"] = company.assigned_rep_email
+
+            # Funnel the insert through the email-keyed get-or-create. If a row
+            # with this lower(email) already slipped in (a concurrent writer, or
+            # a path that skipped the pre-lookup), the savepoint catches the
+            # unique-index violation and re-fetches the winner instead of
+            # aborting the whole import at commit. created=False means we landed
+            # on an existing row, so apply the same non-empty-field merge the
+            # update branch uses.
+            contact, was_created = await get_or_create_contact_by_email(
+                session,
+                email or "",
+                defaults={k: v for k, v in contact_fields.items() if k != "email"},
+            )
+            if was_created:
+                contact.persona = classify_persona(contact)
+                if company:
+                    refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+                created_count += 1
+            else:
+                for key, value in contact_fields.items():
+                    if value in (None, "", []) or key == "email":
+                        continue
+                    if key == "enrichment_data":
+                        current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+                        current_enrichment.update(value)
+                        contact.enrichment_data = current_enrichment
+                        continue
+                    setattr(contact, key, value)
+                contact.persona = classify_persona(contact)
+                contact.updated_at = datetime.utcnow()
+                if company:
+                    refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
+                updated_count += 1
             session.add(contact)
-            created_count += 1
+            if email:
+                seen_emails[email] = contact
 
     await session.commit()
 
@@ -1005,7 +1128,7 @@ async def import_contacts_csv(
 
 
 @router.get("/{contact_id}/brief")
-async def get_contact_brief(contact_id: UUID, session: DBSession):
+async def get_contact_brief(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Generate AI stakeholder brief (Playwright + GPT-4o, 5-20s). Not cached."""
     from app.services.contact_intelligence import generate_contact_brief
     result = await generate_contact_brief(contact_id, session)

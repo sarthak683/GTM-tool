@@ -35,7 +35,6 @@ import {
 } from "lucide-react";
 import {
   analyticsApi,
-  authApi,
   dealsApi,
   tasksApi,
   type SalesHighlight,
@@ -43,6 +42,7 @@ import {
   type SalesActivityDrilldown,
   type SalesActivityDrilldownRow,
   type SalesDashboard,
+  type SalesAccountStatusRow,
   type SalesForecastRow,
   type SalesFunnelStep,
   type SalesPipelineOwnerRow,
@@ -52,9 +52,11 @@ import {
   type SalesStageBucket,
   type SalesVelocityRow,
 } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
+import { accountStatusOption } from "../lib/accountStatus";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
-import { performanceApi, type RepSummary } from "../lib/api";
+import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
 import OutreachAnalyticsTab from "../components/analytics/OutreachAnalyticsTab";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
@@ -63,7 +65,18 @@ import {
   type PerformanceTabKey,
 } from "./sales-analytics/PerformanceTabs";
 
-const WINDOW_OPTIONS = [30, 90, 180] as const;
+// "All time" is modeled as a very large day-window so the existing
+// window_days → date-range math on the backend keeps working unchanged.
+const ALL_TIME_DAYS = 36500;
+const WINDOW_PRESETS = [
+  { days: 7, label: "1W" },
+  { days: 30, label: "1M" },
+  { days: 90, label: "3M" },
+  { days: 180, label: "6M" },
+  { days: ALL_TIME_DAYS, label: "All" },
+] as const;
+const windowPresetLabel = (days: number): string =>
+  WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total";
@@ -823,12 +836,16 @@ function HighlightsCard({
 function RepActivityTable({
   rows,
   onOpenMetric,
+  showDemos = false,
+  emptyLabel = "No rep activity yet for this time range.",
 }: {
   rows: SalesRepActivityRow[];
   onOpenMetric: (row: SalesRepActivityRow, metric: SalesActivityMetric) => void;
+  showDemos?: boolean;
+  emptyLabel?: string;
 }) {
   if (rows.length === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No rep activity yet for this time range.</p>;
+    return <p className="crm-muted" style={{ margin: 0 }}>{emptyLabel}</p>;
   }
 
   return (
@@ -854,17 +871,78 @@ function RepActivityTable({
               Rank #{index + 1}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 10 }}>
-            <StatPill label="Emails" value={row.emails} tone="#eefbf2" text="#2f8d5d" onClick={() => onOpenMetric(row, "emails")} />
-            <StatPill label="Calls" value={row.calls} tone="#eef3ff" text="#445fd0" onClick={() => onOpenMetric(row, "calls")} />
-            <StatPill label="Connected" value={row.connected_calls} tone="#edf9f8" text="#15736d" onClick={() => onOpenMetric(row, "connected_calls")} />
-            <StatPill label="Live Calls" value={row.live_calls} tone="#f4efff" text="#6b4bd6" onClick={() => onOpenMetric(row, "live_calls")} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+            <StatPill
+              label="Emails"
+              value={row.emails}
+              tone="#eefbf2"
+              text="#2f8d5d"
+              sub={
+                <>
+                  <span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% reply</span>
+                  <span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>
+                </>
+              }
+              onClick={() => onOpenMetric(row, "emails")}
+            />
+            <StatPill
+              label="Calls"
+              value={row.calls}
+              tone="#eef3ff"
+              text="#445fd0"
+              sub={<span>{row.calls > 0 ? Math.round((row.connected_calls / row.calls) * 100) : 0}% connected</span>}
+              onClick={() => onOpenMetric(row, "calls")}
+            />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
             <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
-            <StatPill label="Touches" value={row.total} tone="#faf1ff" text="#8052be" onClick={() => onOpenMetric(row, "total")} />
+            {showDemos ? (
+              <>
+                <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" />
+                <StatPill label="Demos Done" value={row.demos_done} tone="#eafaf1" text="#1c7a4f" />
+                <StatPill
+                  label="Converted"
+                  value={row.demos_converted}
+                  tone="#fdf1e3"
+                  text="#b4690e"
+                  sub={<span>{row.demos_done > 0 ? Math.round((row.demos_converted / row.demos_done) * 100) : 0}% of done</span>}
+                />
+              </>
+            ) : null}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AccountStatusBreakdown({ rows }: { rows: SalesAccountStatusRow[] }) {
+  const total = rows.reduce((sum, row) => sum + (row.count || 0), 0);
+  if (total === 0) {
+    return <p className="crm-muted" style={{ margin: 0 }}>No sourced accounts in this scope.</p>;
+  }
+  const max = Math.max(...rows.map((row) => row.count || 0), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {rows.map((row) => {
+        const option = accountStatusOption(row.key);
+        const color = option?.color ?? "#64748b";
+        const bg = option?.bg ?? "#eef2f7";
+        const pct = total > 0 ? Math.round((row.count / total) * 100) : 0;
+        return (
+          <div key={row.key} style={{ display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#243447" }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
+                {row.label}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#5d7187" }}>{row.count} • {pct}%</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 999, background: bg, overflow: "hidden" }}>
+              <div style={{ width: `${Math.max((row.count / max) * 100, row.count > 0 ? 6 : 0)}%`, height: "100%", borderRadius: 999, background: color }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -874,21 +952,25 @@ function StatPill({
   value,
   tone,
   text,
+  sub,
   onClick,
 }: {
   label: string;
   value: string | number;
   tone: string;
   text: string;
+  sub?: ReactNode;
   onClick?: () => void;
 }) {
-  const numericValue = Number(value || 0);
+  // Rate pills pass a string like "45%": display-only, always full opacity.
+  const isRate = typeof value === "string";
+  const numericValue = isRate ? 1 : Number(value || 0);
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick || numericValue <= 0}
-      title={numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
+      title={isRate ? label : numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -904,6 +986,23 @@ function StatPill({
     >
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+      {sub ? (
+        <span
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 1,
+            marginTop: 2,
+            fontSize: 10,
+            fontWeight: 700,
+            color: text,
+            opacity: 0.78,
+          }}
+        >
+          {sub}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -918,7 +1017,6 @@ const REP_ACTIVITY_METRICS: Array<{
   { key: "emails", label: "Emails", color: "#2f8d5d", tone: "#eefbf2", icon: Mail },
   { key: "calls", label: "Calls", color: "#445fd0", tone: "#eef3ff", icon: Phone },
   { key: "connected_calls", label: "Connected", color: "#15736d", tone: "#edf9f8", icon: Phone },
-  { key: "live_calls", label: "Live Calls", color: "#6b4bd6", tone: "#f4efff", icon: Phone },
   { key: "linkedin_reachouts", label: "LinkedIn", color: "#0a66c2", tone: "#eef4ff", icon: Link2 },
   { key: "meetings", label: "Meetings", color: "#c16a18", tone: "#fff4ea", icon: CalendarDays },
 ];
@@ -926,7 +1024,7 @@ const REP_ACTIVITY_METRICS: Array<{
 type RepMetricKey = (typeof REP_ACTIVITY_METRICS)[number]["key"];
 
 const OUTREACH_MIX_KEYS: RepMetricKey[] = ["emails", "calls", "linkedin_reachouts", "meetings"];
-const CALL_QUALITY_KEYS: RepMetricKey[] = ["calls", "connected_calls", "live_calls"];
+const CALL_QUALITY_KEYS: RepMetricKey[] = ["calls", "connected_calls"];
 
 const REP_ACTIVITY_META = Object.fromEntries(
   REP_ACTIVITY_METRICS.map((metric) => [metric.key, metric]),
@@ -1030,7 +1128,8 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
     total: week.total,
   }));
   const callConnectionRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.connected_calls / selectedRow.totals.calls) * 100) : 0;
-  const liveCallRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.live_calls / selectedRow.totals.calls) * 100) : 0;
+  const emailReplyRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_replies / selectedRow.totals.emails) * 100) : 0;
+  const emailOpenRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_opens / selectedRow.totals.emails) * 100) : 0;
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -1064,12 +1163,26 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
               </p>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))", gap: 10 }}>
-              <StatPill label="Touches" value={selectedRow.totals.total} tone="#f5efff" text="#7245d7" />
-              <StatPill label="Emails" value={selectedRow.totals.emails} tone="#eefbf2" text="#2f8d5d" />
-              <StatPill label="Calls" value={selectedRow.totals.calls} tone="#eef3ff" text="#445fd0" />
-              <StatPill label="Connected %" value={`${callConnectionRate}%`} tone="#edf9f8" text="#15736d" />
-              <StatPill label="Live %" value={`${liveCallRate}%`} tone="#f4efff" text="#6b4bd6" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+              <StatPill
+                label="Emails"
+                value={selectedRow.totals.emails}
+                tone="#eefbf2"
+                text="#2f8d5d"
+                sub={
+                  <>
+                    <span>{emailReplyRate}% reply</span>
+                    <span>{emailOpenRate}% open</span>
+                  </>
+                }
+              />
+              <StatPill
+                label="Calls"
+                value={selectedRow.totals.calls}
+                tone="#eef3ff"
+                text="#445fd0"
+                sub={<span>{callConnectionRate}% connected</span>}
+              />
               <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
             </div>
           </div>
@@ -1740,6 +1853,7 @@ export default function SalesAnalytics() {
     | "outreach"
     | PerformanceTabKey;
   const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
+  const [pods, setPods] = useState<PodSummary[]>([]);
   const tabContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1752,7 +1866,15 @@ export default function SalesAnalytics() {
     }
   }, [activeTab]);
 
-  const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>(90);
+  // Pod rosters (US Pod / India Pod) for the one-click pod scope.
+  useEffect(() => {
+    performanceApi
+      .getPods()
+      .then(setPods)
+      .catch(() => setPods([]));
+  }, []);
+
+  const [windowDays, setWindowDays] = useState<number>(90);
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string[]>([]);
@@ -1800,8 +1922,7 @@ export default function SalesAnalytics() {
   );
 
   useEffect(() => {
-    authApi
-      .listAllUsers()
+    getCachedUsers()
       .then((users) => {
         setTeamUsers(
           users
@@ -1940,9 +2061,12 @@ export default function SalesAnalytics() {
     trend?: { curr: number; prev: number };
   }> = data ? (() => {
     const s = data.summary;
-    const pocProcuredCount = s.poc_agreed_count + (s.poc_wip_count ?? 0);
-    const pocProcuredPrev = (s.prev_poc_agreed_count ?? 0) + (s.prev_poc_wip_count ?? 0);
-    const pocProcuredDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed" || d.milestone_key === "poc_wip");
+    // POC Agreed and POC WIP are distinct funnel stages. Report each on its own
+    // milestone so the board MIS sees true POC WIP numbers — previously these two
+    // were summed under a single, mislabeled "POC WIP" tile, so the drill-down
+    // was dominated by POC Agreed deals.
+    const pocAgreedDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_agreed");
+    const pocWipDeals = (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_wip");
 
     return [
     {
@@ -1962,7 +2086,9 @@ export default function SalesAnalytics() {
     {
       label: "Forecast Window",
       value: formatShortCurrency(data.summary.forecast_amount),
-      hint: `Weighted pipeline expected to land inside the next ${data.window_days} days`,
+      hint: data.window_days >= ALL_TIME_DAYS
+        ? "Weighted pipeline expected to land across all open deals"
+        : `Weighted pipeline expected to land inside the next ${data.window_days} days`,
       tone: "amber" as const,
       icon: CalendarRange,
     },
@@ -1997,13 +2123,22 @@ export default function SalesAnalytics() {
       trend: { curr: s.demo_done_count, prev: s.prev_demo_done_count ?? 0 },
     },
     {
-      label: "POC WIP",
-      value: String(pocProcuredCount),
-      hint: "Unique companies that entered POC Agreed or POC WIP for the first time in this window",
+      label: "POC Agreed",
+      value: String(s.poc_agreed_count),
+      hint: "Unique companies that reached POC Agreed for the first time in this window",
       tone: "blue" as const,
       icon: ArrowUpRight,
-      deals: pocProcuredDeals,
-      trend: { curr: pocProcuredCount, prev: pocProcuredPrev },
+      deals: pocAgreedDeals,
+      trend: { curr: s.poc_agreed_count, prev: s.prev_poc_agreed_count ?? 0 },
+    },
+    {
+      label: "POC WIP",
+      value: String(s.poc_wip_count ?? 0),
+      hint: "Unique companies that reached POC WIP for the first time in this window",
+      tone: "blue" as const,
+      icon: ArrowUpRight,
+      deals: pocWipDeals,
+      trend: { curr: s.poc_wip_count ?? 0, prev: s.prev_poc_wip_count ?? 0 },
     },
     {
       label: "POC Done",
@@ -2038,6 +2173,18 @@ export default function SalesAnalytics() {
   const visibleRepActivity = useMemo(
     () => (!hideDeveloper ? data?.rep_activity ?? [] : (data?.rep_activity ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
     [data?.rep_activity, hideDeveloper, user?.id],
+  );
+
+  // Split the leaderboard by role. SDRs get the demo funnel columns; AEs keep
+  // the pipeline-focused view. Rows with no role (unattributed activity) are
+  // dropped from the per-rep boards rather than padding either side.
+  const sdrRepActivity = useMemo(
+    () => visibleRepActivity.filter((row) => (row.role || "").toLowerCase() === "sdr"),
+    [visibleRepActivity],
+  );
+  const aeRepActivity = useMemo(
+    () => visibleRepActivity.filter((row) => (row.role || "").toLowerCase() === "ae"),
+    [visibleRepActivity],
   );
 
   const visibleRepWeeklyActivity = useMemo(
@@ -2239,24 +2386,24 @@ export default function SalesAnalytics() {
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {WINDOW_OPTIONS.map((value) => (
+              {WINDOW_PRESETS.map((preset) => (
                 <button
-                  key={value}
+                  key={preset.days}
                   type="button"
-                  onClick={() => { setWindowDays(value); setFromDate(""); setToDate(""); }}
+                  onClick={() => { setWindowDays(preset.days); setFromDate(""); setToDate(""); }}
                   style={{
                     height: 38,
                     padding: "0 14px",
                     borderRadius: 999,
-                    border: !usingCustomRange && value === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
-                    background: !usingCustomRange && value === windowDays ? "#f3fbe3" : "#fff",
-                    color: !usingCustomRange && value === windowDays ? "#4d7c0f" : "#506378",
+                    border: !usingCustomRange && preset.days === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
+                    background: !usingCustomRange && preset.days === windowDays ? "#f3fbe3" : "#fff",
+                    color: !usingCustomRange && preset.days === windowDays ? "#4d7c0f" : "#506378",
                     fontSize: 12,
                     fontWeight: 800,
                     cursor: "pointer",
                   }}
                 >
-                  {value}d
+                  {preset.label}
                 </button>
               ))}
             </div>
@@ -2311,6 +2458,32 @@ export default function SalesAnalytics() {
                 );
               })()
             )}
+            {pods.length > 0 && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pod</span>
+                {pods.map((pod) => {
+                  const ids = pod.rep_ids;
+                  const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
+                  return (
+                    <button
+                      key={pod.key}
+                      type="button"
+                      onClick={() => setRepFilter(active ? [] : ids)}
+                      title={`${pod.label} — scopes the whole dashboard (forecast, pipeline, activity) to: ${pod.reps.map((r) => r.name).join(", ")}`}
+                      style={{
+                        height: 32, padding: "0 12px", borderRadius: 999,
+                        border: active ? "1px solid #3555c4" : "1px solid #d7e2fb",
+                        background: active ? "#3555c4" : "#eef4ff",
+                        color: active ? "#fff" : "#3555c4",
+                        fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pod.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <MultiSelectDropdown
               label="Rep filter"
               options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
@@ -2328,7 +2501,9 @@ export default function SalesAnalytics() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
-                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>{windowDays}d</p>
+                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>
+                  {usingCustomRange ? "Custom" : windowDays >= ALL_TIME_DAYS ? "All time" : windowPresetLabel(windowDays)}
+                </p>
               </div>
               <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Updated</p>
@@ -2342,7 +2517,7 @@ export default function SalesAnalytics() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f7f9fc", border: "1px solid #e3ebf4", color: "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <CalendarRange size={14} />
-            Window: last {windowDays} days
+            {usingCustomRange ? "Window: custom range" : windowDays >= ALL_TIME_DAYS ? "Window: all time" : `Window: last ${windowDays} days`}
           </div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: repFilter.length > 0 ? "#eef4ff" : "#f7f9fc", border: repFilter.length > 0 ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: repFilter.length > 0 ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
             <BarChart3 size={14} />
@@ -2397,19 +2572,44 @@ export default function SalesAnalytics() {
 
           <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(320px, 1fr)", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18 }}>
             <SectionCard
-              title="Rep Activity Leaderboard"
-              subtitle="Weekly-touch totals by rep across email, calls, connected/live conversations, LinkedIn, and meetings, alongside the live pipeline they own."
+              title="SDR Leaderboard"
+              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and how many converted to a qualified deal."
             >
-              <RepActivityTable rows={visibleRepActivity} onOpenMetric={handleOpenActivityMetric} />
+              <RepActivityTable
+                rows={sdrRepActivity}
+                onOpenMetric={handleOpenActivityMetric}
+                showDemos
+                emptyLabel="No SDR activity yet for this time range."
+              />
             </SectionCard>
 
+            <SectionCard
+              title="AE Leaderboard"
+              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) by AE, alongside the live pipeline each one owns."
+            >
+              <RepActivityTable
+                rows={aeRepActivity}
+                onOpenMetric={handleOpenActivityMetric}
+                emptyLabel="No AE activity yet for this time range."
+              />
+            </SectionCard>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(300px, 1fr)", gap: 18 }}>
             <SectionCard
               title="Conversion Funnel"
               subtitle="How this window's pipeline moves from Lead to Closed Won, with step-to-step conversion rates."
             >
               <ConversionFunnelView steps={data.conversion_funnel} />
+            </SectionCard>
+
+            <SectionCard
+              title="Accounts by Status"
+              subtitle="Sourced accounts grouped by their manual status. Scoped to the selected reps and geography."
+            >
+              <AccountStatusBreakdown rows={data.accounts_by_status ?? []} />
             </SectionCard>
           </div>
 

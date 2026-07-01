@@ -42,7 +42,7 @@ export default function Companies() {
   const [polling, setPolling] = useState(false);
 
   useEffect(() => {
-    companiesApi.list().then((cs) => { setCompanies(cs); setLoading(false); });
+    companiesApi.list().then((cs) => setCompanies(cs)).catch(() => setCompanies([])).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {

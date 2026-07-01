@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Common corporate suffixes that should not block dedupe.
@@ -62,6 +63,72 @@ from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.outreach import OutreachSequence
 from app.repositories.base import BaseRepository
+
+
+def _normalize_domain(domain: str) -> str:
+    """Lower-cased, whitespace- and scheme-stripped domain key.
+
+    Matches how callers persist domains (e.g. the upload paths lowercase and
+    strip ``https://``/``www.``) so the dedup key the unique index is built on
+    (``lower(domain)``) lines up with what we compare against here.
+    """
+    s = (domain or "").strip().lower()
+    if not s:
+        return ""
+    s = s.replace("https://", "").replace("http://", "")
+    if s.startswith("www."):
+        s = s[4:]
+    return s.split("/")[0].strip()
+
+
+async def get_or_create_company_by_domain(
+    session: AsyncSession,
+    domain: str,
+    defaults: Optional[dict] = None,
+) -> tuple[Company, bool]:
+    """Case-insensitive dedup on ``domain``. Returns ``(company, created)``.
+
+    Mirrors ``app.repositories.contact.get_or_create_contact_by_email``: the
+    single funnel for "create a company keyed by its domain" so no path can mint
+    a duplicate-domain row. Safe under the unique index on ``lower(domain)``
+    (migration 083): if a concurrent writer (or a path that skipped the
+    pre-lookup) already inserted the same domain, the nested-savepoint insert
+    hits the constraint, we roll back ONLY that savepoint (not the caller's
+    transaction) and re-fetch the winning row. Callers get the existing company
+    instead of an IntegrityError.
+
+    Note: companies carry a BEFORE INSERT trigger requiring a
+    ``sourcing_batch_id`` — callers that create must pass one via ``defaults``.
+    A blank/whitespace domain is rejected (a company must have a real domain
+    key); callers without a domain should build the row themselves.
+    """
+    normalized = _normalize_domain(domain)
+    if not normalized:
+        raise ValueError("get_or_create_company_by_domain requires a non-empty domain")
+
+    fields = {k: v for k, v in (defaults or {}).items() if k != "domain"}
+
+    async def _fetch() -> Optional[Company]:
+        res = await session.execute(
+            select(Company).where(func.lower(Company.domain) == normalized).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    existing = await _fetch()
+    if existing is not None:
+        return existing, False
+
+    company = Company(domain=normalized, **fields)
+    try:
+        async with session.begin_nested():
+            session.add(company)
+            await session.flush()
+        return company, True
+    except IntegrityError:
+        existing = await _fetch()
+        if existing is not None:
+            return existing, False
+        raise
 
 
 class CompanyRepository(BaseRepository[Company]):

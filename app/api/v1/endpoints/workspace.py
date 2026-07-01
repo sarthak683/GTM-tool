@@ -15,7 +15,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.models.battlecard import Battlecard
 from app.models.company import Company
 from app.models.contact import Contact, ContactRead
@@ -184,8 +184,17 @@ def _tone_for_prospect_stage(stage: str) -> str:
     return "blue"
 
 
-async def _load_tracked_contacts(session) -> list[ContactRead]:
-    contacts = (await session.execute(select(Contact))).scalars().all()
+async def _load_tracked_contacts(session, user=None) -> list[ContactRead]:
+    # Scope to what `user` may see (own + unassigned) for non-admins, so the
+    # workspace alerts/insights built from these contacts don't leak other reps'
+    # prospect names + /contacts/{id} deep-links. None/admin => all contacts.
+    stmt = select(Contact)
+    if user is not None:
+        from app.repositories.contact import visible_contact_restriction
+        restriction = await visible_contact_restriction(session, user)
+        if restriction is not None:
+            stmt = stmt.where(restriction)
+    contacts = (await session.execute(stmt)).scalars().all()
     tracked = [ContactRead.model_validate(contact) for contact in contacts]
     await apply_contact_tracking(session, tracked)
     return tracked
@@ -222,6 +231,7 @@ def _deal_stage_group(stage: str) -> dict[str, object]:
 async def _compute_alerts(
     session,
     tracked_contacts: Optional[list[ContactRead]] = None,
+    user=None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
     now = datetime.utcnow()
@@ -414,7 +424,7 @@ async def _compute_alerts(
         ))
 
     if tracked_contacts is None:
-        tracked_contacts = await _load_tracked_contacts(session)
+        tracked_contacts = await _load_tracked_contacts(session, user=user)
 
     hot_contacts = sorted(
         [contact for contact in tracked_contacts if (contact.tracking_stage or "") in HOT_PROSPECT_STAGES],
@@ -499,7 +509,7 @@ async def _compute_alerts(
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/summary", response_model=WorkspaceSummary)
-async def workspace_summary(session: DBSession):
+async def workspace_summary(session: DBSession, current_user: CurrentUser):
     """
     Single fast aggregate response for the Sales Workspace landing page.
     Replaces 4 separate list() API calls in the frontend.
@@ -520,7 +530,7 @@ async def workspace_summary(session: DBSession):
         select(func.count(Meeting.id)).where(Meeting.status == "scheduled")
     )).scalar_one()
 
-    alerts = await _compute_alerts(session)
+    alerts = await _compute_alerts(session, user=current_user)
 
     return WorkspaceSummary(
         open_deals=open_deals,
@@ -532,20 +542,20 @@ async def workspace_summary(session: DBSession):
 
 
 @router.get("/alerts", response_model=list[Alert])
-async def workspace_alerts(session: DBSession):
+async def workspace_alerts(session: DBSession, current_user: CurrentUser):
     """
     CRM alerts feed — computed from existing model state, no stored alerts table.
     Covers: stale deals, at-risk deals, missing close dates, contactless accounts,
             upcoming meetings with no brief, completed meetings with no next steps.
     """
-    return await _compute_alerts(session)
+    return await _compute_alerts(session, user=current_user)
 
 
 @router.get("/insights", response_model=WorkspaceInsights)
-async def workspace_insights(session: DBSession):
+async def workspace_insights(session: DBSession, current_user: CurrentUser):
     now = datetime.utcnow()
-    tracked_contacts = await _load_tracked_contacts(session)
-    alerts = await _compute_alerts(session, tracked_contacts=tracked_contacts)
+    tracked_contacts = await _load_tracked_contacts(session, user=current_user)
+    alerts = await _compute_alerts(session, tracked_contacts=tracked_contacts, user=current_user)
 
     deal_rows = (await session.execute(
         select(
@@ -845,7 +855,7 @@ async def workspace_insights(session: DBSession):
 
 
 @router.get("/stages/{stage}", response_model=StageStatus)
-async def stage_status(stage: str, session: DBSession):
+async def stage_status(stage: str, session: DBSession, _user: CurrentUser):
     """
     Per-stage health check — returns ready | needs_action | blocked
     plus specific blockers and suggested actions.

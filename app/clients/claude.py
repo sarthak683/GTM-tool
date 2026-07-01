@@ -59,13 +59,24 @@ class ClaudeClient:
             return settings.CLAUDE_MODEL_SIMPLE
         return settings.CLAUDE_MODEL_STANDARD
 
-    async def complete(self, system: str, user: str, max_tokens: int = 500) -> Optional[str]:
-        """Single-turn completion. Returns None in mock mode."""
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 500,
+        model_override: Optional[str] = None,
+    ) -> Optional[str]:
+        """Single-turn completion. Returns None in mock mode.
+
+        Pass model_override to pin a specific model and bypass _pick_model
+        routing (e.g. structured JSON extraction that doesn't need the
+        complex tier despite a high max_tokens).
+        """
         if self.mock:
             return None
 
         try:
-            model = self._pick_model(system=system, user=user, max_tokens=max_tokens)
+            model = model_override or self._pick_model(system=system, user=user, max_tokens=max_tokens)
             client = self._get_client()
             response = await asyncio.wait_for(
                 client.messages.create(
@@ -93,13 +104,18 @@ class ClaudeClient:
         tool_description: str,
         input_schema: dict[str, Any],
         max_tokens: int = 800,
+        model_override: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """Single-turn structured extraction via Claude tool use."""
+        """Single-turn structured extraction via Claude tool use.
+
+        Pass model_override to pin a specific model and bypass _pick_model
+        routing.
+        """
         if self.mock:
             return None
 
         try:
-            model = self._pick_model(system=system, user=user, max_tokens=max_tokens)
+            model = model_override or self._pick_model(system=system, user=user, max_tokens=max_tokens)
             client = self._get_client()
             response = await asyncio.wait_for(
                 client.messages.create(

@@ -4,6 +4,7 @@ import { AuthProvider } from "./lib/AuthContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Layout from "./components/layout/Layout";
 import { ToastProvider } from "./lib/ToastContext";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 // Lazy — the aircall-everywhere SDK is heavy and only ~a few reps enable the
 // dialer. Keeping it out of the main bundle speeds up boot for everyone else.
@@ -85,12 +86,13 @@ function AircallToggleListener() {
 
 export default function App() {
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <AuthProvider>
-        <ToastProvider>
-          <ScrollToTop />
-          <AircallToggleListener />
-          <Suspense fallback={<PageSkeleton />}>
+    <ErrorBoundary>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AuthProvider>
+          <ToastProvider>
+            <ScrollToTop />
+            <AircallToggleListener />
+            <Suspense fallback={<PageSkeleton />}>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
@@ -130,9 +132,10 @@ export default function App() {
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
             </Routes>
-          </Suspense>
-        </ToastProvider>
-      </AuthProvider>
-    </BrowserRouter>
+            </Suspense>
+          </ToastProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

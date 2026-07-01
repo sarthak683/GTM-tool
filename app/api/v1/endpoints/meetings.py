@@ -71,6 +71,7 @@ async def list_meetings(
     temporal_status: list[str] = Query(default=[], description="'upcoming' and 'overdue' are virtual filters for scheduled meetings."),
     meeting_type: list[str] = Query(default=[]),
     assignee_id: list[UUID] = Query(default=[]),
+    assignee_unassigned: bool = Query(default=False, description="If true, include meetings with no assignee (deal AE and meeting owner both null). OR'd with assignee_id."),
     link_state: list[str] = Query(default=[]),
     has_intel: Optional[bool] = Query(default=None),
     order: str = Query(default="desc"),
@@ -152,12 +153,18 @@ async def list_meetings(
     if meeting_type:
         stmt = stmt.where(Meeting.meeting_type.in_(meeting_type))
         count_stmt = count_stmt.where(Meeting.meeting_type.in_(meeting_type))
-    if assignee_id:
+    if assignee_id or assignee_unassigned:
         ensure_deal_join()
-        assignee_clause = or_(
-            Deal.assigned_to_id.in_(assignee_id),
-            Meeting.owner_user_id.in_(assignee_id),
-        )
+        assignee_terms = []
+        if assignee_id:
+            assignee_terms.append(Deal.assigned_to_id.in_(assignee_id))
+            assignee_terms.append(Meeting.owner_user_id.in_(assignee_id))
+        if assignee_unassigned:
+            # No assignee: neither the linked deal's AE nor the meeting owner is set.
+            assignee_terms.append(
+                and_(Deal.assigned_to_id.is_(None), Meeting.owner_user_id.is_(None))
+            )
+        assignee_clause = or_(*assignee_terms)
         stmt = stmt.where(assignee_clause)
         count_stmt = count_stmt.where(assignee_clause)
     link_state_set = {value.strip().lower() for value in link_state if value}
@@ -362,7 +369,7 @@ async def create_meeting(payload: MeetingCreate, session: DBSession, current_use
                 return candidate  # return existing instead of creating duplicate
 
     data.setdefault("synced_by_user_id", str(current_user.id))
-    data.setdefault("synced_at", datetime.utcnow().isoformat())
+    data.setdefault("synced_at", datetime.utcnow())
     data.setdefault("external_source", "manual")
     internal_flag = await _classify_internal_from_attendees(session, data.get("attendees"))
     if internal_flag is not None:
@@ -683,7 +690,11 @@ async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSessio
             f"Company: {company_name}\nMeeting type: {meeting.meeting_type}\n"
             f"Meeting notes:\n{raw_notes[:2000]}\n\nAnalyse and return JSON as specified."
         )
-        raw = await ai.complete(system, user, max_tokens=700)
+        from app.config import settings
+
+        # Structured JSON debrief score — pin the standard model so
+        # max_tokens=700 doesn't route this to the complex tier.
+        raw = await ai.complete(system, user, max_tokens=700, model_override=settings.CLAUDE_MODEL_STANDARD)
         try:
             result_data = json.loads(raw or "{}")
         except Exception:

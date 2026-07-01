@@ -118,12 +118,19 @@ class GmailInboxClient:
         self.updated_token_payload: Optional[dict] = None
         self.enabled = bool(self.inbox and (self.token_payload or settings.GMAIL_TOKEN_JSON))
 
-    def fetch_new_messages(self, after_epoch: int, max_results: int = 50) -> list[EmailMessage]:
+    def fetch_new_messages(
+        self, after_epoch: int, max_results: int = 50, max_pages: int = 10
+    ) -> list[EmailMessage]:
         """
         Fetch messages received after `after_epoch` (unix timestamp).
 
         Uses Gmail search query `after:EPOCH` which is simple, reliable,
-        and doesn't require historyId management. Returns newest first.
+        and doesn't require historyId management.
+
+        Raises on Gmail API/credential failure instead of returning [] —
+        callers must be able to tell "no new mail" apart from "fetch failed"
+        so they don't advance their sync cursor past a window that was never
+        actually read (which silently loses those emails forever).
         """
         if not self.enabled:
             logger.debug("Gmail sync disabled — no inbox configured")
@@ -133,16 +140,31 @@ class GmailInboxClient:
         if updated_token_payload:
             self.updated_token_payload = updated_token_payload
         if not service:
-            logger.warning("Gmail credentials not valid — run setup first")
-            return []
+            raise RuntimeError("Gmail credentials not valid — run setup first")
 
         try:
             query = f"after:{after_epoch}"
-            results = service.users().messages().list(
-                userId="me", q=query, maxResults=max_results,
-            ).execute()
+            msg_ids: list[dict] = []
+            page_token: Optional[str] = None
+            # Follow nextPageToken so a burst/backlog larger than one page
+            # isn't dropped — the cursor jump used to skip everything beyond
+            # the first `max_results` messages in the window.
+            for _ in range(max_pages):
+                params: dict = {"userId": "me", "q": query, "maxResults": max_results}
+                if page_token:
+                    params["pageToken"] = page_token
+                results = service.users().messages().list(**params).execute()
+                msg_ids.extend(results.get("messages", []))
+                page_token = results.get("nextPageToken")
+                if not page_token:
+                    break
+            if page_token:
+                logger.error(
+                    "Gmail sync: window holds more than %d messages; older "
+                    "messages in this window will be skipped",
+                    max_pages * max_results,
+                )
 
-            msg_ids = results.get("messages", [])
             if not msg_ids:
                 return []
 
@@ -157,7 +179,7 @@ class GmailInboxClient:
 
         except Exception as e:
             logger.error(f"Gmail fetch failed: {e}")
-            return []
+            raise
 
     def _fetch_message(self, service, gmail_id: str) -> Optional[EmailMessage]:
         """Fetch and parse a single Gmail message."""

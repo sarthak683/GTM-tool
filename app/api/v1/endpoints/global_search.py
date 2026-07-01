@@ -9,6 +9,7 @@ from app.core.dependencies import CurrentUser, DBSession
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.repositories.contact import visible_contact_restriction
 from app.models.meeting import Meeting
 from app.models.sales_resource import SalesResource
 from app.models.task import Task
@@ -52,11 +53,15 @@ def _display_domain(value: Optional[str]) -> Optional[str]:
 @router.get("/global", response_model=GlobalSearchResponse)
 async def global_search(
     session: DBSession,
-    _: CurrentUser,
+    current_user: CurrentUser,
     q: str = Query(..., min_length=1, description="Global search query"),
 ):
     query = q.strip()
     pattern = f"%{query}%"
+
+    # Prospect-visibility: a non-admin must not surface other reps' contacts via
+    # search. None for admins/granted users (see all); otherwise own + unassigned.
+    contact_restriction = await visible_contact_restriction(session, current_user)
 
     company_rows = (
         await session.execute(
@@ -76,20 +81,23 @@ async def global_search(
 
     contact_rows = (
         await session.execute(
-            select(Contact, Company.name.label("company_name"))
-            .outerjoin(Company, Contact.company_id == Company.id)
-            .where(
-                or_(
-                    Contact.first_name.ilike(pattern),
-                    Contact.last_name.ilike(pattern),
-                    func.concat(Contact.first_name, literal(" "), Contact.last_name).ilike(pattern),
-                    Contact.email.ilike(pattern),
-                    Contact.title.ilike(pattern),
-                    Company.name.ilike(pattern),
+            (
+                select(Contact, Company.name.label("company_name"))
+                .outerjoin(Company, Contact.company_id == Company.id)
+                .where(
+                    or_(
+                        Contact.first_name.ilike(pattern),
+                        Contact.last_name.ilike(pattern),
+                        func.concat(Contact.first_name, literal(" "), Contact.last_name).ilike(pattern),
+                        Contact.email.ilike(pattern),
+                        Contact.title.ilike(pattern),
+                        Company.name.ilike(pattern),
+                    )
                 )
+                .where(contact_restriction if contact_restriction is not None else literal(True))
+                .order_by(Contact.updated_at.desc())
+                .limit(6)
             )
-            .order_by(Contact.updated_at.desc())
-            .limit(6)
         )
     ).all()
 
@@ -110,20 +118,31 @@ async def global_search(
         )
     ).all()
 
-    meeting_rows = (
-        await session.execute(
-            select(Meeting, Company.name.label("company_name"))
-            .outerjoin(Company, Meeting.company_id == Company.id)
-            .where(
-                or_(
-                    Meeting.title.ilike(pattern),
-                    Meeting.meeting_type.ilike(pattern),
-                    Company.name.ilike(pattern),
-                )
+    meeting_stmt = (
+        select(Meeting, Company.name.label("company_name"))
+        .outerjoin(Company, Meeting.company_id == Company.id)
+        .where(
+            or_(
+                Meeting.title.ilike(pattern),
+                Meeting.meeting_type.ilike(pattern),
+                Company.name.ilike(pattern),
             )
-            .order_by(Meeting.updated_at.desc())
-            .limit(4)
         )
+    )
+    # Mirror GET /meetings visibility: non-admins must not surface other
+    # reps' meetings through search — only their own (owned/synced) or those
+    # on their deals/accounts.
+    if current_user.role != "admin":
+        meeting_stmt = meeting_stmt.outerjoin(Deal, Meeting.deal_id == Deal.id).where(
+            or_(
+                Meeting.owner_user_id == current_user.id,
+                Meeting.synced_by_user_id == current_user.id,
+                Deal.assigned_to_id == current_user.id,
+                Company.assigned_to_id == current_user.id,
+            )
+        )
+    meeting_rows = (
+        await session.execute(meeting_stmt.order_by(Meeting.updated_at.desc()).limit(4))
     ).all()
 
     task_rows = (
@@ -140,7 +159,15 @@ async def global_search(
             )
             .outerjoin(
                 Contact,
-                and_(Task.entity_type == "contact", Task.entity_id == Contact.id),
+                # Gate the contact join: a restricted user only joins (and can
+                # match/see the name of) contacts they may view. For a hidden
+                # contact the join yields NULL, so neither contact_name nor the
+                # email/name search-match clauses below can surface it.
+                and_(
+                    Task.entity_type == "contact",
+                    Task.entity_id == Contact.id,
+                    contact_restriction if contact_restriction is not None else literal(True),
+                ),
             )
             .outerjoin(
                 Deal,

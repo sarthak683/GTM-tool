@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
-import { activitiesApi, authApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
+import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
+import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
@@ -80,6 +81,20 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   bofu: ["meeting_booked"],
 };
 const GEO_OPTIONS = ["India", "America", "Rest of the World"] as const;
+// Friendly labels for the standard (create-modal) deal sources. The marketing
+// Source filter shows these plus any other source values actually present on
+// deals (e.g. system-generated ones), so no deal is hidden from the filter.
+const SOURCE_LABELS: Record<string, string> = {
+  inbound: "Inbound",
+  outbound: "Outbound",
+  referral: "Referral",
+  partner: "Partner",
+  event: "Event",
+  cold_call: "Cold Call",
+  linkedin: "LinkedIn",
+};
+const KNOWN_SOURCES = ["inbound", "outbound", "referral", "partner", "event", "cold_call", "linkedin"];
+const sourceLabel = (value: string) => SOURCE_LABELS[value] ?? value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const ENGAGEMENT_SIGNAL_LEGEND = "Signal legend: Active = last touch within 3d; Watch = 4-7d; Stale = older than 7d; No signal = no captured activity yet.";
 
 function normalizeBucketConfig(value: Partial<FunnelConfig> | undefined, defaults: FunnelConfig): FunnelConfig {
@@ -626,7 +641,7 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority: "normal", assigned_to_id: "", geography: "", tags: "", source: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", geography: "", tags: "", source: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; source: boolean }>({ name: false, source: false });
@@ -674,7 +689,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         company_id: form.company_id || undefined,
         value: form.value ? Number(form.value) : undefined,
         close_date_est: form.close_date_est || undefined,
-        priority: form.priority,
+        priority_tag: form.priority_tag || undefined,
         assigned_to_id: form.assigned_to_id || undefined,
         geography: form.geography || undefined,
         source: form.source || undefined,
@@ -771,11 +786,11 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))}>
                 {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}
               </select>
-              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}>
-                <option value="urgent">Urgent</option>
-                <option value="high">High</option>
-                <option value="normal">Normal</option>
-                <option value="low">Low</option>
+              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.priority_tag} onChange={(event) => setForm((current) => ({ ...current, priority_tag: event.target.value }))}>
+                <option value="">No priority</option>
+                <option value="P0">P0</option>
+                <option value="P1">P1</option>
+                <option value="P2">P2</option>
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -939,7 +954,7 @@ function CrmImportModal({
 }
 
 
-function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; accountPriorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
+function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; priorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
   const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
 
   return (
@@ -999,14 +1014,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, accountPriorityTag, s
           <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#7a8ca1" }}><Clock3 size={10} /><span>{deal.days_in_stage ?? 0}d</span></div>
           {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 10, color: "#5e738b", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={10} />{deal.contact_count}</span>}
         </div>
-        {accountPriorityTag && (
+        {priorityTag && (
           <span style={{
             fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 5, flexShrink: 0,
-            background: accountPriorityTag === "P0" ? "#fff1f2" : accountPriorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
-            color: accountPriorityTag === "P0" ? "#be123c" : accountPriorityTag === "P1" ? "#c2410c" : "#15803d",
-            border: `1px solid ${accountPriorityTag === "P0" ? "#fecdd3" : accountPriorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
+            background: priorityTag === "P0" ? "#fff1f2" : priorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
+            color: priorityTag === "P0" ? "#be123c" : priorityTag === "P1" ? "#c2410c" : "#15803d",
+            border: `1px solid ${priorityTag === "P0" ? "#fecdd3" : priorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
           }}>
-            {accountPriorityTag}
+            {priorityTag}
           </span>
         )}
       </div>
@@ -1568,6 +1583,7 @@ export default function Pipeline() {
   const [assigneeFilters, setAssigneeFilters] = useState<string[]>([]);
   const [geographyFilters, setGeographyFilters] = useState<string[]>([]);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
   const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
   const [commitFilter, setCommitFilter] = useState<string[]>([]);
   const [stalledOnly, setStalledOnly] = useState(false);
@@ -1608,10 +1624,18 @@ export default function Pipeline() {
   const [showAddProspect, setShowAddProspect] = useState(false);
   const [showSidebarMenu, setShowSidebarMenu] = useState(false);
   const prospectImportInputRef = useRef<HTMLInputElement | null>(null);
+  // CRM-import status poll id — kept in a ref so unmount can clear it (the
+  // interval otherwise outlives the page if the rep navigates away mid-import).
+  const crmImportPollRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (crmImportPollRef.current) window.clearInterval(crmImportPollRef.current);
+  }, []);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
   const allDeals = useMemo(() => Object.values(dealBoard).flat(), [dealBoard]);
   const dealTags = useMemo(() => Array.from(new Set(allDeals.flatMap((deal) => deal.tags ?? []))).sort((a, b) => a.localeCompare(b)), [allDeals]);
+  const dealSources = useMemo(() => Array.from(new Set(allDeals.map((deal) => deal.source).filter((s): s is string => Boolean(s)))).sort((a, b) => a.localeCompare(b)), [allDeals]);
   const effectiveDealStages = useMemo(() => {
     const configured = dealStages.length ? dealStages : DEFAULT_DEAL_STAGES;
     const seen = new Set(configured.map((stage) => stage.id));
@@ -1686,7 +1710,7 @@ export default function Pipeline() {
     try {
       const [companyList, userList, summarySettings] = await Promise.all([
         companiesApi.list(),
-        authApi.listAllUsers().catch(() => []),
+        getCachedUsers().catch(() => []),
         settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
       ]);
       setCompanies(companyList);
@@ -1700,7 +1724,6 @@ export default function Pipeline() {
   };
 
   const loadBoard = async () => {
-    void loadSupportingData();
     await Promise.all([loadDealBoard(), loadProspectBoard()]);
   };
 
@@ -1708,8 +1731,16 @@ export default function Pipeline() {
     loadBoard();
   }, []);
 
+  // Companies (~1000 rows), users, and summary settings rarely change, so load
+  // them once on mount instead of refetching on every board reload (loadBoard
+  // runs after each drag-drop). Flows that can create companies (CRM import,
+  // prospect migration) call loadSupportingData explicitly.
   useEffect(() => {
-    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
+    void loadSupportingData();
+  }, []);
+
+  useEffect(() => {
+    getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {
@@ -1771,8 +1802,9 @@ export default function Pipeline() {
         return geo ? geographyFilters.includes(geo) : false;
       });
       if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
+      if (sourceFilters.length) items = items.filter((deal) => (deal.source ? sourceFilters.includes(deal.source) : false));
       if (priorityFilters.length) items = items.filter((deal) => {
-        const tag = deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : null;
+        const tag = deal.priority_tag ?? null;
         return tag ? priorityFilters.includes(tag) : false;
       });
       if (healthFilters.length) items = items.filter((deal) => healthFilters.includes((deal.health || "unknown").toLowerCase()));
@@ -1849,7 +1881,7 @@ export default function Pipeline() {
       next[stage.id] = items;
     }
     return next;
-  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, stageFilters, stalledOnly, tagFilters]);
+  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, sourceFilters, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -1971,7 +2003,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || sourceFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
@@ -2008,6 +2040,7 @@ export default function Pipeline() {
     { value: "missing", label: "No contacts linked" },
   ];
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
+  const sourceOptions = Array.from(new Set([...KNOWN_SOURCES, ...dealSources])).map((value) => ({ value, label: sourceLabel(value) }));
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
   const accentBorder = tab === "deal" ? "#b8d0f0" : "#b2e0dc";
@@ -2034,7 +2067,7 @@ export default function Pipeline() {
       "Geography": deal.geography || normalizeGeo(company?.region) || "",
       "Health": deal.health || "",
       "Health Score": deal.health_score ?? "",
-      "Priority": company?.priority_tag || "",
+      "Priority": deal.priority_tag || "",
       "Commit": deal.commit_to_deal ? "Yes" : "No",
       "Close Date": deal.close_date_est ? formatDate(deal.close_date_est) : "",
       "Days In Stage": deal.days_in_stage ?? "",
@@ -2099,7 +2132,8 @@ export default function Pipeline() {
     setBulkBusy(true);
     try {
       await dealsApi.bulkUpdate({ deal_ids: [...selectedDealIds], ...payload });
-      await loadBoard();
+      // Deals-only mutation — don't re-download the 500-row prospect list.
+      await loadDealBoard();
       clearSelection();
       setBulkTag("");
     } catch {
@@ -2128,6 +2162,7 @@ export default function Pipeline() {
     setAssigneeFilters([]);
     setGeographyFilters([]);
     setTagFilters([]);
+    setSourceFilters([]);
     setPriorityFilters([]);
     setCommitFilter([]);
     setHealthFilters([]);
@@ -2326,7 +2361,8 @@ export default function Pipeline() {
     setBusyStage(pendingDealMove.targetStage);
     try {
       await dealsApi.moveStage(pendingDealMove.dealId, pendingDealMove.targetStage);
-      await loadBoard();
+      // Deals-only mutation — don't re-download the 500-row prospect list.
+      await loadDealBoard();
     } finally {
       setBusyStage(null);
       setPendingDealMove(null);
@@ -2343,7 +2379,9 @@ export default function Pipeline() {
     setBusyStage(targetStage);
     try {
       await contactsApi.update(dragItem.id, prospectPatch(targetStage));
-      await loadBoard();
+      // Prospect-only mutation — the deal board is untouched (conversion to a
+      // deal happens later via handleConvertProspectToDeal, which reloads both).
+      await loadProspectBoard();
       if (targetStage === "meeting_booked" && draggedProspect?.company_id) {
         setPendingConvertProspect({
           ...draggedProspect,
@@ -2414,6 +2452,8 @@ export default function Pipeline() {
             if (status.status === "success") {
               window.clearInterval(interval);
               setCrmImportResult(status.result ?? null);
+              // CRM import can create companies — refresh supporting data too.
+              void loadSupportingData();
               await loadBoard();
               resolve();
             } else if (status.status === "failure") {
@@ -2426,6 +2466,7 @@ export default function Pipeline() {
             reject(pollErr);
           }
         }, 5000);
+        crmImportPollRef.current = interval;
       });
     } catch (err) {
       setCrmImportError(err instanceof Error ? err.message : "Failed to import from CRM");
@@ -2438,6 +2479,8 @@ export default function Pipeline() {
     setMigratingProspects(true);
     try {
       const result = await contactsApi.importCsv(file);
+      // CSV import auto-creates accounts — refresh supporting data too.
+      void loadSupportingData();
       await loadBoard();
       const missingMessage = result.missing_company_count
         ? `\nPlaceholder companies created: ${result.missing_company_count} (they were imported now and can be enriched or remapped later)`
@@ -2631,6 +2674,7 @@ export default function Pipeline() {
             <MultiSelectFilter values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
             <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
+            {tab === "deal" && <MultiSelectFilter values={sourceFilters} onChange={setSourceFilters} label="Source" allLabel="All Sources" options={sourceOptions} />}
             {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
             {tab === "deal" && <MultiSelectFilter values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
             {tab === "deal" && <MultiSelectFilter values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}
@@ -2765,7 +2809,7 @@ export default function Pipeline() {
                             next.set("deal", deal.id);
                             return next;
                           }, { replace: true });
-                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} accountPriorityTag={deal.company_id ? companyMap.get(deal.company_id)?.priority_tag : undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} priorityTag={deal.priority_tag ?? undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -2813,7 +2857,7 @@ export default function Pipeline() {
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrency(deal.value)}</span>
-                        {(() => { const p = companyMap.get(deal.company_id!)?.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
+                        {(() => { const p = deal.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
                       </div>
                     </div>
                   </div>
@@ -2875,7 +2919,7 @@ export default function Pipeline() {
           next.delete("deal");
           return next;
         }, { replace: true });
-      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} onCompanyUpdated={(updated) => setCompanies((prev) => prev.some((c) => c.id === updated.id) ? prev.map((c) => c.id === updated.id ? updated : c) : [...prev, updated])} />}
+      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingDealMove && (
         <>

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import and_, func, or_
 from sqlmodel import select
 
 from app.celery_app import celery_app
@@ -48,6 +49,15 @@ def _safe_int(value) -> int:
 _SENDING_CAMPAIGN_STATUSES = {1, 2, 4}  # active, paused, running-subsequences
 
 
+# Campaign IDs Instantly returns 404 for — deleted in the Instantly UI while a
+# sequence still references them. They never come back, so we cache them per
+# worker process to stop re-GETting a known-gone campaign every sync cycle (and
+# to log the deletion once as INFO rather than a WARNING+traceback every 15 min).
+# Intentionally process-local: a worker restart clears it, self-healing the rare
+# case of a transient/incorrect 404.
+_DEAD_CAMPAIGN_IDS: set[str] = set()
+
+
 async def _ensure_campaign_open_tracking(client: InstantlyClient, campaign_id: str) -> bool:
     """Guarantee an actively-sending campaign reports email opens.
 
@@ -65,6 +75,21 @@ async def _ensure_campaign_open_tracking(client: InstantlyClient, campaign_id: s
     """
     try:
         camp = await client.get_campaign(campaign_id)
+    except InstantlyError as exc:
+        if exc.status_code == 404:
+            # Campaign was deleted in the Instantly UI but a sequence still
+            # points at it. It will never return, so record it once (clean INFO,
+            # not a WARNING+traceback) and cache the id so later cycles skip it.
+            if campaign_id not in _DEAD_CAMPAIGN_IDS:
+                _DEAD_CAMPAIGN_IDS.add(campaign_id)
+                logger.info(
+                    "instantly_sync: campaign %s no longer exists on Instantly "
+                    "(deleted upstream) — skipping it from now on",
+                    campaign_id,
+                )
+            return False
+        logger.warning("open_tracking reconcile: get_campaign failed for %s", campaign_id, exc_info=True)
+        return False
     except Exception:
         logger.warning("open_tracking reconcile: get_campaign failed for %s", campaign_id, exc_info=True)
         return False
@@ -92,14 +117,18 @@ _PRE_SEND_INSTANTLY = {"", "ready", "missing_email", "none"}
 
 async def _existing_synced_event_count(session, contact_id: UUID, event_type: str) -> int:
     result = await session.execute(
-        select(Activity.id).where(
+        select(func.count(Activity.id)).where(
             Activity.contact_id == contact_id,
             Activity.source == "instantly",
-            Activity.medium == "email",
+            # Webhook-logged email activities historically carried medium=None
+            # (only this poller stamped medium="email"), so match both — a
+            # medium-only predicate missed webhook rows and made every poll
+            # cycle mint duplicate events.
+            or_(Activity.medium == "email", Activity.medium.is_(None)),
             Activity.event_metadata["event_type"].as_string() == event_type,
         )
     )
-    return len(result.scalars().all())
+    return int(result.scalar_one() or 0)
 
 
 async def _backfill_synced_sent_event(
@@ -319,15 +348,29 @@ async def _async_sync_active_campaigns() -> dict:
 
     async with task_session() as session:
         # Find all sequences with active Instantly campaigns
+        # Sequences whose campaign finished ("completed"/"error") more than 7
+        # days ago are skipped: their leads have already had a week of
+        # idempotent backfill passes, the campaign will never send again, and
+        # re-polling them forever burns Instantly API quota. The webhook still
+        # covers anything missed. updated_at is bumped by every webhook/sync
+        # touch, so it doubles as a "last seen change" marker.
+        stale_cutoff = datetime.utcnow() - timedelta(days=7)
         result = await session.execute(
             select(OutreachSequence).where(
                 OutreachSequence.instantly_campaign_id.isnot(None),
-                # Include completed/error campaigns too: they've already sent
-                # emails, so their leads need the email_sent/reply backfill even
-                # though no further webhooks will fire. The per-lead work is
-                # idempotent, so re-checking a finished campaign is cheap.
-                OutreachSequence.instantly_campaign_status.in_(
-                    ["active", "paused", "completed", "error", None]
+                or_(
+                    OutreachSequence.instantly_campaign_status.in_(["active", "paused"]),
+                    # NULL status = never synced yet — poll it. (SQL `IN` never
+                    # matches NULL, so this needs an explicit IS NULL.)
+                    OutreachSequence.instantly_campaign_status.is_(None),
+                    # Include recently completed/error campaigns too: they've
+                    # already sent emails, so their leads need the
+                    # email_sent/reply backfill even though no further webhooks
+                    # will fire. The per-lead work is idempotent.
+                    and_(
+                        OutreachSequence.instantly_campaign_status.in_(["completed", "error"]),
+                        OutreachSequence.updated_at >= stale_cutoff,
+                    ),
                 ),
             )
         )
@@ -346,10 +389,19 @@ async def _async_sync_active_campaigns() -> dict:
         # One reconcile check per unique campaign (many sequences share a
         # campaign) so we don't re-GET the same campaign for every lead.
         reconciled_open_tracking: set[str] = set()
+        # Same dedup for analytics: one GET per campaign per run instead of
+        # one per sequence (sequences sharing a campaign re-fetched the same
+        # analytics payload every 15 minutes).
+        analytics_cache: dict[str, object] = {}
 
         for seq in sequences:
             try:
                 campaign_id = seq.instantly_campaign_id
+
+                # Campaign was deleted on Instantly in a prior cycle — nothing
+                # left to reconcile or sync, so skip without another API call.
+                if campaign_id and campaign_id in _DEAD_CAMPAIGN_IDS:
+                    continue
 
                 # Safety-net: UI-created campaigns linked to our sequences are
                 # born with open tracking off. Flip it on once per campaign so
@@ -359,7 +411,12 @@ async def _async_sync_active_campaigns() -> dict:
                     if await _ensure_campaign_open_tracking(client, campaign_id):
                         tracking_enabled += 1
 
-                analytics_list = await client.get_campaign_analytics(campaign_id=campaign_id)
+                if campaign_id and campaign_id in analytics_cache:
+                    analytics_list = analytics_cache[campaign_id]
+                else:
+                    analytics_list = await client.get_campaign_analytics(campaign_id=campaign_id)
+                    if campaign_id:
+                        analytics_cache[campaign_id] = analytics_list
                 if not analytics_list:
                     continue
 
@@ -405,9 +462,12 @@ async def _async_sync_active_campaigns() -> dict:
                                 elif interest == 1 and contact.sequence_status != "interested":
                                     contact.sequence_status = "interested"
                                     contact.instantly_status = "interested"
-                                elif interest == -1 and contact.sequence_status != "not_interested":
-                                    contact.sequence_status = "not_interested"
-                                    contact.instantly_status = "not_interested"
+                                # NOTE: lt_interest_status == -1 ("not interested")
+                                # is deliberately NOT mapped here. Instantly stamps
+                                # -1 from auto-replies / OOO / imports with no real
+                                # negative reply, which produced phantom "negative
+                                # email reply" flags. Genuine negatives flow through
+                                # the human-set lead_not_interested webhook instead.
 
                                 if lead.get("email_open_count", 0) > (contact.email_open_count or 0):
                                     contact.email_open_count = lead["email_open_count"]

@@ -10,6 +10,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import and_, case, false, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -20,6 +21,56 @@ from app.models.outreach import OutreachSequence
 from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.services.contact_tracking import apply_contact_tracking
+
+
+async def get_or_create_contact_by_email(
+    session: AsyncSession,
+    email: str,
+    defaults: Optional[dict] = None,
+) -> tuple[Contact, bool]:
+    """Case-insensitive dedup on email. Returns ``(contact, created)``.
+
+    Single funnel for the ~dozen contact-creation sites so none of them can mint
+    a duplicate. Safe under the partial unique index on ``lower(email)``: if a
+    concurrent writer (or a path that skipped the pre-lookup) already inserted
+    the same address, the nested-savepoint insert hits the constraint, we roll
+    back ONLY that savepoint (not the caller's transaction) and re-fetch the
+    winning row. Callers get the existing contact instead of an IntegrityError.
+    """
+    normalized = (email or "").strip()
+    fields = {k: v for k, v in (defaults or {}).items() if k != "email"}
+
+    if not normalized:
+        # No email -> nothing to dedup on; the partial unique index ignores
+        # null/empty emails, so just create the row.
+        contact = Contact(email=None, **fields)
+        session.add(contact)
+        await session.flush()
+        return contact, True
+
+    key = normalized.lower()
+
+    async def _fetch() -> Optional[Contact]:
+        res = await session.execute(
+            select(Contact).where(func.lower(Contact.email) == key).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    existing = await _fetch()
+    if existing is not None:
+        return existing, False
+
+    contact = Contact(email=normalized, **fields)
+    try:
+        async with session.begin_nested():
+            session.add(contact)
+            await session.flush()
+        return contact, True
+    except IntegrityError:
+        existing = await _fetch()
+        if existing is not None:
+            return existing, False
+        raise
 
 FREE_EMAIL_PROVIDERS = frozenset({
     "gmail.com",
@@ -82,6 +133,16 @@ def _parse_uuid_values(value: str | None) -> list[UUID]:
     return parsed
 
 
+# Sentinel the frontend sends to request "no owner" in an ownership filter. It
+# can never be a real UUID, so _parse_uuid_values silently drops it; we detect
+# it on the raw string instead and translate it to an IS NULL clause.
+UNASSIGNED_SENTINEL = "__unassigned__"
+
+
+def _has_unassigned(value: str | None) -> bool:
+    return UNASSIGNED_SENTINEL in _parse_multi_query(value)
+
+
 def _like_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -92,6 +153,51 @@ def _search_tokens(value: str) -> list[str]:
         for token in re.findall(r"[a-z0-9@.+'-]+", value.lower())
         if token
     ]
+
+
+def contact_visibility_filter(user_id: UUID):
+    """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
+
+    A non-admin may see a contact if they own it in either slot, OR they are the
+    AE on the contact's COMPANY (account-scoped: an AE sees every prospect inside
+    the accounts they own, including ones an SDR sourced and hasn't handed over
+    yet), OR they own a DEAL on the contact's company (an AE running a demo/POC
+    sees the prospects at that account even when the company/contacts are still
+    held by the sourcing SDR or another company AE), OR it is fully unassigned
+    (both slots NULL — an unclaimed lead anyone may pick up). This is the SINGLE
+    SOURCE OF TRUTH for the rule; reuse it on EVERY contact-browse surface (the
+    prospects list, the account-sourcing company page, global search) so
+    visibility can never diverge between surfaces. Mirrors the inline `.in_()`
+    form in ``list_with_company_name`` (which supports a multi-id list).
+    """
+    from app.models.deal import Deal
+    return or_(
+        Contact.assigned_to_id == user_id,
+        Contact.sdr_id == user_id,
+        Contact.company_id.in_(
+            select(Company.id).where(Company.assigned_to_id == user_id)
+        ),
+        Contact.company_id.in_(
+            select(Deal.company_id).where(
+                Deal.assigned_to_id == user_id, Deal.company_id.is_not(None)
+            )
+        ),
+        and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
+    )
+
+
+async def visible_contact_restriction(session: AsyncSession, user):
+    """Return the visibility predicate for `user`, or None if they may see ALL
+    prospects (admins + users in the view-all grant list).
+
+    Apply with ``stmt = stmt.where(restriction)`` only when not None. Keeps every
+    endpoint's gate consistent with the main list's `can_view_all_prospects` rule.
+    """
+    from app.services.permissions import can_view_all_prospects
+
+    if await can_view_all_prospects(session, user):
+        return None
+    return contact_visibility_filter(user.id)
 
 
 class ContactRepository(BaseRepository[Contact]):
@@ -108,11 +214,13 @@ class ContactRepository(BaseRepository[Contact]):
         sequence_status: Optional[str] = None,
         call_disposition: Optional[str] = None,
         email_state: Optional[str] = None,
+        linkedin_status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_dir: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
         owner_id: Optional[str] = None,
+        restrict_to_owner_id: Optional[str] = None,
         scope_any_match: bool = False,
         prospect_only: bool = False,
         timezone: Optional[str] = None,
@@ -146,6 +254,25 @@ class ContactRepository(BaseRepository[Contact]):
             .correlate(Contact)
             .scalar_subquery()
         )
+        # Rep comments are stored as Activity rows (type='comment'). Surface the
+        # newest one + a count so the prospect table can show a "Comments" column
+        # at a glance; the full history is fetched on demand via GET /activities.
+        latest_comment_subq = (
+            select(Activity.content)
+            .where(Activity.contact_id == Contact.id)
+            .where(Activity.type == "comment")
+            .order_by(Activity.created_at.desc())
+            .limit(1)
+            .correlate(Contact)
+            .scalar_subquery()
+        )
+        comment_count_subq = (
+            select(func.count(Activity.id))
+            .where(Activity.contact_id == Contact.id)
+            .where(Activity.type == "comment")
+            .correlate(Contact)
+            .scalar_subquery()
+        )
         base_stmt = (
             select(
                 Contact,
@@ -153,6 +280,8 @@ class ContactRepository(BaseRepository[Contact]):
                 ae_user.name.label("assigned_to_name"),
                 sdr_user.name.label("sdr_name"),
                 call_attempt_count_subq.label("call_attempt_count"),
+                latest_comment_subq.label("latest_comment"),
+                comment_count_subq.label("comment_count"),
             )
             .outerjoin(Company, Contact.company_id == Company.id)
             .outerjoin(ae_user, Contact.assigned_to_id == ae_user.id)
@@ -369,6 +498,28 @@ class ContactRepository(BaseRepository[Contact]):
                 base_stmt = base_stmt.where(disposition_filter)
                 count_stmt = count_stmt.where(disposition_filter)
 
+        # LinkedIn-status filter — mirrors call_disposition. Named values are
+        # sent / accepted / follow_up / meeting_booked / meeting_rejected;
+        # "not_contacted" matches prospects with no LinkedIn touch logged yet
+        # (status null/empty/"none").
+        linkedin_status_values = _parse_multi_query(linkedin_status)
+        if linkedin_status_values:
+            include_not_contacted = "not_contacted" in linkedin_status_values
+            named_statuses = [v for v in linkedin_status_values if v != "not_contacted"]
+            clauses = []
+            if named_statuses:
+                clauses.append(Contact.linkedin_status.in_(named_statuses))
+            if include_not_contacted:
+                clauses.append(or_(
+                    Contact.linkedin_status.is_(None),
+                    Contact.linkedin_status == "",
+                    Contact.linkedin_status == "none",
+                ))
+            linkedin_filter = or_(*clauses) if clauses else None
+            if linkedin_filter is not None:
+                base_stmt = base_stmt.where(linkedin_filter)
+                count_stmt = count_stmt.where(linkedin_filter)
+
         email_filters = []
         for state in _parse_multi_query(email_state):
             if state == "has_email":
@@ -388,34 +539,91 @@ class ContactRepository(BaseRepository[Contact]):
         ae_ids = _parse_uuid_values(ae_id)
         sdr_ids = _parse_uuid_values(sdr_id)
         owner_ids = _parse_uuid_values(owner_id)
+        # "Unassigned" selections: each maps to an IS NULL clause on the matching
+        # ownership slot(s). Detected on the raw param string (the sentinel is
+        # dropped by UUID parsing above).
+        ae_unassigned = _has_unassigned(ae_id)
+        sdr_unassigned = _has_unassigned(sdr_id)
+        owner_unassigned = _has_unassigned(owner_id)
 
-        if owner_ids:
-            owner_filter = or_(
-                Contact.assigned_to_id.in_(owner_ids),
-                Contact.sdr_id.in_(owner_ids),
+        # Hard server-side visibility gate (NOT user-selectable): when set, the
+        # viewer may see prospects they own (either ownership slot), prospects in
+        # an account they own as AE (account-scoped — an AE sees everything inside
+        # their accounts, incl. SDR-sourced prospects not yet handed over), or
+        # unowned prospects (both slots empty). Admins/granted users bypass this
+        # by passing restrict_to_owner_id=None. ANDed with every other filter.
+        # Keep in lockstep with contact_visibility_filter() above.
+        restrict_ids = _parse_uuid_values(restrict_to_owner_id)
+        if restrict_ids:
+            from app.models.deal import Deal
+            visibility_filter = or_(
+                Contact.assigned_to_id.in_(restrict_ids),
+                Contact.sdr_id.in_(restrict_ids),
+                Contact.company_id.in_(
+                    select(Company.id).where(Company.assigned_to_id.in_(restrict_ids))
+                ),
+                # Deal owner (e.g. the AE running the demo/POC) sees the account's
+                # prospects even when the company/contacts sit with the sourcing
+                # SDR or another company AE. Lockstep with contact_visibility_filter().
+                Contact.company_id.in_(
+                    select(Deal.company_id).where(
+                        Deal.assigned_to_id.in_(restrict_ids), Deal.company_id.is_not(None)
+                    )
+                ),
+                and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
             )
+            base_stmt = base_stmt.where(visibility_filter)
+            count_stmt = count_stmt.where(visibility_filter)
+
+        if owner_ids or owner_unassigned:
+            owner_clauses = []
+            if owner_ids:
+                owner_clauses.append(
+                    or_(
+                        Contact.assigned_to_id.in_(owner_ids),
+                        Contact.sdr_id.in_(owner_ids),
+                    )
+                )
+            if owner_unassigned:
+                # Owner is empty only when BOTH ownership slots are null.
+                owner_clauses.append(
+                    and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None))
+                )
+            owner_filter = or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0]
             base_stmt = base_stmt.where(owner_filter)
             count_stmt = count_stmt.where(owner_filter)
 
-        if scope_any_match and (ae_ids or sdr_ids):
-            clauses = []
-            if ae_ids:
-                clauses.append(Contact.assigned_to_id.in_(ae_ids))
-            if sdr_ids:
-                clauses.append(Contact.sdr_id.in_(sdr_ids))
+        # Per-slot filter terms, each optionally including an "unassigned" (IS
+        # NULL) alternative for that slot.
+        ae_term = None
+        if ae_ids and ae_unassigned:
+            ae_term = or_(Contact.assigned_to_id.in_(ae_ids), Contact.assigned_to_id.is_(None))
+        elif ae_ids:
+            ae_term = Contact.assigned_to_id.in_(ae_ids)
+        elif ae_unassigned:
+            ae_term = Contact.assigned_to_id.is_(None)
+
+        sdr_term = None
+        if sdr_ids and sdr_unassigned:
+            sdr_term = or_(Contact.sdr_id.in_(sdr_ids), Contact.sdr_id.is_(None))
+        elif sdr_ids:
+            sdr_term = Contact.sdr_id.in_(sdr_ids)
+        elif sdr_unassigned:
+            sdr_term = Contact.sdr_id.is_(None)
+
+        if scope_any_match and (ae_term is not None or sdr_term is not None):
+            clauses = [t for t in (ae_term, sdr_term) if t is not None]
             scope_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
             base_stmt = base_stmt.where(scope_filter)
             count_stmt = count_stmt.where(scope_filter)
         else:
-            if ae_ids:
-                ae_filter = Contact.assigned_to_id.in_(ae_ids)
-                base_stmt = base_stmt.where(ae_filter)
-                count_stmt = count_stmt.where(ae_filter)
+            if ae_term is not None:
+                base_stmt = base_stmt.where(ae_term)
+                count_stmt = count_stmt.where(ae_term)
 
-            if sdr_ids:
-                sdr_filter = Contact.sdr_id.in_(sdr_ids)
-                base_stmt = base_stmt.where(sdr_filter)
-                count_stmt = count_stmt.where(sdr_filter)
+            if sdr_term is not None:
+                base_stmt = base_stmt.where(sdr_term)
+                count_stmt = count_stmt.where(sdr_term)
 
         # Call-outcome color filter. Each color maps to a set of call_disposition
         # values; "yellow" means "attempts exist but no decisive outcome". The
@@ -477,7 +685,13 @@ class ContactRepository(BaseRepository[Contact]):
                 if color == "green":
                     clauses.append(Contact.sequence_status.in_(email_positive))
                 elif color == "red":
-                    clauses.append(Contact.sequence_status == email_negative)
+                    # EMAIL negative only. sequence_status='not_interested' is an
+                    # OVERLOADED field also written by negative CALL/LinkedIn
+                    # dispositions, so a phone "not interested" was wrongly shown
+                    # as a negative EMAIL reply. instantly_status='not_interested'
+                    # is set ONLY by the genuine email paths (Instantly negative
+                    # webhook / reply), so it's the correct email-sourced marker.
+                    clauses.append(Contact.instantly_status == email_negative)
                 elif color == "blue":
                     clauses.append(
                         and_(
@@ -610,21 +824,44 @@ class ContactRepository(BaseRepository[Contact]):
         ).all()
 
         result: list[ContactRead] = []
-        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count in rows:
+        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count, latest_comment, comment_count in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
             read.assigned_to_name = assigned_to_name
             read.sdr_name = sdr_name
             read.call_attempt_count = int(call_attempt_count or 0)
+            read.latest_comment = latest_comment
+            read.comment_count = int(comment_count or 0)
             result.append(read)
 
         await apply_contact_tracking(self.session, result)
         return result, total
 
     async def delete_all(self) -> None:
-        """Delete all contacts and their dependent records. Admin only."""
+        """Delete all contacts and their dependent records. Admin only.
+
+        Mirrors the dependent cleanup in ``delete_many`` so an all-rows purge
+        cannot trip a NO ACTION foreign key. ``reminders.contact_id`` is NO
+        ACTION (migration 026), so a bare ``DELETE FROM contacts`` raised
+        ForeignKeyViolation whenever any reminder existed. outreach steps,
+        deal-stakeholder links and angel mappings are removed here too to keep
+        the two delete paths consistent; their FKs already cascade, but the
+        explicit deletes guard against future ondelete regressions. Outreach
+        steps go before their sequences. call_recordings are removed by their
+        ON DELETE CASCADE foreign key (migration 072).
+        """
         from sqlalchemy import delete as sa_delete
+
+        from app.models.angel import AngelMapping
+        from app.models.deal import DealContact
+        from app.models.outreach import OutreachStep
+        from app.models.reminder import Reminder
+
+        await self.session.execute(sa_delete(OutreachStep))
         await self.session.execute(sa_delete(OutreachSequence))
+        await self.session.execute(sa_delete(DealContact))
+        await self.session.execute(sa_delete(Reminder))
+        await self.session.execute(sa_delete(AngelMapping))
         await self.session.execute(sa_delete(Activity).where(Activity.contact_id.isnot(None)))
         await self.session.execute(sa_delete(Contact))
         await self.session.commit()

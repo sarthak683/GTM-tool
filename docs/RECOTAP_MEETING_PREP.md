@@ -1,5 +1,19 @@
 # Recotap Integration — Meeting Prep
 
+> ⚠️ **HISTORICAL (kickoff prep) — superseded 2026-06-04.** The current design and the
+> **verified** API contract now live in [`RECOTAP_INTEGRATION.md`](./RECOTAP_INTEGRATION.md).
+> Two things in this file are now known to be wrong/outdated:
+> 1. **Architecture:** Recotap is now a **standalone marketing/ABM module** — it does *not*
+>    add `rtp_*` columns to `companies`/`deals`/`activities` or feed the sales dashboard.
+>    The "merge into sales" design in §5–§7 below is retired.
+> 2. **API claims:** sandbox testing (2026-06-04) showed `POST /accounts` is **insert-only**
+>    (not upsert), `GET /accounts/unmapped` and `GET /custom-fields/account` **404**,
+>    response envelopes are **not** uniform, and the OpenAPI URL is a placeholder. See
+>    `RECOTAP_INTEGRATION.md` §8 for the tested contract — **trust that, not the tables below.**
+>
+> The still-useful parts of this file are the Beacon-codebase reference (§9) and the
+> open-questions list (§8) for the vendor conversation.
+
 > Internal prep for the kickoff call. Source: https://docs.recotap.com/llms.txt
 > Beacon-side codebase context: this file is a snapshot, not the system of truth.
 

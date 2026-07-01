@@ -184,6 +184,9 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
       return;
     }
 
+    // Cancel stale loads: switching prospects quickly would otherwise let the
+    // previous contact's response land last and show the wrong sequence.
+    let cancelled = false;
     setLoading(true);
     setTab(stepTabKey(1));
     setShowAdvancedSettings(false);
@@ -192,6 +195,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
     outreachApi
       .getSequenceOptional(contact.id)
       .then((s) => {
+        if (cancelled) return;
         if (!s) {
           setSeq(null);
           setSteps([]);
@@ -207,11 +211,18 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
         }
       })
       .catch(() => {
+        if (cancelled) return;
         setSeq(null);
         setSteps([]);
         setError("");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [contact?.id]);
 
   const loadSteps = async (sequenceId: string, currentSeq?: OutreachSequence | null) => {

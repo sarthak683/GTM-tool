@@ -517,6 +517,12 @@ async def _create_ai_task_for_deal(
     Create a system task on a deal based on an AI-detected intent.
     Returns True if a task was created.
     """
+    # This generator writes Task(task_type="system") directly (it does not go
+    # through refresh_system_tasks_for_entity), so it needs its own gate to
+    # honour the manual-tasks-only switch.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return False
+
     # intent_key is either "move_deal_stage:POC_AGREED" or a plain action
     if ":" in intent_key:
         action, target_stage = intent_key.split(":", 1)
@@ -808,6 +814,27 @@ async def process_personal_emails(
         }
 
         if not all_addrs:
+            continue
+
+        # Dedup BEFORE any AI spend (mirrors app/tasks/email_sync.py): if this
+        # sync user already logged this message — with or without a deal — the
+        # downstream create_email_activity would detect the duplicate and
+        # return False anyway, but only AFTER the pass-4 Haiku classification
+        # and the Haiku summary were re-billed. Skip the message up-front so
+        # already-processed mail costs nothing. The dedup check inside
+        # create_email_activity stays as the second line of defence, and the
+        # final DB state / stats counters match the old duplicate path
+        # (emails_processed was already incremented above; activities_created
+        # and touched_deal_ids were never bumped for duplicates).
+        already_logged = await session.execute(
+            select(Activity.id).where(
+                and_(
+                    Activity.email_message_id == msg.message_id,
+                    Activity.created_by_id == sync_user.id,
+                )
+            )
+        )
+        if already_logged.first():
             continue
 
         google_doc_contexts, updated_token = await fetch_google_doc_context(

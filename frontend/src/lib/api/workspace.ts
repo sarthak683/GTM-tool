@@ -162,6 +162,13 @@ export type ScorecardResponse = {
 };
 
 export type RepSummary = { id: string; name: string; email: string; role: string };
+export type PodSummary = {
+  key: string;
+  label: string;
+  rep_ids: string[];      // all members — drives the rep filter
+  ae_rep_ids: string[];   // deal-owning AEs — the pipeline/forecast subset
+  reps: { id: string; name: string; email: string; role: string; is_ae: boolean }[];
+};
 
 export const performanceApi = {
   getScorecard: (params: { rep_id?: string; period?: "week" | "month"; anchor?: string }) => {
@@ -173,6 +180,7 @@ export const performanceApi = {
     return request<ScorecardResponse>(`/api/v1/performance/scorecard${tail ? `?${tail}` : ""}`);
   },
   listReps: () => request<RepSummary[]>("/api/v1/performance/reps"),
+  getPods: () => request<PodSummary[]>("/api/v1/performance/pods"),
   getFunnel: (params: { period?: "week" | "month" | "quarter"; anchor?: string; rep_id?: string }) => {
     const qs = new URLSearchParams();
     if (params.period) qs.set("period", params.period);
@@ -316,15 +324,21 @@ export type SalesRepActivityRow = {
   key: string;
   user_id?: string | null;
   rep_name: string;
+  role?: string | null;
   calls: number;
   connected_calls: number;
   live_calls: number;
   emails: number;
+  email_opens: number;
+  email_replies: number;
   linkedin_reachouts: number;
   meetings: number;
   total: number;
   active_deals: number;
   pipeline_amount: number;
+  demos_scheduled: number;
+  demos_done: number;
+  demos_converted: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -446,7 +460,14 @@ export type SalesDashboard = {
   forecast_granularity?: "week" | "month";
   conversion_funnel: SalesFunnelStep[];
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
+  accounts_by_status?: SalesAccountStatusRow[];
   quota: SalesQuotaState;
+};
+
+export type SalesAccountStatusRow = {
+  key: string;
+  label: string;
+  count: number;
 };
 
 export type SalesActivityDrilldownRow = {
@@ -974,6 +995,13 @@ export const settingsApi = {
   stopTldvSync: () =>
     request<{ status: string; tldv_sync_enabled: boolean }>("/api/v1/settings/sync-schedule/tldv-stop", {
       method: "POST",
+    }),
+  getProspectVisibility: () =>
+    request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility"),
+  updateProspectVisibility: (userIds: string[]) =>
+    request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility", {
+      method: "PUT",
+      body: JSON.stringify({ user_ids: userIds }),
     }),
   getZippySystemPrompt: () =>
     request<{ prompt: string; is_default: boolean }>("/api/v1/settings/zippy-system-prompt"),

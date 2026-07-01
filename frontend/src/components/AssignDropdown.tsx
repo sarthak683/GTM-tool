@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { UserPlus } from "lucide-react";
-import { authApi, assignmentsApi } from "../lib/api";
+import { assignmentsApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { User } from "../types";
 
@@ -36,11 +37,23 @@ export default function AssignDropdown({
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const eligibleUsers = users.filter((user) => user.role === role);
+  // AE/SDR slots are ownership labels, not a hard role gate — any active team
+  // member can hold either. So admins (e.g. Shahruk) appear in both pickers, and
+  // AEs show up in the SDR picker (and vice-versa). The selected user with the
+  // matching role is sorted first so the common case stays one tap away.
+  const ASSIGNABLE_ROLES = new Set(["ae", "sdr", "admin"]);
+  const eligibleUsers = users
+    .filter((user) => ASSIGNABLE_ROLES.has((user.role || "").toLowerCase()))
+    .sort((a, b) => {
+      const aMatch = (a.role || "").toLowerCase() === role ? 0 : 1;
+      const bMatch = (b.role || "").toLowerCase() === role ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
+      return (a.name || "").localeCompare(b.name || "");
+    });
 
   useEffect(() => {
     if (open && users.length === 0) {
-      authApi.listAllUsers().then(setUsers).catch(() => {});
+      getCachedUsers().then(setUsers).catch(() => {});
     }
   }, [open, users.length]);
 
@@ -218,7 +231,7 @@ export default function AssignDropdown({
 
           {users.length > 0 && eligibleUsers.length === 0 && (
             <div style={{ padding: "12px", color: "#7f8fa5", fontSize: "12px", textAlign: "center" }}>
-              No {role.toUpperCase()} users available
+              No assignable team members available
             </div>
           )}
 

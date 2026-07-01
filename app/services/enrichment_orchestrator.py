@@ -64,13 +64,17 @@ async def enrich_company(company: Company, session: AsyncSession) -> Company:
     except Exception as e:
         logger.error("Apollo enrichment failed for %s: %s", company.domain, safe_error_message(e))
 
-    # ── 2. Hunter — email pattern signals + auto-create contacts ─────────────
+    # ── 2. Hunter — email pattern signals (company-level only) ────────────────
+    # Policy: enrichment must NOT pull/create prospects. Contacts are added only
+    # via CSV upload on the Account Sourcing / Prospecting pages. We still keep
+    # Hunter's company-level signal in enrichment_sources, but never materialise
+    # discovered emails into Contact rows (_create_contacts_from_hunter is no
+    # longer called from any enrichment path).
     try:
         hunter_data = await hunter.domain_search(company.domain)
         if hunter_data:
             enrichment_sources["hunter"] = hunter_data
-            await _create_contacts_from_hunter(company, hunter_data.get("contacts", []), session)
-            logger.info(f"Hunter enriched {company.domain}")
+            logger.info(f"Hunter enriched {company.domain} (company signal only; contacts not pulled)")
     except Exception as e:
         logger.error("Hunter enrichment failed for %s: %s", company.domain, safe_error_message(e))
 

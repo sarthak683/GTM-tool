@@ -30,6 +30,10 @@ export interface Company {
   sdr_name?: string;
   outreach_status?: string;
   disposition?: string;
+  // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)
+  account_status?: string | null;
+  // Free-text "Outbound Summary" quick notes shown under the status control.
+  outbound_summary?: string | null;
   rep_feedback?: string;
   account_thesis?: string;
   why_now?: string;
@@ -44,8 +48,29 @@ export interface Company {
   pe_investors?: string;
   vc_investors?: string;
   strategic_investors?: string;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
+  // Recotap ABM signals, joined by domain (Account Sourcing only).
+  recotap?: RecotapSignals | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RecotapSignals {
+  domain: string;
+  name?: string | null;
+  rtp_aid?: string | null;
+  journey_stage?: string | null;
+  score?: number | null;
+  engagement?: string | null;
+  icp_fit?: string | null;
+  advertising_activity_score?: number | null;
+  website_intent_score?: number | null;
+  g2_intent_score?: number | null;
+  bombora_intent_score?: number | null;
+  hq_location?: string | null;
+  last_account_date?: string | null;
+  source?: string | null;
 }
 
 export interface Contact {
@@ -94,6 +119,9 @@ export interface Contact {
   // Aggregate count of Activity rows with type='call' for this contact.
   // Drives the per-attempt yellow-dot rail on the prospect-page progress cell.
   call_attempt_count?: number;
+  // Latest rep comment + total count (comments are activity rows, type='comment').
+  latest_comment?: string | null;
+  comment_count?: number;
   // Scheduled follow-up datetime for `interested_follow_up_required` /
   // `call_back_later_rescheduled` dispositions. Cleared automatically when
   // the disposition changes to something that doesn't imply a follow-up.
@@ -176,6 +204,8 @@ export interface Deal {
   next_step?: string;
   next_step_updated_at?: string;
   next_step_due_at?: string;
+  qualification_reason?: string;
+  priority_tag?: "P0" | "P1" | "P2" | null;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;
@@ -746,6 +776,8 @@ export interface SyncScheduleSettings {
   tldv_last_synced_at?: string | null;
   email_sync_interval_seconds: number;
   deal_health_hour: number;
+  /** When on, emails track only via zippy+<deal-alias> CC; bulk inbox sync pauses. */
+  zippy_only_email_sync: boolean;
 }
 
 export interface ClickUpCrmSettings {

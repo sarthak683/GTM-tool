@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Link, useSearchParams } from "react-router-dom";
 import { CalendarDays, Check, ChevronDown, Filter, Plus, Search, X } from "lucide-react";
 import { authApi, companiesApi, contactsApi, dealsApi, meetingsApi } from "../lib/api";
+import { getCachedUsers } from "../lib/cachedFetch";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import { useAuth } from "../lib/AuthContext";
 import type { Company, Contact, Deal, Meeting, User } from "../types";
@@ -389,13 +390,19 @@ export default function Meetings() {
         return [];
       })));
 
+      // Split the "Unassigned" sentinel out of the UUID list: the backend takes
+      // real user IDs in assignee_id and a separate assignee_unassigned boolean.
+      const assigneeUserIds = assigneeFilter.filter((v) => v !== "__unassigned__");
+      const assigneeUnassigned = assigneeFilter.includes("__unassigned__");
+
       const pageResp = await meetingsApi.listPaginated({
         skip: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE,
         status: apiStatusFilter,
         temporalStatus: temporalStatusFilter,
         meetingType: typeFilter,
-        assigneeId: assigneeFilter,
+        assigneeId: assigneeUserIds,
+        assigneeUnassigned,
         linkState: linkFilter,
         q: debouncedSearch || undefined,
         syncedAfter: syncedAfterIso,
@@ -433,7 +440,7 @@ export default function Meetings() {
       // resolve synced_by_user_id → user name for every rep, not just admins.
       // The non-admin `listUsers` endpoint returns the public subset.
       const rosterPromise: Promise<User[]> = isAdmin
-        ? authApi.listAllUsers().catch(() => [])
+        ? getCachedUsers().catch(() => [])
         : authApi.listUsers().catch(() => []);
       const [companyResults, dealResults, us] = await Promise.all([
         Promise.all(companyIds.map((id) => companiesApi.get(id).catch(() => null))),
@@ -629,7 +636,12 @@ export default function Meetings() {
           />
           {isAdmin && visibleUsers.length > 0 && (
             <MultiSelectDropdown
-              options={visibleUsers.map((u) => ({ value: u.id, label: u.name }))}
+              options={[
+                // Sentinel for meetings with no assignee (deal AE + meeting
+                // owner both null) so nothing slips through unowned.
+                { value: "__unassigned__", label: "Unassigned" },
+                ...visibleUsers.map((u) => ({ value: u.id, label: u.name })),
+              ]}
               selected={assigneeFilter}
               onChange={setAssigneeFilter}
               placeholder="All reps"

@@ -104,7 +104,12 @@ function getEmailChannel(contact: Contact): ChannelState {
 
   const replied = seq === "replied";
   const booked = seq === "meeting_booked";
-  const negative = seq === "not_interested";
+  // EMAIL negative only: instantly_status is set just by the genuine email paths,
+  // whereas sequence_status='not_interested' is ALSO written by negative CALL/
+  // LinkedIn dispositions — using seq here made a phone "not interested" render
+  // as a red "Negative reply · email" (the reported bug). The call's own red dot
+  // (from call_disposition, handled separately below) still shows correctly.
+  const negative = inst === "not_interested";
   const sent = reallySent;
 
   const dots: OutcomeDot[] = [];

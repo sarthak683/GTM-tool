@@ -844,6 +844,10 @@ def _validate_proposal(
 
     # Code-specific payload validation — reject silently on malformed shapes.
     if code == "T-STAGE":
+        # Local import: app.services.tasks imports this module, so a module-level
+        # import would create a cycle. _stage_reached is a pure stage-ordering helper.
+        from app.services.tasks import _stage_reached
+
         target = str(payload.get("target_stage") or "").strip()
         if target not in DEAL_STAGES or target == deal.stage:
             return None
@@ -1208,6 +1212,10 @@ async def emit_ai_tasks(
         system=SYSTEM_PROMPT,
         user=USER_PROMPT_TEMPLATE.format(bundle_json=bundle_json),
         max_tokens=800,
+        # Pin the standard model: structured JSON proposals don't need the
+        # complex tier, but max_tokens>=650 would otherwise route there (5x
+        # price). Mirrors deal_activity_interpreter / meddpicc_assist pins.
+        model_override=settings.CLAUDE_MODEL_STANDARD,
     )
 
     parsed = _extract_json(response)

@@ -137,7 +137,15 @@ async def generate_sequence(
 
     # ── Knowledge base context ──────────────────────────────────────────────────
     from app.services.knowledge_context import get_knowledge_context
-    kb_context = await get_knowledge_context(session, "outreach", limit=3, max_total_chars=1500)
+    kb_query = " ".join(filter(None, [
+        getattr(company, "name", None),
+        getattr(company, "industry", None),
+        getattr(contact, "title", None),
+        persona,
+    ]))
+    kb_context = await get_knowledge_context(
+        session, "outreach", query=kb_query, limit=3, max_total_chars=1500
+    )
     context["kb_context"] = kb_context
 
     ai = ClaudeClient()

@@ -2,9 +2,25 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+# Manual account-sourcing status. Canonical snake_case values stored in the DB;
+# human labels live in ACCOUNT_STATUS_LABELS (app/api/v1/endpoints/analytics.py)
+# and the frontend control (frontend/src/lib/accountStatus.ts, which owns the
+# display order). Keep all three in lockstep.
+ACCOUNT_STATUS_VALUES = {
+    "cold",
+    "in_progress",
+    "meeting_booked",
+    "meeting_done",
+    "in_pipeline",
+    "not_a_fit",
+    "dnd",
+    "reach_out_later",
+}
 
 
 class CompanyBase(SQLModel):
@@ -44,6 +60,12 @@ class Company(CompanyBase, table=True):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = Field(default=None, index=True)
+    # Manual sourcing status (see ACCOUNT_STATUS_VALUES). Distinct from
+    # disposition; set by reps on the detail page.
+    account_status: Optional[str] = Field(default=None, index=True)
+    # Free-text quick notes SDRs keep on the account ("Outbound Summary"),
+    # surfaced under the status control on the detail page.
+    outbound_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -59,6 +81,12 @@ class Company(CompanyBase, table=True):
     pe_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     vc_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
     strategic_investors: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Who added this account (manual add or CSV/Excel upload). created_by_name is
+    # denormalized — like assigned_rep_name/sdr_name — so the UI can show
+    # "Added by X" without a join. System-created rows (imports, AI sourcing,
+    # seed) leave these null.
+    created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    created_by_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -88,6 +116,8 @@ class CompanyRead(CompanyBase):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
+    account_status: Optional[str] = None
+    outbound_summary: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -102,6 +132,12 @@ class CompanyRead(CompanyBase):
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
+    created_by_id: Optional[UUID] = None
+    created_by_name: Optional[str] = None
+    # Recotap ABM signals (journey stage, score, engagement, intent sub-scores),
+    # joined by domain from recotap_accounts. Populated only by the Account
+    # Sourcing endpoints — no rtp_* columns on the companies table itself.
+    recotap: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
 
@@ -151,6 +187,8 @@ class CompanyUpdate(SQLModel):
     sdr_name: Optional[str] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
+    account_status: Optional[str] = None
+    outbound_summary: Optional[str] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -165,3 +203,18 @@ class CompanyUpdate(SQLModel):
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
+
+    @field_validator("account_status", mode="before")
+    @classmethod
+    def _validate_account_status(cls, value):
+        """Accept a canonical status, blank (→ clear), or reject anything else."""
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized not in ACCOUNT_STATUS_VALUES:
+            raise ValueError(
+                f"account_status must be one of {sorted(ACCOUNT_STATUS_VALUES)} or empty"
+            )
+        return normalized

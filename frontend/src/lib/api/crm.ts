@@ -70,6 +70,7 @@ export const contactsApi = {
     sequenceStatus?: string[];
     callDisposition?: string[];
     emailState?: string[];
+    linkedinStatus?: string[];
     // Outcome-color filters wired to the prospect-row progress dots.
     // Backend maps each color to a set of dispositions / sequence states
     // (see app/repositories/contact.py). Multi-value = OR.
@@ -107,6 +108,7 @@ export const contactsApi = {
     if (params.sequenceStatus?.length) search.set("sequence_status", params.sequenceStatus.join(","));
     if (params.callDisposition?.length) search.set("call_disposition", params.callDisposition.join(","));
     if (params.emailState?.length) search.set("email_state", params.emailState.join(","));
+    if (params.linkedinStatus?.length) search.set("linkedin_status", params.linkedinStatus.join(","));
     if (params.callOutcomeColor?.length) search.set("call_outcome_color", params.callOutcomeColor.join(","));
     if (params.emailOutcomeColor?.length) search.set("email_outcome_color", params.emailOutcomeColor.join(","));
     if (params.callAttemptsBucket?.length) search.set("call_attempts_bucket", params.callAttemptsBucket.join(","));
@@ -470,6 +472,12 @@ export const timelineApi = {
     );
     return res.items ?? [];
   },
+  forCompany: async (companyId: string, limit = 200) => {
+    const res = await request<{ items: TimelineEvent[] }>(
+      `/api/v1/companies/${companyId}/timeline?limit=${limit}`
+    );
+    return res.items ?? [];
+  },
 };
 
 export const meetingsApi = {
@@ -493,6 +501,7 @@ export const meetingsApi = {
     temporalStatus?: string[];
     meetingType?: string[];
     assigneeId?: string[];
+    assigneeUnassigned?: boolean;
     linkState?: string[];
     hasIntel?: boolean;
     order?: "asc" | "desc";
@@ -512,6 +521,7 @@ export const meetingsApi = {
     for (const value of params.temporalStatus ?? []) search.append("temporal_status", value);
     for (const value of params.meetingType ?? []) search.append("meeting_type", value);
     for (const value of params.assigneeId ?? []) search.append("assignee_id", value);
+    if (params.assigneeUnassigned) search.set("assignee_unassigned", "true");
     for (const value of params.linkState ?? []) search.append("link_state", value);
     if (params.hasIntel !== undefined) search.set("has_intel", params.hasIntel ? "true" : "false");
     if (params.order) search.set("order", params.order);

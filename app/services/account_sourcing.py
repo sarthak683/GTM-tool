@@ -29,7 +29,7 @@ from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import update as sa_update
+from sqlalchemy import func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -132,7 +132,12 @@ _ALIASES_RAW: dict[str, list[str]] = {
         "hq direct line", "direct line", "mobile phone",
     ],
     "contact_timezone": ["timezone", "time zone", "timezones", "time zones"],
-    "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile"],
+    "linkedin_url":   ["linkedin", "linkedin url", "linkedin profile",
+                       # Apollo / Sales Nav exports name the person column
+                       # "Person Linkedin Url" (vs "Company Linkedin Url").
+                       "person linkedin url", "person linkedin",
+                       "linkedin profile url", "linkedin link",
+                       "contact linkedin url", "contact linkedin"],
     "next_steps":     ["next steps", "recommended next step"],
     "ownership_stage": ["ownership stage"],
     "pe_investors":   ["pe investors"],
@@ -200,14 +205,57 @@ def _find(row: dict, field: str) -> str:
     return ""
 
 
+def _find_any_phone(row: dict) -> str:
+    """Last-resort phone lookup: any column whose normalized header contains
+    'phone'. A workbook with two "Phone" columns (direct + mobile — common in
+    Apollo / Sales Nav exports) is de-collided by the parser to 'phone' and
+    'phone 2'; 'phone 2' matches no fixed alias, so without this fallback a
+    contact whose number sits only in the second column loses it on import."""
+    for key, val in row.items():
+        if "phone" in key and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _find_person_linkedin(row: dict) -> str:
+    """Last-resort person-LinkedIn lookup: any column whose normalized header
+    contains 'linkedin' — excluding company pages and activity/posts columns —
+    whose value actually looks like a linkedin.com link. Catches header
+    variants the alias table doesn't know (e.g. a de-collided 'linkedin url 2')
+    without ever grabbing 'Company Linkedin Url' or free-text activity notes."""
+    for key, val in row.items():
+        if "linkedin" not in key or "company" in key or "activit" in key:
+            continue
+        candidate = str(val).strip()
+        if "linkedin." in candidate.lower():
+            return candidate
+    return ""
+
+
+def _normalize_phone(value: Optional[str]) -> Optional[str]:
+    """Strip a leading non-dialable prefix and drop non-numbers.
+
+    Source sheets fuse a type tag into the number itself ("m+1 248-890-8149" =
+    mobile, "d+1 …" = direct line). When that string is handed to a `tel:` URI
+    the OS dialer T9-maps the leading letter to a digit (m->6, d->3), so the
+    call goes to the wrong number. Keep a leading '+' and the digits; null out
+    anything with fewer than 7 digits (e.g. "Not available (Apollo)")."""
+    if not value:
+        return None
+    cleaned = re.sub(r"^[^0-9+]+", "", str(value).strip())
+    if len(re.sub(r"[^0-9]", "", cleaned)) < 7:
+        return None
+    return cleaned
+
+
 def _clean_domain(raw: str) -> str:
     raw = raw.strip().lower()
     if not raw:
         return ""
     if raw.startswith("http"):
         parsed = urlparse(raw)
-        raw = parsed.netloc.lstrip("www.")
-    raw = raw.lstrip("www.")
+        raw = parsed.netloc.removeprefix("www.")
+    raw = raw.removeprefix("www.")
     return raw.split("/")[0]
 
 
@@ -1070,14 +1118,16 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     last = _find(row, "contact_last_name")
     title = _find(row, "contact_title")
     email = _clean_email(_find(row, "contact_email"))
-    linkedin_url = _find(row, "linkedin_url") or None
-    # Prefer "Direct / Mobile (Personal)" if present; else generic contact phone;
-    # else HQ direct line as a fallback.
-    phone = (
+    linkedin_url = _find(row, "linkedin_url") or _find_person_linkedin(row) or None
+    # Prefer "Direct / Mobile (Personal)"; else generic contact phone; else HQ
+    # direct line; else any column with 'phone' in its header (catches a 2nd
+    # de-collided "Phone" column). Normalize to strip fused type-prefixes like
+    # "m+1…"/"d+1…" that otherwise T9-corrupt the OS dialer.
+    phone = _normalize_phone(
         _find(row, "direct_mobile")
         or _find(row, "contact_phone")
         or _find(row, "hq_direct_line")
-        or None
+        or _find_any_phone(row)
     )
 
     if not first and not last and contact_name:
@@ -2417,8 +2467,15 @@ async def enrich_company_tiered(
 
     # Email verification is capped to a few top contacts to add confidence
     # signals without turning every batch into an expensive verification run.
+    # Gated behind should_run_paid so a low-priority / fresh-cache company that
+    # skipped Apollo/Hunter doesn't still spend Hunter verify credits. A manual
+    # force sets should_run_paid via _should_run_paid_enrichment(forced_refresh),
+    # so the re-verify-everything path stays available on demand.
     # ── Email verification for top contacts (Hunter) ──────────────────────
-    await _verify_top_contact_emails(company.id, session, cache)
+    if should_run_paid:
+        await _verify_top_contact_emails(company.id, session, cache, force=force_paid_refresh)
+    else:
+        _pipeline_stamp(cache, "email_verification", "skipped", paid_reason)
 
     research_quality = _research_quality_snapshot(
         company=company,
@@ -2725,7 +2782,7 @@ async def _create_contacts(company: Company, contacts_data: list[dict], session:
             # stable across title changes and repeated imports.
             if email:
                 existing = await session.execute(
-                    select(Contact).where(Contact.email == email).limit(1)
+                    select(Contact).where(func.lower(Contact.email) == email.strip().lower()).limit(1)
                 )
                 if existing.scalars().first():
                     continue
@@ -2805,15 +2862,48 @@ _SENIORITY_RANK = {
     "senior": 4, "manager": 5, "entry": 6,
 }
 _MAX_VERIFY_EMAILS = 5
+# Re-verifying an email returns the same Hunter result for weeks but bills a
+# credit each time. Skip any contact verified within this window regardless of
+# outcome (deliverable OR undeliverable), so known-bad emails aren't re-checked
+# forever. Mirrors the paid-cache TTL (14 days).
+_EMAIL_VERIFY_TTL_HOURS = _PAID_CACHE_TTL_HOURS
+
+
+def _email_verification_is_fresh(contact: Contact, ttl_hours: int) -> bool:
+    """True when this contact's email was Hunter-verified within the TTL.
+
+    Reads the 'checked_at' stamp this function writes into
+    enrichment_data['email_verification']; absent on contacts last verified
+    before this guard existed, so they get re-checked exactly once and then
+    stamped going forward.
+    """
+    enrich = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+    verification = enrich.get("email_verification")
+    if not isinstance(verification, dict):
+        return False
+    checked_at = verification.get("checked_at")
+    if not isinstance(checked_at, str):
+        return False
+    try:
+        checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if checked.tzinfo is not None:
+        checked = checked.replace(tzinfo=None)
+    return datetime.utcnow() - checked <= timedelta(hours=ttl_hours)
 
 
 async def _verify_top_contact_emails(
-    company_id: UUID, session: AsyncSession, cache: dict[str, Any]
+    company_id: UUID, session: AsyncSession, cache: dict[str, Any], force: bool = False
 ) -> None:
     """
     Verify email deliverability for the top contacts (by seniority) at a company
     using Hunter.io's email-verifier. Updates contact.email_verified and
     enrichment_data.confidence. Capped at 5 contacts to control API costs.
+
+    Each verification is stamped with 'checked_at'; contacts verified within
+    _EMAIL_VERIFY_TTL_HOURS are skipped (even known-bad ones) unless force=True,
+    so a company re-enrich doesn't re-bill Hunter for emails it just checked.
     """
     from app.clients.hunter import HunterClient
     hunter = HunterClient()
@@ -2832,7 +2922,31 @@ async def _verify_top_contact_emails(
 
     # Sort by seniority (C-suite first), then take top N
     contacts.sort(key=lambda c: _SENIORITY_RANK.get(c.seniority or "", 6))
-    to_verify = contacts[:_MAX_VERIFY_EMAILS]
+    candidates = contacts[:_MAX_VERIFY_EMAILS]
+
+    # Skip contacts already verified within the TTL (regardless of result) so
+    # undeliverable addresses aren't re-billed on every re-enrich.
+    if force:
+        to_verify = candidates
+        skipped = 0
+    else:
+        to_verify = [
+            c for c in candidates
+            if not _email_verification_is_fresh(c, _EMAIL_VERIFY_TTL_HOURS)
+        ]
+        skipped = len(candidates) - len(to_verify)
+
+    if not to_verify:
+        cache["email_verification"] = {
+            "data": {
+                "verified": 0,
+                "checked": 0,
+                "skipped_fresh": skipped,
+                "total_contacts_with_email": len(contacts),
+            },
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        return
 
     verified_count = 0
     for contact in to_verify:
@@ -2844,6 +2958,10 @@ async def _verify_top_contact_emails(
             is_deliverable = verification.get("result") == "deliverable"
             score = verification.get("score", 0)
             contact.email_verified = is_deliverable
+
+            # Stamp when we checked so the TTL guard can skip this contact on the
+            # next re-enrich whether or not the email turned out deliverable.
+            verification["checked_at"] = datetime.utcnow().isoformat()
 
             # Store verification details in enrichment_data
             enrich = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
@@ -2861,17 +2979,17 @@ async def _verify_top_contact_emails(
             )
             continue
 
-    if to_verify:
-        await session.commit()
-        cache["email_verification"] = {
-            "data": {
-                "verified": verified_count,
-                "checked": len(to_verify),
-                "total_contacts_with_email": len(contacts),
-            },
-            "fetched_at": datetime.utcnow().isoformat(),
-        }
-        logger.info(
-            f"Email verification: {verified_count}/{len(to_verify)} deliverable "
-            f"for company {company_id}"
-        )
+    await session.commit()
+    cache["email_verification"] = {
+        "data": {
+            "verified": verified_count,
+            "checked": len(to_verify),
+            "skipped_fresh": skipped,
+            "total_contacts_with_email": len(contacts),
+        },
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+    logger.info(
+        f"Email verification: {verified_count}/{len(to_verify)} deliverable "
+        f"({skipped} skipped fresh) for company {company_id}"
+    )

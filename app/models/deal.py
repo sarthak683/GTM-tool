@@ -3,9 +3,12 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column, Numeric, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+from app.models.meeting import to_naive_utc
 
 
 # ── Stage definitions ────────────────────────────────────────────────────────
@@ -94,6 +97,15 @@ class Deal(DealBase, table=True):
     # When the next step is due. Drives the pipeline reminder task, which fires a
     # one-time in-app notification to the assigned rep when this time passes.
     next_step_due_at: Optional[datetime] = None
+    # Free-text qualification note ("why is this deal qualified / what's the
+    # criteria"). Reps capture this once a deal reaches demo_done. Mirrors
+    # next_step — a plain Text column, separate from the MEDDPICC qualification
+    # JSONB above.
+    qualification_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Per-deal priority tag (P0/P1/P2) shown as the pipeline badge. Lives on the
+    # deal — not the company — because one company can have several deals at
+    # different priorities.
+    priority_tag: Optional[str] = Field(default=None)
     commit_to_deal: bool = Field(default=False)
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_input_hash: Optional[str] = None
@@ -118,11 +130,18 @@ class DealCreate(SQLModel):
     description: Optional[str] = None
     next_step: Optional[str] = None
     next_step_due_at: Optional[datetime] = None
+    qualification_reason: Optional[str] = None
+    priority_tag: Optional[str] = None
     tags: list[str] = []
     qualification: Optional[Any] = None
     health: str = "green"
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
+
+    @field_validator("next_step_due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
 
 
 class DealRead(DealBase):
@@ -138,6 +157,8 @@ class DealRead(DealBase):
     next_step: Optional[str] = None
     next_step_updated_at: Optional[datetime] = None
     next_step_due_at: Optional[datetime] = None
+    qualification_reason: Optional[str] = None
+    priority_tag: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     # Joined fields populated by board/detail queries
@@ -186,6 +207,8 @@ class DealUpdate(SQLModel):
     description: Optional[str] = None
     next_step: Optional[str] = None
     next_step_due_at: Optional[datetime] = None
+    qualification_reason: Optional[str] = None
+    priority_tag: Optional[str] = None
     days_in_stage: Optional[int] = None
     stage_entered_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None
@@ -193,6 +216,11 @@ class DealUpdate(SQLModel):
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
     commit_to_deal: Optional[bool] = None
+
+    @field_validator("next_step_due_at", mode="before")
+    @classmethod
+    def strip_timezone(cls, v: Any) -> Optional[datetime]:
+        return to_naive_utc(v)
 
 
 # ── DealContact junction ─────────────────────────────────────────────────────

@@ -12,7 +12,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import { settingsApi, tasksApi } from "../../lib/api";
+import { tasksApi } from "../../lib/api";
+import { getCachedRolePermissions } from "../../lib/cachedFetch";
 import { useAuth } from "../../lib/AuthContext";
 
 // Navigation is grouped so the rail reads as a focused command center rather
@@ -33,7 +34,7 @@ const NAV_GROUPS = [
     items: [
       { to: "/sales-analytics", label: "Sales Analytics", description: "See pipeline quality, activity, and forecast health.", icon: ChartColumnBig },
       { to: "/meetings", label: "Meetings", description: "Prep upcoming calls, review past meetings, and generate account intel.", icon: CalendarDays },
-      { to: "/tasks", label: "Tasks", description: "Work the queue and accept Beacon recommendations.", icon: ListChecks },
+      { to: "/tasks", label: "Tasks", description: "Work your queue of manual follow-ups across deals, prospects, and accounts.", icon: ListChecks },
     ],
   },
 ];
@@ -87,8 +88,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       return;
     }
     let cancelled = false;
-    settingsApi
-      .getRolePermissions()
+    getCachedRolePermissions()
       .then((permissions) => {
         if (!cancelled) {
           const permissionRole = user.role === "admin" ? null : user.role;
@@ -114,10 +114,20 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       }).catch(() => {});
     };
     fetchCount();
-    const interval = window.setInterval(fetchCount, 60_000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      fetchCount();
+    }, 60_000);
+    // Hidden ticks are skipped, so catch the badge up the moment the tab
+    // regains visibility (same pattern as NotificationBell).
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchCount();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [user]);
 

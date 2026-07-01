@@ -193,8 +193,30 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
     valid_cache: dict[str, frozenset[str]] = {}
     updated = 0
 
+    # One IN() fetch instead of up-to-200 session.get round trips.
+    deals_by_id = {
+        deal.id: deal
+        for deal in (
+            await session.execute(select(Deal).where(Deal.id.in_(payload.deal_ids)))
+        ).scalars()
+    }
+
+    # Validate every stage transition BEFORE mutating anything. The check used
+    # to run mid-loop with per-deal commits, so one prospect mixed into a deal
+    # selection 422'd the request AFTER earlier deals were already committed
+    # (and the most recent one lost its audit/stage-history rows to the
+    # rollback). Now an invalid stage fails cleanly with nothing changed.
+    if payload.stage:
+        for deal in deals_by_id.values():
+            if payload.stage == deal.stage:
+                continue
+            if deal.pipeline_type not in valid_cache:
+                valid_cache[deal.pipeline_type] = await _valid_stages(session, deal.pipeline_type)
+            if payload.stage not in valid_cache[deal.pipeline_type]:
+                raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid_cache[deal.pipeline_type])}")
+
     for deal_id in payload.deal_ids:
-        deal = await session.get(Deal, deal_id)
+        deal = deals_by_id.get(deal_id)
         if deal is None:
             continue
 
@@ -203,10 +225,6 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
         stage_changed = False
 
         if payload.stage and payload.stage != deal.stage:
-            if deal.pipeline_type not in valid_cache:
-                valid_cache[deal.pipeline_type] = await _valid_stages(session, deal.pipeline_type)
-            if payload.stage not in valid_cache[deal.pipeline_type]:
-                raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid_cache[deal.pipeline_type])}")
             update_data["stage"] = payload.stage
             update_data["stage_entered_at"] = now
             update_data["days_in_stage"] = 0
@@ -278,6 +296,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             and deal.next_step_due_at is None
         ):
             update_data["next_step_due_at"] = _default_next_step_due()
+    if "qualification_reason" in update_data:
+        update_data["qualification_reason"] = _normalize_optional_text(update_data.get("qualification_reason"))
 
     # Validate stage if changed
     if "stage" in update_data and update_data["stage"] != deal.stage:
@@ -295,6 +315,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         changes.append(f"Amount changed to ${update_data['value']}")
     if "priority" in update_data and update_data["priority"] != deal.priority:
         changes.append(f"Priority changed to {update_data['priority']}")
+    if "priority_tag" in update_data and update_data["priority_tag"] != deal.priority_tag:
+        changes.append(f"Priority changed to {update_data['priority_tag'] or 'none'}")
     if "assigned_to_id" in update_data and str(update_data.get("assigned_to_id")) != str(deal.assigned_to_id):
         changes.append("Assignee changed")
     if "commit_to_deal" in update_data and update_data["commit_to_deal"] != deal.commit_to_deal:
@@ -305,6 +327,8 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         # Only stamp next_step_updated_at when the text itself changed —
         # ignore no-op writes that send the same string back.
         update_data["next_step_updated_at"] = datetime.utcnow()
+    if "qualification_reason" in update_data and update_data["qualification_reason"] != _normalize_optional_text(deal.qualification_reason):
+        changes.append(_summarize_text_change("Qualification criteria", update_data["qualification_reason"]))
     if "description" in update_data and update_data["description"] != _normalize_optional_text(deal.description):
         changes.append(_summarize_text_change("Description", update_data["description"]))
 
@@ -465,7 +489,7 @@ async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
 # ── Deal Contacts ────────────────────────────────────────────────────────────
 
 @router.get("/{deal_id}/contacts", response_model=list[DealContactRead])
-async def list_deal_contacts(deal_id: UUID, session: DBSession):
+async def list_deal_contacts(deal_id: UUID, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     await repo.get_or_raise(deal_id)
     return await repo.list_contacts(deal_id)
@@ -551,7 +575,7 @@ async def list_deal_stage_history(deal_id: UUID, session: DBSession, _user: Curr
 
 
 @router.get("/{deal_id}/activities", response_model=list[ActivityRead])
-async def list_deal_activities(deal_id: UUID, session: DBSession):
+async def list_deal_activities(deal_id: UUID, session: DBSession, _user: CurrentUser):
     from app.models.meeting import Meeting
 
     repo = DealRepository(session)

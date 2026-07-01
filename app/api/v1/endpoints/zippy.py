@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select as sm_select
 
 from app.core.dependencies import CurrentUser, DBSession
@@ -122,13 +123,15 @@ async def send_message(
             image_base64=payload.image_base64,
             image_media_type=payload.image_media_type,
         )
-    except RuntimeError as exc:
+    except RuntimeError:
         # Config errors (missing API key etc.) — surface as 503 so the UI can
-        # show a "Zippy is not configured" state.
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
+        # show a "Zippy is not configured" state. The real detail goes to logs;
+        # we never echo internal config text back to the client.
+        logger.exception("Zippy turn failed: not configured")
+        raise HTTPException(status_code=503, detail="Zippy is not configured")
+    except Exception:
         logger.exception("Zippy turn failed")
-        raise HTTPException(status_code=500, detail=f"Zippy failed: {exc}")
+        raise HTTPException(status_code=500, detail="Zippy failed")
 
     return _agent_turn_to_response(turn)
 
@@ -154,13 +157,21 @@ async def list_conversations(
     result = await session.execute(stmt)
     conversations = list(result.scalars().all())
 
-    # Count messages per conversation in a single follow-up query for the
-    # sidebar. N+1 is fine at this scale; we cap limit at 30.
+    # Count messages per conversation in a single grouped query for the
+    # sidebar — the old per-conversation loop loaded every message row
+    # (content + tool_trace JSONB) just to take len() of it.
+    counts: dict = {}
+    if conversations:
+        count_rows = await session.execute(
+            sm_select(ZippyMessage.conversation_id, func.count())
+            .where(ZippyMessage.conversation_id.in_([c.id for c in conversations]))
+            .group_by(ZippyMessage.conversation_id)
+        )
+        counts = {row[0]: row[1] for row in count_rows.all()}
+
     summaries: list[ZippyConversationSummary] = []
     for convo in conversations:
-        count_stmt = sm_select(ZippyMessage).where(ZippyMessage.conversation_id == convo.id)
-        count_result = await session.execute(count_stmt)
-        count = len(list(count_result.scalars().all()))
+        count = counts.get(convo.id, 0)
         summaries.append(
             ZippyConversationSummary(
                 id=convo.id,

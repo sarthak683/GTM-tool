@@ -46,6 +46,7 @@ async def _async_recalculate() -> int:
     from app.models.deal import Deal
     from app.services.deal_health import compute_health
     from app.services.deal_linker import reconcile_deal_stakeholders
+    from app.services.internal_domains import get_internal_domains
 
     updated = 0
     contacts_linked = 0
@@ -56,6 +57,22 @@ async def _async_recalculate() -> int:
         )
         deals = result.scalars().all()
 
+        # compute_health only needs each deal's LATEST activity timestamp —
+        # one grouped max() instead of loading every Activity row (content +
+        # JSONB) for every active deal, which dominated this nightly task.
+        latest_by_deal: dict = {}
+        if deals:
+            latest_rows = await session.execute(
+                select(Activity.deal_id, func.max(Activity.created_at))
+                .where(Activity.deal_id.in_([d.id for d in deals]))
+                .group_by(Activity.deal_id)
+            )
+            latest_by_deal = {row[0]: row[1] for row in latest_rows.all()}
+
+        # The internal-domain set is workspace-global — fetch it once for the
+        # whole run instead of once per deal inside reconcile_deal_stakeholders.
+        internal_domains = await get_internal_domains(session)
+
         for deal in deals:
             # Recompute days_in_stage from stage_entered_at
             if deal.stage_entered_at:
@@ -63,12 +80,9 @@ async def _async_recalculate() -> int:
             elif deal.created_at:
                 deal.days_in_stage = (datetime.utcnow() - deal.created_at).days
 
-            acts_result = await session.execute(
-                select(Activity).where(Activity.deal_id == deal.id)
+            score, health = compute_health(
+                deal, [], last_activity_at=latest_by_deal.get(deal.id)
             )
-            activities = acts_result.scalars().all()
-
-            score, health = compute_health(deal, activities)
             deal.health_score = score
             deal.health = health
             session.add(deal)
@@ -77,7 +91,9 @@ async def _async_recalculate() -> int:
             # Reconcile stakeholders from the deal's own account + meetings +
             # emails so the AE workflow + MEDDPICC have people to work with.
             try:
-                res = await reconcile_deal_stakeholders(session, deal)
+                res = await reconcile_deal_stakeholders(
+                    session, deal, internal_domains=internal_domains
+                )
                 contacts_linked += res["linked"]
                 contacts_created += res["created"]
             except Exception:
@@ -105,6 +121,13 @@ def reconcile_recent_deal_tasks() -> dict:
 
 
 async def _async_reconcile_recent_deal_tasks() -> int:
+    from app.config import settings
+
+    # Manual-tasks-only mode: skip the candidate query + assignment sweep entirely
+    # instead of running 96x/day just to no-op inside refresh_system_tasks_for_entity.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return 0
+
     from app.database import task_session
     from app.models.deal import Deal
     from app.models.task import Task

@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 
@@ -65,6 +65,29 @@ REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 # role) are NOT reps — their emails/calls/meetings must not inflate rep metrics
 # or appear as a rep row. User.role is one of: admin | ae | sdr.
 REP_ROLES = {"ae", "sdr"}
+
+# A demo "converts" when its account reaches a qualified opportunity or beyond.
+# Lost/dead stages (closed_lost, not_a_fit, churned, cold, on_hold, nurture) are
+# explicitly NOT conversions. Used for the SDR demo funnel.
+CONVERTED_DEAL_STAGES = {
+    "qualified_lead", "poc_agreed", "poc_wip", "poc_done",
+    "commercial_negotiation", "msa_review", "workshop", "closed_won",
+}
+
+# Canonical account-sourcing status values + display labels. Kept in lockstep
+# with ACCOUNT_STATUS_VALUES in app/models/company.py and the frontend control.
+# Insertion order drives the "Accounts by Status" breakdown order on the
+# dashboard; keep it in lockstep with frontend/src/lib/accountStatus.ts.
+ACCOUNT_STATUS_LABELS: dict[str, str] = {
+    "cold": "Cold",
+    "in_progress": "In Progress",
+    "meeting_booked": "Meeting Booked",
+    "meeting_done": "Meeting Done",
+    "in_pipeline": "In Pipeline",
+    "not_a_fit": "Not a Fit",
+    "dnd": "DND",
+    "reach_out_later": "Reach Out Later",
+}
 
 
 def _is_rep(rep_id, rep_user_ids) -> bool:
@@ -194,15 +217,24 @@ class RepActivityRow(BaseModel):
     key: str
     user_id: Optional[UUID] = None
     rep_name: str
+    # "ae" | "sdr" | None. Drives the SDR/AE leaderboard split on the client.
+    role: Optional[str] = None
     calls: int
     connected_calls: int = 0
     live_calls: int = 0
     emails: int
+    email_opens: int = 0
+    email_replies: int = 0
     linkedin_reachouts: int = 0
     meetings: int
     total: int
     active_deals: int
     pipeline_amount: float
+    # SDR demo funnel (attributed to the account's SDR). demos_converted counts
+    # done demos whose account reached a qualified deal or beyond.
+    demos_scheduled: int = 0
+    demos_done: int = 0
+    demos_converted: int = 0
 
 
 class RepActivityWeekRow(BaseModel):
@@ -306,6 +338,12 @@ class MonthlyUniqueFunnelRow(BaseModel):
     closed_won: int
 
 
+class AccountStatusRow(BaseModel):
+    key: str       # canonical status value (or "unset")
+    label: str     # human label
+    count: int
+
+
 class SalesDashboardRead(BaseModel):
     generated_at: datetime
     window_days: int
@@ -324,6 +362,7 @@ class SalesDashboardRead(BaseModel):
     forecast_granularity: str = "month"
     conversion_funnel: list[FunnelStep]
     monthly_unique_funnel: list[MonthlyUniqueFunnelRow]
+    accounts_by_status: list[AccountStatusRow] = []
     quota: QuotaState
 
 
@@ -400,14 +439,17 @@ def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
 
 def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
     now = _utcnow()
-    if from_date:
-        window_start = datetime.fromisoformat(from_date)
-    else:
-        window_start = now - timedelta(days=window_days)
-    if to_date:
-        window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
-    else:
-        window_end = now
+    try:
+        if from_date:
+            window_start = datetime.fromisoformat(from_date)
+        else:
+            window_start = now - timedelta(days=window_days)
+        if to_date:
+            window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
+        else:
+            window_end = now
+    except ValueError:
+        raise HTTPException(status_code=422, detail="from_date/to_date must be ISO 8601")
     return window_start, window_end
 
 
@@ -445,16 +487,59 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
     return "unassigned", None, "Unassigned"
 
 
+# Our outbound email-sending identities: the primary domain plus the Instantly
+# cold-outreach lookalike domains. A rep shares one local-part across all of them
+# (annie@beacon.li == annie@beaconli.com == annie@beaconli.co), so an outbound
+# email is mapped to its rep by local-part, not by the full address.
+BEACON_SENDING_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+
+
+def _beacon_sender_local(email_from) -> "str | None":
+    """Local-part of ``email_from`` when it is one of OUR sending identities,
+    else None (received mail or a non-rep sender)."""
+    local, _, domain = str(email_from or "").strip().lower().partition("@")
+    if not local or not domain:
+        return None
+    if domain in BEACON_SENDING_DOMAINS or domain.startswith("beaconli."):
+        return local
+    return None
+
+
+def _email_event_kind(row) -> "str | None":
+    """Classify an email Activity: 'send' | 'open' | 'reply' | None. Only sends
+    count toward the ``emails`` metric; opens/replies feed open/reply-rate;
+    other Instantly events (bounce, campaign_completed, lead_*) are ignored."""
+    meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+    et = str(meta.get("event_type") or "").strip().lower()
+    if et == "email_opened":
+        return "open"
+    if et == "reply_received" or str(row.source or "").strip().lower() == "email_reply":
+        return "reply"
+    if et in {"email_sent", ""}:
+        return "send"
+    return None
+
+
 def _activity_rep_id(
     row,
     *,
     deal_owner: dict[UUID, UUID | None],
     contact_owner: dict[UUID, UUID | None],
+    rep_id_by_local: "dict[str, UUID] | None" = None,
 ) -> UUID | None:
     source = str(row.source or "").strip().lower()
     medium = str(row.medium or "").strip().lower()
     kind = str(row.type or "").strip().lower()
     metadata = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+
+    # Email SENDS credit the actual sender — the rep whose address is in
+    # email_from across our primary + outreach domains — NOT the deal/contact
+    # owner. Received mail / non-rep senders return None so inbound is excluded.
+    # Opens and replies are engagement events and keep owner-based attribution.
+    if rep_id_by_local is not None and (medium == "email" or kind == "email"):
+        if _email_event_kind(row) == "send":
+            local = _beacon_sender_local(row.email_from)
+            return rep_id_by_local.get(local) if local else None
 
     # Manually logged calls/LinkedIn touches should credit the rep who logged
     # the action, even when the contacted person is assigned to a different rep.
@@ -568,7 +653,14 @@ def _normalize_geography_key(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if not raw:
         return "Unassigned"
-    if raw in {"us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
+    # This function normalizes BOTH raw region values (e.g. "US", "APAC") AND the
+    # filter param the UI sends, which is the already-bucketed label itself
+    # ("America", "Rest of the World", "unassigned"). So the bucket labels must map
+    # to themselves — "america" was missing from the set below, so selecting the
+    # America filter normalized to "Rest of the World" and returned the wrong region.
+    if raw == "unassigned":
+        return "Unassigned"
+    if raw in {"america", "us", "usa", "united states", "united states of america", "na", "north america", "americas", "latam", "latin america", "canada", "mexico"}:
         return "America"
     if raw in {"india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"}:
         return "Rest of the World"
@@ -703,7 +795,7 @@ async def sales_activity_drilldown(
         Literal["emails", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "meetings", "total"],
         Query(description="Activity metric to inspect"),
     ],
-    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
     rep_id: Annotated[Optional[UUID], Query()] = None,
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
@@ -718,23 +810,39 @@ async def sales_activity_drilldown(
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # email_from local-part -> rep id, for sender-based attribution of email sends.
+    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
     # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
-    deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id)
-    if filter_geographies:
-        deal_stmt = deal_stmt.where(Deal.geography.in_(list(filter_geographies)))
+    # Geography must be applied via _normalize_geography_key in Python, exactly
+    # like sales_dashboard does — the filter param holds bucket labels
+    # ("America", "Rest of the World", "Unassigned") while the DB columns hold
+    # raw values ("US", "APAC", NULL), so an IN() on the raw columns matches
+    # nothing and the drilldown disagrees with the dashboard tiles.
+    deal_stmt = select(Deal.id, Deal.name, Deal.assigned_to_id, Deal.company_id, Deal.geography)
     if rep_id:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id == rep_id)
     scoped_deal_rows = (await session.execute(deal_stmt)).all()
+    if filter_geographies:
+        scoped_deal_rows = [
+            row for row in scoped_deal_rows
+            if _normalize_geography_key(row.geography) in filter_geographies
+        ]
     scoped_deal_ids = {row.id for row in scoped_deal_rows}
 
-    contact_stmt = select(Contact.id, Contact.assigned_to_id, Contact.company_id)
-    if filter_geographies:
-        contact_stmt = contact_stmt.outerjoin(Company, Contact.company_id == Company.id).where(Company.region.in_(list(filter_geographies)))
+    contact_stmt = (
+        select(Contact.id, Contact.assigned_to_id, Contact.company_id, Company.region.label("company_region"))
+        .outerjoin(Company, Contact.company_id == Company.id)
+    )
     if rep_id:
         contact_stmt = contact_stmt.where(Contact.assigned_to_id == rep_id)
     scoped_contact_rows = (await session.execute(contact_stmt)).all()
+    if filter_geographies:
+        scoped_contact_rows = [
+            row for row in scoped_contact_rows
+            if _normalize_geography_key(row.company_region) in filter_geographies
+        ]
     scoped_contact_ids = {row.id for row in scoped_contact_rows}
 
     def activity_metric_filter():
@@ -763,7 +871,14 @@ async def sales_activity_drilldown(
             .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
             .where(activity_metric_filter())
         )
-        if rep_id:
+        if rep_id and metric == "emails":
+            # Emails are sender-based: fetch this rep's OUTBOUND sends across all
+            # our sending domains (beacon.li + outreach lookalikes), not emails
+            # that merely sit on deals/contacts they own.
+            rep_local = (user_emails.get(rep_id) or "").split("@")[0]
+            rep_from = {f"{rep_local}@{d}" for d in BEACON_SENDING_DOMAINS} if rep_local else set()
+            activity_stmt = activity_stmt.where(func.lower(Activity.email_from).in_(rep_from or {"__none__"}))
+        elif rep_id:
             activity_stmt = activity_stmt.where(
                 or_(
                     Activity.created_by_id == rep_id,
@@ -778,13 +893,19 @@ async def sales_activity_drilldown(
                     Activity.contact_id.in_(scoped_contact_ids or {UUID(int=0)}),
                 )
             )
-        activities = (
-            await session.execute(
-                activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
-            )
-        ).scalars().all()
+        # For metric="total" the activity and meeting streams are merged and
+        # paginated ONCE on the combined list below, so we must NOT pre-offset
+        # this stream — fetch from the top through offset+limit (+1 sentinel).
+        # Other metrics paginate this stream alone, so keep the SQL offset.
+        if metric == "total":
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).limit(offset + limit + 1)
+        else:
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
+        activities = (await session.execute(activity_stmt)).scalars().all()
 
-        activity_page = activities[:limit]
+        # total merges globally, so every fetched activity must participate;
+        # single-metric pages are already the final slice (cap at limit).
+        activity_page = activities if metric == "total" else activities[:limit]
         contact_ids = {activity.contact_id for activity in activity_page if activity.contact_id}
         deal_ids = {activity.deal_id for activity in activity_page if activity.deal_id}
 
@@ -828,17 +949,26 @@ async def sales_activity_drilldown(
             }
 
         for activity in activity_page:
-            if not activity.contact_id and not activity.deal_id:
+            is_email = str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email"
+            if metric == "emails":
+                # The emails metric is sender-based and SENDS only — independent
+                # of contact/deal linkage; opens/replies and inbound are excluded.
+                if _email_event_kind(activity) != "send":
+                    continue
+            elif not activity.contact_id and not activity.deal_id:
                 continue
-            row_rep_id = _activity_rep_id(activity, deal_owner=deal_owner, contact_owner=contact_owner)
+            row_rep_id = _activity_rep_id(
+                activity, deal_owner=deal_owner, contact_owner=contact_owner, rep_id_by_local=rep_id_by_local
+            )
             if not _is_rep(row_rep_id, rep_user_ids):
                 continue
             if rep_id and row_rep_id != rep_id:
                 continue
             rep_email = user_emails.get(row_rep_id) if row_rep_id else None
             direction = None
-            if str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email":
-                direction = "outbound" if rep_email and str(activity.email_from or "").strip().lower() == rep_email else "inbound"
+            if is_email:
+                # outbound iff it came from one of OUR sending identities.
+                direction = "outbound" if _beacon_sender_local(activity.email_from) else "inbound"
             company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
             activity_type = str(activity.type or activity.medium or "activity").strip().lower() or "activity"
             source = activity.source
@@ -946,7 +1076,15 @@ async def sales_activity_drilldown(
             reverse=True,
         )
         meeting_has_more = len(_meeting_entries) > offset + limit
-        for meeting, row_rep_id in _meeting_entries[offset:offset + limit]:
+        # metric="total" merges this stream with activities and slices once
+        # below, so feed it the top offset+limit (+1 sentinel) un-offset; the
+        # meetings-only page is its own final slice.
+        meeting_slice = (
+            _meeting_entries[: offset + limit + 1]
+            if metric == "total"
+            else _meeting_entries[offset:offset + limit]
+        )
+        for meeting, row_rep_id in meeting_slice:
             meeting_time = _meeting_reporting_timestamp(meeting, window_end=window_end)
             company_id = meeting.company_id or deal_company_ids.get(meeting.deal_id)
             rows.append(
@@ -967,10 +1105,16 @@ async def sales_activity_drilldown(
     rows.sort(key=lambda row: row.occurred_at, reverse=True)
     selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
     has_more = False
-    if metric != "meetings":
-        has_more = has_more or len(locals().get("activities", [])) > limit
-    if metric in {"meetings", "total"}:
-        has_more = has_more or meeting_has_more
+    if metric == "total":
+        # Both streams were fetched un-offset, merged and sorted above; paginate
+        # the combined list exactly once so a page is never larger than `limit`
+        # and interleaved rows are not dropped/duplicated across page boundaries.
+        has_more = len(rows) > offset + limit
+        rows = rows[offset:offset + limit]
+    elif metric == "meetings":
+        has_more = meeting_has_more
+    else:
+        has_more = len(locals().get("activities", [])) > limit
     return SalesActivityDrilldownRead(
         generated_at=_utcnow(),
         metric=metric,
@@ -991,7 +1135,7 @@ async def sales_activity_drilldown(
 async def sales_dashboard(
     session: DBSession,
     _user: CurrentUser,
-    window_days: Annotated[int, Query(ge=30, le=365)] = 90,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
     rep_id: Annotated[list[UUID], Query()] = [],
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
@@ -1051,6 +1195,7 @@ async def sales_dashboard(
         Deal.days_in_stage,
         Deal.stage_entered_at,
         Deal.assigned_to_id,
+        Deal.company_id,
         Deal.created_at,
         Deal.updated_at,
         Deal.geography,
@@ -1058,6 +1203,10 @@ async def sales_dashboard(
     if filter_rep_ids:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
     deal_rows = (await session.execute(deal_stmt)).all()
+    # Keep the pre-geography list: the conversion funnel applies region by
+    # ACCOUNT (not by Deal.geography), so it reuses these rep-scoped rows
+    # instead of re-running an identical full deals query further down.
+    raw_deal_rows = deal_rows
     if filter_geographies:
         deal_rows = [row for row in deal_rows if _normalize_geography_key(row.geography) in filter_geographies]
     allowed_deal_ids = {row.id for row in deal_rows}
@@ -1080,10 +1229,19 @@ async def sales_dashboard(
     allowed_contact_ids = {row.id for row in contact_rows}
     contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
-    week_starts = _rolling_week_starts(window_start, window_end)
+    # Bound the weekly-activity chart to at most ~1 year of buckets. Totals are
+    # still computed over the full window (activities older than this still count
+    # toward the leaderboard); only the per-week breakdown is capped so "All time"
+    # doesn't generate thousands of weekly buckets per rep.
+    week_window_start = max(window_start, window_end - timedelta(weeks=52))
+    week_starts = _rolling_week_starts(week_window_start, window_end)
     user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
     users = {row.id: row.name for row in user_rows}
+    user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
+    user_roles = {row.id: str(row.role or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
+    # email_from local-part -> rep id, for sender-based attribution of email sends.
+    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
     # Only ae/sdr users are reps; admin activity must not inflate rep metrics
     # or create an admin rep row (the "Rakesh 419 emails" leak).
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
@@ -1102,6 +1260,7 @@ async def sales_dashboard(
                 Activity.aircall_user_name,
                 Activity.call_outcome,
                 Activity.call_duration,
+                Activity.email_from,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -1109,7 +1268,7 @@ async def sales_dashboard(
     if filter_rep_ids:
         activity_rows = [
             row for row in activity_rows
-            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner) in filter_rep_ids
+            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner, rep_id_by_local=rep_id_by_local) in filter_rep_ids
         ]
     if filter_geographies:
         activity_rows = [row for row in activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
@@ -1129,6 +1288,7 @@ async def sales_dashboard(
                 Meeting.external_source,
                 Meeting.attendees,
                 Meeting.is_internal,
+                Meeting.meeting_type,
             ).where(
                 Meeting.is_internal.is_(False),
                 or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
@@ -1139,6 +1299,10 @@ async def sales_dashboard(
             )
         )
     ).all()
+    # The conversion funnel needs the same window of meetings WITHOUT the
+    # rep/geography filters below — keep the raw result so it doesn't re-run
+    # this identical query.
+    raw_meeting_rows = meetings_rows
     if filter_rep_ids:
         meetings_rows = [
             row
@@ -1335,6 +1499,7 @@ async def sales_dashboard(
             row,
             deal_owner=deal_owner,
             contact_owner=contact_owner,
+            rep_id_by_local=rep_id_by_local,
         )
         if not _is_rep(row_rep_id, rep_user_ids):
             continue
@@ -1402,9 +1567,29 @@ async def sales_dashboard(
                 if week_counts is not None:
                     week_counts["live_calls"] += 1
         elif medium == "email" or kind == "email":
-            activity_bucket["emails"] += 1
-            if week_counts is not None:
-                week_counts["emails"] += 1
+            # All email events share type="email"; the sent/opened/replied
+            # distinction lives in event_metadata.event_type (Instantly) or
+            # source (replies). Count SENT for the emails total, and tally
+            # opens/replies separately so the cards can show open/reply rate
+            # over emails sent. Personal-sync rows carry no event_type → treated
+            # as sent (they ARE real sent/received emails).
+            # Email attribution is SENDER-based (see _activity_rep_id): for a
+            # SEND, row_rep_id is the rep who actually sent it (across our
+            # primary + outreach domains), and inbound / non-rep senders were
+            # already dropped by the _is_rep guard above. Opens/replies keep
+            # owner attribution and feed the open/reply-rate cards only.
+            meta = row.event_metadata if isinstance(row.event_metadata, dict) else {}
+            event_type = str(meta.get("event_type") or "").strip().lower()
+            src = str(row.source or "").strip().lower()
+            if event_type == "email_opened":
+                activity_bucket["email_opens"] = activity_bucket.get("email_opens", 0) + 1
+            elif event_type == "reply_received" or src == "email_reply":
+                activity_bucket["email_replies"] = activity_bucket.get("email_replies", 0) + 1
+            elif event_type in {"email_sent", ""}:
+                # Outbound send by this rep (inbound already excluded upstream).
+                activity_bucket["emails"] += 1
+                if week_counts is not None:
+                    week_counts["emails"] += 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
@@ -1521,20 +1706,139 @@ async def sales_dashboard(
                 continue
             bump_meeting(row_rep_id, meeting_timestamp)
 
+    # ── SDR demo funnel ──────────────────────────────────────────────────────
+    # Demos scheduled / done / converted, attributed to the account's SDR (the
+    # rep who books and owns the prospect), NOT the AE running the call. This is
+    # a dedicated query rather than a reuse of `meetings_rows` for two reasons:
+    #  1) meetings_rows is pre-filtered by _meeting_rep_ids (owner/AE/attendees),
+    #     which would drop an SDR's demos whenever the dashboard is rep-filtered.
+    #  2) demos count regardless of the deal's current stage (the rep-activity
+    #     stage gate excludes meetings once an account is deep in POC).
+    # A demo "converts" when its account has any deal at qualified_lead or beyond.
+    demo_meeting_rows = (
+        await session.execute(
+            select(
+                Meeting.company_id,
+                Meeting.deal_id,
+                Meeting.scheduled_at,
+                Meeting.created_at,
+                Meeting.status,
+                Meeting.external_source,
+            ).where(
+                Meeting.is_internal.is_(False),
+                func.lower(func.coalesce(Meeting.meeting_type, "")) == "demo",
+                Meeting.company_id.isnot(None),
+                or_(
+                    (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
+                    Meeting.scheduled_at.is_(None)
+                    & (Meeting.created_at >= window_start)
+                    & (Meeting.created_at <= window_end),
+                ),
+            )
+        )
+    ).all()
+    deduped_demos = _dedupe_meetings_across_sources(
+        [row for row in demo_meeting_rows if str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES]
+    )
+    demo_company_ids = {row.company_id for row in deduped_demos if row.company_id}
+
+    company_sdr: dict[UUID, UUID | None] = {}
+    company_region_for_demo: dict[UUID, str | None] = {}
+    converted_company_ids: set[UUID] = set()
+    if demo_company_ids:
+        sdr_rows = (
+            await session.execute(
+                select(Company.id, Company.sdr_id, Company.region).where(Company.id.in_(demo_company_ids))
+            )
+        ).all()
+        company_sdr = {row.id: row.sdr_id for row in sdr_rows}
+        company_region_for_demo = {row.id: row.region for row in sdr_rows}
+        conv_rows = (
+            await session.execute(
+                select(Deal.company_id, Deal.stage).where(Deal.company_id.in_(demo_company_ids))
+            )
+        ).all()
+        for crow in conv_rows:
+            if crow.company_id and str(crow.stage or "").strip().lower() in CONVERTED_DEAL_STAGES:
+                converted_company_ids.add(crow.company_id)
+
+    def bump_demo(sdr_id: UUID | None, *, done: bool, converted: bool) -> None:
+        if not sdr_id:
+            return
+        # The account's SDR must be an actual rep (ae/sdr). Without this, a
+        # company whose sdr_id points to an admin (or any non-rep) would mint a
+        # leaderboard row for them — unlike every other bump path, which gates on
+        # _is_rep. The row stays hidden by the client's role filter today, but it
+        # should never be created in the first place.
+        if not _is_rep(sdr_id, rep_user_ids):
+            return
+        if filter_rep_ids and sdr_id not in filter_rep_ids:
+            return
+        rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
+        bucket = rep_activity.setdefault(
+            rep_key,
+            {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
+                "emails": 0,
+                "linkedin_reachouts": 0,
+                "meetings": 0,
+                "total": 0,
+                "active_deals": 0,
+                "pipeline_amount": 0.0,
+            },
+        )
+        bucket["demos_scheduled"] = int(bucket.get("demos_scheduled", 0)) + 1
+        if done:
+            bucket["demos_done"] = int(bucket.get("demos_done", 0)) + 1
+            if converted:
+                bucket["demos_converted"] = int(bucket.get("demos_converted", 0)) + 1
+
+    for row in deduped_demos:
+        if filter_geographies:
+            region_key = _normalize_geography_key(company_region_for_demo.get(row.company_id))
+            if region_key not in filter_geographies:
+                continue
+        # A demo counts as "done" when explicitly completed/scored, OR when its
+        # scheduled time has already passed and it wasn't cancelled. Reps almost
+        # never flip status to "completed" (prod: ~41 demo/scheduled vs ~6
+        # demo/completed), so requiring the manual flag left demos_done ~0
+        # board-wide. Time-based inference treats a past, non-cancelled demo as
+        # held. Trade-off: a no-show left in "scheduled" is counted as done.
+        status_norm = str(row.status or "").strip().lower()
+        if status_norm in {"completed", "scored"}:
+            is_done = True
+        elif status_norm == "cancelled":
+            is_done = False
+        else:
+            is_done = row.scheduled_at is not None and row.scheduled_at <= now
+        is_converted = bool(row.company_id and row.company_id in converted_company_ids)
+        bump_demo(company_sdr.get(row.company_id), done=is_done, converted=is_converted)
+
     rep_activity_rows = [
         RepActivityRow(
             key=str(bucket["key"]),
             user_id=bucket["user_id"],
             rep_name=str(bucket["rep_name"]),
+            role=(user_roles.get(bucket["user_id"]) or None) if bucket["user_id"] else None,
             calls=int(bucket["calls"]),
             connected_calls=int(bucket["connected_calls"]),
             live_calls=int(bucket["live_calls"]),
             emails=int(bucket["emails"]),
+            email_opens=int(bucket.get("email_opens", 0)),
+            email_replies=int(bucket.get("email_replies", 0)),
             linkedin_reachouts=int(bucket["linkedin_reachouts"]),
             meetings=int(bucket["meetings"]),
             total=int(bucket["total"]),
             active_deals=int(bucket["active_deals"]),
             pipeline_amount=round(float(bucket["pipeline_amount"]), 2),
+            demos_scheduled=int(bucket.get("demos_scheduled", 0)),
+            demos_done=int(bucket.get("demos_done", 0)),
+            demos_converted=int(bucket.get("demos_converted", 0)),
         )
         for bucket in sorted(
             rep_activity.values(),
@@ -1691,21 +1995,88 @@ async def sales_dashboard(
     # switch week/month with no extra request.
     forecast_bucket_rows = forecast_week_rows if forecast_granularity == "week" else forecast_rows
 
-    leads_count = sum(1 for row in contact_rows if row.created_at >= window_start)
-    meeting_stage_contacts = sum(1 for row in contact_rows if _contact_meeting_signal(row))
-    # Reuse the deduped list from rep-activity counting above so the funnel's
-    # Meeting count agrees with per-rep totals (no tldv+gcal double-count).
-    meetings_count = len(deduped_meetings)
-    proposal_count = sum(
-        1
-        for row in deal_rows
-        if row.stage in PROPOSAL_STAGES and row.updated_at >= window_start
-    )
-    closed_won_count = sum(
-        1
-        for row in deal_rows
-        if row.stage == "closed_won" and row.updated_at >= window_start
-    )
+    # ── Conversion funnel — ACCOUNT-based, uniformly region-filtered ─────────
+    # Each step counts distinct ACCOUNTS (companies), all filtered by the account's
+    # region (Company.region). Before: 'Lead' counted contacts (~3.4k prospects),
+    # and the deal/meeting steps filtered on Deal.geography (~80% null in prod) — so
+    # the funnel mixed entity types and the America / Rest-of-World filter applied
+    # unevenly (it also dropped company-only meetings). Counting accounts on one
+    # well-populated region source makes the funnel and its filter coherent.
+    company_meta_rows = (
+        await session.execute(
+            select(Company.id, Company.region, Company.created_at, Company.assigned_to_id, Company.sdr_id)
+        )
+    ).all()
+    funnel_company_region = {row.id: _normalize_geography_key(row.region) for row in company_meta_rows}
+
+    def _funnel_account_in_geo(company_id) -> bool:
+        return (not filter_geographies) or funnel_company_region.get(company_id) in filter_geographies
+
+    # Lead = accounts sourced (company created) in the window; rep filter scopes to
+    # the account's AE/SDR so a rep-filtered funnel shows that rep's accounts.
+    lead_accounts = {
+        row.id
+        for row in company_meta_rows
+        if row.created_at is not None
+        and window_start <= row.created_at <= window_end
+        and _funnel_account_in_geo(row.id)
+        and (not filter_rep_ids or row.assigned_to_id in filter_rep_ids or row.sdr_id in filter_rep_ids)
+    }
+
+    # Proposal / Closed Won = distinct accounts with a deal at the stage, last
+    # updated in the window. Rep-scoped by deal owner, region by the account.
+    # Reuses the rep-scoped, pre-geography deal fetch from above (raw_deal_rows
+    # carries id/company_id/stage/updated_at with the identical rep filter) so
+    # it isn't perturbed by the Deal.geography pre-filter and doesn't re-scan
+    # the deals table.
+    funnel_deal_rows = raw_deal_rows
+    funnel_deal_company = {row.id: row.company_id for row in funnel_deal_rows}
+    proposal_accounts: set = set()
+    won_accounts: set = set()
+    for row in funnel_deal_rows:
+        cid = row.company_id
+        if (
+            cid is None
+            or row.updated_at < window_start
+            or row.updated_at > window_end
+            or not _funnel_account_in_geo(cid)
+        ):
+            continue
+        if row.stage in PROPOSAL_STAGES:
+            proposal_accounts.add(cid)
+        if row.stage == "closed_won":
+            won_accounts.add(cid)
+
+    # Meeting = distinct accounts with a qualifying meeting in the window. Dedicated
+    # rep-scoped query (NOT pre-filtered by Deal.geography) so the region filter is
+    # applied by account, matching the other steps; same gating + cross-source dedup
+    # as the rep-activity meeting count.
+    # Identical window/columns to the rep-activity meetings query above —
+    # reuse its raw (pre rep/geo filter) result instead of re-querying.
+    funnel_meeting_rows = raw_meeting_rows
+    funnel_meeting_candidates = [
+        row
+        for row in funnel_meeting_rows
+        if _is_crm_linked_meeting(row)
+        and row.status != "cancelled"
+        and _meeting_within_sales_funnel(row)
+        and str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES
+    ]
+    meeting_accounts: set = set()
+    for row in _dedupe_meetings_across_sources(funnel_meeting_candidates):
+        cid = row.company_id or funnel_deal_company.get(row.deal_id)
+        if cid is None or not _funnel_account_in_geo(cid):
+            continue
+        if filter_rep_ids:
+            mreps = set(_meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email))
+            if not (mreps & filter_rep_ids):
+                continue
+        meeting_accounts.add(cid)
+
+    leads_count = len(lead_accounts)
+    meetings_count = len(meeting_accounts)
+    proposal_count = len(proposal_accounts)
+    closed_won_count = len(won_accounts)
 
     # Milestone-based deduplicated counts for the selected window
     # Each company counted only once (first time it reached the milestone)
@@ -1876,6 +2247,32 @@ async def sales_dashboard(
 
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 
+    # ── Accounts by status ───────────────────────────────────────────────────
+    # Distribution of sourced accounts across the manual account_status field,
+    # scoped to the selected reps (owner or SDR) and geography. Always emits the
+    # 5 canonical statuses so the UI stays stable; "No status" only if non-zero.
+    status_select = select(
+        Company.account_status, Company.region, Company.assigned_to_id, Company.sdr_id
+    )
+    if filter_rep_ids:
+        status_select = status_select.where(
+            or_(Company.assigned_to_id.in_(filter_rep_ids), Company.sdr_id.in_(filter_rep_ids))
+        )
+    status_counts: dict[str, int] = {}
+    for srow in (await session.execute(status_select)).all():
+        if filter_geographies and _normalize_geography_key(srow.region) not in filter_geographies:
+            continue
+        key = str(srow.account_status or "").strip().lower() or "unset"
+        status_counts[key] = status_counts.get(key, 0) + 1
+    accounts_by_status = [
+        AccountStatusRow(key=key, label=label, count=status_counts.get(key, 0))
+        for key, label in ACCOUNT_STATUS_LABELS.items()
+    ]
+    if status_counts.get("unset"):
+        accounts_by_status.append(
+            AccountStatusRow(key="unset", label="No status", count=status_counts["unset"])
+        )
+
     result = SalesDashboardRead(
         generated_at=now,
         window_days=window_days,
@@ -1916,6 +2313,7 @@ async def sales_dashboard(
         forecast_granularity=forecast_granularity,
         conversion_funnel=funnel_rows,
         monthly_unique_funnel=monthly_unique_funnel,
+        accounts_by_status=accounts_by_status,
         quota=QuotaState(
             configured=False,
             title="Quota setup required",

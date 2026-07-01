@@ -30,11 +30,17 @@ def _run_async(coro: Awaitable[T]) -> T:
 @celery_app.task(
     name="app.tasks.enrichment.enrich_company_task",
     bind=True,
-    max_retries=3,
+    max_retries=1,
     default_retry_delay=60,
 )
 def enrich_company_task(self, company_id: str) -> dict:
-    """Enrich a company by ID. Retries up to 3x on failure."""
+    """Enrich a company by ID. Retries once on failure.
+
+    The legacy orchestrator (enrich_company) has no per-source cache, so every
+    retry re-hits the full paid Apollo/Hunter/BuiltWith/News waterfall. Capped
+    at a single retry (was 3) so a transient failure can re-bill the waterfall
+    at most twice instead of up to four times.
+    """
     try:
         _run_async(_async_enrich(UUID(company_id)))
         return {"status": "completed", "company_id": company_id}
@@ -338,7 +344,14 @@ async def _async_icp_research_batch(batch_id: UUID) -> None:
             async with semaphore:
                 try:
                     async with SessionLocal() as company_session:
-                        await research_company_and_update(company_id, company_session)
+                        # force=False: this batch task is max_retries=1 and
+                        # restarts from row 0, so the freshness guard inside
+                        # research_company_and_update lets a retry skip the
+                        # companies that already succeeded (fresh icp_analysis)
+                        # and only re-bill the ones that previously failed.
+                        await research_company_and_update(
+                            company_id, company_session, force=False
+                        )
                 except Exception as exc:
                     import traceback
                     logger.error(f"ICP research failed for {company_id}: {exc}\n{traceback.format_exc()}")
@@ -429,5 +442,11 @@ def icp_research_single_task(self, company_id: str) -> dict:
 
 
 async def _async_icp_research_single(company_id: UUID) -> None:
+    # This single-company task backs the manual re-enrich / ICP-research /
+    # refresh buttons, so force a re-run past the freshness guard. The batch
+    # path (_async_icp_research_batch) deliberately leaves force defaulting to
+    # False so a retry skips already-enriched companies.
     from app.services.icp_intelligence import research_company_and_update
-    await _run_with_fresh_session(lambda session: research_company_and_update(company_id, session))
+    await _run_with_fresh_session(
+        lambda session: research_company_and_update(company_id, session, force=True)
+    )

@@ -2,21 +2,34 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from sqlmodel import select
 
 from app.config import settings
-from app.core.dependencies import DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence, OutreachStep
 from app.services.pre_meeting import generate_account_brief
 
+try:  # EmailStr needs the optional `email-validator` package; degrade gracefully.
+    from pydantic import EmailStr
+except Exception:  # pragma: no cover - missing email-validator at runtime
+    EmailStr = str  # type: ignore[assignment,misc]
+
 router = APIRouter(tags=["intelligence"])
 
 
+class OutreachSendPayload(BaseModel):
+    """Validated body for sending one outreach touch."""
+
+    email_number: int
+    to_email: EmailStr
+
+
 @router.get("/intelligence/{company_id}")
-async def get_account_brief(company_id: UUID, session: DBSession):
+async def get_account_brief(company_id: UUID, session: DBSession, current_user: CurrentUser):
     """
     Company-level account planning brief:
     combines saved CRM signals, stakeholder coverage, cached enrichment,
@@ -29,7 +42,12 @@ async def get_account_brief(company_id: UUID, session: DBSession):
 
 
 @router.post("/outreach/send/{sequence_id}")
-async def send_outreach_email(sequence_id: UUID, payload: dict, session: DBSession):
+async def send_outreach_email(
+    sequence_id: UUID,
+    payload: OutreachSendPayload,
+    session: DBSession,
+    current_user: CurrentUser,
+):
     """
     Send one touch of an outreach sequence via Resend.
     Body: { "email_number": 1|2|3, "to_email": "prospect@company.com" }
@@ -44,8 +62,8 @@ async def send_outreach_email(sequence_id: UUID, payload: dict, session: DBSessi
         raise NotFoundError("Sequence not found")
 
     contact = await session.get(Contact, seq.contact_id)
-    email_number = payload.get("email_number", 1)
-    to_email = (payload.get("to_email") or "").strip()
+    email_number = payload.email_number
+    to_email = (str(payload.to_email) or "").strip()
 
     if not to_email:
         if contact and contact.email:

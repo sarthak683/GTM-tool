@@ -37,8 +37,15 @@ async def build_outreach_overview(
     launched_q = select(func.count(OutreachSequence.id)).where(and_(*seq_filters))
     launched = (await session.execute(launched_q)).scalar() or 0
 
-    contacts_in_window_q = select(Contact).where(and_(*contact_filters))
-    contacts_in_window = (await session.execute(contacts_in_window_q)).scalars().all()
+    # Only the four columns the counters below read — select(Contact) dragged
+    # enrichment_data/talking_points JSONB for every contact in the window.
+    contacts_in_window_q = select(
+        Contact.email_open_count,
+        Contact.email_click_count,
+        Contact.sequence_status,
+        Contact.instantly_status,
+    ).where(and_(*contact_filters))
+    contacts_in_window = (await session.execute(contacts_in_window_q)).all()
 
     sent = sum(1 for c in contacts_in_window if (c.email_open_count or 0) > 0 or (c.sequence_status or "") in {
         "queued_instantly", "active", "interested", "not_interested", "meeting_booked", "bounced", "unsubscribed"
@@ -47,7 +54,10 @@ async def build_outreach_overview(
     clicked = sum(1 for c in contacts_in_window if (c.email_click_count or 0) > 0)
     interested = sum(1 for c in contacts_in_window if c.sequence_status == "interested")
     booked = sum(1 for c in contacts_in_window if c.sequence_status == "meeting_booked")
-    not_interested = sum(1 for c in contacts_in_window if c.sequence_status == "not_interested")
+    # EMAIL negative only — instantly_status (not the call/LinkedIn-overloaded
+    # sequence_status), so a phone "not interested" no longer inflates the email
+    # not_interested count / reply_rate.
+    not_interested = sum(1 for c in contacts_in_window if c.instantly_status == "not_interested")
     bounced = sum(1 for c in contacts_in_window if c.sequence_status == "bounced")
     unsubscribed = sum(1 for c in contacts_in_window if c.sequence_status == "unsubscribed")
 

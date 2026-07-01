@@ -13,7 +13,15 @@ import { useEffect, useMemo, useState } from "react";
  */
 export default function Dial() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const tel = params.get("tel") || "";
+  const rawTel = params.get("tel") || "";
+  // Keep only a leading '+' and digits. Source data sometimes fuses a type tag
+  // into the number ("m+1 248-890-8149" = mobile); handed to a tel: URI the OS
+  // dialer T9-maps the stray letter to a digit (m->6, d->3) and calls the wrong
+  // number. Defense-in-depth alongside the import-side normalizer.
+  const tel = useMemo(() => {
+    const stripped = rawTel.trim().replace(/^[^\d+]+/, "");
+    return (stripped.startsWith("+") ? "+" : "") + stripped.replace(/[^\d]/g, "");
+  }, [rawTel]);
   const name = params.get("name") || "";
   const [error, setError] = useState<string | null>(null);
 

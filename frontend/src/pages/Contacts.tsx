@@ -1,7 +1,8 @@
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, authApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
+import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
@@ -11,7 +12,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight,
+  Mic, ArrowRight, MessageCircle, MessageSquare, Send,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -59,6 +60,11 @@ const SEQUENCE_FILTER_OPTIONS = [
 const CALL_DISPOSITION_FILTER_OPTIONS = [
   { value: "unreviewed", label: "Unreviewed" },
   ...CALL_DISPOSITION_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+];
+
+const LINKEDIN_STATUS_FILTER_OPTIONS = [
+  { value: "not_contacted", label: "Not contacted" },
+  ...LINKEDIN_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
 ];
 
 const SEARCH_SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
@@ -142,6 +148,7 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
   { key: "title", label: "Title" },
   { key: "email", label: "Email", required: true },
   { key: "progress", label: "Progress", required: true },
+  { key: "comments", label: "Comments" },
   { key: "timezone", label: "Timezone" },
   { key: "ae", label: "AE" },
   { key: "sdr", label: "SDR" },
@@ -296,7 +303,20 @@ function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey
     if (!Array.isArray(parsed)) return DEFAULT_CONTACT_TABLE_COLUMNS;
     const allowed = new Set(CONTACT_TABLE_COLUMNS.map((column) => column.key));
     const next = parsed.filter((value): value is ContactTableColumnKey => typeof value === "string" && allowed.has(value as ContactTableColumnKey));
-    return next.length ? next : DEFAULT_CONTACT_TABLE_COLUMNS;
+    if (!next.length) return DEFAULT_CONTACT_TABLE_COLUMNS;
+    // Auto-include any NEW columns added to the app since this layout was saved
+    // (e.g. "comments") so existing users see them without re-enabling manually.
+    // New columns are inserted just before "action" so they don't land after the
+    // row action buttons; if "action" isn't present they're appended.
+    const present = new Set(next);
+    const missing = CONTACT_TABLE_COLUMNS
+      .map((column) => column.key as ContactTableColumnKey)
+      .filter((key) => !present.has(key));
+    if (!missing.length) return next;
+    const actionIdx = next.indexOf("action");
+    return actionIdx === -1
+      ? [...next, ...missing]
+      : [...next.slice(0, actionIdx), ...missing, ...next.slice(actionIdx)];
   } catch {
     return DEFAULT_CONTACT_TABLE_COLUMNS;
   }
@@ -358,6 +378,7 @@ export default function Contacts() {
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
   const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
+  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("li")));
   // Progress-dot color filters. Map 1:1 to the dot colors rendered by
   // `ProgressCell`. URL keys: `cc` (call color), `ec` (email color), `ca`
   // (call attempts bucket). The backend translates colors to disposition /
@@ -421,6 +442,16 @@ export default function Contacts() {
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
   const [bulkClaimingSdr, setBulkClaimingSdr] = useState(false);
   const [deletingContacts, setDeletingContacts] = useState(false);
+  // Admin bulk SDR reassignment for selected prospects (e.g. splitting an
+  // account's prospects across SDRs by timezone).
+  const [assignableUsers, setAssignableUsers] = useState<Array<{ id: string; name?: string | null; role: string }>>([]);
+  const [bulkAssigningSdr, setBulkAssigningSdr] = useState(false);
+  // Bulk "start campaign" — enroll the selected prospects into an existing Instantly campaign.
+  const [campaignModalOpen, setCampaignModalOpen] = useState(false);
+  const [campaignOptions, setCampaignOptions] = useState<{ id: string; name: string }[]>([]);
+  const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [startingCampaign, setStartingCampaign] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
   // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
   // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
@@ -436,6 +467,11 @@ export default function Contacts() {
   // call drawer closes. Queried via the DOM since the element lives outside
   // this component's tree.
   const restoreScrollRef = useRef<number | null>(null);
+  // Monotonic request id for loadContacts: only the latest in-flight request
+  // is allowed to write state (see loadContacts for the race it guards).
+  const loadSeqRef = useRef(0);
+  // Angel-mapping data is fetched lazily the first time that tab opens.
+  const angelsLoadedRef = useRef(false);
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
   // Id of the recording attached to the in-progress call disposition,
@@ -462,6 +498,15 @@ export default function Contacts() {
   const [linkedinSuggestion, setLinkedinSuggestion] = useState<string | null>(null);
   const [linkedinSuggestionLoading, setLinkedinSuggestionLoading] = useState(false);
   const [linkedinSuggestionCopied, setLinkedinSuggestionCopied] = useState(false);
+  const [whatsappContact, setWhatsappContact] = useState<Contact | null>(null);
+  const [whatsappOutcome, setWhatsappOutcome] = useState("sent");
+  const [whatsappNotes, setWhatsappNotes] = useState("");
+  const [savingWhatsapp, setSavingWhatsapp] = useState(false);
+  const [commentsContact, setCommentsContact] = useState<Contact | null>(null);
+  const [commentsList, setCommentsList] = useState<Activity[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
   const [uploadingProspects, setUploadingProspects] = useState(false);
   // Upload progress UI: phase = "uploading" while bytes are on the wire,
   // "processing" once they're all delivered and the server is parsing.
@@ -622,6 +667,10 @@ export default function Contacts() {
   };
 
   const loadContacts = (opts?: { silent?: boolean }) => {
+    // A filter change fires this twice (once with the old page still in the
+    // closure, once after the page-reset effect runs), so two requests race.
+    // The sequence counter lets only the latest response write state.
+    const seq = ++loadSeqRef.current;
     // Silent reloads skip the loading state so the table stays mounted — this
     // is what lets us preserve scroll position after the call drawer closes
     // (the loading flash would otherwise unmount the list and reset scroll).
@@ -637,6 +686,7 @@ export default function Contacts() {
       persona: personaFilter.length ? personaFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
+      linkedinStatus: linkedinStatusFilter.length ? linkedinStatusFilter : undefined,
       callOutcomeColor: callOutcomeColorFilter.length ? callOutcomeColorFilter : undefined,
       emailOutcomeColor: emailOutcomeColorFilter.length ? emailOutcomeColorFilter : undefined,
       callAttemptsBucket: callAttemptsBucketFilter.length ? callAttemptsBucketFilter : undefined,
@@ -659,6 +709,8 @@ export default function Contacts() {
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       prospectOnly: true,
     }).then((result) => {
+      // A newer request superseded this one — drop the stale response.
+      if (seq !== loadSeqRef.current) return;
       setContacts(result.items);
       setContactsTotal(result.total);
       setContactsPages(result.pages);
@@ -672,13 +724,24 @@ export default function Contacts() {
           if (scroller) scroller.scrollTop = target;
         });
       }
-    }).finally(() => { if (!opts?.silent) setLoading(false); });
+    }).catch((error) => {
+      if (seq !== loadSeqRef.current) return;
+      toast.error(error instanceof Error ? error.message : "Failed to load prospects.", "Load failed");
+    }).finally(() => {
+      // Only the latest request controls the spinner; this also recovers if a
+      // superseded non-silent request left loading=true behind.
+      if (seq === loadSeqRef.current) setLoading(false);
+    });
   };
 
   const downloadProspectTemplate = () => {
     const template = [
-      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Phone"],
-      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+15135330040"],
+      // SDR / AE are OPTIONAL ownership columns: put a teammate's email or full
+      // name to assign the prospect to them. Leave blank to assign it to you
+      // (the uploader). Email is the most reliable; a name must match one
+      // teammate exactly.
+      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone", "SDR", "AE"],
+      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199", "mahesh@beacon.li", "Pravalika Jamalpur"],
     ]
       .map((row) => row.join(","))
       .join("\n");
@@ -788,17 +851,21 @@ export default function Contacts() {
     }).catch(() => setAngelLoading(false));
   };
 
+  // Angel-mapping data only renders on that tab, so fetch it lazily the first
+  // time the tab becomes active instead of on every prospecting-page mount.
   useEffect(() => {
+    if (tab !== "angel-mapping" || angelsLoadedRef.current) return;
+    angelsLoadedRef.current = true;
     loadAngels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
   useEffect(() => {
-    settingsApi.getRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
-  }, []);
-
-  useEffect(() => {
-    authApi
-      .listAllUsers()
+    getCachedUsers()
       .then((users) => {
         setTeamUsers(
           users
@@ -838,6 +905,7 @@ export default function Contacts() {
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
+      linkedinStatusFilter.length ? next.set("li", linkedinStatusFilter.join(",")) : next.delete("li");
       callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
       emailOutcomeColorFilter.length ? next.set("ec", emailOutcomeColorFilter.join(",")) : next.delete("ec");
       callAttemptsBucketFilter.length ? next.set("ca", callAttemptsBucketFilter.join(",")) : next.delete("ca");
@@ -855,7 +923,7 @@ export default function Contacts() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -866,7 +934,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setPage(1);
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -879,7 +947,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   useEffect(() => {
     if (contacts.length === 0 || selectedContactIds.size === 0) return;
@@ -1081,6 +1149,27 @@ export default function Contacts() {
       }
       return next;
     });
+  };
+
+  // Admin: reassign the selected prospects' SDR to any team member. Used to
+  // split an account across SDRs (filter by timezone, select, assign).
+  const bulkAssignSelectedSdr = async (userId: string) => {
+    if (!userId || selectedContactIds.size === 0) return;
+    setBulkAssigningSdr(true);
+    try {
+      const result = await assignmentsApi.bulkAssignContacts(Array.from(selectedContactIds), userId, "sdr");
+      const who = assignableUsers.find((u) => u.id === userId)?.name || "SDR";
+      toast.success(
+        `${result.updated} prospect${result.updated === 1 ? "" : "s"} assigned to ${who}${result.skipped ? `, ${result.skipped} skipped` : ""}.`,
+        "SDR reassigned",
+      );
+      setSelectedContactIds(new Set());
+      await loadContacts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to assign selected prospects.", "Assign failed");
+    } finally {
+      setBulkAssigningSdr(false);
+    }
   };
 
   const bulkClaimSelectedSdr = async () => {
@@ -1452,7 +1541,14 @@ export default function Contacts() {
         toast.error("LinkedIn saved but timeline write failed — check activity feed.", "Partial save");
       }
 
-      toast.success(`LinkedIn touch logged for ${linkedinContact.first_name}.`, "LinkedIn logged");
+      // Quick confirmation — reps log many touches in a row, so this toast
+      // auto-dismisses fast (2s) instead of the 5s default.
+      toast.show({
+        tone: "success",
+        message: `LinkedIn touch logged for ${linkedinContact.first_name}.`,
+        title: "LinkedIn logged",
+        durationMs: 2000,
+      });
       // Preserve scroll: capture where the rep is, then reload silently so the
       // list stays mounted (a non-silent reload flips `loading` and bounces the
       // page to the top — the bug reps reported after logging a LinkedIn touch).
@@ -1465,6 +1561,123 @@ export default function Contacts() {
       toast.error("Failed to log LinkedIn touch.", "Error");
     } finally {
       setSavingLinkedin(false);
+    }
+  };
+
+  // wa.me needs a bare international number (country code + digits, no + or spaces).
+  const waPhoneDigits = (phone?: string | null) => (phone || "").replace(/[^\d]/g, "");
+
+  const saveWhatsappTouch = async () => {
+    if (!whatsappContact || !whatsappOutcome) return;
+    setSavingWhatsapp(true);
+    try {
+      const label = ({
+        sent: "Sent WhatsApp message",
+        replied: "WhatsApp reply received",
+        no_response: "WhatsApp — no response",
+        meeting_booked: "Meeting booked via WhatsApp",
+      } as Record<string, string>)[whatsappOutcome] ?? `WhatsApp: ${whatsappOutcome}`;
+      const contactLabel = `${whatsappContact.first_name ?? ""} ${whatsappContact.last_name ?? ""}`.trim();
+      const content = whatsappNotes ? `${label} — ${contactLabel}: ${whatsappNotes}` : `${label} — ${contactLabel}`;
+      await activitiesApi.create({
+        type: "whatsapp",
+        medium: "whatsapp",
+        source: "manual",
+        content,
+        contact_id: whatsappContact.id,
+      } as Partial<Activity>);
+      // Quick auto-dismiss toast (reps log many touches in a row).
+      toast.show({
+        tone: "success",
+        message: `WhatsApp logged for ${whatsappContact.first_name}.`,
+        title: "WhatsApp logged",
+        durationMs: 2000,
+      });
+      const scroller = document.querySelector<HTMLElement>(".crm-content");
+      restoreScrollRef.current = scroller ? scroller.scrollTop : null;
+      setWhatsappContact(null);
+      setWhatsappNotes("");
+      loadContacts({ silent: true });
+    } catch {
+      toast.error("Failed to log WhatsApp message.", "Error");
+    } finally {
+      setSavingWhatsapp(false);
+    }
+  };
+
+  // Open the comments panel for a prospect and load its history. Comments are
+  // activity rows (type='comment'); we fetch the contact's activities and keep
+  // only comments, newest first.
+  const openComments = (contact: Contact) => {
+    setCommentsContact(contact);
+    setCommentDraft("");
+    setCommentsList([]);
+    setCommentsLoading(true);
+    activitiesApi
+      .list(undefined, contact.id)
+      .then((items) => {
+        const comments = (items || [])
+          .filter((a) => a.type === "comment")
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+        setCommentsList(comments);
+      })
+      .catch(() => setCommentsList([]))
+      .finally(() => setCommentsLoading(false));
+  };
+
+  const saveComment = async () => {
+    const body = commentDraft.trim();
+    if (!commentsContact || !body) return;
+    setSavingComment(true);
+    try {
+      const created = await activitiesApi.create({
+        type: "comment",
+        source: "manual",
+        content: body,
+        contact_id: commentsContact.id,
+      } as Partial<Activity>);
+      // Prepend optimistically so the new comment shows instantly.
+      setCommentsList((prev) => [created, ...prev]);
+      setCommentDraft("");
+      toast.show({ tone: "success", message: "Comment added.", title: "Saved", durationMs: 2000 });
+      // Refresh the list so the row's latest-comment column reflects it.
+      const scroller = document.querySelector<HTMLElement>(".crm-content");
+      restoreScrollRef.current = scroller ? scroller.scrollTop : null;
+      loadContacts({ silent: true });
+    } catch {
+      toast.error("Failed to add comment.", "Error");
+    } finally {
+      setSavingComment(false);
+    }
+  };
+
+  // Open the bulk "start campaign" modal and load the available Instantly campaigns.
+  const openCampaignModal = () => {
+    if (selectedContactIds.size === 0) return;
+    setCampaignModalOpen(true);
+    setSelectedCampaignId("");
+    setCampaignOptionsLoading(true);
+    outreachApi
+      .listInstantlyCampaigns()
+      .then((res) => setCampaignOptions(res.campaigns || []))
+      .catch(() => setCampaignOptions([]))
+      .finally(() => setCampaignOptionsLoading(false));
+  };
+
+  const startBulkCampaign = async () => {
+    if (!selectedCampaignId || selectedContactIds.size === 0) return;
+    setStartingCampaign(true);
+    try {
+      const res = await outreachApi.bulkAddToInstantlyCampaign(Array.from(selectedContactIds), selectedCampaignId);
+      const skipped = res.skipped_no_email ? ` · ${res.skipped_no_email} skipped (no email)` : "";
+      toast.success(`${res.enrolled} prospect${res.enrolled === 1 ? "" : "s"} added to the campaign${skipped}.`, "Campaign started");
+      setCampaignModalOpen(false);
+      setSelectedContactIds(new Set());
+      loadContacts({ silent: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to start campaign.", "Error");
+    } finally {
+      setStartingCampaign(false);
     }
   };
 
@@ -1996,7 +2209,7 @@ export default function Contacts() {
                         fontWeight: 800,
                       }}
                     >
-                      {ownerScope === "mine" ? "My list" : "All reps"}
+                      {ownerScope === "mine" ? "My list" : isAdmin ? "All reps" : "Mine + unassigned"}
                     </button>
                   </div>
                   <div style={{ position: "relative" }}>
@@ -2324,6 +2537,7 @@ export default function Contacts() {
                 ownerScope === "mine" ||
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
+                linkedinStatusFilter.length ||
                 callOutcomeColorFilter.length ||
                 emailOutcomeColorFilter.length ||
                 callAttemptsBucketFilter.length ||
@@ -2338,10 +2552,16 @@ export default function Contacts() {
                 companyFilter ||
                 search
               );
-              const teamUserOptions = teamUsers.map((u) => ({
-                value: u.id,
-                label: u.name || u.email,
-              }));
+              const teamUserOptions = [
+                // Sentinel for "no owner" — backend maps "__unassigned__" to an
+                // IS NULL clause on the matching ownership slot(s) so reps can
+                // surface prospects that slipped through with no AE/SDR.
+                { value: "__unassigned__", label: "Unassigned" },
+                ...teamUsers.map((u) => ({
+                  value: u.id,
+                  label: u.name || u.email,
+                })),
+              ];
               return (
                 <div className="prospect-desktop-only" style={{
                   display: "flex", flexDirection: "column", alignItems: "stretch", gap: 9,
@@ -2413,6 +2633,15 @@ export default function Contacts() {
                     options={CALL_DISPOSITION_FILTER_OPTIONS}
                     allLabel="All call outcomes"
                     minWidth={190}
+                  />
+                  <MultiSelectFilter
+                    hideLabel
+                    label="LinkedIn status"
+                    values={linkedinStatusFilter}
+                    onChange={setLinkedinStatusFilter}
+                    options={LINKEDIN_STATUS_FILTER_OPTIONS}
+                    allLabel="All LinkedIn"
+                    minWidth={180}
                   />
                   {/* Outcome-color + attempt filters — match the dots
                       rendered by ProgressCell so the rep can click "Green"
@@ -2668,6 +2897,7 @@ export default function Contacts() {
                         setSearch("");
                         setOwnerScope("all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
+                        setLinkedinStatusFilter([]);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
                         setCallAttemptsBucketFilter([]);
                         setFollowupCountMin(null); setFollowupCountMax(null);
@@ -2798,6 +3028,27 @@ export default function Contacts() {
                   >
                     <Trash2 size={14} /> {deletingContacts ? "Deleting..." : "Delete selected"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={openCampaignModal}
+                    disabled={selectedContactIds.size === 0}
+                    style={{
+                      height: 36,
+                      border: "1px solid #bfe3cb",
+                      background: selectedContactIds.size ? "#e9f9ef" : "#f6f8fb",
+                      color: selectedContactIds.size ? "#0f9d58" : "#9aa8b7",
+                      borderRadius: 11,
+                      padding: "0 14px",
+                      fontSize: 13,
+                      fontWeight: 850,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: selectedContactIds.size ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    <Send size={14} /> Start campaign
+                  </button>
                   {user?.role === "sdr" && (
                     <button
                       type="button"
@@ -2817,6 +3068,33 @@ export default function Contacts() {
                     >
                       {bulkClaimingSdr ? "Claiming..." : "Claim selected as SDR"}
                     </button>
+                  )}
+                  {isAdmin && (
+                    <select
+                      value=""
+                      disabled={selectedContactIds.size === 0 || bulkAssigningSdr}
+                      onFocus={() => { if (assignableUsers.length === 0) getCachedUsers().then((u) => setAssignableUsers(u as never)).catch(() => {}); }}
+                      onChange={(e) => { if (e.target.value) void bulkAssignSelectedSdr(e.target.value); e.currentTarget.value = ""; }}
+                      title="Assign selected prospects' SDR"
+                      style={{
+                        height: 36,
+                        border: "1px solid #bfd6ee",
+                        background: selectedContactIds.size ? "#fff" : "#f6f8fb",
+                        color: selectedContactIds.size ? "#175089" : "#9aa8b7",
+                        borderRadius: 11,
+                        padding: "0 12px",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: selectedContactIds.size ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      <option value="">{bulkAssigningSdr ? "Assigning…" : "Assign SDR →"}</option>
+                      {assignableUsers
+                        .filter((u) => ["sdr", "ae", "admin"].includes((u.role || "").toLowerCase()))
+                        .map((u) => (
+                          <option key={u.id} value={u.id}>{u.name || u.id} ({(u.role || "").toUpperCase()})</option>
+                        ))}
+                    </select>
                   )}
                 </div>
               </div>
@@ -2973,18 +3251,6 @@ export default function Contacts() {
                                       ) : (
                                         <span className="text-[#96a7ba]">-</span>
                                       )}
-                                      {c.outreach_lane && (
-                                        <span title={`Outreach lane: ${c.outreach_lane}`} style={{
-                                          alignSelf: "flex-start",
-                                          fontSize: 10, fontWeight: 700,
-                                          padding: "2px 7px", borderRadius: 999,
-                                          background: "#fef3c7", color: "#92400e",
-                                          border: "1px solid #fde68a", lineHeight: 1.3,
-                                          whiteSpace: "nowrap",
-                                        }}>
-                                          {c.outreach_lane}
-                                        </span>
-                                      )}
                                     </div>
                                   </td>
                                 );
@@ -3041,6 +3307,32 @@ export default function Contacts() {
                                     style={{ cursor: "pointer" }}
                                   >
                                     <ProgressCell contact={c} lifecycle={lifecycleSummaries[c.id]} />
+                                  </td>
+                                );
+                              case "comments":
+                                return (
+                                  <td
+                                    key={column.key}
+                                    onClick={(e) => { e.stopPropagation(); openComments(c); }}
+                                    style={{ cursor: "pointer", maxWidth: 220 }}
+                                    title={c.latest_comment || "Add a comment"}
+                                  >
+                                    {c.latest_comment ? (
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                                        <span style={{ fontSize: 12.5, color: "#33485f", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                          {c.latest_comment}
+                                        </span>
+                                        {(c.comment_count ?? 0) > 1 && (
+                                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "#6f8297" }}>
+                                            {c.comment_count} comments · view all
+                                          </span>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: "#8aa0b6" }}>
+                                        <MessageSquare size={13} /> Add comment
+                                      </span>
+                                    )}
                                   </td>
                                 );
                               case "timezone": {
@@ -3151,6 +3443,9 @@ export default function Contacts() {
                                       </a>
                                       <button type="button" onClick={(e) => { e.stopPropagation(); setLinkedinContact(c); setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent"); setLinkedinNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log LinkedIn touch">
                                         <Link2 size={13} /> Log
+                                      </button>
+                                      <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) { setWhatsappContact(c); setWhatsappOutcome("sent"); setWhatsappNotes(""); } }} style={{ height: 38, borderRadius: 10, border: "1px solid #b7e3c5", background: c.phone ? "#e7f9ef" : "#f6f8fb", color: c.phone ? "#0f9d58" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? "WhatsApp & log message" : "No phone number"}>
+                                        <MessageCircle size={13} /> WhatsApp
                                       </button>
                                       <button type="button" onClick={(e) => { e.stopPropagation(); setOpenActionsId((current) => (current === c.id ? null : c.id)); }} style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", color: "#4a6580", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} title="Prospect actions">
                                         <MoreHorizontal size={16} />
@@ -4422,6 +4717,230 @@ export default function Contacts() {
                 >
                   {savingLinkedin ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
                   {savingLinkedin ? "Saving…" : "Log touch"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {whatsappContact && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setWhatsappContact(null)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 420, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#25D366,#128C7E)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <MessageCircle size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Log WhatsApp</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{whatsappContact.first_name} {whatsappContact.last_name}</div>
+                </div>
+              </div>
+              <button onClick={() => setWhatsappContact(null)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              {waPhoneDigits(whatsappContact.phone) ? (
+                <a href={`https://wa.me/${waPhoneDigits(whatsappContact.phone)}`} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#0f9d58", fontWeight: 700, textDecoration: "none" }}>
+                  <MessageCircle size={14} /> Open WhatsApp chat ({whatsappContact.phone})
+                </a>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "#b06a00" }}>No phone number saved — you can still log a message.</div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>What happened? *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+                  {([
+                    { value: "sent", label: "Message sent" },
+                    { value: "replied", label: "Replied" },
+                    { value: "no_response", label: "No response" },
+                    { value: "meeting_booked", label: "Meeting booked" },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setWhatsappOutcome(opt.value)}
+                      style={{
+                        padding: "10px 0", borderRadius: 10, border: `2px solid ${whatsappOutcome === opt.value ? "#0f9d58" : "#dce8f4"}`,
+                        background: whatsappOutcome === opt.value ? "#e7f9ef" : "#f7faff",
+                        color: whatsappOutcome === opt.value ? "#0f7a47" : "#4a6580",
+                        fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes (optional)</label>
+                <textarea
+                  value={whatsappNotes}
+                  onChange={(e) => setWhatsappNotes(e.target.value)}
+                  placeholder="What did you send or hear back? Any signals…"
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setWhatsappContact(null)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveWhatsappTouch()}
+                  disabled={savingWhatsapp}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#25D366,#128C7E)", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: savingWhatsapp ? 0.7 : 1 }}
+                >
+                  {savingWhatsapp ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  {savingWhatsapp ? "Saving…" : "Log message"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {commentsContact && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setCommentsContact(null)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 460, maxWidth: "95vw", maxHeight: "85vh", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden", display: "flex", flexDirection: "column" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#475569,#1e293b)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <MessageSquare size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Comments</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{commentsContact.first_name} {commentsContact.last_name}</div>
+                </div>
+              </div>
+              <button onClick={() => setCommentsContact(null)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Add a new comment */}
+            <div style={{ padding: "14px 22px 12px", borderBottom: "1px solid #eef2f7" }}>
+              <textarea
+                value={commentDraft}
+                onChange={(e) => setCommentDraft(e.target.value)}
+                placeholder="Add a comment for this prospect…"
+                rows={2}
+                onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void saveComment(); }}
+                style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button
+                  onClick={() => void saveComment()}
+                  disabled={savingComment || !commentDraft.trim()}
+                  style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: commentDraft.trim() ? "linear-gradient(135deg,#475569,#1e293b)" : "#c7d2dd", color: "#fff", fontSize: 13, fontWeight: 700, cursor: commentDraft.trim() ? "pointer" : "default", display: "inline-flex", alignItems: "center", gap: 8 }}
+                >
+                  {savingComment ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  {savingComment ? "Saving…" : "Add comment"}
+                </button>
+              </div>
+            </div>
+
+            {/* Previous comments */}
+            <div style={{ padding: "12px 22px 20px", overflowY: "auto" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+                Previous comments{commentsList.length ? ` (${commentsList.length})` : ""}
+              </div>
+              {commentsLoading ? (
+                <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading…</div>
+              ) : commentsList.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#9aa8b7" }}>No comments yet — add the first one above.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {commentsList.map((cm) => (
+                    <div key={cm.id} style={{ border: "1px solid #e7eef5", borderRadius: 12, padding: "10px 12px", background: "#fbfdff" }}>
+                      <div style={{ fontSize: 13, color: "#27384a", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{cm.content}</div>
+                      <div style={{ fontSize: 11, color: "#8aa0b6", marginTop: 6, fontWeight: 600 }}>
+                        {cm.user_name ? `${cm.user_name} · ` : ""}{cm.created_at ? new Date(cm.created_at).toLocaleString() : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {campaignModalOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setCampaignModalOpen(false)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 440, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f9d58,#0b7a43)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Send size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Start campaign</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{selectedContactIds.size} prospect{selectedContactIds.size === 1 ? "" : "s"} selected</div>
+                </div>
+              </div>
+              <button onClick={() => setCampaignModalOpen(false)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Instantly campaign *</label>
+                {campaignOptionsLoading ? (
+                  <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading campaigns…</div>
+                ) : campaignOptions.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#b06a00" }}>No Instantly campaigns found. Create one in Instantly first.</div>
+                ) : (
+                  <select
+                    value={selectedCampaignId}
+                    onChange={(e) => setSelectedCampaignId(e.target.value)}
+                    style={{ width: "100%", height: 42, border: "1px solid #c8d9e8", borderRadius: 10, padding: "0 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none" }}
+                  >
+                    <option value="">Select a campaign…</option>
+                    {campaignOptions.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                )}
+                <p className="crm-muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
+                  Selected prospects are added as leads to this campaign. Prospects without an email are skipped.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setCampaignModalOpen(false)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void startBulkCampaign()}
+                  disabled={startingCampaign || !selectedCampaignId}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: selectedCampaignId ? "linear-gradient(135deg,#0f9d58,#0b7a43)" : "#c7d2dd", color: "#fff", fontSize: 14, fontWeight: 700, cursor: selectedCampaignId ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {startingCampaign ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                  {startingCampaign ? "Starting…" : "Start campaign"}
                 </button>
               </div>
             </div>

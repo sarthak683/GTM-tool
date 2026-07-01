@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to this file so it works regardless of CWD
@@ -17,8 +18,32 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # App
-    SECRET_KEY: str = "dev_secret_key"
+    SECRET_KEY: str = "dev_secret_key"  # dev placeholder — MUST be overridden in prod/staging
     ENVIRONMENT: str = "development"
+
+    # ── Security / auth policy ────────────────────────────────────────────────
+    # Comma-separated Google Workspace domains allowed to sign in. Empty = allow
+    # any Google account (current behaviour). Set e.g. "beacon.li" to lock down.
+    ALLOWED_EMAIL_DOMAINS: str = ""
+    # Comma-separated emails granted admin on first sign-in. Empty keeps the
+    # legacy "first user to sign in becomes admin" bootstrap.
+    ADMIN_BOOTSTRAP_EMAILS: str = ""
+    # When true, inbound webhooks without a verifiable signature/secret are
+    # rejected (fail-closed). Defaults off so local/dev keeps working; enable in
+    # prod via env.
+    REQUIRE_WEBHOOK_SECRETS: bool = False
+    # Per-source webhook shared secrets. INSTANTLY_/AIRCALL_ equivalents already
+    # exist further down; these cover the previously-unverified sources.
+    FIREFLIES_WEBHOOK_SECRET: str = ""
+    TLDV_WEBHOOK_SECRET: str = ""
+    RB2B_WEBHOOK_SECRET: str = ""
+
+    # ── Observability ─────────────────────────────────────────────────────────
+    SENTRY_DSN: str = ""             # empty = error tracking disabled
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    SENTRY_ENVIRONMENT: str = ""     # falls back to ENVIRONMENT when empty
+    ENABLE_METRICS: bool = True      # expose Prometheus /metrics
+    LOG_JSON: bool = False           # structured JSON logs (enable in prod)
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
@@ -57,19 +82,29 @@ class Settings(BaseSettings):
     # Anthropic Claude
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_API_KEY: str = ""  # alias — some .env files use this name
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     # CRM AI routing by complexity
     CLAUDE_MODEL_SIMPLE: str = "claude-haiku-4-5-20251001"
-    CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL_STANDARD: str = "claude-sonnet-4-6"
     CLAUDE_MODEL_COMPLEX: str = "claude-opus-4-6"
+
+    # Master switch for ALL system-generated tasks. Default is OFF: the product
+    # is "manual tasks only" — the task list contains only human-created
+    # (task_type="manual") tasks. Every automated generator is short-circuited
+    # at the single chokepoint (refresh_system_tasks_for_entity) — AI emitter,
+    # deterministic critical rules, stage playbook, contact/company hygiene, and
+    # personal-email-sync. The generator code stays in-tree and dormant, so
+    # auto-tasks can be re-enabled by setting this back to true (env override).
+    ENABLE_SYSTEM_TASKS: bool = False
 
     # AI task emitter — the 5 LLM-gated codes (T-STAGE, T-AMOUNT, T-CLOSE,
     # T-MEDPICC, T-CONTACT). T-CRITICAL always runs (deterministic rules).
+    # Finer sub-gate: only relevant when ENABLE_SYSTEM_TASKS is true.
     ENABLE_AI_TASK_EMITTER: bool = True
 
     # Demo generation tuning
-    DEMO_MODEL: str = "claude-sonnet-4-20250514"  # Sonnet 4 — best availability + quality for code gen
+    DEMO_MODEL: str = "claude-sonnet-4-6"  # Sonnet 4.6 — best availability + quality for code gen (Sonnet 4 retired 2026-06-15)
     DEMO_MAX_TOKENS: int = 30000             # Extended thinking unlocks 64K; 30K is plenty for 15-25K token demos
     DEMO_THINKING_BUDGET: int = 10000        # Tokens for planning HTML structure before writing
     DEMO_TIMEOUT_SECONDS: int = 300          # Per-attempt timeout (streaming)
@@ -116,7 +151,7 @@ class Settings(BaseSettings):
     NDA_TEMPLATE_DRIVE_ID_US: str = ""
     NDA_TEMPLATE_DRIVE_ID_SINGAPORE: str = ""
 
-    ZIPPY_MODEL: str = "claude-sonnet-4-20250514"
+    ZIPPY_MODEL: str = "claude-sonnet-4-6"
     ZIPPY_MAX_TOKENS: int = 4000
     ZIPPY_TOP_K: int = 8
     ZIPPY_CHUNK_SIZE: int = 1200
@@ -147,9 +182,32 @@ class Settings(BaseSettings):
     #      print('PRIV:', v.private_key.to_string().hex())"
     # Or any VAPID generator. The PUBLIC key is exposed to the browser; the
     # PRIVATE key never leaves the server.
-    VAPID_PUBLIC_KEY: str = "BMVWMkEi8KTbqH5iomhRCQUmj3NI1lv5Yy8F25tTYrTfpiArrl12Ej9iXMOWi5oaj4z_3rfkDuv8raJyCNrMEQI"   # base64url-encoded uncompressed P-256 public key
-    VAPID_PRIVATE_KEY: str = "60WTbuXtl_tv9Vi_k_f5vqhVmo03qu0bAXMTw3x_A8k"  # base64url-encoded P-256 private key
+    # NOTE: the previously committed keypair has been removed from source and
+    # MUST be rotated — treat the old value as compromised. Supply both via env.
+    VAPID_PUBLIC_KEY: str = ""   # base64url-encoded uncompressed P-256 public key
+    VAPID_PRIVATE_KEY: str = ""  # base64url-encoded P-256 private key (never commit)
     VAPID_SUBJECT: str = "mailto:admin@beacon.li"  # mailto: or https: contact for push services
+
+    # Recotap (ABM / account intelligence) — sandbox + prod share an X-Api-Key
+    # auth. Mind the hyphen: sandbox is reco-tap.com, prod is recotap.com.
+    RECOTAP_ENVIRONMENT: str = "sandbox"  # "sandbox" | "prod"
+    RECOTAP_SANDBOX_API_KEY: str = ""
+    # Prod X-Api-Key. Accept both RECOTAP_PROD_API_KEY (symmetric with the sandbox
+    # var, preferred) and the legacy RECOTAP_API_KEY so existing envs keep working.
+    RECOTAP_PROD_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("RECOTAP_PROD_API_KEY", "RECOTAP_API_KEY"),
+    )
+    RECOTAP_SANDBOX_BASE_URL: str = "https://sandboxapi.reco-tap.com/api/v1"
+    RECOTAP_PROD_BASE_URL: str = "https://eapi.recotap.com/api/v1"
+
+    @property
+    def recotap_base_url(self) -> str:
+        return self.RECOTAP_PROD_BASE_URL if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_BASE_URL
+
+    @property
+    def recotap_api_key(self) -> str:
+        return self.RECOTAP_PROD_API_KEY if self.RECOTAP_ENVIRONMENT.strip().lower() == "prod" else self.RECOTAP_SANDBOX_API_KEY
 
     # Aircall
     AIRCALL_API_ID: str = ""
@@ -241,6 +299,43 @@ class Settings(BaseSettings):
     ZIPPY_TOP_K: int = 8
     ZIPPY_CHUNK_SIZE: int = 1200
     ZIPPY_CHUNK_OVERLAP: int = 200
+
+    # ── Derived security helpers ──────────────────────────────────────────────
+    @property
+    def is_production(self) -> bool:
+        """True for prod-like environments where secrets/hardening are enforced."""
+        return self.ENVIRONMENT.strip().lower() in {"production", "prod", "staging"}
+
+    @property
+    def allowed_email_domains(self) -> List[str]:
+        """Lowercased domain allowlist; empty list means 'allow any Google account'."""
+        return [d.strip().lower() for d in self.ALLOWED_EMAIL_DOMAINS.split(",") if d.strip()]
+
+    @property
+    def admin_bootstrap_emails(self) -> set:
+        """Lowercased emails auto-granted admin; empty means legacy first-user bootstrap."""
+        return {e.strip().lower() for e in self.ADMIN_BOOTSTRAP_EMAILS.split(",") if e.strip()}
+
+    def validate_runtime_secrets(self) -> List[str]:
+        """
+        Return a list of blocking misconfigurations for prod/staging startup.
+
+        Empty in development. The app calls this on boot (see app/main.py) and
+        refuses to start in a prod-like environment that is still running on the
+        insecure dev placeholders or the leaked, now-rotated VAPID key.
+        """
+        if not self.is_production:
+            return []
+        problems: List[str] = []
+        if self.SECRET_KEY == "dev_secret_key":
+            problems.append("SECRET_KEY is the insecure dev default — set a strong random value.")
+        if self.JWT_SECRET == "jwt_dev_secret_change_me":
+            problems.append("JWT_SECRET is the insecure dev default — set a strong random value.")
+        if len(self.JWT_SECRET) < 32:
+            problems.append("JWT_SECRET is too short (<32 chars) for production.")
+        if self.VAPID_PRIVATE_KEY == "60WTbuXtl_tv9Vi_k_f5vqhVmo03qu0bAXMTw3x_A8k":
+            problems.append("VAPID_PRIVATE_KEY is the leaked committed key — rotate and set via env.")
+        return problems
 
 
 settings = Settings()

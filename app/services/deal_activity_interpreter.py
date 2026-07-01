@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.clients.claude import ClaudeClient
+from app.config import settings
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.deal import DEAL_STAGES, Deal
@@ -266,6 +267,9 @@ async def interpret_deal_activity(
         tool_description="Record the structured state interpretation of the recent deal activity bundle.",
         input_schema=TOOL_SCHEMA,
         max_tokens=700,
+        # Structured tool-use extraction — pin the standard model so
+        # max_tokens=700 doesn't route this to the complex tier.
+        model_override=settings.CLAUDE_MODEL_STANDARD,
     )
     if not isinstance(payload, dict):
         return fallback

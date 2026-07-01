@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -24,6 +25,122 @@ from app.repositories.outreach import OutreachRepository
 from app.services.outreach_generator import generate_sequence
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
+logger = logging.getLogger(__name__)
+
+
+@router.get("/instantly/campaigns")
+async def list_instantly_campaigns(_user: CurrentUser):
+    """List Instantly campaigns (for the bulk-start campaign picker).
+
+    Returns a slim {id, name, status} list. On any Instantly error we return an
+    empty list rather than 500 so the picker degrades gracefully.
+    """
+    try:
+        campaigns = await InstantlyClient().list_campaigns(limit=200)
+    except Exception:
+        # Degrade to an empty list rather than 500, but log it — a silent except
+        # here once masked a 400 ("limit must be <= 100") as "no campaigns found".
+        logger.exception("list_instantly_campaigns: failed to fetch Instantly campaigns")
+        return {"campaigns": []}
+    slim = []
+    for c in campaigns or []:
+        cid = c.get("id") or c.get("campaign_id")
+        if not cid:
+            continue
+        slim.append({
+            "id": str(cid),
+            "name": c.get("name") or c.get("campaign_name") or str(cid),
+            "status": c.get("status"),
+        })
+    return {"campaigns": slim}
+
+
+@router.post("/instantly/bulk-add")
+async def bulk_add_to_instantly_campaign(
+    session: DBSession,
+    _user: CurrentUser,
+    contact_ids: list[UUID] = Body(..., embed=True),
+    campaign_id: str = Body(..., embed=True),
+):
+    """Add a selected set of prospects to an EXISTING Instantly campaign.
+
+    The bulk analog of the single-contact sequence launch: reps tick prospects on
+    the Prospects page, pick a campaign, and we bulk-add them as leads via
+    Instantly's add_leads_bulk (≤1000/call). The campaign already owns its email
+    steps in Instantly, so we don't create/activate anything here — we just enroll
+    leads. Contacts without an email are skipped and reported.
+    """
+    from app.models.company import Company
+
+    ids = [cid for cid in contact_ids if cid]
+    if not ids:
+        raise ValidationError("Select at least one prospect.")
+    if len(set(ids)) > 1000:
+        raise ValidationError("Too many prospects in one request (max 1000). Start in smaller batches.")
+    if not (campaign_id or "").strip():
+        raise ValidationError("Pick a campaign to start.")
+
+    contacts = (
+        await session.execute(select(Contact).where(Contact.id.in_(list(set(ids)))))
+    ).scalars().all()
+    if not contacts:
+        raise NotFoundError("No matching prospects found.")
+
+    # Batch-fetch company names for the lead payloads (contacts may span companies).
+    company_ids = list({c.company_id for c in contacts if c.company_id})
+    companies = (
+        await session.execute(select(Company).where(Company.id.in_(company_ids)))
+    ).scalars().all() if company_ids else []
+    company_name_by_id = {str(co.id): co.name for co in companies}
+
+    leads: list[dict] = []
+    enrolled = []
+    skipped_no_email = 0
+    for contact in contacts:
+        if not (contact.email or "").strip():
+            skipped_no_email += 1
+            continue
+        leads.append({
+            "email": contact.email,
+            "first_name": contact.first_name or "",
+            "last_name": contact.last_name or "",
+            "company_name": company_name_by_id.get(str(contact.company_id), "") if contact.company_id else "",
+            "job_title": contact.title or "",
+            "linkedin_url": contact.linkedin_url or "",
+        })
+        enrolled.append(contact)
+
+    if not leads:
+        raise ValidationError("None of the selected prospects have an email address.")
+
+    client = InstantlyClient()
+    # Register webhooks so we get status callbacks (non-fatal if it fails).
+    if settings.INSTANTLY_WEBHOOK_URL:
+        try:
+            await client.ensure_webhook(url=settings.INSTANTLY_WEBHOOK_URL, event_types=INSTANTLY_WEBHOOK_EVENTS)
+        except Exception:
+            pass
+
+    try:
+        await client.add_leads_bulk(campaign_id=campaign_id, leads=leads)
+    except InstantlyError as e:
+        raise ValidationError(f"Instantly bulk-add failed: {e.detail}")
+
+    # Stamp each enrolled contact so the UI reflects the queued state immediately.
+    for contact in enrolled:
+        contact.instantly_status = "pushed"
+        contact.sequence_status = "queued_instantly"
+        contact.instantly_campaign_id = campaign_id
+        session.add(contact)
+    await session.commit()
+
+    return {
+        "campaign_id": campaign_id,
+        "requested": len(set(ids)),
+        "enrolled": len(enrolled),
+        "skipped_no_email": skipped_no_email,
+    }
+
 
 _ALLOWED_SEQUENCE_FIELDS = frozenset(
     ["email_1", "email_2", "email_3", "subject_1", "subject_2", "subject_3",
@@ -939,9 +1056,10 @@ async def sync_campaign_from_instantly(
                     elif interest == 1:
                         contact.sequence_status = "interested"
                         contact.instantly_status = "interested"
-                    elif interest == -1:
-                        contact.sequence_status = "not_interested"
-                        contact.instantly_status = "not_interested"
+                    # interest == -1 ("not interested") deliberately NOT mapped:
+                    # Instantly stamps it on auto-replies/OOO/imports with no real
+                    # reply (phantom negatives). Genuine negatives come via the
+                    # human-set lead_not_interested webhook. (Matches instantly_sync.)
                     elif lead_status == 1:
                         contact.instantly_status = "active"
 

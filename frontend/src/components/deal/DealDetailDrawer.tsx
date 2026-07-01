@@ -7,7 +7,8 @@ import {
   Shield, BarChart2, ClipboardList, Presentation,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
-import { accountSourcingApi, companiesApi, dealsApi, contactsApi, settingsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
+import { accountSourcingApi, dealsApi, contactsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
+import { getCachedGmailSync } from "../../lib/cachedFetch";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
@@ -28,7 +29,6 @@ interface Props {
   onDealUpdated: (deal: Deal) => void;
   onDealDeleted?: (dealId: string) => void;
   onConvert?: (deal: Deal) => void;
-  onCompanyUpdated?: (company: Company) => void;
 }
 
 const PERSONA_STYLE: Record<string, { bg: string; color: string }> = {
@@ -312,7 +312,7 @@ function EngagementPanel({
  * overdue/due chip) so they don't have to scroll into the form or hop tabs.
  * Read-only summary; editing stays in the Deal Details form below.
  */
-function DealAtAGlance({ deal, onPatch }: { deal: Deal; onPatch: (data: Partial<Deal>) => void }) {
+function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatch: (data: Partial<Deal>) => void; qualificationDue: boolean }) {
   const [draft, setDraft] = useState("");
   const healthColor =
     deal.health === "green" ? "#15803d" : deal.health === "yellow" ? "#c2410c" : deal.health === "red" ? "#be123c" : "#64748b";
@@ -380,22 +380,57 @@ function DealAtAGlance({ deal, onPatch }: { deal: Deal; onPatch: (data: Partial<
           </div>
         ) : null}
       </div>
+      {/* Qualification criteria — captured once a deal reaches demo_done.
+          Always shown if a note already exists; otherwise only surfaced (and
+          nudged) for demo_done-and-later deals. */}
+      {(qualificationDue || deal.qualification_reason) ? (
+        <div style={{ borderTop: "1px solid #eef2f7", paddingTop: 9, display: "grid", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Qualification criteria</span>
+            {qualificationDue && !deal.qualification_reason ? (
+              <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: "#b08400", background: "#fffbeb", border: "1px solid #fde68a" }}>
+                Required after demo
+              </span>
+            ) : null}
+          </div>
+          <textarea
+            key={`qual-${deal.id}-${deal.qualification_reason ?? ""}`}
+            defaultValue={deal.qualification_reason ?? ""}
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v !== (deal.qualification_reason ?? "")) onPatch({ qualification_reason: v || null } as unknown as Partial<Deal>);
+            }}
+            placeholder="Why is this deal qualified? Capture the qualification criteria / reason…"
+            rows={2}
+            style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, color: "#16273d", border: `1px solid ${qualificationDue && !deal.qualification_reason ? "#fde68a" : "#d5e0ec"}`, borderRadius: 8, padding: "8px 10px", outline: "none", fontFamily: "inherit", resize: "vertical" }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /**
- * "Beacon suggests" — surfaces the top open AI next-actions (T-STAGE / T-MEDPICC
- * / T-CONTACT …) on the deal Overview so the AE can act in one click instead of
- * digging into the Tasks tab. Reuses the same task feed + accept/dismiss actions
- * as TaskCenterModal (task_type=system, task_track=sales_ai). Renders nothing
- * when there are no open suggestions.
+ * "Beacon suggests" — historically surfaced the top open AI next-actions
+ * (T-STAGE / T-MEDPICC / T-CONTACT …) on the deal Overview. The product is now
+ * "manual tasks only": system tasks are no longer generated (backend flag
+ * ENABLE_SYSTEM_TASKS) and existing ones are dismissed, so this strip has
+ * nothing to show. We keep the component wired (it still respects the same task
+ * feed) but disable the fetch so it renders nothing and makes no dead network
+ * call. To restore: re-enable system tasks on the backend and flip
+ * SYSTEM_TASKS_ENABLED below.
  */
+const SYSTEM_TASKS_ENABLED = false;
+
 function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: () => void }) {
   const [items, setItems] = useState<TaskItem[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = () => {
+    if (!SYSTEM_TASKS_ENABLED) {
+      setItems([]);
+      return;
+    }
     tasksApi
       .list("deal", dealId, false, "auto")
       .then((tasks) =>
@@ -475,7 +510,7 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
   );
 }
 
-function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert, onCompanyUpdated }: Props) {
+function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -520,10 +555,11 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   // Tag input
   const [tagInput, setTagInput] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [localPriorityTag, setLocalPriorityTag] = useState<"P0" | "P1" | "P2" | null>(() => {
-    const tag = companies.find((c) => c.id === deal.company_id)?.priority_tag ?? null;
-    return tag as "P0" | "P1" | "P2" | null;
-  });
+  // Per-deal priority tag (P0/P1/P2). Now lives on the deal itself, not the
+  // company — one company can have several deals at different priorities.
+  const [localPriorityTag, setLocalPriorityTag] = useState<"P0" | "P1" | "P2" | null>(
+    (deal.priority_tag ?? null) as "P0" | "P1" | "P2" | null,
+  );
 
   // Company searchable combobox
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
@@ -578,7 +614,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   };
 
   useEffect(() => {
-    settingsApi.getGmailSync().then((data) => {
+    getCachedGmailSync().then((data) => {
       if (data.inbox) setSharedInbox(data.inbox);
       setSharedEmailSyncConnected(Boolean(data.configured));
     }).catch(() => {});
@@ -787,6 +823,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   };
 
   const stageLabel = stages.find((s) => s.id === deal.stage)?.label ?? deal.stage;
+  // Qualification criteria become required once a deal reaches demo_done. Use
+  // the configured stage order (the board columns) to decide "at or past
+  // demo_done"; if demo_done isn't a configured stage, never force it.
+  const demoDoneIdx = stages.findIndex((s) => s.id === "demo_done");
+  const currentStageIdx = stages.findIndex((s) => s.id === deal.stage);
+  const qualificationDue = demoDoneIdx >= 0 && currentStageIdx >= demoDoneIdx;
   const selectedCompanyName = companies.find(c => c.id === deal.company_id)?.name
     ?? companyResults.find(c => c.id === deal.company_id)?.name
     ?? deal.company_name
@@ -1108,7 +1150,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             <>
 
           {/* At-a-glance status so the AE reads the deal in one look. */}
-          <DealAtAGlance deal={deal} onPatch={patchDeal} />
+          <DealAtAGlance deal={deal} onPatch={patchDeal} qualificationDue={qualificationDue} />
 
           {/* Beacon's AI next-actions, surfaced inline so the AE acts without
               digging into the Tasks tab. */}
@@ -1319,32 +1361,30 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               </select>
             </FieldRow>
 
-            {/* Account Priority Tag */}
-            {deal.company_id && (
-              <FieldRow label="Account Priority" icon={<Tag size={13} />}>
-                <select
-                  value={localPriorityTag ?? ""}
-                  onChange={(e) => {
-                    const prev = localPriorityTag;
-                    const next = (e.target.value || null) as "P0" | "P1" | "P2" | null;
-                    setLocalPriorityTag(next);
-                    companiesApi.patch(deal.company_id!, { priority_tag: next } as Partial<Company>)
-                      .then((updated) => { onCompanyUpdated?.(updated); })
-                      .catch((err) => { console.error("[priority] patch failed:", err?.message ?? err); setLocalPriorityTag(prev); });
-                  }}
-                  style={{
-                    ...fieldInputStyle,
-                    color: localPriorityTag === "P0" ? "#be123c" : localPriorityTag === "P1" ? "#c2410c" : localPriorityTag === "P2" ? "#15803d" : undefined,
-                    fontWeight: localPriorityTag ? 700 : undefined,
-                  }}
-                >
-                  <option value="">No priority</option>
-                  <option value="P0">P0</option>
-                  <option value="P1">P1</option>
-                  <option value="P2">P2</option>
-                </select>
-              </FieldRow>
-            )}
+            {/* Deal Priority Tag (P0/P1/P2) — per deal, not per company */}
+            <FieldRow label="Deal Priority" icon={<Tag size={13} />}>
+              <select
+                value={localPriorityTag ?? ""}
+                onChange={(e) => {
+                  const prev = localPriorityTag;
+                  const next = (e.target.value || null) as "P0" | "P1" | "P2" | null;
+                  setLocalPriorityTag(next);
+                  dealsApi.patch(deal.id, { priority_tag: next } as Partial<Deal>)
+                    .then((updated) => { onDealUpdated(updated); })
+                    .catch((err) => { console.error("[priority] patch failed:", err?.message ?? err); setLocalPriorityTag(prev); });
+                }}
+                style={{
+                  ...fieldInputStyle,
+                  color: localPriorityTag === "P0" ? "#be123c" : localPriorityTag === "P1" ? "#c2410c" : localPriorityTag === "P2" ? "#15803d" : undefined,
+                  fontWeight: localPriorityTag ? 700 : undefined,
+                }}
+              >
+                <option value="">No priority</option>
+                <option value="P0">P0</option>
+                <option value="P1">P1</option>
+                <option value="P2">P2</option>
+              </select>
+            </FieldRow>
             {/* Commit to Deal */}
             <FieldRow label="Commit to Deal" icon={<span style={{ fontSize: 13 }}>✓</span>}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 36, padding: "0 10px", borderRadius: 8, border: deal.commit_to_deal ? "1.5px solid #bbf7d0" : "1px solid #dbe6f2", background: deal.commit_to_deal ? "#f0fdf4" : "#f8fafc" }}>
