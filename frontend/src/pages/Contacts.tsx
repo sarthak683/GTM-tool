@@ -473,6 +473,7 @@ export default function Contacts() {
   // Angel-mapping data is fetched lazily the first time that tab opens.
   const angelsLoadedRef = useRef(false);
   const [callDisposition, setCallDisposition] = useState("");
+  const [dispoDropdownOpen, setDispoDropdownOpen] = useState(false);
   const [callNotes, setCallNotes] = useState("");
   // Id of the recording attached to the in-progress call disposition,
   // if any. Threaded into the Activity row's metadata on save so the
@@ -4183,7 +4184,7 @@ export default function Contacts() {
           {
             title: "Follow-up",
             tone: { bg: "#fffbeb", fg: "#92400e", border: "#fde68a" },
-            values: ["call_back_later_rescheduled", "gatekeeper_connected_to_admin"],
+            values: ["call_back_later_rescheduled", "gatekeeper_connected_to_admin", "referral"],
           },
           {
             title: "Negative",
@@ -4193,7 +4194,7 @@ export default function Contacts() {
           {
             title: "No contact",
             tone: { bg: "#f1f5f9", fg: "#475569", border: "#e2e8f0" },
-            values: ["no_answer_busy_signal", "invalid_number_wrong_number"],
+            values: ["no_answer_busy_signal", "invalid_number_wrong_number", "hang_up"],
           },
         ];
         const dispoLabel = (v: string) => CALL_DISPOSITION_OPTIONS.find((o) => o.value === v)?.label ?? v;
@@ -4425,55 +4426,139 @@ export default function Contacts() {
                     </div>
                   </div>
 
-                  {/* Disposition — grouped pills */}
+                  {/* Disposition — custom coloured dropdown */}
                   <div style={{ marginBottom: 18 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                        Disposition <span style={{ color: "#ef4444" }}>*</span>
-                      </div>
-                      {callDisposition && (
-                        <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <CheckCircle2 size={11} /> Selected
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+                      Disposition <span style={{ color: "#ef4444" }}>*</span>
+                    </div>
+                    <div style={{ position: "relative" }}>
+                      {/* Trigger button */}
+                      <button
+                        type="button"
+                        onClick={() => setDispoDropdownOpen((v) => !v)}
+                        style={{
+                          width: "100%",
+                          padding: "11px 14px",
+                          borderRadius: 11,
+                          border: callDisposition
+                            ? `1.5px solid ${dispoGroups.find(g => g.values.includes(callDisposition))?.tone.fg ?? "#16a34a"}`
+                            : "1.5px solid #e4ebf3",
+                          background: callDisposition
+                            ? dispoGroups.find(g => g.values.includes(callDisposition))?.tone.bg ?? "#f0fdf4"
+                            : "#fff",
+                          color: callDisposition
+                            ? dispoGroups.find(g => g.values.includes(callDisposition))?.tone.fg ?? "#14532d"
+                            : "#6b7c93",
+                          fontSize: 13.5,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          textAlign: "left",
+                        }}
+                      >
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {callDisposition && (
+                            <span style={{
+                              width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                              background: dispoGroups.find(g => g.values.includes(callDisposition))?.tone.fg ?? "#16a34a",
+                            }} />
+                          )}
+                          {callDisposition ? dispoLabel(callDisposition) : "— Pick a disposition —"}
                         </span>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, transform: dispoDropdownOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }}>
+                          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+
+                      {/* Dropdown panel */}
+                      {dispoDropdownOpen && (
+                        <>
+                          {/* Backdrop to close on outside click */}
+                          <div
+                            style={{ position: "fixed", inset: 0, zIndex: 98 }}
+                            onClick={() => setDispoDropdownOpen(false)}
+                          />
+                          <div style={{
+                            position: "absolute",
+                            top: "calc(100% + 6px)",
+                            left: 0,
+                            right: 0,
+                            zIndex: 99,
+                            background: "#fff",
+                            border: "1.5px solid #e4ebf3",
+                            borderRadius: 13,
+                            boxShadow: "0 12px 32px rgba(15,23,42,0.14)",
+                            overflow: "hidden",
+                          }}>
+                            {dispoGroups.map((g, gi) => (
+                              <div key={g.title}>
+                                {/* Category header */}
+                                <div style={{
+                                  padding: "7px 14px 5px",
+                                  background: g.tone.bg,
+                                  borderTop: gi > 0 ? `1px solid ${g.tone.border}` : "none",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}>
+                                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.tone.fg, flexShrink: 0 }} />
+                                  <span style={{ fontSize: 10.5, fontWeight: 900, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                                    {g.title}
+                                  </span>
+                                </div>
+                                {/* Options */}
+                                {g.values.map((v) => {
+                                  const active = callDisposition === v;
+                                  return (
+                                    <button
+                                      key={v}
+                                      type="button"
+                                      onClick={() => { handleCallDispositionChange(v); setDispoDropdownOpen(false); }}
+                                      style={{
+                                        width: "100%",
+                                        padding: "9px 14px 9px 28px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 9,
+                                        background: active ? g.tone.bg : "#fff",
+                                        border: "none",
+                                        borderLeft: `3px solid ${active ? g.tone.fg : "transparent"}`,
+                                        color: active ? g.tone.fg : "#1e2d3e",
+                                        fontSize: 13.5,
+                                        fontWeight: active ? 700 : 500,
+                                        cursor: "pointer",
+                                        textAlign: "left",
+                                        fontFamily: "inherit",
+                                        transition: "background 0.1s ease",
+                                      }}
+                                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = g.tone.bg; }}
+                                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "#fff"; }}
+                                    >
+                                      <span style={{
+                                        width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                                        background: active ? g.tone.fg : "#cbd5e1",
+                                      }} />
+                                      {dispoLabel(v)}
+                                      {active && (
+                                        <svg style={{ marginLeft: "auto" }} width="13" height="13" viewBox="0 0 13 13" fill="none">
+                                          <path d="M2 6.5l3.5 3.5L11 3" stroke={g.tone.fg} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                                        </svg>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </>
                       )}
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {dispoGroups.map((g) => (
-                        <div key={g.title}>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-                            {g.title}
-                          </div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-                            {g.values.map((v) => {
-                              const active = callDisposition === v;
-                              return (
-                                <button
-                                  key={v}
-                                  type="button"
-                                  onClick={() => handleCallDispositionChange(v)}
-                                  style={{
-                                    padding: "8px 15px",
-                                    borderRadius: 999,
-                                    border: `1.5px solid ${active ? g.tone.fg : g.tone.border}`,
-                                    background: active ? g.tone.fg : g.tone.bg,
-                                    color: active ? "#ffffff" : g.tone.fg,
-                                    fontSize: 13, fontWeight: 700,
-                                    cursor: "pointer",
-                                    transition: "all 0.12s ease",
-                                    transform: active ? "translateY(-1px)" : "none",
-                                    boxShadow: active ? `0 0 0 3px ${g.tone.fg}22, 0 5px 16px ${g.tone.fg}55` : "none",
-                                  }}
-                                >
-                                  {dispoLabel(v)}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                     {!callDisposition && (
-                      <div style={{ fontSize: 11, color: "#ef4444", marginTop: 8 }}>Pick a disposition to enable Save.</div>
+                      <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>Pick a disposition to enable Save.</div>
                     )}
                   </div>
 
