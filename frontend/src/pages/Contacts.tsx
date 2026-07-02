@@ -1564,6 +1564,16 @@ export default function Contacts() {
     }
   };
 
+  // Skip — discard any unsaved input and jump straight to the next callable
+  // prospect. If there's no next prospect, just close the drawer.
+  const handleSkip = () => {
+    if (nextCallable) {
+      void openCallSidebar(nextCallable);
+    } else {
+      setCallContact(null);
+    }
+  };
+
   const saveLinkedinTouch = async () => {
     if (!linkedinContact || !linkedinStatus) return;
     setSavingLinkedin(true);
@@ -4828,6 +4838,39 @@ export default function Contacts() {
                 boxShadow: "0 -8px 24px rgba(15,23,42,0.06)",
               }}>
                 <div style={{ display: "flex", gap: 8 }}>
+                  {/* Skip — always visible, no disposition needed */}
+                  <button
+                    type="button"
+                    onClick={handleSkip}
+                    title={nextCallable ? `Skip to ${nextCallable.first_name} ${nextCallable.last_name}` : "Close drawer"}
+                    style={{
+                      flexShrink: 0,
+                      padding: "13px 16px",
+                      borderRadius: 12,
+                      border: "1.5px solid #dde6f0",
+                      background: "#f8fafc",
+                      color: "#64748b",
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      whiteSpace: "nowrap",
+                      transition: "all 0.12s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "#f1f5f9";
+                      e.currentTarget.style.borderColor = "#c8d6e5";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "#f8fafc";
+                      e.currentTarget.style.borderColor = "#dde6f0";
+                    }}
+                  >
+                    {(callDisposition || callNotes) ? "Skip (don't save)" : "Skip"}
+                    <ArrowRight size={14} />
+                  </button>
                   <button
                     className="prospect-call-drawer-save"
                     onClick={() => void saveCallDisposition()}
