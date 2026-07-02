@@ -36,15 +36,13 @@ async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
 
 
 def _can_see_deal(deal: Deal, user: User, view_all: bool = False) -> bool:
-    """Python mirror of ``deal_visibility_filter`` for single-object guards.
+    """Deals are workspace-wide (Jul 1): everyone can see + edit any deal.
 
-    Admins (and view-all grantees, via ``view_all``) see every deal; any other
-    non-admin only sees deals they own (AE or SDR). Use on single-deal mutation
-    routes to 404 a deal the caller can't see (so existence isn't leaked).
+    Signature kept (callers still pass ``deal``/``user``/``view_all``) but all
+    args are now ignored — always returns True. The audit trail on each edit
+    (``created_by_id``) captures who made the change.
     """
-    if view_all or user.role == "admin":
-        return True
-    return deal.assigned_to_id == user.id or deal.sdr_id == user.id
+    return True
 
 
 def _normalize_optional_text(value: object) -> str | None:
@@ -155,6 +153,7 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
         type="deal_created",
         source="system",
         content=f"Deal created in {deal.pipeline_type} pipeline",
+        created_by_id=_user.id,
     )
     session.add(activity)
     await record_deal_stage_milestone(
@@ -284,6 +283,7 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
             session.add(Activity(
                 deal_id=deal_id, type="stage_change", source="system",
                 content=f"Stage moved from {previous_stage} to {upd.stage} (bulk)",
+                created_by_id=_user.id,
             ))
             await record_deal_stage_milestone(
                 session, deal=upd, stage=upd.stage,
@@ -394,6 +394,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
                 type="stage_change",
                 source="system",
                 content=f"Stage moved from {previous_stage} to {updated.stage}",
+                created_by_id=_user.id,
             )
         )
         await record_deal_stage_milestone(
@@ -419,6 +420,7 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             type="field_change",
             source="system",
             content="; ".join(changes),
+            created_by_id=_user.id,
         )
         session.add(activity)
 
@@ -500,6 +502,7 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         type="stage_change",
         source="system",
         content=f"Stage moved from {old_stage} to {new_stage}",
+        created_by_id=_user.id,
     )
     session.add(activity)
     await record_deal_stage_milestone(

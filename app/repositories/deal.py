@@ -25,23 +25,13 @@ from app.services.deal_flags import compute_deal_flags
 
 
 def deal_visibility_filter(user_id: UUID, is_admin: bool):
-    """SQLAlchemy predicate enforcing deal visibility for ONE user.
+    """Pipeline is workspace-wide (Jul 1): every user sees ALL deals. Returns true() unconditionally.
 
-    SINGLE SOURCE OF TRUTH for the deal-level visibility rule — reuse it on every
-    deal-browse surface so access can never diverge between endpoints.
-
-    - Admins (``is_admin``) see ALL deals. Returns ``true()`` — a no-op in
-      ``.where()``.
-    - A non-admin sees a deal ONLY if they own it in either slot
-      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR). Unassigned deals are NOT
-      visible to non-admins.
+    Signature kept (callers still pass ``user_id``/``is_admin``) but both args are
+    now ignored — visibility scoping was removed by product decision. Audit trail
+    on each edit captures who changed what instead.
     """
-    if is_admin:
-        return true()
-    return or_(
-        Deal.assigned_to_id == user_id,
-        Deal.sdr_id == user_id,
-    )
+    return true()
 
 
 # Local-part tokens that mark a non-human / marketing / transactional sender.
