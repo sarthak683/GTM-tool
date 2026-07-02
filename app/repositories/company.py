@@ -8,7 +8,7 @@ import re
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +63,33 @@ from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.outreach import OutreachSequence
 from app.repositories.base import BaseRepository
+
+
+def company_visibility_filter(user_id: UUID, is_admin: bool):
+    """SQLAlchemy predicate enforcing company (account) visibility for ONE user.
+
+    SINGLE SOURCE OF TRUTH for the account-level visibility rule — reuse it on
+    EVERY company-browse surface so access can never diverge between endpoints.
+
+    - Admins (``is_admin``) see ALL companies, including ``not_a_fit`` ones, so
+      they can manage/reverse them. Returns ``true()`` — a no-op in ``.where()``.
+    - A non-admin sees a company ONLY if they own it in either slot
+      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR) AND the account is not
+      flagged ``not_a_fit`` (``not_a_fit`` accounts are hidden from non-admins
+      even from their owner). Unassigned accounts are NOT visible to non-admins.
+    """
+    if is_admin:
+        return true()
+    return and_(
+        or_(
+            Company.assigned_to_id == user_id,
+            Company.sdr_id == user_id,
+        ),
+        or_(
+            Company.account_status.is_(None),
+            Company.account_status != "not_a_fit",
+        ),
+    )
 
 
 def _normalize_domain(domain: str) -> str:

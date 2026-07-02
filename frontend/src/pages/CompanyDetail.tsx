@@ -441,7 +441,13 @@ export default function CompanyDetail() {
                     const persona = canonicalPersona(c.persona, c.persona_type);
                     const trackingTone = getProspectTrackingTone(c);
                     return (
-                      <div key={c.id} className="crm-hover-lift rounded-2xl border border-[#e0e8f1] bg-white p-5">
+                      <div
+                        key={c.id}
+                        onClick={() => navigate(`/contacts/${c.id}`)}
+                        title="Open prospect detail"
+                        style={{ cursor: "pointer" }}
+                        className="crm-hover-lift rounded-2xl border border-[#e0e8f1] bg-white p-5"
+                      >
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex items-start gap-3 min-w-0">
                             <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
@@ -453,7 +459,7 @@ export default function CompanyDetail() {
                               <div className="flex flex-wrap items-center gap-2 mt-3 text-[12px] text-[#688097]">
                                 {c.email && <span className="rounded-full bg-[#f2f6fa] px-2.5 py-1">{c.email}</span>}
                                 {c.linkedin_url && (
-                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#9ace3d]">
+                                  <a href={c.linkedin_url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-full bg-[#eef5ff] px-2.5 py-1 text-[#335f93] hover:text-[#9ace3d]">
                                     LinkedIn
                                   </a>
                                 )}
@@ -471,16 +477,17 @@ export default function CompanyDetail() {
                             <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold" style={PERSONA_STYLE[persona]}>
                               {PERSONA_SHORT[persona]}
                             </span>
-                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={() => handleContactBrief(c.id)} disabled={contactBriefLoading[c.id]}>
+                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={(e) => { e.stopPropagation(); handleContactBrief(c.id); }} disabled={contactBriefLoading[c.id]}>
                               {contactBriefLoading[c.id] ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
                               Brief
                             </button>
-                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={() => setSelectedContact(c)}>
+                            <button className="crm-button soft h-10 px-3 text-[12px]" onClick={(e) => { e.stopPropagation(); setSelectedContact(c); }}>
                               <Sparkles className="h-3.5 w-3.5" />
                               Outreach
                             </button>
                             <button
-                              onClick={async () => {
+                              onClick={async (e) => {
+                                e.stopPropagation();
                                 if (!window.confirm(`Delete "${c.first_name} ${c.last_name}"?`)) return;
                                 await contactsApi.delete(c.id);
                                 setContacts((prev) => prev.filter((x) => x.id !== c.id));

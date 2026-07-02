@@ -326,19 +326,42 @@ export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  // Filter hydration source. URL params WIN when present (bookmarks/shared
+  // links keep working); otherwise fall back to the last-saved filters in
+  // localStorage so returning via the left-nav link or a detail "back" button
+  // (which land on the BARE path with no query string) restores the view
+  // instead of resetting everything. Computed once at mount.
+  const initParams = useMemo(() => {
+    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "call", "li", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
+    const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
+    if (hasAny) return searchParams;
+    try {
+      const saved = localStorage.getItem("crm.prospecting.filters");
+      if (saved) return new URLSearchParams(saved);
+    } catch {
+      /* ignore */
+    }
+    return searchParams;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { isAdmin, user } = useAuth();
+  // SDRs are scoped to their own prospects everywhere (backend now returns only
+  // own-assigned for this role). The owner-scope control's "All reps" /
+  // "Unassigned" views would be misleading (they'd return only the SDR's own),
+  // so for non-admin SDRs we force scope to "mine" and lock the toggle.
+  const isSdrLocked = !isAdmin && user?.role === "sdr";
   const toast = useToast();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [searchScope, setSearchScope] = useState<string>(() => searchParams.get("qf") ?? "all");
+  const [search, setSearch] = useState(() => initParams.get("q") ?? "");
+  const [searchScope, setSearchScope] = useState<string>(() => initParams.get("qf") ?? "all");
   // Match mode for scoped/bulk search: "contains" treats each pasted entry as
   // a substring; "exact" requires whole-cell equality (case-insensitive).
   // URL-persisted as `qm`; only sent when scope !== "all".
-  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (searchParams.get("qm") === "exact" ? "exact" : "contains"));
+  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (initParams.get("qm") === "exact" ? "exact" : "contains"));
   // Explicit sort. Server-side so it covers the full dataset, not just the
   // visible page. URL-persisted as `sb`/`sd` so deep-linked alphabetised
   // views survive navigation.
@@ -351,7 +374,7 @@ export default function Contacts() {
     { value: "company_desc", label: "Company Z → A" },
   ];
   const [prospectSort, setProspectSort] = useState<ProspectSortKey>(() => {
-    const raw = searchParams.get("sb") ?? "recent";
+    const raw = initParams.get("sb") ?? "recent";
     return (PROSPECT_SORT_OPTIONS.some((o) => o.value === raw) ? raw : "recent") as ProspectSortKey;
   });
   const sortToApi = (s: ProspectSortKey): { sortBy?: "name" | "company"; sortDir?: "asc" | "desc" } => {
@@ -366,26 +389,26 @@ export default function Contacts() {
     // filters — otherwise users would have to hunt for the toggle to discover
     // why the list is narrowed.
     return Boolean(
-      searchParams.get("seq") || searchParams.get("call") || searchParams.get("ae") ||
-      searchParams.get("sdr") || searchParams.get("own") || searchParams.get("tz") ||
-      searchParams.get("co") || searchParams.get("owner") === "mine" ||
-      searchParams.get("cc") || searchParams.get("ec") || searchParams.get("ca") ||
-      searchParams.get("fcmin") || searchParams.get("fcmax") ||
-      searchParams.get("nfa") || searchParams.get("nfb") ||
-      searchParams.get("cla") || searchParams.get("clb")
+      initParams.get("seq") || initParams.get("call") || initParams.get("ae") ||
+      initParams.get("sdr") || initParams.get("own") || initParams.get("tz") ||
+      initParams.get("co") || initParams.get("owner") === "mine" ||
+      initParams.get("cc") || initParams.get("ec") || initParams.get("ca") ||
+      initParams.get("fcmin") || initParams.get("fcmax") ||
+      initParams.get("nfa") || initParams.get("nfb") ||
+      initParams.get("cla") || initParams.get("clb")
     );
   });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
-  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("seq")));
-  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("call")));
-  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("li")));
+  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
+  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("call")));
+  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("li")));
   // Progress-dot color filters. Map 1:1 to the dot colors rendered by
   // `ProgressCell`. URL keys: `cc` (call color), `ec` (email color), `ca`
   // (call attempts bucket). The backend translates colors to disposition /
   // sequence_status / count buckets — see app/repositories/contact.py.
-  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("cc")));
-  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ec")));
-  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ca")));
+  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("cc")));
+  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ec")));
+  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ca")));
   // Follow-up count range (calls logged). URL keys: `fcmin` / `fcmax`. Either
   // bound may be null (open-ended). Backend maps these to call_attempt_min/max.
   const parseCountParam = (raw: string | null): number | null => {
@@ -393,45 +416,49 @@ export default function Contacts() {
     const n = Number(raw);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
   };
-  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(searchParams.get("fcmin")));
-  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(searchParams.get("fcmax")));
+  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(initParams.get("fcmin")));
+  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(initParams.get("fcmax")));
   // Date-range filters. `nextFollowupRange` filters on the rep-scheduled
   // callback (next_followup_at); `callLastRange` on the last call (call_last_at).
   // Values are `YYYY-MM-DD`; "" means unbounded. URL keys: nfa/nfb, cla/clb.
   const [nextFollowupRange, setNextFollowupRange] = useState<DateRangeValue>(() => ({
-    from: searchParams.get("nfa") ?? "",
-    to: searchParams.get("nfb") ?? "",
+    from: initParams.get("nfa") ?? "",
+    to: initParams.get("nfb") ?? "",
   }));
   const [callLastRange, setCallLastRange] = useState<DateRangeValue>(() => ({
-    from: searchParams.get("cla") ?? "",
-    to: searchParams.get("clb") ?? "",
+    from: initParams.get("cla") ?? "",
+    to: initParams.get("clb") ?? "",
   }));
   const [emailFilter, setEmailFilter] = useState<string[]>([]);
   // Client-side filter wired to the engagement KPI tiles. Clicking a tile
   // narrows the already-loaded prospect page to the matching population —
   // the same scope the tiles count. null = show everyone.
   const [cardFilter, setCardFilter] = useState<"calls_today" | "emails" | "linkedin" | "meetings" | null>(null);
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
-  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("ae")));
-  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("sdr")));
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() =>
+    // SDRs only ever see their own prospects — force "mine" on load regardless
+    // of any persisted ?owner= param.
+    isSdrLocked || initParams.get("owner") === "mine" ? "mine" : "all"
+  );
+  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ae")));
+  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
   // Owner filter — multi-select that matches AE OR SDR ownership for any
   // selected user. Different from ownerScope (binary "mine vs all") and from
   // aeFilter/sdrFilter (role-specific). Sent to backend via owner_id +
   // scope_any_match=true so a single user_id matches contacts they own as
   // either AE or SDR.
-  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
   // Timezone filter — values are short labels (IST, PST, etc.). When sent to
   // the backend they're expanded to include matching IANA names from
   // TIMEZONE_LABELS so a contact stored as "Asia/Kolkata" matches "IST".
-  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tz")));
+  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tz")));
   // Company filter — optional narrowing to a single company's prospects.
   // Backend's contacts list already accepts `company_id`; this just wires a
   // dropdown to it. Value is a single company UUID (or "" for all).
-  const [companyFilter, setCompanyFilter] = useState<string>(() => searchParams.get("co") ?? "");
+  const [companyFilter, setCompanyFilter] = useState<string>(() => initParams.get("co") ?? "");
   const [companyOptions, setCompanyOptions] = useState<Company[]>([]);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
-  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
+  const [debouncedSearch, setDebouncedSearch] = useState(() => initParams.get("q") ?? "");
+  const [page, setPage] = useState(() => parseInt(initParams.get("pg") ?? "1", 10) || 1);
   const [contactsTotal, setContactsTotal] = useState(0);
   const [contactsPages, setContactsPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -452,6 +479,14 @@ export default function Contacts() {
   const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [startingCampaign, setStartingCampaign] = useState(false);
+  // Bulk "add follow-up" — set a per-contact Reminder on every selected
+  // prospect so it surfaces on each of their detail pages. `bulkFollowupAt` is
+  // a naive datetime-local string (rep's local time); `bulkFollowupNote` is an
+  // optional note stored on each reminder.
+  const [bulkFollowupOpen, setBulkFollowupOpen] = useState(false);
+  const [bulkFollowupAt, setBulkFollowupAt] = useState("");
+  const [bulkFollowupNote, setBulkFollowupNote] = useState("");
+  const [bulkFollowupSaving, setBulkFollowupSaving] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
   // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
   // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
@@ -470,6 +505,13 @@ export default function Contacts() {
   // Monotonic request id for loadContacts: only the latest in-flight request
   // is allowed to write state (see loadContacts for the race it guards).
   const loadSeqRef = useRef(0);
+  // Guards the "reset to page 1 on filter change" effect so it does NOT fire on
+  // the initial mount. Without this, returning from a prospect detail (remount)
+  // would clobber the `pg` restored from the URL/localStorage back to page 1 —
+  // the rep lands on a different slice of prospects and the list appears to
+  // "shuffle". We only want to reset the page for genuine post-mount filter
+  // changes, so the very first run (mount) is skipped.
+  const pageResetMountedRef = useRef(false);
   // Angel-mapping data is fetched lazily the first time that tab opens.
   const angelsLoadedRef = useRef(false);
   const [callDisposition, setCallDisposition] = useState("");
@@ -762,7 +804,7 @@ export default function Contacts() {
     try {
       const result = await contactsApi.importCsv(
         file,
-        true, // accounts are always auto-created on import (no enrichment queued)
+        isAdmin, // only admins auto-create accounts on import; AE/SDR add prospects only — unmatched rows are flagged for an admin to add the account
         (phase, percent) => setUploadProgress({ phase, percent }),
       );
       setImportSummary(result);
@@ -896,6 +938,13 @@ export default function Contacts() {
   }, [location.pathname]);
 
   // Sync all filter state into URL so navigating away and back restores position
+  // Guard: SDRs are scoped to their own prospects everywhere. Snap the
+  // owner-scope back to "mine" if anything (stale URL/localStorage param,
+  // future code path) ever sets it to "all" for a locked SDR.
+  useEffect(() => {
+    if (isSdrLocked && ownerScope !== "mine") setOwnerScope("mine");
+  }, [isSdrLocked, ownerScope]);
+
   useEffect(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -922,6 +971,16 @@ export default function Contacts() {
       timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
       companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      // The active "tab" here is route-driven (angel-mapping is its own route),
+      // so the route itself already persists which view is shown — we only
+      // persist the prospect-list filters. Persist the same params to
+      // localStorage so a bare-path return (left-nav / detail back button) can
+      // rehydrate them via initParams. URL still wins when present.
+      try {
+        localStorage.setItem("crm.prospecting.filters", next.toString());
+      } catch {
+        /* ignore */
+      }
       return next;
     }, { replace: true });
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
@@ -934,6 +993,13 @@ export default function Contacts() {
   }, [search]);
 
   useEffect(() => {
+    // Skip the mount run so the page restored from the URL/localStorage (`pg`)
+    // survives a navigate-back from a prospect detail. Only reset to page 1 on
+    // real filter/sort changes made after mount.
+    if (!pageResetMountedRef.current) {
+      pageResetMountedRef.current = true;
+      return;
+    }
     setPage(1);
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
@@ -1682,6 +1748,62 @@ export default function Contacts() {
     }
   };
 
+  // Bulk follow-up: open the dialog pre-seeded with the same "tomorrow at
+  // 10:00 AM PST" default the single call-follow-up uses.
+  const openBulkFollowup = () => {
+    if (selectedContactIds.size === 0) return;
+    setBulkFollowupAt(defaultFollowupLocalString());
+    setBulkFollowupNote("");
+    setBulkFollowupOpen(true);
+  };
+
+  // Create one Reminder per selected prospect. The datetime-local value is
+  // naive (rep's local time); `new Date(...)` interprets an unsuffixed string
+  // as local, then we send ISO/UTC — mirrors the single-reminder create at
+  // saveCallDisposition. Each reminder is per-contact, so it surfaces on that
+  // prospect's detail page automatically (no backend change needed).
+  const submitBulkFollowup = async () => {
+    if (selectedContactIds.size === 0 || !bulkFollowupAt) return;
+    const due = new Date(bulkFollowupAt);
+    if (Number.isNaN(due.getTime())) {
+      toast.error("Enter a valid follow-up date and time.", "Invalid date");
+      return;
+    }
+    const dueIso = due.toISOString();
+    const note = bulkFollowupNote.trim() || "Follow-up";
+    const ids = Array.from(selectedContactIds);
+    // Map contact id → company id from the loaded list so each reminder carries
+    // its company (same field the single-reminder path sets).
+    const companyById = new Map(contacts.map((c) => [c.id, c.company_id]));
+    setBulkFollowupSaving(true);
+    try {
+      await Promise.all(
+        ids.flatMap((id) => [
+          // next_followup_at is the mechanism reps actually SEE (follow-up badge
+          // on the prospect) and get REMINDED by (fires the "Follow-up due" bell
+          // alert via prospect_reminders). Set it on every selected prospect.
+          contactsApi.update(id, { next_followup_at: dueIso } as Partial<Contact>),
+          // Also keep the Reminder record (carries the note) — mirrors the
+          // single-reminder disposition path.
+          remindersApi.create({
+            contact_id: id,
+            company_id: companyById.get(id) || undefined,
+            note,
+            due_at: dueIso,
+            assigned_to_id: user?.id,
+          }),
+        ])
+      );
+      toast.success(`Follow-up set for ${ids.length} prospect${ids.length === 1 ? "" : "s"}.`, "Follow-up scheduled");
+      setBulkFollowupOpen(false);
+      setSelectedContactIds(new Set());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to set follow-up reminders.", "Error");
+    } finally {
+      setBulkFollowupSaving(false);
+    }
+  };
+
   const handleDeleteInvestor = async (id: string) => {
     if (!confirm("Delete this investor and all their mappings?")) return;
     try {
@@ -2196,6 +2318,26 @@ export default function Contacts() {
                         {contactsTotal} total · {myCallsTodayCount} calls today
                       </div>
                     </div>
+                    {isSdrLocked ? (
+                      // SDRs only see their own prospects — show a static label,
+                      // no toggle to team-wide / unassigned views.
+                      <div
+                        style={{
+                          height: 36,
+                          padding: "0 12px",
+                          borderRadius: 12,
+                          border: "1px solid #ffb995",
+                          background: "#f3fbe3",
+                          color: "#4d7c0f",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        My prospects
+                      </div>
+                    ) : (
                     <button
                       type="button"
                       onClick={() => setOwnerScope(ownerScope === "mine" ? "all" : "mine")}
@@ -2212,6 +2354,7 @@ export default function Contacts() {
                     >
                       {ownerScope === "mine" ? "My list" : isAdmin ? "All reps" : "Mine + unassigned"}
                     </button>
+                    )}
                   </div>
                   <div style={{ position: "relative" }}>
                     <Search size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#6f8297", pointerEvents: "none" }} />
@@ -2288,6 +2431,14 @@ export default function Contacts() {
                         style={{ height: 34, border: "1px solid #f0c2c2", borderRadius: 10, background: selectedContactIds.size ? "#fff1f1" : "#f6f8fb", color: selectedContactIds.size ? "#b3261e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                       >
                         <Trash2 size={13} /> {deletingContacts ? "Deleting..." : "Delete selected"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openBulkFollowup}
+                        disabled={selectedContactIds.size === 0}
+                        style={{ height: 34, border: "1px solid #f5d77a", borderRadius: 10, background: selectedContactIds.size ? "#fffbeb" : "#f6f8fb", color: selectedContactIds.size ? "#92400e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                      >
+                        <Clock size={13} /> Add follow-up
                       </button>
                       {user?.role === "sdr" && (
                         <div style={{ display: "flex", gap: 8 }}>
@@ -2502,10 +2653,12 @@ export default function Contacts() {
                     active: followupCountMin === 3 && followupCountMax == null,
                     apply: () => { setFollowupCountMin(3); setFollowupCountMax(null); },
                     clear: () => { setFollowupCountMin(null); setFollowupCountMax(null); } },
-                  { key: "mine", label: "My prospects", icon: Users,
+                  // SDRs are locked to their own prospects — the toggle would be
+                  // a no-op (and "clear" → "all" must not be reachable), so omit it.
+                  ...(isSdrLocked ? [] : [{ key: "mine", label: "My prospects", icon: Users,
                     active: ownerScope === "mine",
                     apply: () => setOwnerScope("mine"),
-                    clear: () => setOwnerScope("all") },
+                    clear: () => setOwnerScope("all") }]),
                 ];
                 return views.map((v) => {
                   const Icon = v.icon;
@@ -2535,7 +2688,9 @@ export default function Contacts() {
                 filters so they can see what's narrowing the list. */}
             {showFilters && (() => {
               const hasFilters = !!(
-                ownerScope === "mine" ||
+                // For locked SDRs "mine" is the permanent baseline, not an
+                // active filter — don't let it force the Reset / panel state.
+                (!isSdrLocked && ownerScope === "mine") ||
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
                 linkedinStatusFilter.length ||
@@ -2575,8 +2730,28 @@ export default function Contacts() {
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Prospects</span>
                     <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
-                  {/* View — all vs mine */}
+                  {/* View — all vs mine. SDRs are locked to their own prospects,
+                      so render a static label instead of an interactive select. */}
                   <div style={{ display: "flex", flexDirection: "column" }}>
+                    {isSdrLocked ? (
+                      <div
+                        style={{
+                          height: 42,
+                          padding: "0 14px",
+                          borderRadius: 12,
+                          border: "1.5px solid #9ace3d",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: "#4d7c0f",
+                          background: "#f3fbe3",
+                          minWidth: 150,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        My prospects
+                      </div>
+                    ) : (
                     <select
                       value={ownerScope}
                       onChange={(e) => setOwnerScope(e.target.value === "mine" ? "mine" : "all")}
@@ -2596,6 +2771,7 @@ export default function Contacts() {
                       <option value="all">All prospects</option>
                       <option value="mine">My prospects</option>
                     </select>
+                    )}
                   </div>
                   {/* Company */}
                   <div style={{ display: "flex", flexDirection: "column" }}>
@@ -2896,7 +3072,8 @@ export default function Contacts() {
                       type="button"
                       onClick={() => {
                         setSearch("");
-                        setOwnerScope("all");
+                        // SDRs stay locked to their own prospects on reset.
+                        setOwnerScope(isSdrLocked ? "mine" : "all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setLinkedinStatusFilter([]);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
@@ -3049,6 +3226,27 @@ export default function Contacts() {
                     }}
                   >
                     <Send size={14} /> Start campaign
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openBulkFollowup}
+                    disabled={selectedContactIds.size === 0}
+                    style={{
+                      height: 36,
+                      border: "1px solid #f5d77a",
+                      background: selectedContactIds.size ? "#fffbeb" : "#f6f8fb",
+                      color: selectedContactIds.size ? "#92400e" : "#9aa8b7",
+                      borderRadius: 11,
+                      padding: "0 14px",
+                      fontSize: 13,
+                      fontWeight: 850,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: selectedContactIds.size ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    <Clock size={14} /> Add follow-up
                   </button>
                   {user?.role === "sdr" && (
                     <button
@@ -4967,6 +5165,72 @@ export default function Contacts() {
           </div>
         </div>
       )}
+      {bulkFollowupOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setBulkFollowupOpen(false)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 440, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#f59e0b,#d97706)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Clock size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Add follow-up</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{selectedContactIds.size} prospect{selectedContactIds.size === 1 ? "" : "s"} selected</div>
+                </div>
+              </div>
+              <button onClick={() => setBulkFollowupOpen(false)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Due date &amp; time *</label>
+                <input
+                  type="datetime-local"
+                  value={bulkFollowupAt}
+                  onChange={(e) => setBulkFollowupAt(e.target.value)}
+                  style={{ width: "100%", height: 42, border: "1px solid #c8d9e8", borderRadius: 10, padding: "0 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", fontFamily: "inherit" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Note (optional)</label>
+                <textarea
+                  value={bulkFollowupNote}
+                  onChange={(e) => setBulkFollowupNote(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Follow up on pricing conversation"
+                  style={{ width: "100%", border: "1px solid #c8d9e8", borderRadius: 10, padding: "10px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", fontFamily: "inherit", resize: "vertical" }}
+                />
+                <p className="crm-muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
+                  A reminder is created on each selected prospect and shows on their detail page.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setBulkFollowupOpen(false)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void submitBulkFollowup()}
+                  disabled={bulkFollowupSaving || !bulkFollowupAt}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: bulkFollowupAt ? "linear-gradient(135deg,#f59e0b,#d97706)" : "#c7d2dd", color: "#fff", fontSize: 14, fontWeight: 700, cursor: bulkFollowupAt && !bulkFollowupSaving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {bulkFollowupSaving ? <Loader2 size={15} className="animate-spin" /> : <Clock size={15} />}
+                  {bulkFollowupSaving ? "Setting…" : "Set follow-up"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {campaignModalOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setCampaignModalOpen(false)}

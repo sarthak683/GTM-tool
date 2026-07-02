@@ -27,6 +27,9 @@ class Contact(ContactBase, table=True):
     # Account sourcing enrichment fields
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    # Extra phone numbers beyond the primary `phone` (which remains the dial/
+    # search/enrichment number). Shape: [{"number": str, "label": str?}].
+    additional_phones: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     persona_type: Optional[str] = None  # champion | buyer | evaluator | blocker
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)  # AE
     assigned_rep_email: Optional[str] = None
@@ -62,6 +65,7 @@ class Contact(ContactBase, table=True):
 
 class ContactCreate(ContactBase):
     company_id: Optional[UUID] = None
+    additional_phones: Optional[Any] = None
     persona_type: Optional[str] = None
 
 
@@ -71,6 +75,7 @@ class ContactRead(ContactBase):
     company_name: Optional[str] = None  # populated via SQL JOIN in ContactRepository
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
+    additional_phones: Optional[Any] = None
     persona_type: Optional[str] = None
     assigned_to_id: Optional[UUID] = None    # AE
     assigned_to_name: Optional[str] = None   # populated via JOIN
@@ -128,6 +133,7 @@ class ContactUpdate(SQLModel):
     company_id: Optional[UUID] = None
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
+    additional_phones: Optional[Any] = None
     persona_type: Optional[str] = None
     assigned_to_id: Optional[UUID] = None
     assigned_rep_email: Optional[str] = None

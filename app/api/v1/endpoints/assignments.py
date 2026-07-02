@@ -40,7 +40,7 @@ def _validate_assignment_user(user: User, *, role: str) -> None:
     # team member (admin/ae/sdr) may hold either slot. This lets admins (e.g.
     # Shahruk) own prospects as AE *or* SDR, and lets AEs cover the SDR slot.
     # We only reject genuinely non-assignable accounts.
-    assignable = {"admin", "ae", "sdr"}
+    assignable = {"admin", "ae", "sdr", "agency"}
     if (user.role or "").lower() not in assignable:
         raise ValidationError(
             f"Cannot assign {user.name} ({(user.role or 'unknown').upper()}) — not an assignable team member"
@@ -74,6 +74,16 @@ def _is_self_claim_or_self_release(
     return False
 
 
+def _can_assign_team(actor: User) -> bool:
+    """Any admin/AE/SDR may assign or reassign an account's (or contact's) AE/SDR.
+
+    Per Annie 2026-06-17 account ownership is collaborative — any AE or SDR can
+    set the AE/SDR slot, superseding the self-claim-only rule (Pulkit 2026-05-07,
+    which still gates the *bulk* endpoints via `_is_self_claim_or_self_release`).
+    """
+    return (actor.role or "").lower() in {"admin", "ae", "sdr"}
+
+
 # ── Single assignment ────────────────────────────────────────────────────────
 
 
@@ -97,17 +107,8 @@ async def assign_company(
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-    if actor.role != "admin":
-        if not _is_self_claim_or_self_release(
-            actor=actor,
-            target_user_id=body.user_id,
-            current_assigned_id=current_assigned_id,
-            role=role_key,
-        ):
-            raise ForbiddenError(
-                "Only admins can reassign accounts. You can claim an unassigned "
-                f"{role_key.upper()} slot or release your own assignment."
-            )
+    if not _can_assign_team(actor):
+        raise ForbiddenError("You do not have permission to assign account owners.")
     previous_name = (
         company.sdr_name or company.sdr_email
         if is_sdr
@@ -205,17 +206,8 @@ async def assign_contact(
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
-    if actor.role != "admin":
-        if not _is_self_claim_or_self_release(
-            actor=actor,
-            target_user_id=body.user_id,
-            current_assigned_id=current_assigned_id,
-            role=role_key,
-        ):
-            raise ForbiddenError(
-                "Only admins can reassign contacts. You can claim an unassigned "
-                f"{role_key.upper()} slot or release your own assignment."
-            )
+    if not _can_assign_team(actor):
+        raise ForbiddenError("You do not have permission to assign contact owners.")
     previous_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
 
     if body.user_id:

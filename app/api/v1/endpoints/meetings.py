@@ -377,6 +377,35 @@ async def create_meeting(payload: MeetingCreate, session: DBSession, current_use
     return await MeetingRepository(session).create(data)
 
 
+class RelinkResult(BaseModel):
+    dry_run: bool
+    scanned: int
+    matched: int
+    linked_company: int
+    linked_deal: int
+    proposals: list[dict]
+
+
+@router.post("/relink-unlinked", response_model=RelinkResult)
+async def relink_unlinked(
+    session: DBSession,
+    current_user: CurrentUser,
+    dry_run: bool = Query(True, description="Preview proposed links without writing (default)."),
+    limit: Optional[int] = Query(None, ge=1, le=5000),
+):
+    """Backfill: re-run the live-sync matcher over meetings that were never
+    linked to a company/deal (company_id AND deal_id both NULL).
+
+    Admin only. Defaults to a dry run so the proposed links can be inspected
+    before anything is written. Pass ``dry_run=false`` to commit.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    from app.services.meeting_relink import relink_unlinked_meetings
+
+    return await relink_unlinked_meetings(session, dry_run=dry_run, limit=limit)
+
+
 @router.get("/{meeting_id}", response_model=MeetingRead)
 async def get_meeting(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
     return await MeetingRepository(session).get_or_raise(meeting_id)

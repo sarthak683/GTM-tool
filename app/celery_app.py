@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.transcribe_call",
         "app.tasks.deal_reminders",
         "app.tasks.prospect_reminders",
+        "app.tasks.meeting_relink",
     ],
 )
 
@@ -116,6 +117,14 @@ celery_app.conf.update(
         "send-due-prospect-followup-reminders": {
             "task": "app.tasks.prospect_reminders.send_due_prospect_followup_reminders",
             "schedule": 900,
+        },
+        # Backfill: re-link meetings whose company/deal/contact did not exist
+        # when they synced (live sync links only once, at ingest). Daily at
+        # 03:00 UTC — off-peak, and the matcher only touches still-unlinked
+        # meetings, so a re-run is cheap and idempotent.
+        "relink-unlinked-meetings-daily": {
+            "task": "app.tasks.meeting_relink.relink_unlinked_meetings_task",
+            "schedule": crontab(hour=3, minute=0),
         },
     },
 )

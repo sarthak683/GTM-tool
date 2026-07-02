@@ -1122,13 +1122,29 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
     # Prefer "Direct / Mobile (Personal)"; else generic contact phone; else HQ
     # direct line; else any column with 'phone' in its header (catches a 2nd
     # de-collided "Phone" column). Normalize to strip fused type-prefixes like
-    # "m+1…"/"d+1…" that otherwise T9-corrupt the OS dialer.
-    phone = _normalize_phone(
-        _find(row, "direct_mobile")
-        or _find(row, "contact_phone")
-        or _find(row, "hq_direct_line")
-        or _find_any_phone(row)
-    )
+    # "m+1…"/"d+1…" that otherwise T9-corrupt the OS dialer. Collect EVERY phone
+    # column so a row with both a direct AND a mobile keeps both: the first non-
+    # empty becomes the primary `phone`, the rest go to `additional_phones`.
+    _phone_candidates = [
+        _find(row, "direct_mobile"),
+        _find(row, "contact_phone"),
+        _find(row, "hq_direct_line"),
+    ]
+    _phone_candidates += [
+        v for k, v in row.items() if "phone" in k and str(v or "").strip()
+    ]
+    _phones: list[str] = []
+    _seen_digits: set[str] = set()
+    for _cand in _phone_candidates:
+        _np = _normalize_phone(_cand)
+        if not _np:
+            continue
+        _digits = re.sub(r"\D", "", _np)
+        if _digits and _digits not in _seen_digits:
+            _seen_digits.add(_digits)
+            _phones.append(_np)
+    phone = _phones[0] if _phones else None
+    additional_phones = [{"number": p} for p in _phones[1:]] or None
 
     if not first and not last and contact_name:
         first, last = _split_contact_name(contact_name)
@@ -1224,6 +1240,7 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         # (MEDIUM/LOW/blank) leave email_verified unset for normal verification.
         "email_verified": True if email and email_confidence == "HIGH" else None,
         "phone": phone,
+        "additional_phones": additional_phones,
         "title": title or None,
         "linkedin_url": linkedin_url,
         "assigned_rep_email": company_fields.get("assigned_rep_email"),

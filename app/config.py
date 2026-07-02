@@ -200,6 +200,12 @@ class Settings(BaseSettings):
     )
     RECOTAP_SANDBOX_BASE_URL: str = "https://sandboxapi.reco-tap.com/api/v1"
     RECOTAP_PROD_BASE_URL: str = "https://eapi.recotap.com/api/v1"
+    # CRM-stage push: when set (e.g. "CRM_STAGE_C"), the deal stage is sent as this
+    # Recotap account custom-field instead of the legacy free-text tag. Empty =
+    # keep sending tags, so this stays inert until the field exists in Recotap.
+    RECOTAP_CRM_STAGE_FIELD_KEY: str = ""
+    # Optional static segment id to group pushed accounts into. Empty = no segment.
+    RECOTAP_PUSH_SEGMENT_ID: str = ""
 
     @property
     def recotap_base_url(self) -> str:

@@ -18,9 +18,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.recotap import RecotapClient
+from app.config import settings
 from app.models.company import Company
 from app.models.deal import Deal
 from app.models.recotap import RECOTAP_JOURNEY_STAGES, RecotapAccount, RecotapAccountRead
+from app.models.settings import WorkspaceSettings
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +92,25 @@ async def _get_or_create_row(session: AsyncSession, domain: str) -> RecotapAccou
     return row
 
 
-async def pull_into_db(session: AsyncSession) -> dict[str, int]:
+async def pull_into_db(session: AsyncSession, *, incremental: bool = True) -> dict[str, int]:
     """Pull live Recotap accounts → upsert recotap_accounts by domain.
-    Sandbox data is mostly unscored; we keep it and mark source='recotap'."""
+
+    Incremental by default: we send Recotap's last ``syncTimestamp`` as ``lastSync``
+    so only accounts changed since the previous pull come back, and we persist the
+    new marker in workspace_settings.sync_schedule_settings["recotap_last_sync_at"].
+    The first-ever pull (no stored marker) or ``incremental=False`` fetches
+    everything. Sandbox data is mostly unscored; we keep it and mark source='recotap'.
+    """
     client = RecotapClient()
     if not client.configured():
         return {"pulled": 0, "configured": 0}
-    accounts = await client.get_accounts(limit=100)
+    settings_row = (
+        await session.execute(select(WorkspaceSettings).where(WorkspaceSettings.id == 1))
+    ).scalar_one_or_none()
+    last_sync = None
+    if incremental and settings_row is not None and isinstance(settings_row.sync_schedule_settings, dict):
+        last_sync = settings_row.sync_schedule_settings.get("recotap_last_sync_at")
+    accounts = await client.get_accounts(limit=100, last_sync=last_sync)
     companies = (await session.execute(select(Company.id, Company.domain))).all()
     company_by_domain = {normalize_domain(d): cid for cid, d in companies if d}
     pulled = 0
@@ -125,8 +139,20 @@ async def pull_into_db(session: AsyncSession) -> dict[str, int]:
         row.pulled_at = datetime.utcnow()
         row.updated_at = datetime.utcnow()
         pulled += 1
+    # Persist Recotap's "as of" marker for the next incremental pull. Reassign the
+    # dict (not in-place) so SQLAlchemy detects the JSON change.
+    if settings_row is not None and client.last_sync_timestamp:
+        sched = dict(settings_row.sync_schedule_settings or {})
+        sched["recotap_last_sync_at"] = client.last_sync_timestamp
+        settings_row.sync_schedule_settings = sched
+        session.add(settings_row)
     await session.commit()
-    return {"pulled": pulled, "configured": 1}
+    return {
+        "pulled": pulled,
+        "configured": 1,
+        "incremental": bool(last_sync),
+        "synced_through": client.last_sync_timestamp,
+    }
 
 
 async def seed_mock_signals(session: AsyncSession, *, overwrite: bool = False) -> dict[str, int]:
@@ -211,29 +237,64 @@ def crm_status_tag(stages: list[str]) -> Optional[str]:
     return f"CRM: {label}" if label else None
 
 
-async def _push_one(client: RecotapClient, session: AsyncSession, company: Company, domain: str, tags: list[str]) -> dict:
-    acct = {"domain": domain, "name": company.name, "externalId": str(company.id), "tags": tags}
-    data = await client.push_accounts([acct])
-    results = data.get("results") or []
-    item = results[0] if results else {}
-    status = item.get("status")
+def crm_stage_value(stages: list[str]) -> Optional[str]:
+    """Bare CRM-stage label for the Recotap custom field (e.g. 'POC', 'Customer'),
+    using the most-advanced deal stage — the structured-field counterpart of
+    crm_status_tag (which returns the 'CRM: POC' tag string)."""
+    ranked = [(_STAGE_RANK[s], s) for s in stages if s in _STAGE_RANK]
+    if not ranked:
+        return None
+    _, top = max(ranked)
+    return _STAGE_TAG.get(top)
+
+
+async def _push_one(
+    client: RecotapClient,
+    session: AsyncSession,
+    company: Company,
+    domain: str,
+    *,
+    tag: Optional[str],
+    stage_value: Optional[str],
+    dry_run: bool = False,
+) -> dict:
+    """Upsert one account into Recotap. POST is create-or-update on Recotap's side
+    (confirmed 2026-06), so we send once and read the per-item status — no
+    error-string parsing / separate PUT. When RECOTAP_CRM_STAGE_FIELD_KEY is set we
+    send the stage as a structured custom field; otherwise we fall back to the
+    legacy 'CRM: ...' tag. dry_run builds the payload without calling Recotap."""
+    field_key = (settings.RECOTAP_CRM_STAGE_FIELD_KEY or "").strip()
+    acct: dict = {"domain": domain, "name": company.name, "externalId": str(company.id)}
+    if field_key and stage_value:
+        acct["customFields"] = {field_key: stage_value}
+    else:
+        acct["tags"] = [tag] if tag else []
+
+    if dry_run:
+        return {"domain": domain, "name": company.name, "status": "dry_run", "payload": acct}
+
+    segment_id = (settings.RECOTAP_PUSH_SEGMENT_ID or "").strip() or None
+    data = await client.push_accounts([acct], segment_id=segment_id)
+    item = (data.get("results") or [{}])[0]
+    status = item.get("status")          # created | updated (upsert) | failed
     rtp_aid = item.get("rtp_aid")
-    # POST is insert-only; on a dup it hands back the PUT path with the rtp_aid.
-    if status == "failed" and "already exists" in (item.get("error") or ""):
-        m = re.search(r"/accounts/([A-Za-z0-9]+)", item.get("error", ""))
-        rtp_aid = m.group(1) if m else None
-        if rtp_aid:
-            await client.update_account(rtp_aid, {"name": company.name, "tags": tags})
-            status = "updated"
+    if status not in ("created", "updated"):
+        # Upsert means a duplicate is no longer a failure; if something else fails
+        # we just record it (no error-string parsing) so the batch isn't aborted.
+        logger.warning("recotap push: status=%s domain=%s error=%s",
+                       status, domain, str(item.get("error"))[:200])
+
     row = await _get_or_create_row(session, domain)
     row.rtp_aid = rtp_aid or row.rtp_aid
-    row.tags = tags
+    if "tags" in acct:
+        row.tags = acct["tags"]
     row.external_id = str(company.id)
     row.company_id = company.id
     row.pushed_at = datetime.utcnow()
     row.push_status = status
     row.updated_at = datetime.utcnow()
-    return {"domain": domain, "name": company.name, "tag": tags[0] if tags else None, "status": status, "rtp_aid": rtp_aid}
+    return {"domain": domain, "name": company.name,
+            "stage": stage_value or tag, "status": status, "rtp_aid": rtp_aid}
 
 
 async def push_crm_status(
@@ -241,13 +302,15 @@ async def push_crm_status(
     *,
     limit: Optional[int] = None,
     company_ids: Optional[list] = None,
+    dry_run: bool = False,
 ) -> dict:
-    """Push CRM deal-stage status to Recotap as account tags. Only accounts with a
-    mapped deal stage are pushed (so the tag reflects Customer/POC/etc.). POST
-    creates the account; on 'already exists' it captures the rtp_aid and PUTs the
-    tags. `limit`/`company_ids` scope a test run."""
+    """Push CRM deal-stage status to Recotap for every company with a mapped stage.
+    The stage is sent as a custom field when RECOTAP_CRM_STAGE_FIELD_KEY is set,
+    else as the legacy 'CRM: ...' tag, via an upsert (POST create-or-update).
+    `limit`/`company_ids` scope a test run; `dry_run=True` returns the payloads it
+    WOULD send WITHOUT calling Recotap (safe to run anywhere, key not required)."""
     client = RecotapClient()
-    if not client.configured():
+    if not dry_run and not client.configured():
         return {"configured": 0, "pushed": 0, "results": []}
     deal_rows = (
         await session.execute(select(Deal.company_id, Deal.stage).where(Deal.company_id.is_not(None)))
@@ -263,26 +326,39 @@ async def push_crm_status(
     pushed = 0
     skipped_invalid = 0
     for company in companies:
-        tag = crm_status_tag(stages_by_company.get(company.id, []))
-        if not tag:
+        stage_list = stages_by_company.get(company.id, [])
+        tag = crm_status_tag(stage_list)
+        stage_value = crm_stage_value(stage_list)
+        if not tag and not stage_value:
             continue
         domain = normalize_domain(company.domain)
         if not is_pushable_domain(domain):
             # Placeholder/import-artifact domain (e.g. "*.unknown", numeric IDs) —
-            # never POST it; POST is insert-only and would create a junk account.
+            # never push it; it would create a junk account in Recotap's tenant.
             skipped_invalid += 1
             continue
         try:
-            outcome = await _push_one(client, session, company, domain, [tag])
+            outcome = await _push_one(
+                client, session, company, domain,
+                tag=tag, stage_value=stage_value, dry_run=dry_run,
+            )
         except Exception as exc:  # one account's network/API failure shouldn't abort the batch
-            outcome = {"domain": domain, "name": company.name, "tag": tag, "status": "error", "error": str(exc)[:160]}
+            outcome = {"domain": domain, "name": company.name, "status": "error", "error": str(exc)[:160]}
         results.append(outcome)
-        if outcome.get("status") in ("created", "updated"):
+        if outcome.get("status") in ("created", "updated", "dry_run"):
             pushed += 1
         if limit and pushed >= limit:
             break
-    await session.commit()
-    return {"configured": 1, "pushed": pushed, "skipped_invalid_domain": skipped_invalid, "results": results}
+    if not dry_run:
+        await session.commit()
+    return {
+        "configured": int(client.configured()),
+        "pushed": pushed,
+        "skipped_invalid_domain": skipped_invalid,
+        "dry_run": dry_run,
+        "field_key": (settings.RECOTAP_CRM_STAGE_FIELD_KEY or "").strip() or None,
+        "results": results,
+    }
 
 
 # ── CRM deal stage → Recotap journey stage (for Account Sourcing display) ─────
