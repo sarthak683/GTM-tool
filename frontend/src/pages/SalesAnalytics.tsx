@@ -1,6 +1,6 @@
 import "./sales-analytics-refresh.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -79,7 +79,7 @@ const windowPresetLabel = (days: number): string =>
   WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
-type SalesActivityMetric = "emails" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total";
+type SalesActivityMetric = "emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted";
 
 // Brand-green chart palette. Kept here so every Recharts surface on this page
 // pulls from one source of truth instead of scattering hex literals. The funnel
@@ -477,6 +477,7 @@ function ActivityDrilldownModal({
   onClose,
   onLoadMore,
   loadingMore,
+  onOpenDeal,
 }: {
   title: string;
   data: SalesActivityDrilldown | null;
@@ -485,6 +486,7 @@ function ActivityDrilldownModal({
   onClose: () => void;
   onLoadMore?: () => void;
   loadingMore?: boolean;
+  onOpenDeal?: (dealId: string) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -572,8 +574,15 @@ function ActivityDrilldownModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map((row) => (
-                    <tr key={`${row.kind}-${row.id}`} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                  {data.rows.map((row) => {
+                    const canOpenDeal = Boolean(row.deal_id && onOpenDeal);
+                    return (
+                    <tr
+                      key={`${row.kind}-${row.id}`}
+                      style={{ borderBottom: "1px solid #f0f3f8", cursor: canOpenDeal ? "pointer" : "default" }}
+                      title={canOpenDeal ? "Double-click to open deal" : undefined}
+                      onDoubleClick={canOpenDeal ? () => onOpenDeal!(row.deal_id as string) : undefined}
+                    >
                       <td style={{ ...tdSty, whiteSpace: "nowrap", color: "#62748a" }}>{formatSnapshotTime(row.occurred_at)}</td>
                       <td style={tdSty}>
                         <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 999, background: "#eef4ff", color: "#3555c4", fontSize: 11, fontWeight: 800 }}>
@@ -593,7 +602,8 @@ function ActivityDrilldownModal({
                         </p>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               {data.has_more && onLoadMore && (
@@ -873,17 +883,20 @@ function RepActivityTable({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
             <StatPill
-              label="Emails"
+              label="Emails Out"
               value={row.emails}
               tone="#eefbf2"
               text="#2f8d5d"
-              sub={
-                <>
-                  <span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% reply</span>
-                  <span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>
-                </>
-              }
+              sub={<span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>}
               onClick={() => onOpenMetric(row, "emails")}
+            />
+            <StatPill
+              label="Emails In"
+              value={row.email_replies}
+              tone="#f3eaff"
+              text="#7c3aed"
+              sub={<span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% of sent</span>}
+              onClick={() => onOpenMetric(row, "email_replies")}
             />
             <StatPill
               label="Calls"
@@ -897,14 +910,15 @@ function RepActivityTable({
             <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
             {showDemos ? (
               <>
-                <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" />
-                <StatPill label="Demos Done" value={row.demos_done} tone="#eafaf1" text="#1c7a4f" />
+                <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "demos_scheduled")} />
+                <StatPill label="Demos Done" value={row.demos_done} tone="#eafaf1" text="#1c7a4f" onClick={() => onOpenMetric(row, "demos_done")} />
                 <StatPill
                   label="Converted"
                   value={row.demos_converted}
                   tone="#fdf1e3"
                   text="#b4690e"
                   sub={<span>{row.demos_done > 0 ? Math.round((row.demos_converted / row.demos_done) * 100) : 0}% of done</span>}
+                  onClick={() => onOpenMetric(row, "demos_converted")}
                 />
               </>
             ) : null}
@@ -1847,6 +1861,7 @@ function TabStrip({ active }: { active: string }) {
 
 export default function SalesAnalytics() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { tab: tabParam } = useParams<{ tab?: string }>();
   const activeTab = (ALL_TABS.find((t) => t.key === tabParam)?.key ?? "overview") as
     | "overview"
@@ -1997,12 +2012,16 @@ export default function SalesAnalytics() {
   const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
     const labelByMetric: Record<SalesActivityMetric, string> = {
       emails: "Emails",
+      email_replies: "Emails In",
       calls: "Calls",
       connected_calls: "Connected calls",
       live_calls: "Live calls",
       linkedin_reachouts: "LinkedIn",
       meetings: "Meetings",
       total: "Touches",
+      demos_scheduled: "Demos Scheduled",
+      demos_done: "Demos Done",
+      demos_converted: "Converted Demos",
     };
     setActivityDrilldown(null);
     setActivityDrilldownError("");
@@ -2773,6 +2792,14 @@ export default function SalesAnalytics() {
           error={activityDrilldownError}
           onLoadMore={handleLoadMoreActivity}
           loadingMore={activityDrilldownLoadingMore}
+          onOpenDeal={(dealId) => {
+            setActivityDrilldown(null);
+            setActivityDrilldownError("");
+            setActivityDrilldownLoading(false);
+            setActivityDrilldownQuery(null);
+            setActivityDrilldownLoadingMore(false);
+            navigate(`/pipeline?deal=${encodeURIComponent(dealId)}`);
+          }}
           onClose={() => {
             setActivityDrilldown(null);
             setActivityDrilldownError("");

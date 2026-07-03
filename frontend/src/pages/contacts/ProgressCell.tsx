@@ -524,9 +524,11 @@ export function ProgressCell({
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
         <ChannelRow Icon={Mail} channel="Email" state={email} />
         <ChannelRow Icon={PhoneCall} channel="Call" state={call} />
-        {/* LinkedIn lane only renders once there's a logged motion, so the
-            common email/call-only rows stay compact. */}
-        {linkedin.heroColor ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
+        {/* LinkedIn lane renders when it's a viable channel (the prospect has a
+            LinkedIn URL) OR once a motion is logged — so a new prospect shows its
+            LinkedIn touchpoint alongside Email/Call instead of it going missing.
+            Only prospects with no LinkedIn URL and no motion stay compact. */}
+        {linkedin.heroColor || contact.linkedin_url ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
       </div>
 
       {hasLiveSequence ? (

@@ -11,11 +11,25 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate
 from app.models.deal import Deal, DealRead
-from app.repositories.company import CompanyRepository
+from app.repositories.company import CompanyRepository, company_visibility_filter
 from app.schemas.common import PaginatedResponse
 from app.services.icp_scorer import score_company
 
 router = APIRouter(prefix="/companies", tags=["companies"])
+
+
+def _can_see_company(company: Company, user) -> bool:
+    """Python mirror of ``company_visibility_filter`` for single-object guards.
+
+    Admins see every company (including ``not_a_fit``); a non-admin only sees a
+    company they own (AE or SDR) that is not flagged ``not_a_fit``. Use on
+    single-company detail/update routes to 404 a company the caller can't see
+    (so existence isn't leaked).
+    """
+    if user.role == "admin":
+        return True
+    owns = company.assigned_to_id == user.id or company.sdr_id == user.id
+    return owns and company.account_status != "not_a_fit"
 
 
 def _visible_company_selector_filter():
@@ -81,7 +95,10 @@ async def list_companies(
     q: Optional[str] = Query(default=None, description="Filter by company name or domain (case-insensitive substring)."),
 ):
     repo = CompanyRepository(session)
-    filters = [_visible_company_selector_filter()]
+    filters = [
+        _visible_company_selector_filter(),
+        company_visibility_filter(_user.id, _user.role == "admin"),
+    ]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
     order_by = Company.icp_score.desc()
@@ -122,13 +139,19 @@ async def create_company(payload: CompanyCreate, session: DBSession, _user: Curr
 
 @router.get("/{company_id}", response_model=CompanyRead)
 async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
-    return await CompanyRepository(session).get_or_raise(company_id)
+    company = await CompanyRepository(session).get_or_raise(company_id)
+    if not _can_see_company(company, _user):
+        # 404 (not 403) so a non-admin can't probe which company ids exist.
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company
 
 
 @router.put("/{company_id}", response_model=CompanyRead)
 async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
+    if not _can_see_company(company, _user):
+        raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(company, key, value)
@@ -141,6 +164,8 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
 async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
+    if not _can_see_company(company, _user):
+        raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(company, key, value)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2 } from "lucide-react";
+import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2, PenLine, Plus, Trash2 } from "lucide-react";
 import { companiesApi, contactsApi, outreachApi } from "../lib/api";
 import {
   getProspectTrackingScore,
@@ -30,6 +30,9 @@ export default function ContactDetail() {
   const [editingTimezone, setEditingTimezone] = useState(false);
   const [timezoneDraft, setTimezoneDraft] = useState("");
   const [linkedInDialogOpen, setLinkedInDialogOpen] = useState(false);
+  const [editingPhones, setEditingPhones] = useState(false);
+  const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
+  const [phonesSaving, setPhonesSaving] = useState(false);
 
   const loadContact = async () => {
     if (!id) return;
@@ -91,6 +94,27 @@ export default function ContactDetail() {
     const updated = await contactsApi.update(id, { timezone: timezoneDraft.trim() || null } as Partial<Contact>);
     setContact(updated);
     setEditingTimezone(false);
+  };
+
+  const startEditingPhones = () => {
+    setPhonesDraft((contact?.additional_phones || []).map((p) => ({ number: p.number, label: p.label || "" })));
+    setEditingPhones(true);
+  };
+
+  const handleSaveAdditionalPhones = async () => {
+    if (!contact) return;
+    const cleaned = phonesDraft
+      .map((p) => ({ number: p.number.trim(), label: (p.label || "").trim() }))
+      .filter((p) => p.number)
+      .map((p) => (p.label ? { number: p.number, label: p.label } : { number: p.number }));
+    setPhonesSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { additional_phones: cleaned });
+      setContact(updated);
+      setEditingPhones(false);
+    } finally {
+      setPhonesSaving(false);
+    }
   };
 
   if (loading) {
@@ -213,6 +237,80 @@ export default function ContactDetail() {
                     </>
                   )}
                 </span>
+              </div>
+
+              <div className="mt-3" style={{ marginTop: 14, maxWidth: 760 }}>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-[#8499ad]" style={{ letterSpacing: 0.4 }}>More phones</div>
+                <div className="mt-2" style={{ display: "grid", gap: 8 }}>
+                  {editingPhones ? (
+                    <>
+                      {phonesDraft.length === 0 ? (
+                        <div className="text-[13px] text-[#8499ad]">No additional numbers yet. Add one below.</div>
+                      ) : (
+                        phonesDraft.map((row, idx) => (
+                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <input
+                              value={row.number}
+                              onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, number: e.target.value } : p)))}
+                              placeholder="+1 555-123-4567"
+                              style={{ flex: "1 1 160px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #9ace3d", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }}
+                            />
+                            <input
+                              value={row.label || ""}
+                              onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, label: e.target.value } : p)))}
+                              placeholder="mobile / office"
+                              style={{ flex: "1 1 100px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }}
+                            />
+                            <button type="button" aria-label="Remove number" onClick={() => setPhonesDraft((prev) => prev.filter((_, i) => i !== idx))}
+                              style={{ height: 32, width: 32, flexShrink: 0, borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <button type="button" onClick={() => setPhonesDraft((prev) => [...prev, { number: "", label: "" }])}
+                          style={{ border: "1px dashed #d5e3ef", background: "#fbfdff", color: "#4d6178", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <Plus size={12} /> Add number
+                        </button>
+                        <button type="button" disabled={phonesSaving} onClick={() => handleSaveAdditionalPhones()}
+                          style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #9ace3d", background: "#9ace3d", color: "#1f3a0a", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                          {phonesSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button type="button" onClick={() => setEditingPhones(false)}
+                          style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#8499ad", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (contact.additional_phones && contact.additional_phones.length > 0) ? (
+                    <>
+                      {contact.additional_phones.map((row, idx) => (
+                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => window.__aircallDial?.(row.number, `${contact.first_name} ${contact.last_name}`.trim() || undefined)}
+                            className="inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                            title={`Call ${row.number}`}
+                            style={{ height: 32, padding: "0 12px", borderRadius: 8, border: "1px solid #cdeedc", background: "#eefaf2", color: "#1f8f5f", fontSize: 13, fontWeight: 800 }}
+                          >
+                            <Phone size={13} />{row.number}
+                          </button>
+                          {row.label ? <span className="text-[12px] text-[#8499ad]">{row.label}</span> : null}
+                        </div>
+                      ))}
+                      <button type="button" onClick={startEditingPhones}
+                        style={{ alignSelf: "flex-start", border: "1px solid #d5e3ef", background: "#f7f9fc", color: "#2a5f8c", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <PenLine size={12} /> Edit numbers
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={startEditingPhones}
+                      style={{ alignSelf: "flex-start", border: "1px dashed #d5e3ef", background: "#fbfdff", color: "#8499ad", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <Plus size={12} /> Add number
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

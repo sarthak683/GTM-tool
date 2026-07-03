@@ -281,6 +281,7 @@ async def list_contacts(
         None if await can_view_all_prospects(session, current_user) else str(current_user.id)
     )
     items, total = await repo.list_with_company_name(
+        restrict_to_role=current_user.role,
         company_id=company_id,
         q=q,
         q_field=q_field,
@@ -395,6 +396,21 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
             raise HTTPException(status_code=409, detail="A contact with this email already exists.")
 
     contact = Contact(**payload.model_dump())
+
+    # Auto-tag a new prospect to its ACCOUNT's owners: when it's added under a
+    # company, inherit that company's SDR and AE so the prospect lands with the
+    # reps who own the account (e.g. a BillTrust prospect -> BillTrust's SDR + AE).
+    # Only fills a slot the caller didn't explicitly set; the creator-fallback
+    # below still covers any slot the company itself leaves empty.
+    if contact.company_id and (not contact.sdr_id or not contact.assigned_to_id):
+        company = await session.get(Company, contact.company_id)
+        if company:
+            if not contact.sdr_id and company.sdr_id:
+                contact.sdr_id = company.sdr_id
+                contact.sdr_name = company.sdr_name
+            if not contact.assigned_to_id and company.assigned_to_id:
+                contact.assigned_to_id = company.assigned_to_id
+                contact.assigned_rep_email = company.assigned_rep_email
 
     # Auto-assign to the creator (unless already set) so a rep who manually
     # adds a prospect actually sees it in their scoped list. Admins creating
@@ -741,6 +757,13 @@ async def import_contacts_csv(
     auto_create_companies: bool = Form(False),
 ):
     await require_workspace_permission(session, current_user, "prospect_migration")
+
+    # AEs/SDRs can add prospects but NOT accounts: only admins may auto-create
+    # companies during a prospect import. For non-admins, unmatched rows are
+    # flagged as missing-company (an admin adds the account, then maps the
+    # prospect to it) rather than silently spawning new accounts.
+    if auto_create_companies and (current_user.role or "").lower() != "admin":
+        auto_create_companies = False
 
     lower_name = (file.filename or "").lower()
     if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):

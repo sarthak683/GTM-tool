@@ -23,7 +23,8 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi } from "../lib/api";
+import { accountSourcingApi, assignmentsApi } from "../lib/api";
+import { useToast } from "../lib/ToastContext";
 import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
 import type { RecotapSummary } from "../lib/api/prospecting";
 import { getCachedUsers } from "../lib/cachedFetch";
@@ -367,10 +368,27 @@ function prettyRepName(name?: string | null, email?: string | null): string | nu
   return e || null;
 }
 
-function CompanyTableHeader() {
+function CompanyTableHeader({
+  selectable,
+  allSelected,
+  onToggleAll,
+}: {
+  selectable?: boolean;
+  allSelected?: boolean;
+  onToggleAll?: () => void;
+} = {}) {
   const cell: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div className="as-company-table-header" style={{ padding: "2px 18px 8px" }}>
+    <div className={`as-company-table-header${selectable ? " as-selectable" : ""}`} style={{ padding: "2px 18px 8px" }}>
+      {selectable && (
+        <input
+          type="checkbox"
+          checked={!!allSelected}
+          onChange={onToggleAll}
+          aria-label="Select all visible accounts"
+          style={{ width: 16, height: 16, accentColor: colors.primary, cursor: "pointer", justifySelf: "center" }}
+        />
+      )}
       <span style={cell}>Account</span>
       <span style={cell}>Signals</span>
       <span style={{ ...cell, textAlign: "right" }}>AE · SDR</span>
@@ -378,10 +396,23 @@ function CompanyTableHeader() {
   );
 }
 
-function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (userId: string | null, userName: string | null) => void }) {
+function CompanyCard({
+  company,
+  onAssigned,
+  selectable,
+  selected,
+  onToggleSelect,
+}: {
+  company: Company;
+  onAssigned: (userId: string | null, userName: string | null) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (companyId: string) => void;
+}) {
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
+  const hasIcp = !!company.icp_tier;  // unscored accounts must not masquerade as "cold"
   const disposition = company.disposition || "";
   const statusOption = accountStatusOption(company.account_status);
   const rtp = company.recotap;
@@ -391,7 +422,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 
   return (
     <div
-      className="as-company-card as-company-row crm-hover-lift"
+      className={`as-company-card as-company-row crm-hover-lift${selectable ? " as-selectable" : ""}${selected ? " as-selected" : ""}`}
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
@@ -400,10 +431,26 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
         padding: "11px 18px",
         cursor: "pointer",
         transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background 0.15s",
+        ...(selected ? { background: "#f3f9ea", borderColor: "#cfe89a" } : null),
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fbff"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "#ffffff"; }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#f8fbff"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = selected ? "#f3f9ea" : "#ffffff"; }}
     >
+      {selectable && (
+        <div
+          className="as-col-select"
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect?.(company.id)}
+            aria-label={`Select ${company.name}`}
+            style={{ width: 16, height: 16, accentColor: colors.primary, cursor: "pointer" }}
+          />
+        </div>
+      )}
       {/* Account */}
       <div className="as-col-account" style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
         <CompanyAvatar name={company.name} />
@@ -420,9 +467,17 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           rest (status, disposition, Recotap journey/engagement, HQ) appear only
           when set. Wraps to a second line on dense rows. */}
       <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 0 }}>
-        <span style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>{tier.toUpperCase()}</span>
+        {hasIcp ? (
+          <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
+        ) : null}
         {statusOption ? (
-          <span style={{ background: statusOption.bg, color: statusOption.color, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{statusOption.label}</span>
+          // Status is the primary at-a-glance signal, so it gets a SOLID filled
+          // pill (colored background + white text) rather than the soft tint used
+          // by the neighboring chips — this makes it pop in a dense row. Colors
+          // reuse accountStatusOption() so they stay in lockstep with the detail
+          // page and analytics. (Matches the "active" status badge on the
+          // company detail page.)
+          <span title={`Account status · ${statusOption.label}`} style={{ background: statusOption.color, color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.02em", whiteSpace: "nowrap", boxShadow: `0 1px 3px ${statusOption.color}55` }}>{statusOption.label}</span>
         ) : null}
         {disposition ? (
           <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>
@@ -431,7 +486,7 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
           <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
         ) : null}
         {rtp?.engagement ? (
-          <span title="Recotap engagement" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{rtp.engagement}</span>
+          <span title="Recotap buying intent (engagement, from account score)" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>Intent · {rtp.engagement}</span>
         ) : null}
         {rtp?.hq_location ? (
           <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{rtp.hq_location}</span>
@@ -469,19 +524,37 @@ function CompanyCard({ company, onAssigned }: { company: Company; onAssigned: (u
 export default function AccountSourcing() {
   const pageSize = 40;
   const [searchParams, setSearchParams] = useSearchParams();
+  // Filter hydration source. URL params WIN when present (bookmarks/shared
+  // links keep working); otherwise fall back to the last-saved filters in
+  // localStorage so returning via the left-nav link or a detail "back" button
+  // (which land on the BARE path with no query string) restores the view
+  // instead of resetting everything. Computed once at mount.
+  const initParams = useMemo(() => {
+    const FILTER_KEYS = ["q", "pmin", "pmax", "journey", "owner", "own", "tier", "disp", "status", "lane", "sort", "pg", "tab"];
+    const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
+    if (hasAny) return searchParams;
+    try {
+      const saved = localStorage.getItem("crm.accountSourcing.filters");
+      if (saved) return new URLSearchParams(saved);
+    } catch {
+      /* ignore */
+    }
+    return searchParams;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [summary, setSummary] = useState<AccountSourcingSummary | null>(null);
   const [batches, setBatches] = useState<SourcingBatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("q") ?? "");
+  const [search, setSearch] = useState(() => initParams.get("q") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => initParams.get("q") ?? "");
   // Advanced filter — single rule "prospects {op} {value}" against the
   // contact count per account. URL-persisted as `pmin` / `pmax` so navigating
   // back into the page restores the filter. The op+value pair is derived
   // from the bounds when the modal opens.
   type ProspectOp = "gt" | "lt" | "eq" | "between";
-  const initialPMin = searchParams.get("pmin");
-  const initialPMax = searchParams.get("pmax");
+  const initialPMin = initParams.get("pmin");
+  const initialPMax = initParams.get("pmax");
   const [prospectsMin, setProspectsMin] = useState<number | undefined>(initialPMin !== null ? Number(initialPMin) : undefined);
   const [prospectsMax, setProspectsMax] = useState<number | undefined>(initialPMax !== null ? Number(initialPMax) : undefined);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
@@ -490,27 +563,27 @@ export default function AccountSourcing() {
   const [advValue2, setAdvValue2] = useState("");
   const [downloadingFiltered, setDownloadingFiltered] = useState(false);
   // Recotap journey-stage filter + the funnel counts that power the ABM band.
-  const [journeyFilter, setJourneyFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("journey")));
+  const [journeyFilter, setJourneyFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("journey")));
   const [journeySummary, setJourneySummary] = useState<RecotapSummary | null>(null);
   const [syncingRecotap, setSyncingRecotap] = useState(false);
   const hasAdvancedFilter = prospectsMin !== undefined || prospectsMax !== undefined;
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (searchParams.get("owner") === "mine" ? "mine" : "all"));
+  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (initParams.get("owner") === "mine" ? "mine" : "all"));
   // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
   // selected user. Different from ownerScope (binary mine vs all).
-  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("own")));
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("tier")));
-  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("disp")));
-  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("status")));
-  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(searchParams.get("lane")));
-  const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(searchParams.get("sort")));
-  const [page, setPage] = useState(() => parseInt(searchParams.get("pg") ?? "1", 10) || 1);
+  const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tier")));
+  const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("disp")));
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("status")));
+  const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("lane")));
+  const [sortBy, setSortBy] = useState<AccountSortKey>(() => parseAccountSort(initParams.get("sort")));
+  const [page, setPage] = useState(() => parseInt(initParams.get("pg") ?? "1", 10) || 1);
   const [companyTotal, setCompanyTotal] = useState(0);
   const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
-  const [activeTab, setActiveTab] = useState<"accounts" | "imports">("accounts");
+  const [activeTab, setActiveTab] = useState<"accounts" | "imports">(() => (initParams.get("tab") === "imports" ? "imports" : "accounts"));
   const [dismissedBatchIds, setDismissedBatchIds] = useState<string[]>(() => {
     try {
       const raw = window.localStorage.getItem("account-sourcing-dismissed-batches");
@@ -530,7 +603,13 @@ export default function AccountSourcing() {
   const [bulkEnrichResult, setBulkEnrichResult] = useState<string | null>(null);
   const [bulkIcpRunning, setBulkIcpRunning] = useState(false);
   const [bulkIcpResult, setBulkIcpResult] = useState<string | null>(null);
+  // Admin row-level multi-select → bulk-assign AE/SDR for the selected accounts.
+  // Mirrors the prospect multi-select pattern in Contacts.tsx.
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(() => new Set());
+  const [bulkAssigningAe, setBulkAssigningAe] = useState(false);
+  const [bulkAssigningSdr, setBulkAssigningSdr] = useState(false);
   const { isAdmin, user } = useAuth();
+  const toast = useToast();
 
   useEffect(() => {
     if (searchParams.get("new") !== "company") return;
@@ -657,9 +736,17 @@ export default function AccountSourcing() {
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       prospectsMin !== undefined ? next.set("pmin", String(prospectsMin)) : next.delete("pmin");
       prospectsMax !== undefined ? next.set("pmax", String(prospectsMax)) : next.delete("pmax");
+      activeTab !== "accounts" ? next.set("tab", activeTab) : next.delete("tab");
+      // Persist the same params to localStorage so a bare-path return (left-nav
+      // / detail back button) can rehydrate them via initParams. URL still wins.
+      try {
+        localStorage.setItem("crm.accountSourcing.filters", next.toString());
+      } catch {
+        /* ignore */
+      }
       return next;
     }, { replace: true });
-  }, [laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [activeTab, laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -714,6 +801,65 @@ export default function AccountSourcing() {
     });
     return withIndex.map((item) => item.company);
   }, [companies, sortBy]);
+
+  // Row-level multi-select (admin bulk-assign). Only admins get the controls,
+  // mirroring the prospect bulk-assign gating in Contacts.tsx.
+  const canSelectAccounts = isAdmin;
+  const allVisibleSelected =
+    sortedCompanies.length > 0 && sortedCompanies.every((c) => selectedCompanyIds.has(c.id));
+
+  const toggleCompanySelection = useCallback((companyId: string) => {
+    setSelectedCompanyIds((current) => {
+      const next = new Set(current);
+      if (next.has(companyId)) next.delete(companyId);
+      else next.add(companyId);
+      return next;
+    });
+  }, []);
+
+  const toggleVisibleCompanySelection = useCallback(() => {
+    setSelectedCompanyIds((current) => {
+      if (sortedCompanies.length > 0 && sortedCompanies.every((c) => current.has(c.id))) {
+        // All visible already selected → clear just the visible ones.
+        const next = new Set(current);
+        for (const c of sortedCompanies) next.delete(c.id);
+        return next;
+      }
+      const next = new Set(current);
+      for (const c of sortedCompanies) next.add(c.id);
+      return next;
+    });
+  }, [sortedCompanies]);
+
+  const clearCompanySelection = useCallback(() => setSelectedCompanyIds(new Set()), []);
+
+  // Admin: bulk-assign the selected accounts' AE or SDR. After success, clear
+  // the selection and reload so the rows reflect the new owners.
+  const bulkAssignSelectedCompanies = useCallback(
+    async (role: "ae" | "sdr", userId: string) => {
+      if (!userId || selectedCompanyIds.size === 0) return;
+      const setBusy = role === "sdr" ? setBulkAssigningSdr : setBulkAssigningAe;
+      setBusy(true);
+      try {
+        const result = await assignmentsApi.bulkAssignCompanies(Array.from(selectedCompanyIds), userId, role);
+        const who = teamUsers.find((u) => u.id === userId)?.name || role.toUpperCase();
+        toast.success(
+          `${result.updated} account${result.updated === 1 ? "" : "s"} assigned to ${who}${result.skipped ? `, ${result.skipped} skipped` : ""}.`,
+          `${role.toUpperCase()} reassigned`,
+        );
+        clearCompanySelection();
+        await load();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to assign selected accounts.",
+          "Assign failed",
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selectedCompanyIds, teamUsers, toast, clearCompanySelection, load],
+  );
 
   const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
@@ -793,6 +939,22 @@ export default function AccountSourcing() {
     setDismissedBatchIds((current) => current.filter((id) => id !== batch.id));
     void load();
   }, [load]);
+
+  // Prune selected IDs that are no longer in the loaded list (after paging or
+  // filtering) so a bulk-assign never touches an account the admin can't see.
+  useEffect(() => {
+    setSelectedCompanyIds((current) => {
+      if (current.size === 0) return current;
+      const visible = new Set(companies.map((c) => c.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [companies]);
 
   const handleCreateCompany = useCallback(async () => {
     const entries = parseManualCompanyLines(createForm.companiesText);
@@ -893,24 +1055,26 @@ export default function AccountSourcing() {
               </div>
             </div>
             <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                style={{
-                  border: 0,
-                  background: "#6fae27",
-                  color: "#fff",
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                <Plus size={15} />
-                Add Accounts
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  style={{
+                    border: 0,
+                    background: "#6fae27",
+                    color: "#fff",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Plus size={15} />
+                  Add Accounts
+                </button>
+              )}
               {isAdmin && (
                 <>
                   <button
@@ -1828,9 +1992,126 @@ export default function AccountSourcing() {
           </div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            <CompanyTableHeader />
+            {canSelectAccounts && selectedCompanyIds.size > 0 && (
+              <div
+                className="as-selection-bar"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  border: "1px solid #cfe89a",
+                  background: "#f7fbef",
+                  borderRadius: 14,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ color: colors.text, fontSize: 13, fontWeight: 800 }}>
+                    {selectedCompanyIds.size} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleVisibleCompanySelection}
+                    style={{
+                      height: 34,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {allVisibleSelected ? "Clear page" : "Select visible page"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearCompanySelection}
+                    style={{
+                      height: 34,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.sub,
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 750,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <select
+                    value=""
+                    disabled={bulkAssigningAe || bulkAssigningSdr}
+                    onChange={(e) => { if (e.target.value) void bulkAssignSelectedCompanies("ae", e.target.value); e.currentTarget.value = ""; }}
+                    title="Assign selected accounts' AE"
+                    style={{
+                      height: 36,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 11,
+                      padding: "0 12px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: bulkAssigningAe || bulkAssigningSdr ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <option value="">{bulkAssigningAe ? "Assigning…" : "Assign AE →"}</option>
+                    {teamUsers
+                      .filter((u) => ["sdr", "ae", "admin", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email} ({(u.role || "").toUpperCase()})</option>
+                      ))}
+                  </select>
+                  <select
+                    value=""
+                    disabled={bulkAssigningAe || bulkAssigningSdr}
+                    onChange={(e) => { if (e.target.value) void bulkAssignSelectedCompanies("sdr", e.target.value); e.currentTarget.value = ""; }}
+                    title="Assign selected accounts' SDR"
+                    style={{
+                      height: 36,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 11,
+                      padding: "0 12px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: bulkAssigningAe || bulkAssigningSdr ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <option value="">{bulkAssigningSdr ? "Assigning…" : "Assign SDR →"}</option>
+                    {teamUsers
+                      .filter((u) => ["sdr", "ae", "admin", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email} ({(u.role || "").toUpperCase()})</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            )}
+            <CompanyTableHeader
+              selectable={canSelectAccounts}
+              allSelected={allVisibleSelected}
+              onToggleAll={toggleVisibleCompanySelection}
+            />
             {sortedCompanies.map((c) => (
-              <CompanyCard key={c.id} company={c} onAssigned={() => load()} />
+              <CompanyCard
+                key={c.id}
+                company={c}
+                onAssigned={() => load()}
+                selectable={canSelectAccounts}
+                selected={selectedCompanyIds.has(c.id)}
+                onToggleSelect={toggleCompanySelection}
+              />
             ))}
             <div style={{ ...cardStyle, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ color: colors.sub, fontSize: 13 }}>

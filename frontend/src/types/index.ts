@@ -82,6 +82,7 @@ export interface Contact {
   email?: string;
   email_verified: boolean;
   phone?: string;
+  additional_phones?: { number: string; label?: string }[];
   title?: string;
   seniority?: string;
   linkedin_url?: string;

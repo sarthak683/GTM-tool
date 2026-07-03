@@ -19,14 +19,48 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 
 from app.core.dependencies import CurrentUser, DBSession
+from app.models.contact import Contact
+from app.models.deal import Deal
 from app.models.notification import Notification, NotificationRead
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+# Task notifications are tied to a contact/deal the rep is expected to work. The
+# row's user_id is frozen at creation time, so after a reassignment the reminder
+# would otherwise linger on the previous owner's bell. We re-check CURRENT
+# ownership of the linked entity at read time so everyone sees only their own.
+_TASK_TYPES = ("prospect_followup_due", "next_step_due")
+
+
+def _own_task_clause(user_id):
+    """True when a notification is either (a) not a task type, or (b) a task type
+    whose linked contact/deal is still owned by `user_id` (as SDR or AE)."""
+    contact_owned = (
+        select(Contact.id)
+        .where(
+            cast(Contact.id, String) == Notification.action_payload["contact_id"].astext,
+            or_(Contact.sdr_id == user_id, Contact.assigned_to_id == user_id),
+        )
+        .exists()
+    )
+    deal_owned = (
+        select(Deal.id)
+        .where(
+            cast(Deal.id, String) == Notification.action_payload["deal_id"].astext,
+            or_(Deal.assigned_to_id == user_id, Deal.sdr_id == user_id),
+        )
+        .exists()
+    )
+    return or_(
+        Notification.type.notin_(_TASK_TYPES),
+        and_(Notification.type == "prospect_followup_due", contact_owned),
+        and_(Notification.type == "next_step_due", deal_owned),
+    )
 
 
 @router.get("/", response_model=list[NotificationRead])
@@ -37,7 +71,7 @@ async def list_notifications(
     limit: int = Query(default=50, le=200),
 ):
     """List the current rep's notifications, newest first."""
-    stmt = select(Notification).where(Notification.user_id == user.id)
+    stmt = select(Notification).where(Notification.user_id == user.id, _own_task_clause(user.id))
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
     stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)
@@ -52,6 +86,7 @@ async def unread_count(session: DBSession, user: CurrentUser) -> dict[str, int]:
             Notification.user_id == user.id,
             Notification.read_at.is_(None),
             Notification.dismissed_at.is_(None),
+            _own_task_clause(user.id),
         )
     )).scalar_one()
     return {"unread": int(n or 0)}

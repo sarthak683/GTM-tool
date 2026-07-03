@@ -238,6 +238,11 @@ class WorkspaceSettings(SQLModel, table=True):
     # this widens specific people. NULL/[] = nobody extra.
     prospect_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
+    # Deal visibility grants: user_ids (strings) of non-admins allowed to see
+    # ALL deals (the entire team's pipeline), not just deals they own. Admins
+    # always see all; this widens specific people. NULL/[] = nobody extra.
+    deal_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 

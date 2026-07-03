@@ -644,7 +644,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", geography: "", tags: "", source: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [validationErrors, setValidationErrors] = useState<{ name: boolean; source: boolean }>({ name: false, source: false });
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean }>({ name: false, company_id: false, source: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -668,11 +668,13 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const handleCreate = async () => {
     const nextValidationErrors = {
       name: !form.name.trim(),
+      company_id: !form.company_id,
       source: !form.source,
     };
     setValidationErrors(nextValidationErrors);
     const missingFields = [
       nextValidationErrors.name ? "Deal name" : null,
+      nextValidationErrors.company_id ? "Company" : null,
       nextValidationErrors.source ? "Deal source" : null,
     ].filter(Boolean);
     if (missingFields.length) {
@@ -736,10 +738,19 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
             <div ref={companyDropdownRef} style={{ position: "relative" }}>
               <div
                 onClick={() => setCompanyDropdownOpen((o) => !o)}
-                style={{ ...modalInputStyle, background: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+                style={{
+                  ...modalInputStyle,
+                  background: validationErrors.company_id ? "#fffbf5" : "#fff",
+                  border: validationErrors.company_id ? "1.5px solid #f59e0b" : modalInputStyle.border,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
               >
                 <span style={{ color: form.company_id ? "#1f2d3d" : "#94a3b8", fontSize: 14 }}>
-                  {form.company_id ? selectedCompanyName : "Select company"}
+                  {form.company_id ? selectedCompanyName : "Select company (required)"}
                 </span>
                 <ChevronDown size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />
               </div>
@@ -758,13 +769,6 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                     />
                   </div>
                   <div style={{ overflowY: "auto", maxHeight: 220 }}>
-                    <button
-                      type="button"
-                      onClick={() => { setForm((c) => ({ ...c, company_id: "" })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
-                      style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: !form.company_id ? "#f0f6ff" : "transparent", color: !form.company_id ? "#175089" : "#4d6178", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      No company
-                    </button>
                     {filteredCompanies.length === 0 && (
                       <div style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>No matches</div>
                     )}
@@ -772,7 +776,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                       <button
                         key={company.id}
                         type="button"
-                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
+                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); setValidationErrors((c) => ({ ...c, company_id: false })); if (error) setError(""); }}
                         style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: form.company_id === company.id ? "#f0f6ff" : "transparent", color: form.company_id === company.id ? "#175089" : "#1f2d3d", cursor: "pointer", fontWeight: form.company_id === company.id ? 600 : 400 }}
                       >
                         {company.name}

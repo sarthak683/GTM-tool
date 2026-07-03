@@ -45,6 +45,12 @@ export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
     suggestedCallStatus: "connected",
   },
   {
+    value: "referral",
+    label: "Referral",
+    sequenceStatus: "interested",
+    suggestedCallStatus: "connected",
+  },
+  {
     value: "connected_not_interested",
     label: "Connected - Not Interested",
     sequenceStatus: "not_interested",
@@ -58,6 +64,11 @@ export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
   {
     value: "invalid_number_wrong_number",
     label: "Invalid Number/Wrong Number",
+    suggestedCallStatus: "attempted",
+  },
+  {
+    value: "hang_up",
+    label: "Hang-up",
     suggestedCallStatus: "attempted",
   },
   {
