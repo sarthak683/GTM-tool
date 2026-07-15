@@ -186,7 +186,8 @@ export interface Paginated<T> {
 export interface Deal {
   id: string;
   company_id?: string;
-  assigned_to_id?: string;
+  assigned_to_id?: string;  // AE
+  sdr_id?: string;          // SDR
   email_cc_alias?: string;
   name: string;
   pipeline_type: string;

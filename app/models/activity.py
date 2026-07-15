@@ -45,6 +45,7 @@ class Activity(ActivityBase, table=True):
     email_from: Optional[str] = None           # sender address
     email_to: Optional[str] = Field(default=None, sa_column=Column("email_to", Text))  # comma-separated
     email_cc: Optional[str] = Field(default=None, sa_column=Column("email_cc", Text))  # comma-separated
+    email_bcc: Optional[str] = Field(default=None, sa_column=Column("email_bcc", Text))  # comma-separated
 
 
 class ActivityCreate(ActivityBase):
@@ -62,6 +63,7 @@ class ActivityCreate(ActivityBase):
     email_from: Optional[str] = None
     email_to: Optional[str] = None
     email_cc: Optional[str] = None
+    email_bcc: Optional[str] = None
 
 
 class ActivityRead(ActivityBase):
@@ -82,6 +84,7 @@ class ActivityRead(ActivityBase):
     email_from: Optional[str] = None
     email_to: Optional[str] = None
     email_cc: Optional[str] = None
+    email_bcc: Optional[str] = None
 
 
 class ActivityUpdate(SQLModel):
@@ -103,3 +106,4 @@ class ActivityUpdate(SQLModel):
     email_from: Optional[str] = None
     email_to: Optional[str] = None
     email_cc: Optional[str] = None
+    email_bcc: Optional[str] = None

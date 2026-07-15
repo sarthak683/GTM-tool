@@ -229,6 +229,13 @@ class WorkspaceSettings(SQLModel, table=True):
     report_sender_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     report_sender_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # Zippy calendar — OAuth token for zippy@beacon.li calendar access
+    # Used by the daily AE meeting reminder task.
+    zippy_calendar_connected_email: Optional[str] = Field(default=None)
+    zippy_calendar_connected_at: Optional[datetime] = Field(default=None)
+    zippy_calendar_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    zippy_calendar_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
     # Zippy agent — admin-editable override for the global system prompt.
     # NULL means "use the hardcoded default in zippy_agent.SYSTEM_PROMPT".
     zippy_system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

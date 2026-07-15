@@ -222,6 +222,15 @@ class Settings(BaseSettings):
     AIRCALL_WEBHOOK_SECRET: str = ""  # Shared secret sent as X-Beacon-Webhook-Secret header
     AIRCALL_DEFAULT_NUMBER: str = ""  # E.164 digits of the default outbound number
 
+    # Google Chat Incoming Webhook — AE meeting reminders
+    GOOGLE_CHAT_WEBHOOK_URL: str = ""
+
+    # Zippy calendar credentials — separate from prod Gmail OAuth so the
+    # ae_meeting_reminder task can use the dev-project token stored in the DB
+    # without touching the production Gmail client credentials.
+    ZIPPY_CALENDAR_CLIENT_ID: str = ""
+    ZIPPY_CALENDAR_CLIENT_SECRET: str = ""
+
     # tl;dv meeting intelligence
     TLDV_API_BASE: str = "https://pasta.tldv.io/v1alpha1"
     TLDV_API_KEY: str = ""

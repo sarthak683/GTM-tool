@@ -156,7 +156,7 @@ async def _async_sync() -> dict:
     from app.models.deal import Deal, DealContact
     from app.models.settings import WorkspaceSettings
     from app.services.activity_signal_classifier import detect_latest_intent_from_segments
-    from app.services.personal_email_sync import _load_existing_thread_segments
+    from app.services.personal_email_sync import _load_existing_thread_segments, _normalize_beacon_sender
     from app.services.tasks import refresh_system_tasks_for_entity
 
     # Fresh engine per task
@@ -407,11 +407,13 @@ async def _async_sync() -> dict:
                         ai_summary=ai_summary,
                         email_message_id=msg.message_id,
                         email_subject=msg.subject,
-                        email_from=msg.from_addr,
+                        email_from=_normalize_beacon_sender(msg.from_addr),
                         email_to=", ".join(msg.to_addrs),
                         email_cc=", ".join(msg.cc_addrs),
+                        email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
                         event_metadata={
                             "matched_via": matched_via,
+                            "raw_email_from": msg.from_addr,
                             "matched_aliases": matched_aliases or None,
                             "gmail_thread_id": msg.thread_id or None,
                             "suggested_existing_contacts": suggested_existing_contacts or None,

@@ -491,6 +491,7 @@ export type SalesActivityDrilldownRow = {
   deal_name?: string | null;
   deal_id?: string | null;
   company_id?: string | null;
+  email_body?: string | null;  // full body for expand-in-drilldown (1.2)
 };
 
 export type SalesActivityDrilldown = {

@@ -63,6 +63,7 @@ from app.services.deal_stages import (
     normalize_deal_stage_settings,
 )
 from app.services.gmail_oauth import (
+    CALENDAR_SCOPE,
     GMAIL_SEND_SCOPE,
     GOOGLE_EMAIL_SCOPE,
     build_gmail_connect_url,
@@ -1006,6 +1007,17 @@ async def get_report_sender_connect_url(admin: AdminUser, session: DBSession):
     return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=f"{GOOGLE_EMAIL_SCOPE} {GMAIL_SEND_SCOPE}"))
 
 
+@router.get("/zippy-calendar/google/connect-url", response_model=GmailConnectUrlRead)
+async def get_zippy_calendar_connect_url(admin: AdminUser, _session: DBSession):
+    """Admin-only: get the OAuth URL to connect zippy@beacon.li's calendar.
+    Used by the daily AE meeting reminder Celery task to fetch tomorrow's meetings.
+    """
+    if not settings.gmail_client_id or not settings.gmail_client_secret:
+        raise UnauthorizedError("Gmail OAuth is not configured. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET.")
+    state = create_gmail_oauth_state(str(admin.id), flow="zippy_calendar")
+    return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=CALENDAR_SCOPE))
+
+
 @router.get("/email-sync/google/callback")
 async def gmail_callback(
     session: DBSession,
@@ -1016,7 +1028,12 @@ async def gmail_callback(
     if not payload:
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
     flow = str(payload.get("flow") or "shared").lower()
-    failure_query = "report_sender=error" if flow == "report_sender" else "gmail=error"
+    if flow == "report_sender":
+        failure_query = "report_sender=error"
+    elif flow == "zippy_calendar":
+        failure_query = "zippy_calendar=error"
+    else:
+        failure_query = "gmail=error"
 
     try:
         gmail_info = await exchange_gmail_code(code)
@@ -1039,6 +1056,8 @@ async def gmail_callback(
             row = await _get_or_create(session)
             if flow == "report_sender":
                 row.report_sender_last_error = "Failed to complete Gmail OAuth exchange"
+            elif flow == "zippy_calendar":
+                row.zippy_calendar_last_error = "Failed to complete Gmail OAuth exchange"
             else:
                 row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
             session.add(row)
@@ -1103,6 +1122,17 @@ async def gmail_callback(
         session.add(row)
         await session.commit()
         query = urlencode({"report_sender": "connected", "email": gmail_info["email_address"]})
+        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
+
+    if flow == "zippy_calendar":
+        row = await _get_or_create(session)
+        row.zippy_calendar_connected_email = gmail_info["email_address"]
+        row.zippy_calendar_token_data = gmail_info["token_data"]
+        row.zippy_calendar_connected_at = datetime.utcnow()
+        row.zippy_calendar_last_error = None
+        session.add(row)
+        await session.commit()
+        query = urlencode({"zippy_calendar": "connected", "email": gmail_info["email_address"]})
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
 
     row = await _get_or_create(session)

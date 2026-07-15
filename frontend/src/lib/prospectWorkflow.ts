@@ -68,7 +68,7 @@ export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
   },
   {
     value: "hang_up",
-    label: "Hang-up",
+    label: "Hung-up",
     suggestedCallStatus: "attempted",
   },
   {

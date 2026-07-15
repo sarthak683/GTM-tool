@@ -194,7 +194,8 @@ class DealUpdate(SQLModel):
     stage: Optional[str] = None
     priority: Optional[str] = None
     company_id: Optional[UUID] = None
-    assigned_to_id: Optional[UUID] = None
+    assigned_to_id: Optional[UUID] = None  # AE
+    sdr_id: Optional[UUID] = None          # SDR
     value: Optional[Decimal] = None
     close_date_est: Optional[date] = None
     health: Optional[str] = None

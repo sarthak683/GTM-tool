@@ -488,6 +488,8 @@ function ActivityDrilldownModal({
   loadingMore?: boolean;
   onOpenDeal?: (dealId: string) => void;
 }) {
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -595,11 +597,46 @@ function ActivityDrilldownModal({
                         <p style={{ margin: "4px 0 0", color: "#62748a" }}>{row.company_name || row.deal_name || "—"}</p>
                       </td>
                       <td style={{ ...tdSty, color: "#3f5065" }}>
-                        <p style={{ margin: 0, fontWeight: 700 }}>{row.subject || row.call_outcome || "—"}</p>
-                        <p style={{ margin: "5px 0 0", fontSize: 12, color: "#75869a" }}>
-                          {row.from_email ? `From ${row.from_email}` : row.call_outcome ? `Outcome ${row.call_outcome}` : row.deal_name || ""}
-                          {row.to_email ? ` · To ${row.to_email}` : ""}
-                        </p>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: 0, fontWeight: 700 }}>{row.subject || row.call_outcome || "—"}</p>
+                            <p style={{ margin: "5px 0 0", fontSize: 12, color: "#75869a" }}>
+                              {row.from_email ? `From ${row.from_email}` : row.call_outcome ? `Outcome ${row.call_outcome}` : row.deal_name || ""}
+                              {row.to_email ? ` · To ${row.to_email}` : ""}
+                            </p>
+                          </div>
+                          {row.email_body && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedRowId(expandedRowId === row.id.toString() ? null : row.id.toString());
+                              }}
+                              title={expandedRowId === row.id.toString() ? "Collapse email body" : "Expand email body"}
+                              style={{
+                                flexShrink: 0, padding: "3px 8px", borderRadius: 6,
+                                background: expandedRowId === row.id.toString() ? "#e8edff" : "#f4f6fa",
+                                border: "1px solid #d0d9ef",
+                                color: expandedRowId === row.id.toString() ? "#3555c4" : "#62748a",
+                                fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                              }}
+                            >
+                              {expandedRowId === row.id.toString() ? "▲ Hide" : "▼ Body"}
+                            </button>
+                          )}
+                        </div>
+                        {expandedRowId === row.id.toString() && row.email_body && (
+                          <div style={{
+                            marginTop: 10, padding: "10px 12px",
+                            background: "#f8fafd", borderRadius: 8,
+                            border: "1px solid #e4eaf4",
+                            fontSize: 12, lineHeight: 1.65, color: "#3f5065",
+                            whiteSpace: "pre-wrap", wordBreak: "break-word",
+                            maxHeight: 320, overflowY: "auto",
+                          }}>
+                            {row.email_body}
+                          </div>
+                        )}
                       </td>
                     </tr>
                     );
@@ -907,7 +944,6 @@ function RepActivityTable({
               onClick={() => onOpenMetric(row, "calls")}
             />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
-            <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
             {showDemos ? (
               <>
                 <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "demos_scheduled")} />
@@ -1197,7 +1233,6 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
                 text="#445fd0"
                 sub={<span>{callConnectionRate}% connected</span>}
               />
-              <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
             </div>
           </div>
 
