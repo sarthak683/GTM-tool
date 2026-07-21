@@ -641,10 +641,10 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", geography: "", tags: "", source: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean }>({ name: false, company_id: false, source: false });
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; close_date_est: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, close_date_est: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -670,12 +670,20 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       name: !form.name.trim(),
       company_id: !form.company_id,
       source: !form.source,
+      assigned_to_id: !form.assigned_to_id,
+      sdr_id: !form.sdr_id,
+      meeting_booked_with: !form.meeting_booked_with,
+      close_date_est: !form.close_date_est,
     };
     setValidationErrors(nextValidationErrors);
     const missingFields = [
       nextValidationErrors.name ? "Deal name" : null,
       nextValidationErrors.company_id ? "Company" : null,
+      nextValidationErrors.assigned_to_id ? "Assigned AE" : null,
+      nextValidationErrors.sdr_id ? "Assigned SDR" : null,
       nextValidationErrors.source ? "Deal source" : null,
+      nextValidationErrors.meeting_booked_with ? "Meeting Booked with" : null,
+      nextValidationErrors.close_date_est ? "Meeting Booked Date" : null,
     ].filter(Boolean);
     if (missingFields.length) {
       setError(`Complete required fields: ${missingFields.join(", ")}.`);
@@ -693,9 +701,11 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         close_date_est: form.close_date_est || undefined,
         priority_tag: form.priority_tag || undefined,
         assigned_to_id: form.assigned_to_id || undefined,
+        sdr_id: form.sdr_id || undefined,
         geography: form.geography || undefined,
         source: form.source || undefined,
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+        meeting_booked_with: form.meeting_booked_with || undefined,
       } as Partial<Deal>);
       onCreated(deal);
       onClose();
@@ -798,18 +808,55 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.assigned_to_id} onChange={(event) => setForm((current) => ({ ...current, assigned_to_id: event.target.value }))}>
-                <option value="">Unassigned</option>
+              <select
+                style={{ ...modalInputStyle, background: validationErrors.assigned_to_id ? "#fffbf5" : "#fff", border: validationErrors.assigned_to_id ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.assigned_to_id ? "#1f2d3d" : validationErrors.assigned_to_id ? "#92400e" : undefined }}
+                value={form.assigned_to_id}
+                onChange={(event) => { setForm((current) => ({ ...current, assigned_to_id: event.target.value })); if (validationErrors.assigned_to_id && event.target.value) setValidationErrors((current) => ({ ...current, assigned_to_id: false })); }}
+              >
+                <option value="">Assigned AE *</option>
                 {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
+              <select
+                style={{ ...modalInputStyle, background: validationErrors.sdr_id ? "#fffbf5" : "#fff", border: validationErrors.sdr_id ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.sdr_id ? "#1f2d3d" : validationErrors.sdr_id ? "#92400e" : undefined }}
+                value={form.sdr_id}
+                onChange={(event) => { setForm((current) => ({ ...current, sdr_id: event.target.value })); if (validationErrors.sdr_id && event.target.value) setValidationErrors((current) => ({ ...current, sdr_id: false })); }}
+              >
+                <option value="">Assigned SDR *</option>
+                {users.filter((u) => u.role === "sdr").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.geography} onChange={(event) => setForm((current) => ({ ...current, geography: event.target.value }))}>
-                <option value="">Unassigned</option>
+                <option value="">Geography</option>
                 {GEO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select
+                style={{ ...modalInputStyle, background: form.meeting_booked_with ? "#fff" : validationErrors.meeting_booked_with ? "#fffbf5" : "#fff", border: validationErrors.meeting_booked_with ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.meeting_booked_with ? "#1f2d3d" : validationErrors.meeting_booked_with ? "#92400e" : undefined }}
+                value={form.meeting_booked_with}
+                onChange={(event) => { setForm((current) => ({ ...current, meeting_booked_with: event.target.value })); if (validationErrors.meeting_booked_with && event.target.value) setValidationErrors((current) => ({ ...current, meeting_booked_with: false })); }}
+              >
+                <option value="">Meeting Booked with *</option>
+                <option value="Director">Director</option>
+                <option value="S. Director">S. Director</option>
+                <option value="AVP">AVP</option>
+                <option value="VP">VP</option>
+                <option value="SVP">SVP</option>
+                <option value="Head/Chief">Head / Chief</option>
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <input type="number" style={modalInputStyle} placeholder="Value" value={form.value} onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))} />
-              <input type="date" style={modalInputStyle} value={form.close_date_est} onChange={(event) => setForm((current) => ({ ...current, close_date_est: event.target.value }))} />
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
+                  Meeting Booked Date <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="date"
+                  style={{ ...modalInputStyle, border: validationErrors.close_date_est ? "1.5px solid #fbbf24" : modalInputStyle.border, background: validationErrors.close_date_est ? "#fffbf5" : "#fff" }}
+                  value={form.close_date_est}
+                  onChange={(event) => { setForm((current) => ({ ...current, close_date_est: event.target.value })); if (validationErrors.close_date_est && event.target.value) setValidationErrors((current) => ({ ...current, close_date_est: false })); }}
+                />
+              </div>
             </div>
             <input style={modalInputStyle} placeholder="Tags, comma separated" value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} />
             <div>

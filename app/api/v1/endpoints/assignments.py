@@ -74,6 +74,22 @@ def _is_self_claim_or_self_release(
     return False
 
 
+def _reset_contact_outreach_progress(contact: Contact) -> None:
+    """Wipe call/outreach progress so a newly assigned SDR starts clean.
+
+    Raw Activity records are intentionally left untouched — they are the
+    audit log of what the previous SDR actually did. Only the contact's
+    current-state snapshot (displayed in the prospecting queue) is cleared
+    so the new rep sees a fresh "not called yet" prospect.
+    """
+    contact.call_status = None
+    contact.call_disposition = None
+    contact.call_notes = None
+    contact.call_last_at = None
+    contact.next_followup_at = None
+    contact.sequence_status = None
+
+
 def _can_assign_team(actor: User) -> bool:
     """Any admin/AE/SDR may assign or reassign an account's (or contact's) AE/SDR.
 
@@ -152,6 +168,10 @@ async def assign_company(
                 continue
             contact.sdr_id = company.sdr_id
             contact.sdr_name = company.sdr_name
+            # New SDR → wipe outreach progress so they start from scratch.
+            # Activity log records (Activity table) are intentionally untouched.
+            if body.user_id and body.user_id != current_assigned_id:
+                _reset_contact_outreach_progress(contact)
         else:
             if contact.assigned_to_id not in (None, current_assigned_id):
                 continue
@@ -335,6 +355,10 @@ async def bulk_assign_companies(
                     continue
                 contact.sdr_id = company.sdr_id
                 contact.sdr_name = company.sdr_name
+                # New SDR → wipe outreach progress so they start from scratch.
+                # Activity log records (Activity table) are intentionally untouched.
+                if body.user_id and body.user_id != current_assigned_id:
+                    _reset_contact_outreach_progress(contact)
             else:
                 if contact.assigned_to_id not in (None, current_assigned_id):
                     continue

@@ -11,7 +11,10 @@ import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
+  CartesianGrid,
   Cell,
+  LabelList,
+  Legend,
   PolarAngleAxis,
   RadialBar,
   RadialBarChart,
@@ -19,10 +22,14 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type TooltipProps,
 } from "recharts";
 import {
   AlertTriangle,
+  BarChart3,
+  Building2,
   CheckCircle2,
+  Download,
   Gauge,
   Layers,
   LoaderCircle,
@@ -35,13 +42,22 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import {
+  analyticsApi,
   performanceApi,
   type AnalyticsSettings,
   type DealHealthResponse,
+  type RedAlertDeal,
+  type PipelineBucketDeal,
+  type PipelineBucketsResponse,
   type ForecastResponse,
   type FunnelResponse,
   type LeaderboardResponse,
   type RepSummary,
+  type SalesDashboard,
+  type SalesStageBucket,
+  type SalesPipelineOwnerRow,
+  type SalesRepActivityRow,
+  type SalesRepWeeklyActivityRow,
   type ScorecardBlock,
   type ScorecardMetric,
   type ScorecardResponse,
@@ -817,6 +833,296 @@ function MovementTile({
   );
 }
 
+// ── Pipeline by Stage components (shared with Overview) ───────────────────
+
+const CHART_PIPELINE = {
+  raw: "#cfe89a",
+  weighted: "#5a9216",
+  primary: "#6fae27",
+  grid: "#eef2f8",
+  axis: "#7d8ea3",
+};
+
+function fmtShortCurrency(value?: number | null) {
+  const n = Number(value ?? 0);
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000)}k`;
+  return `$${Math.round(n)}`;
+}
+
+function PipelineCurrencyTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  const dealCount = (payload[0]?.payload as { deal_count?: number } | undefined)?.deal_count;
+  return (
+    <div style={{ borderRadius: 14, border: "1px solid #dfe7f2", background: "rgba(255,255,255,0.96)", boxShadow: "0 18px 34px rgba(21,42,68,0.12)", padding: "12px 14px", minWidth: 190 }}>
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        {payload.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? CHART_PIPELINE.primary }} />
+              {entry.name}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{fmtShortCurrency(Number(entry.value ?? 0))}</span>
+          </div>
+        ))}
+        {typeof dealCount === "number" && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 6, marginTop: 2, borderTop: "1px solid #eef2f8" }}>
+            <span style={{ fontSize: 11, color: "#8696aa" }}>Deals</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{dealCount}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PipelineStageChart({ rows }: { rows: SalesStageBucket[] }) {
+  const chartData = useMemo(
+    () => rows.map((r) => ({ label: r.label, amount: r.amount, weighted: r.weighted_amount, deal_count: r.deal_count })),
+    [rows],
+  );
+  if (rows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No open pipeline yet.</p>;
+  const height = rows.length * 52 + 44;
+  return (
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart layout="vertical" data={chartData} margin={{ top: 8, right: 56, bottom: 0, left: 4 }} barGap={2}>
+          <CartesianGrid horizontal={false} stroke={CHART_PIPELINE.grid} />
+          <XAxis type="number" tick={{ fill: CHART_PIPELINE.axis, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtShortCurrency(Number(v))} />
+          <YAxis type="category" dataKey="label" tick={{ fill: "#46586d", fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} width={132} />
+          <Tooltip content={<PipelineCurrencyTooltip />} cursor={{ fill: "rgba(111,174,39,0.06)" }} />
+          <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+          <Bar dataKey="amount" name="Open" fill={CHART_PIPELINE.raw} radius={[0, 6, 6, 0]} maxBarSize={16}>
+            <LabelList dataKey="amount" position="right" formatter={(v: number) => fmtShortCurrency(Number(v))} fill="#46586d" fontSize={11} fontWeight={700} />
+          </Bar>
+          <Bar dataKey="weighted" name="Weighted" fill={CHART_PIPELINE.weighted} radius={[0, 6, 6, 0]} maxBarSize={16} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PipelineOwnerChart({ rows }: { rows: SalesPipelineOwnerRow[] }) {
+  // Show only AEs — filter out "Unassigned" (no user_id) and any non-person rows
+  const aeRows = rows.filter((r) => r.user_id);
+  if (aeRows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No AE-owned pipeline yet.</p>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {aeRows.map((row) => (
+        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals</p>
+          </div>
+          <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden", display: "flex" }}>
+            {row.stages.map((stage) => {
+              const width = row.amount > 0 ? `${(stage.amount / row.amount) * 100}%` : "0%";
+              return <div key={stage.key} title={`${stage.label}: ${fmtShortCurrency(stage.amount)}`} style={{ width, background: stage.color, minWidth: stage.amount > 0 ? 8 : 0 }} />;
+            })}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{fmtShortCurrency(row.amount)}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{fmtShortCurrency(row.weighted_amount)} weighted</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Helpers (local to this file) ──────────────────────────────────────────
+
+function fmtCurrency(val: number | null | undefined): string {
+  if (!val) return "—";
+  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
+  if (val >= 1_000) return `$${(val / 1_000).toFixed(0)}K`;
+  return `$${val.toFixed(0)}`;
+}
+
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function dlCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `${filename}.csv`;
+  a.click();
+}
+
+// ── Red-alert deal modal ───────────────────────────────────────────────────
+
+function RedAlertModal({
+  label,
+  deals,
+  onClose,
+}: {
+  label: string;
+  deals: RedAlertDeal[];
+  onClose: () => void;
+}) {
+  const total = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 200,
+        background: "rgba(15,26,42,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(820px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10,22,40,0.25)",
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#c0392b", textTransform: "uppercase" }}>{label}</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
+              {deals.length} deal{deals.length === 1 ? "" : "s"}
+              {total > 0 && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>· {fmtCurrency(total)} total</span>}
+            </h3>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {deals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => dlCsv(
+                  label.toLowerCase().replace(/\s+/g, "-"),
+                  ["Deal", "Amount", "Date in Stage", "AE", "SDR"],
+                  deals.map((d) => [d.deal_name, d.amount ?? "", fmtDate(d.stage_entered_at), d.ae_name ?? "", d.sdr_name ?? ""]),
+                )}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}
+            >×</button>
+          </div>
+        </div>
+        {/* Table */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                {["Deal", "Amount", "Date in Stage", "AE Assigned", "SDR Assigned"].map((h, i) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#8b9db2", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {deals.map((d, i) => (
+                <tr key={d.deal_id} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
+                  <td style={{ padding: "12px 16px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
+                  <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{fmtDate(d.stage_entered_at)}</td>
+                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.ae_name || "—"}</td>
+                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
+                </tr>
+              ))}
+              {deals.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Pipeline bucket modal ──────────────────────────────────────────────────
+
+function PipelineBucketModal({
+  label,
+  deals,
+  onClose,
+}: {
+  label: string;
+  deals: PipelineBucketDeal[];
+  onClose: () => void;
+}) {
+  const total = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(15,26,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(4px)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(820px, 100%)", maxHeight: "86vh", background: "#fff", borderRadius: 18, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 40px 80px rgba(10,22,40,0.25)" }}
+      >
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#1d4ed8", textTransform: "uppercase" }}>{label}</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
+              {deals.length} deal{deals.length === 1 ? "" : "s"}
+              {total > 0 && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>· {fmtCurrency(total)} total</span>}
+            </h3>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {deals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => dlCsv(label.toLowerCase().replace(/\s+/g, "-"), ["Deal", "Amount", "Stage", "AE Assigned"], deals.map((d) => [d.deal_name, d.amount ?? "", d.stage, d.ae_name ?? ""]))}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button type="button" onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                {["Deal Name", "Amount", "Stage", "AE Assigned"].map((h, i) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#8b9db2", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {deals.map((d, i) => (
+                <tr key={d.deal_id} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
+                  <td style={{ padding: "12px 16px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
+                  <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.stage}</td>
+                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.ae_name || "—"}</td>
+                </tr>
+              ))}
+              {deals.length === 0 && <tr><td colSpan={4} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Risk (Deal Health) tab ─────────────────────────────────────────────────
 
 export function RiskTab({ reps }: { reps: RepSummary[] }) {
@@ -825,6 +1131,11 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
   const [data, setData] = useState<DealHealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openBucket, setOpenBucket] = useState<{ key: string; label: string } | null>(null);
+  const [pipelineData, setPipelineData] = useState<SalesDashboard | null>(null);
+  const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
+  const [pipelineBuckets, setPipelineBuckets] = useState<PipelineBucketsResponse | null>(null);
+  const [openPipelineBucket, setOpenPipelineBucket] = useState<{ label: string; deals: PipelineBucketDeal[] } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -836,110 +1147,207 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
       .finally(() => setLoading(false));
   }, [repId]);
 
-  const byStageSorted = useMemo(
-    () => (data ? Object.entries(data.by_stage).sort((a, b) => b[1] - a[1]) : []),
-    [data],
-  );
+  useEffect(() => {
+    analyticsApi.salesDashboard(90).then(setPipelineData).catch(() => null);
+    performanceApi.getPipelineBuckets().then(setPipelineBuckets).catch(() => null);
+  }, []);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
-        title="Deal Health — stuck deals"
-        subtitle="Open deals currently over the configured dwell threshold for their stage. Edit thresholds in Targets."
+        title="Deal Health Red Alerts"
+        subtitle="Deals stuck in stage beyond the threshold. Data sourced live from Pipeline."
         action={
           <div style={{ display: "flex", gap: 10 }}>
             {isAdmin && <RepPicker reps={reps} value={repId} onChange={setRepId} />}
           </div>
         }
       >
-        {data && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <div
-              style={{
-                padding: 18,
-                borderRadius: 16,
-                background: `linear-gradient(135deg, ${PALETTE.tintRed} 0%, #fff 100%)`,
-                border: `1px solid ${PALETTE.tintRedBorder}`,
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 800, color: PALETTE.tintRedText, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Total stuck
-              </div>
-              <div style={{ fontSize: 34, fontWeight: 800, color: PALETTE.text, marginTop: 6, lineHeight: 1 }}>
-                {data.total_stuck}
-              </div>
-              <div style={{ fontSize: 12, color: PALETTE.muted, marginTop: 6 }}>
-                {data.total_stuck === 0 ? "No deals stuck." : "Needs escalation attention."}
-              </div>
+        {data && (() => {
+          const b = data.red_alert_buckets ?? {};
+          const alertBuckets = [
+            { key: "demo_scheduled",     label: "Demo Scheduled",   threshold: "> 3 Weeks" },
+            { key: "demo_done",          label: "Demo Done",         threshold: "> 3 Weeks" },
+            { key: "qualified_lead",     label: "Converted",         threshold: "> 3 Weeks" },
+            { key: "poc_agreed",         label: "PoC Agreed",        threshold: "> 4 Weeks" },
+            { key: "poc_wip",            label: "PoC WIP",           threshold: "> 3 Weeks" },
+            { key: "poc_done_and_later", label: "PoC Done & Later",  threshold: "> 8 Weeks" },
+          ];
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 12 }}>
+              {alertBuckets.map(({ key, label, threshold }) => {
+                const count = b[key] ?? 0;
+                const isHot = count > 0;
+                return (
+                  <div
+                    key={key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setOpenBucket({ key, label })}
+                    onKeyDown={(e) => e.key === "Enter" && setOpenBucket({ key, label })}
+                    style={{
+                      padding: 18,
+                      borderRadius: 16,
+                      background: isHot
+                        ? `linear-gradient(135deg, ${PALETTE.tintRed} 0%, #fff 100%)`
+                        : "#fff",
+                      border: `1px solid ${isHot ? PALETTE.tintRedBorder : PALETTE.hairline}`,
+                      cursor: "pointer",
+                      transition: "box-shadow 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
+                  >
+                    <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, marginTop: 6, lineHeight: 1 }}>
+                      {count}
+                    </div>
+                    <div style={{ fontSize: 11, color: isHot ? PALETTE.tintRedText : PALETTE.muted, marginTop: 6, fontWeight: isHot ? 700 : 400 }}>
+                      {threshold} — {count === 1 ? "deal" : "deals"} flagged
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            {byStageSorted.slice(0, 4).map(([stage, count]) => (
-              <div
-                key={stage}
-                style={{
-                  padding: 18,
-                  borderRadius: 16,
-                  background: "#fff",
-                  border: `1px solid ${PALETTE.hairline}`,
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 800, color: PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  {prettyStage(stage)}
-                </div>
-                <div style={{ fontSize: 34, fontWeight: 800, color: PALETTE.text, marginTop: 6, lineHeight: 1 }}>{count}</div>
-                <div style={{ fontSize: 12, color: PALETTE.muted, marginTop: 6 }}>
-                  {count === 1 ? "deal" : "deals"} flagged
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+          );
+        })()}
       </Panel>
+
+      {/* Red-alert deal modal */}
+      {openBucket && data && (
+        <RedAlertModal
+          label={openBucket.label}
+          deals={(data.red_alert_deals ?? {})[openBucket.key] ?? []}
+          onClose={() => setOpenBucket(null)}
+        />
+      )}
 
       {error && <ErrorBanner message={error} />}
       {loading && !data && <Loading />}
 
-      {data && data.deals.length === 0 && <EmptyState icon={<CheckCircle2 size={26} />} text="No stuck deals across the workspace." />}
-
-      {data && data.deals.length > 0 && (
-        <Panel title="Stuck deals" subtitle="Sorted by days over threshold. Click a deal to open the detail view.">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 0 }}>
-            {data.deals.map((d, idx) => (
-              <Link
-                to={`/deals/${d.deal_id}`}
-                key={d.deal_id}
-                style={{
-                  padding: "14px 4px",
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 2fr) 1fr 1fr 1fr",
-                  alignItems: "center",
-                  gap: 12,
-                  borderTop: idx === 0 ? "none" : `1px solid ${PALETTE.hairline}`,
-                  textDecoration: "none",
-                  color: "inherit",
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#fafcff")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: PALETTE.text }}>{d.deal_name}</div>
-                  <div style={{ fontSize: 12, color: PALETTE.muted, marginTop: 2 }}>{prettyStage(d.stage)}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700 }}>In stage</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: PALETTE.text, fontVariantNumeric: "tabular-nums" }}>{d.dwell_days}d</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700 }}>Threshold</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: PALETTE.subtle, fontVariantNumeric: "tabular-nums" }}>{d.threshold_days}d</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <Pill tone="red">+{d.over_by_days}d over</Pill>
-                </div>
-              </Link>
-            ))}
-          </div>
+      {/* Pipeline by Stage */}
+      {pipelineData && (
+        <Panel
+          title="Pipeline by Stage"
+          subtitle="Stage composition of the current open pipeline."
+          action={
+            <div style={{ display: "inline-flex", borderRadius: 999, border: "1px solid #dde6f0", background: "#f8fafc", padding: 4 }}>
+              {(["stage", "rep"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setPipelineView(v)}
+                  style={{
+                    height: 34, padding: "0 12px", borderRadius: 999, border: "none",
+                    background: pipelineView === v ? "#fff" : "transparent",
+                    color: pipelineView === v ? "#2948b9" : "#5d6f84",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    boxShadow: pipelineView === v ? "0 1px 6px rgba(32,53,84,0.08)" : "none",
+                  }}
+                >
+                  {v === "stage" ? "By Stage" : "By Rep"}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          {pipelineView === "stage"
+            ? <PipelineStageChart rows={pipelineData.pipeline_by_stage} />
+            : <PipelineOwnerChart rows={pipelineData.pipeline_by_owner} />}
         </Panel>
+      )}
+
+      {/* Overall Sales Pipeline */}
+      <Panel
+        title="Overall Sales Pipeline"
+        subtitle="Deals in the pipeline that may need attention based on deal size and stage."
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+          {/* Bucket 1: Low-value late-stage deals */}
+          {(() => {
+            const count = pipelineBuckets?.low_value_late_stage_count ?? 0;
+            const deals = pipelineBuckets?.low_value_late_stage_deals ?? [];
+            const isHot = count > 0;
+            return (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpenPipelineBucket({ label: "Late Stage Deals < $750K", deals })}
+                onKeyDown={(e) => e.key === "Enter" && setOpenPipelineBucket({ label: "Late Stage Deals < $750K", deals })}
+                style={{
+                  padding: 20,
+                  borderRadius: 16,
+                  background: isHot
+                    ? `linear-gradient(135deg, ${PALETTE.tintRed} 0%, #fff 100%)`
+                    : "#fff",
+                  border: `1px solid ${isHot ? PALETTE.tintRedBorder : PALETTE.hairline}`,
+                  cursor: "pointer",
+                  transition: "box-shadow 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
+                onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
+              >
+                <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Late Stage · PoC Agreed → Closed
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>
+                  {pipelineBuckets ? count : "—"}
+                </div>
+                <div style={{ fontSize: 11, color: isHot ? PALETTE.tintRedText : PALETTE.muted, marginTop: 6, fontWeight: isHot ? 700 : 400 }}>
+                  Deals in late stages &lt; $750K
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Bucket 2: Small avg deal size */}
+          {(() => {
+            const count = pipelineBuckets?.small_avg_count ?? 0;
+            const deals = pipelineBuckets?.small_avg_deals ?? [];
+            const isHot = count > 0;
+            return (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpenPipelineBucket({ label: "Deals ≤ $100K", deals })}
+                onKeyDown={(e) => e.key === "Enter" && setOpenPipelineBucket({ label: "Deals ≤ $100K", deals })}
+                style={{
+                  padding: 20,
+                  borderRadius: 16,
+                  background: isHot
+                    ? `linear-gradient(135deg, ${PALETTE.tintRed} 0%, #fff 100%)`
+                    : "#fff",
+                  border: `1px solid ${isHot ? PALETTE.tintRedBorder : PALETTE.hairline}`,
+                  cursor: "pointer",
+                  transition: "box-shadow 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
+                onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
+              >
+                <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Small Avg. Deal Size
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>
+                  {pipelineBuckets ? count : "—"}
+                </div>
+                <div style={{ fontSize: 11, color: isHot ? PALETTE.tintRedText : PALETTE.muted, marginTop: 6, fontWeight: isHot ? 700 : 400 }}>
+                  Deals with value ≤ $100K
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </Panel>
+
+      {/* Pipeline bucket modal */}
+      {openPipelineBucket && (
+        <PipelineBucketModal
+          label={openPipelineBucket.label}
+          deals={openPipelineBucket.deals}
+          onClose={() => setOpenPipelineBucket(null)}
+        />
       )}
     </div>
   );
@@ -1519,13 +1927,308 @@ export function TargetsTab() {
 
 // ── Tab strip + router integration ─────────────────────────────────────────
 
+// ── Outreach Analysis tab ─────────────────────────────────────────────────
+
+// Chart constants mirrored from SalesAnalytics (not exported there)
+type AccountMetricKey = "emails" | "calls" | "connected_calls" | "linkedin_reachouts" | "meetings";
+
+const ACCOUNT_ACTIVITY_METRICS: Array<{ key: AccountMetricKey; label: string; color: string; tone: string }> = [
+  { key: "emails",             label: "Emails",    color: "#2f8d5d", tone: "#eefbf2" },
+  { key: "calls",              label: "Calls",     color: "#445fd0", tone: "#eef3ff" },
+  { key: "connected_calls",    label: "Connected", color: "#15736d", tone: "#edf9f8" },
+  { key: "linkedin_reachouts", label: "LinkedIn",  color: "#0a66c2", tone: "#eef4ff" },
+  { key: "meetings",           label: "Meetings",  color: "#c16a18", tone: "#fff4ea" },
+];
+const ACCOUNT_MIX_KEYS: AccountMetricKey[]     = ["emails", "calls", "linkedin_reachouts", "meetings"];
+const ACCOUNT_CALL_KEYS: AccountMetricKey[]    = ["calls", "connected_calls"];
+const ACCOUNT_ACTIVITY_META = Object.fromEntries(
+  ACCOUNT_ACTIVITY_METRICS.map((m) => [m.key, m]),
+) as Record<AccountMetricKey, (typeof ACCOUNT_ACTIVITY_METRICS)[number]>;
+
+function fmtShortAmt(v?: number | null) {
+  if (v == null) return "$0";
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`;
+  return `$${v}`;
+}
+
+function AccountActivityTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div style={{ borderRadius: 14, border: "1px solid #dfe7f2", background: "rgba(255,255,255,0.96)", boxShadow: "0 18px 34px rgba(21,42,68,0.12)", padding: "12px 14px", minWidth: 180 }}>
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        {payload.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? "#4e6be6" }} />
+              {entry.name}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{Number(entry.value ?? 0)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TouchpointPill({
+  label,
+  total,
+  color,
+  tone,
+  rows,
+}: {
+  label: string;
+  total: number;
+  color: string;
+  tone: string;
+  rows: { label: string; value: number | string }[];
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "14px 12px", borderRadius: 14, background: tone, border: "1px solid transparent", flex: 1, minWidth: 160 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        <span style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>{total}</span>
+      </div>
+      <span style={{ fontSize: 10, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ fontSize: 11, color, opacity: 0.72, fontWeight: 600 }}>{r.label}</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
+  const sortedRows = useMemo(
+    () => [...rows].sort((a, b) => {
+      const delta = (b.totals.total ?? 0) - (a.totals.total ?? 0);
+      if (delta !== 0) return delta;
+      return (b.pipeline_amount ?? 0) - (a.pipeline_amount ?? 0);
+    }),
+    [rows],
+  );
+
+  const [selectedKey, setSelectedKey] = useState(sortedRows[0]?.key ?? "");
+
+  useEffect(() => {
+    if (!sortedRows.some((r) => r.key === selectedKey)) {
+      setSelectedKey(sortedRows[0]?.key ?? "");
+    }
+  }, [selectedKey, sortedRows]);
+
+  if (sortedRows.length === 0) {
+    return <p style={{ margin: 0, color: PALETTE.muted }}>No outreach activity yet for this time range.</p>;
+  }
+
+  const selectedIndex = Math.max(sortedRows.findIndex((r) => r.key === selectedKey), 0);
+  const selectedRow   = sortedRows[selectedIndex] ?? sortedRows[0];
+
+  const weeklyChartData = selectedRow.weeks.map((w) => ({
+    label:               w.label,
+    shortLabel:          w.label.replace("Week of ", ""),
+    emails:              w.emails,
+    calls:               w.calls,
+    connected_calls:     w.connected_calls,
+    live_calls:          w.live_calls,
+    linkedin_reachouts:  w.linkedin_reachouts,
+    meetings:            w.meetings,
+    total:               w.total,
+  }));
+
+  const callMtgBooked      = selectedRow.totals.call_meeting_booked ?? 0;
+  const callFirst          = selectedRow.totals.call_first_attempt ?? 0;
+  const callSecondPlus     = selectedRow.totals.call_second_plus ?? 0;
+  const emailFirst         = selectedRow.totals.email_first_attempt ?? 0;
+  const emailMin3          = selectedRow.totals.email_min_3_attempts ?? 0;
+  const liConnRequested    = selectedRow.totals.linkedin_connection_requested ?? 0;
+  const liIntroMsg         = selectedRow.totals.linkedin_intro_msg ?? 0;
+  const liFollowupMsg      = selectedRow.totals.linkedin_followup_msg ?? 0;
+
+  return (
+    <div
+      style={{
+        borderRadius: 22,
+        border: "1px solid #e7edf5",
+        background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+        padding: 20,
+        display: "grid",
+        gap: 18,
+      }}
+    >
+      {/* Top row — spotlight + selector */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, alignItems: "start" }}>
+        {/* Left — name + touchpoint pills */}
+        <div style={{ display: "grid", gap: 14 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>{selectedRow.rep_name}</h3>
+              {(selectedRow.totals.total_prospects ?? 0) > 0 && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  fontSize: 12, fontWeight: 700,
+                  padding: "3px 10px", borderRadius: 999,
+                  background: "#f1f5f9", color: "#475569",
+                  border: "1px solid #e2e8f0",
+                }}>
+                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" style={{ flexShrink: 0 }}>
+                    <circle cx="5.5" cy="3.5" r="2" stroke="#475569" strokeWidth="1.3"/>
+                    <path d="M1.5 9.5c0-2.2 1.79-4 4-4s4 1.8 4 4" stroke="#475569" strokeWidth="1.3" strokeLinecap="round"/>
+                  </svg>
+                  {selectedRow.totals.total_prospects} prospects
+                </span>
+              )}
+            </div>
+            <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>
+              Select an account to see its full outreach breakdown — calls, emails, and LinkedIn touches side by side.
+            </p>
+          </div>
+
+          {/* Touchpoint pills */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <TouchpointPill
+              label="Call Touchpoints"
+              total={selectedRow.totals.calls}
+              color="#445fd0"
+              tone="#eef3ff"
+              rows={[
+                { label: "First Attempt",   value: callFirst },
+                { label: "2nd+ Attempts",   value: callSecondPlus },
+                { label: "Meetings Booked", value: callMtgBooked },
+                { label: "Mobile Numbers",  value: selectedRow.totals.total_mobile_numbers ?? 0 },
+              ]}
+            />
+            <TouchpointPill
+              label="Email Touchpoints"
+              total={selectedRow.totals.emails}
+              color="#2f8d5d"
+              tone="#eefbf2"
+              rows={[
+                { label: "First Attempt",    value: emailFirst },
+                { label: "Min. 3 Attempts",  value: emailMin3 },
+              ]}
+            />
+            <TouchpointPill
+              label="LinkedIn"
+              total={selectedRow.totals.linkedin_reachouts}
+              color="#0a66c2"
+              tone="#e8f2ff"
+              rows={[
+                { label: "Connection Requested", value: liConnRequested },
+                { label: "Intro Msg Sent",       value: liIntroMsg },
+                { label: "Followup Msg Sent",    value: liFollowupMsg },
+              ]}
+            />
+          </div>
+        </div>
+
+        {/* Right — account selector only */}
+        <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Account</p>
+            <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total weekly touches in the current window.</p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {sortedRows.map((row, index) => {
+              const selected = row.key === selectedRow.key;
+              return (
+                <button
+                  key={row.key}
+                  type="button"
+                  onClick={() => setSelectedKey(row.key)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 14,
+                    border:      selected ? "1px solid #b8cff7" : "1px solid #dde6f0",
+                    background:  selected ? "#eef4ff" : "#fff",
+                    color:       selected ? "#2948b9" : "#2a3d54",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    boxShadow:   selected ? "0 8px 18px rgba(66,98,197,0.12)" : "none",
+                  }}
+                >
+                  <span style={{ display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: 999, background: selected ? "#dfe9ff" : "#f2f5fa", color: selected ? "#2948b9" : "#6f8095", fontSize: 11, fontWeight: 800 }}>
+                    {index + 1}
+                  </span>
+                  <span style={{ display: "grid", textAlign: "left" }}>
+                    <span style={{ lineHeight: 1.2 }}>{row.rep_name}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: selected ? "#5e75c8" : "#75879a" }}>{row.totals.total} touches</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Weekly Outreach Mix chart — full width */}
+      <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+        <div>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
+          <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars show weekly volume by channel — calls, emails, LinkedIn, and meetings — so you can spot where effort is concentrated.</p>
+        </div>
+        <div style={{ width: "100%", height: 320 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+              <CartesianGrid vertical={false} stroke="#edf2f8" />
+              <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
+              <Tooltip content={<AccountActivityTooltip />} cursor={{ fill: "rgba(78,107,230,0.05)" }} />
+              <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+              {ACCOUNT_MIX_KEYS.map((key) => {
+                const m = ACCOUNT_ACTIVITY_META[key];
+                return <Bar key={key} dataKey={key} name={m.label} stackId="mix" fill={m.color} radius={[6, 6, 0, 0]} maxBarSize={42} />;
+              })}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function OutreachAnalysisTab() {
+  const [data, setData] = useState<SalesDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    analyticsApi
+      .salesDashboard(90)
+      .then(setData)
+      .catch(() => null)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const rows: SalesRepWeeklyActivityRow[] = data?.rep_weekly_activity ?? [];
+
+  return (
+    <div style={{ display: "grid", gap: 18 }}>
+      <Panel
+        title="Account Analysis"
+        subtitle="Outreach activity by account. Select an account from the panel to spotlight its weekly email, call, and LinkedIn mix alongside call quality trends."
+        action={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999, background: "#eef4ff", border: "1px solid #d7e2fb", fontSize: 11, fontWeight: 800, color: "#3555c4", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            <Building2 size={13} />
+            Account view
+          </span>
+        }
+      >
+        {loading && <Loading />}
+        {!loading && <AccountAnalysisFocus rows={rows} />}
+      </Panel>
+    </div>
+  );
+}
+
 export const PERFORMANCE_TABS = [
-  { key: "scorecard", label: "Scorecard", icon: Target },
-  { key: "funnel", label: "Funnel", icon: Layers },
-  { key: "risk", label: "Risk", icon: AlertTriangle },
-  { key: "forecast", label: "Forecast", icon: TrendingUp },
-  { key: "rankings", label: "Rankings", icon: Trophy },
-  { key: "targets", label: "Targets", icon: Gauge },
+  { key: "scorecard",          label: "Scorecard",         icon: Target },
+  { key: "funnel",             label: "Funnel",            icon: Layers },
+  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle },
+  { key: "forecast",           label: "Forecast",          icon: TrendingUp },
+  { key: "targets",            label: "Targets",           icon: Gauge },
+  { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3 },
 ] as const;
 
 export type PerformanceTabKey = (typeof PERFORMANCE_TABS)[number]["key"];
@@ -1540,9 +2243,9 @@ export function PerformanceTabContent({ tab, reps }: { tab: PerformanceTabKey; r
       return <RiskTab reps={reps} />;
     case "forecast":
       return <ForecastTab reps={reps} />;
-    case "rankings":
-      return <RankingsTab />;
     case "targets":
       return <TargetsTab />;
+    case "outreach-analysis":
+      return <OutreachAnalysisTab />;
   }
 }

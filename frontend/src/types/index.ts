@@ -54,6 +54,44 @@ export interface Company {
   recotap?: RecotapSignals | null;
   created_at: string;
   updated_at: string;
+  // Opportunity Details (AE-filled, account-level)
+  opp_name?: string | null;
+  opp_amount?: number | null;
+  opp_arr?: number | null;
+  opp_multiyear_license_fee?: number | null;
+  opp_service_fee?: number | null;
+  opp_type?: string | null;
+  opp_sales_category?: string | null;
+  opp_geolocation?: string | null;
+  opp_owner?: string | null;
+  opp_solution_engineer?: string | null;
+  opp_close_date?: string | null;
+  opp_forecast_category?: string | null;
+  opp_probability?: number | null;
+  opp_stage?: string | null;
+  opp_poc_start_date?: string | null;
+  opp_poc_status?: string | null;
+  opp_aop_doc_link?: string | null;
+  opp_msp_doc_link?: string | null;
+  // MEDDPICC
+  medd_business_initiatives?: string | null;
+  medd_business_pains?: string | null;
+  medd_technical_pains?: string | null;
+  medd_size_business_pain?: number | null;
+  medd_who_impacted_business?: string | null;
+  medd_size_technical_pain?: number | null;
+  medd_who_impacted_technical?: string | null;
+  medd_metrics?: string | null;
+  medd_decision_criteria?: string | null;
+  medd_economic_buyer?: string | null;
+  medd_eb_top_2_priorities?: string | null;
+  medd_decision_process?: string | null;
+  medd_paper_process?: string | null;
+  medd_champion?: string | null;
+  medd_champion_win?: string | null;
+  medd_competition?: string | null;
+  // Current deal status note
+  opp_current_deal_status?: string | null;
 }
 
 export interface RecotapSignals {
@@ -208,6 +246,7 @@ export interface Deal {
   next_step_due_at?: string;
   qualification_reason?: string;
   priority_tag?: "P0" | "P1" | "P2" | null;
+  meeting_booked_with?: string | null;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;

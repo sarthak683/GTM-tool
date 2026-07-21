@@ -1186,6 +1186,8 @@ async def list_sourced_companies(
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only."),
+    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only."),
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage."),
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
@@ -1249,6 +1251,32 @@ async def list_sourced_companies(
             owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
         if owner_clauses:
             stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+
+    if ae_id:
+        ae_uuids: list[UUID] = []
+        for raw in str(ae_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ae_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if ae_uuids:
+            stmt = stmt.where(Company.assigned_to_id.in_(ae_uuids))
+
+    if sdr_id:
+        sdr_uuids: list[UUID] = []
+        for raw in str(sdr_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                sdr_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if sdr_uuids:
+            stmt = stmt.where(Company.sdr_id.in_(sdr_uuids))
 
     # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
     # on pull/seed), so no domain-normalization in SQL. "not_scored" matches

@@ -523,6 +523,17 @@ export default function Contacts() {
   const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState("attempted");
   const [savingDisposition, setSavingDisposition] = useState(false);
+  // Activities logged during the current call session — prepended to the
+  // precall brief's history so the rep sees their just-saved entry immediately
+  // without waiting for a brief refresh.
+  const [sessionActivities, setSessionActivities] = useState<Array<{
+    type: string;
+    call_status?: string;
+    call_disposition?: string;
+    content?: string | null;
+    created_at: string;
+  }>>([]);
+  const [expandedActivityIndices, setExpandedActivityIndices] = useState<Set<number>>(new Set());
   // Follow-up scheduling — only visible when the disposition is a callback
   // / follow-up. Default = "tomorrow 10:00 AM PST" expressed in the rep's
   // local time, so the <input type="datetime-local"> shows a friendly value.
@@ -1411,6 +1422,8 @@ export default function Contacts() {
     setCallNotes("");
     setFollowupAt("");
     setCurrentRecordingId(null);
+    setSessionActivities([]);
+    setExpandedActivityIndices(new Set());
     // Ring the rep's phone / open the dialer NOW, on open — the whole point of
     // the 10s countdown is to give the rep time to dial and connect before the
     // recording auto-starts. Previously this fired only at the END of the
@@ -1544,6 +1557,16 @@ export default function Contacts() {
       }
 
       toast.success(`Call logged for ${callContact.first_name}.`, "Call logged");
+      // Prepend to local session feed so the rep sees the just-saved entry
+      // in the right-column activity list without waiting for a brief refresh.
+      setSessionActivities((prev) => [{
+        type: "call",
+        call_status: callStatus,
+        call_disposition: callDisposition,
+        content: activityContent,
+        created_at: nowIso,
+      }, ...prev]);
+      setExpandedActivityIndices(new Set());
       // Save & next: jump to the next callable prospect to keep a dialing rep
       // in flow; otherwise close. Either way the list reloads silently so the
       // rep's scroll position is preserved.
@@ -4823,6 +4846,159 @@ export default function Contacts() {
                       style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "13px 15px", fontSize: 14.5, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }}
                     />
                   </div>
+
+                  {/* RECENT ACTIVITY — session entries appear at top immediately
+                      after save; historical entries come from the precall brief. */}
+                  {(() => {
+                    type DisplayAct = {
+                      type: string;
+                      call_disposition?: string;
+                      content?: string | null;
+                      created_at: string;
+                      isSession: boolean;
+                    };
+                    const allActs: DisplayAct[] = [
+                      ...sessionActivities.map((a) => ({
+                        type: a.type,
+                        call_disposition: a.call_disposition,
+                        content: a.content,
+                        created_at: a.created_at,
+                        isSession: true,
+                      })),
+                      ...(precallBrief?.recent_activities ?? []).map((a) => ({
+                        type: a.type,
+                        call_disposition: undefined,
+                        content: a.ai_summary || a.content || null,
+                        created_at: a.created_at,
+                        isSession: false,
+                      })),
+                    ];
+                    if (allActs.length === 0) return null;
+
+                    const fmtDate = (iso: string) => {
+                      const d = new Date(iso);
+                      const diffH = (Date.now() - d.getTime()) / 3_600_000;
+                      if (diffH < 1) return "Just now";
+                      if (diffH < 24) return `${Math.round(diffH)}h ago`;
+                      const diffD = Math.floor(diffH / 24);
+                      if (diffD <= 6) return `${diffD}d ago`;
+                      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                    };
+
+                    const chStyle = (type: string) => {
+                      const t = (type || "").toLowerCase();
+                      if (t === "email") return { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe" };
+                      if (t.includes("linkedin")) return { bg: "#f0f9ff", fg: "#0369a1", border: "#bae6fd" };
+                      return { bg: "#f0fdf4", fg: "#15803d", border: "#bbf7d0" };
+                    };
+
+                    const chIcon = (type: string) => {
+                      const t = (type || "").toLowerCase();
+                      if (t === "email") return <Mail size={11} />;
+                      if (t.includes("linkedin")) return <Link2 size={11} />;
+                      return <Phone size={11} />;
+                    };
+
+                    return (
+                      <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #e8eef5" }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span>Recent activity</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "none", letterSpacing: 0 }}>
+                            {allActs.length} interaction{allActs.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {allActs.map((act, idx) => {
+                            const isExpanded = expandedActivityIndices.has(idx);
+                            const ch = chStyle(act.type);
+                            const tone = act.call_disposition
+                              ? dispoGroups.find((g) => g.values.includes(act.call_disposition!))?.tone ?? null
+                              : null;
+                            const noteText = act.content || "";
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() =>
+                                  setExpandedActivityIndices((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(idx)) next.delete(idx);
+                                    else next.add(idx);
+                                    return next;
+                                  })
+                                }
+                                style={{
+                                  border: `1px solid ${isExpanded ? "#c8d6e6" : "#e8eef5"}`,
+                                  borderRadius: 11,
+                                  background: isExpanded ? "#f8fbff" : "#fff",
+                                  padding: "10px 13px",
+                                  cursor: "pointer",
+                                  transition: "border-color 0.12s, background 0.12s",
+                                }}
+                              >
+                                {/* Channel + date + chevron */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: (tone || noteText) ? 6 : 0 }}>
+                                  <span style={{
+                                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                    width: 22, height: 22, borderRadius: "50%",
+                                    background: ch.bg, color: ch.fg, border: `1px solid ${ch.border}`,
+                                    flexShrink: 0,
+                                  }}>
+                                    {chIcon(act.type)}
+                                  </span>
+                                  <span style={{ fontSize: 11, fontWeight: 800, color: "#3c4f68", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                    {act.type}
+                                  </span>
+                                  {act.isSession && (
+                                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>
+                                      Just saved
+                                    </span>
+                                  )}
+                                  <span style={{ marginLeft: "auto", fontSize: 11, color: "#94a3b8" }}>
+                                    {fmtDate(act.created_at)}
+                                  </span>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                                    style={{ flexShrink: 0, transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                                    <path d="M1.5 3.5l3.5 3 3.5-3" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                  </svg>
+                                </div>
+                                {/* Disposition badge */}
+                                {tone && act.call_disposition && (
+                                  <div style={{ marginBottom: noteText ? 5 : 0 }}>
+                                    <span style={{
+                                      display: "inline-flex", alignItems: "center", gap: 5,
+                                      fontSize: 11, fontWeight: 700,
+                                      padding: "2px 8px", borderRadius: 999,
+                                      background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`,
+                                    }}>
+                                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: tone.fg, flexShrink: 0 }} />
+                                      {dispoLabel(act.call_disposition)}
+                                    </span>
+                                  </div>
+                                )}
+                                {/* Notes text — 2-line clamp, expands on click */}
+                                {noteText && (
+                                  <div style={{
+                                    fontSize: 12.5, color: "#3d5268", lineHeight: 1.5,
+                                    ...(isExpanded
+                                      ? { whiteSpace: "pre-wrap" as const }
+                                      : {
+                                          display: "-webkit-box" as const,
+                                          WebkitLineClamp: 2,
+                                          WebkitBoxOrient: "vertical" as const,
+                                          overflow: "hidden",
+                                        }
+                                    ),
+                                  }}>
+                                    {noteText}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                   </div>{/* end right column */}
                 </div>{/* end two-column grid */}

@@ -54,7 +54,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-BEACON_DOMAIN = "beacon.li"
+BEACON_DOMAINS = {"beacon.li", "beaconli.com"}
 FREE_EMAIL_PROVIDERS = {
     "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
     "icloud.com", "protonmail.com", "googlemail.com",
@@ -84,7 +84,7 @@ def _domain_from_email(addr: str) -> str:
 
 
 def _is_internal(email: str) -> bool:
-    return _domain_from_email(email) == BEACON_DOMAIN
+    return _domain_from_email(email) in BEACON_DOMAINS
 
 
 async def _get_ae_name(
