@@ -3047,9 +3047,9 @@ async def sales_dashboard(
                     "active_deals": 0,
                     "pipeline_amount": 0.0,
                     "weeks": {
-                        week_key: {
-                            "week_key": week_key,
-                            "label": week_label,
+                        _week_key(week_start): {
+                            "week_key": _week_key(week_start),
+                            "label": _week_label(week_start),
                             "week_start": week_start.isoformat(),
                             "week_end": (week_start + timedelta(days=6)).isoformat(),
                             "emails": 0,
@@ -3062,7 +3062,7 @@ async def sales_dashboard(
                             "meetings": 0,
                             "total": 0,
                         }
-                        for week_start, week_key, week_label in week_starts
+                        for week_start in week_starts
                     },
                 },
             )
