@@ -275,6 +275,23 @@ async def impersonate_user(payload: ImpersonateRequest, session: DBSession, curr
 # ── User management (admin) ─────────────────────────────────────────────────
 
 
+def _normalize_user_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _validate_seed_user(email: str, name: str, role: str) -> tuple[str, str, str]:
+    normalized_email = _normalize_user_email(email)
+    normalized_name = name.strip()
+    normalized_role = role.strip().lower()
+    if not normalized_email or "@" not in normalized_email:
+        raise ForbiddenError("A valid email address is required")
+    if not normalized_name:
+        raise ForbiddenError("Name is required")
+    if normalized_role not in ALLOWED_USER_ROLES:
+        raise ForbiddenError("Role must be one of: admin, ae, sdr")
+    return normalized_email, normalized_name, normalized_role
+
+
 @router.get("/users", response_model=List[UserRead])
 async def list_users(session: DBSession, current_user: CurrentUser):
     """List all users for teammates allowed to manage team permissions."""
@@ -388,6 +405,31 @@ class SeedUsersResponse(SQLModel):
     users: list[UserRead]
 
 
+@router.post("/users", response_model=UserRead)
+async def create_user(payload: SeedUserPayload, session: DBSession, current_user: CurrentUser):
+    """Create a placeholder CRM user before their first Google sign-in."""
+    await require_workspace_permission(session, current_user, "manage_team")
+    email, name, role = _validate_seed_user(payload.email, payload.name, payload.role)
+
+    existing = (
+        await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
+    ).scalar_one_or_none()
+    if existing:
+        raise ForbiddenError("A user with this email already exists")
+
+    user = User(
+        email=email,
+        name=name,
+        google_id=f"seed_{email}",
+        role=role,
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 @router.post("/users/seed", response_model=SeedUsersResponse)
 async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: AdminUser):
     """Bulk-create team members so they can be matched during imports (ClickUp, CSV, etc.)."""
@@ -396,7 +438,10 @@ async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: Admi
     all_users: list[User] = []
 
     for entry in payload.users:
-        email = entry.email.strip().lower()
+        try:
+            email, name, role = _validate_seed_user(entry.email, entry.name, entry.role)
+        except ForbiddenError:
+            continue
         existing = (
             await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
         ).scalar_one_or_none()
@@ -405,14 +450,11 @@ async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: Admi
             all_users.append(existing)
             continue
 
-        if entry.role not in ALLOWED_USER_ROLES:
-            continue
-
         user = User(
             email=email,
-            name=entry.name.strip(),
+            name=name,
             google_id=f"seed_{email}",
-            role=entry.role,
+            role=role,
             is_active=True,
         )
         session.add(user)

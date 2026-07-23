@@ -692,6 +692,11 @@ export const authApi = {
   googleLoginUrl: () => `${BASE}/api/v1/auth/google/login`,
   listAllUsers: () => request<User[]>("/api/v1/auth/users/all"),
   listUsers: () => request<User[]>("/api/v1/auth/users"),
+  createUser: (data: { email: string; name: string; role: string }) =>
+    request<User>("/api/v1/auth/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   updateUser: (userId: string, data: { name?: string; role?: string; is_active?: boolean }) =>
     request<User>(`/api/v1/auth/users/${userId}`, {
       method: "PATCH",
