@@ -101,6 +101,30 @@ def _sales_analytics_rep_user_ids(user_rows, analytics_settings: dict | None) ->
                 ids.add(user_id)
     return ids
 
+
+def _sales_analytics_seed_user_ids(user_rows, analytics_settings: dict | None) -> set[UUID]:
+    """Configured/default users who should get a visible zero row if needed."""
+    config = analytics_settings or {}
+    active_user_rows = [row for row in user_rows if getattr(row, "is_active", True) is not False]
+    ids = set()
+    active_ids_by_str = {str(row.id): row.id for row in active_user_rows}
+    for value in config.get("sales_analytics_user_ids") or []:
+        user_id = active_ids_by_str.get(str(value or "").strip())
+        if user_id:
+            ids.add(user_id)
+    if not config.get("sales_analytics_roster_configured"):
+        default_emails = {
+            str(email or "").strip().lower()
+            for email in (config.get("sales_analytics_default_emails") or DEFAULT_SALES_ANALYTICS_EMAILS)
+            if str(email or "").strip()
+        } or DEFAULT_SALES_ANALYTICS_EMAILS
+        active_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in active_user_rows if row.email}
+        for email in default_emails:
+            user_id = active_ids_by_email.get(email)
+            if user_id:
+                ids.add(user_id)
+    return ids
+
 # A demo "converts" when its account reaches a qualified opportunity or beyond.
 # Lost/dead stages (closed_lost, not_a_fit, churned, cold, on_hold, nurture) are
 # explicitly NOT conversions. Used for the SDR demo funnel.
@@ -1917,6 +1941,7 @@ async def sales_dashboard(
             rep_id_by_local.setdefault(alias_local, alias.user_id)
     # AE/SDR users plus any admins explicitly configured for Sales Analytics.
     rep_user_ids = _sales_analytics_rep_user_ids(user_rows, analytics_settings)
+    seed_rep_user_ids = _sales_analytics_seed_user_ids(user_rows, analytics_settings)
 
     activity_rows = (
         await session.execute(
@@ -2988,6 +3013,59 @@ async def sales_dashboard(
             if r.uid and r.uid not in prospect_count_by_uid:
                 prospect_count_by_uid[r.uid] = r.cnt
                 mobile_count_by_uid[r.uid] = r.with_phone
+
+    if seed_rep_user_ids and not filter_geographies:
+        for rep_user_id in sorted(seed_rep_user_ids, key=lambda uid: users.get(uid, "").lower()):
+            if filter_rep_ids and rep_user_id not in filter_rep_ids:
+                continue
+            rep_key, _, rep_name = _label_for_rep(rep_user_id, users)
+            rep_activity.setdefault(
+                rep_key,
+                {
+                    "key": rep_key,
+                    "user_id": rep_user_id,
+                    "rep_name": rep_name,
+                    "calls": 0,
+                    "connected_calls": 0,
+                    "live_calls": 0,
+                    "emails": 0,
+                    "manual_emails": 0,
+                    "instantly_emails": 0,
+                    "linkedin_reachouts": 0,
+                    "meetings": 0,
+                    "total": 0,
+                    "active_deals": 0,
+                    "pipeline_amount": 0.0,
+                },
+            )
+            weekly_rep_activity.setdefault(
+                rep_key,
+                {
+                    "key": rep_key,
+                    "user_id": rep_user_id,
+                    "rep_name": rep_name,
+                    "active_deals": 0,
+                    "pipeline_amount": 0.0,
+                    "weeks": {
+                        week_key: {
+                            "week_key": week_key,
+                            "label": week_label,
+                            "week_start": week_start.isoformat(),
+                            "week_end": (week_start + timedelta(days=6)).isoformat(),
+                            "emails": 0,
+                            "manual_emails": 0,
+                            "instantly_emails": 0,
+                            "calls": 0,
+                            "connected_calls": 0,
+                            "live_calls": 0,
+                            "linkedin_reachouts": 0,
+                            "meetings": 0,
+                            "total": 0,
+                        }
+                        for week_start, week_key, week_label in week_starts
+                    },
+                },
+            )
 
     rep_activity_rows = [
         RepActivityRow(
