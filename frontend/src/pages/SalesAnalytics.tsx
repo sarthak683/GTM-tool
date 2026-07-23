@@ -77,7 +77,7 @@ const windowPresetLabel = (days: number): string =>
   WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
-type SalesActivityMetric = "emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted" | "ae_demos_scheduled" | "ae_demos_done" | "ae_demos_converted";
+type SalesActivityMetric = "emails" | "manual_emails" | "instantly_emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted" | "ae_demos_scheduled" | "ae_demos_done" | "ae_demos_converted";
 
 // Brand-green chart palette. Kept here so every Recharts surface on this page
 // pulls from one source of truth instead of scattering hex literals. The funnel
@@ -926,12 +926,20 @@ function RepActivityTable({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
             <StatPill
-              label="Emails Out"
-              value={row.emails}
+              label="Manual Emails"
+              value={row.manual_emails ?? 0}
               tone="#eefbf2"
               text="#2f8d5d"
-              sub={<span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>}
-              onClick={() => onOpenMetric(row, "emails")}
+              sub={<span>{row.emails > 0 ? Math.round(((row.manual_emails ?? 0) / row.emails) * 100) : 0}% of out</span>}
+              onClick={() => onOpenMetric(row, "manual_emails")}
+            />
+            <StatPill
+              label="Instantly Emails"
+              value={row.instantly_emails ?? 0}
+              tone="#fff7ed"
+              text="#c05621"
+              sub={<span>{row.emails > 0 ? Math.round(((row.instantly_emails ?? 0) / row.emails) * 100) : 0}% of out</span>}
+              onClick={() => onOpenMetric(row, "instantly_emails")}
             />
             <StatPill
               label="Emails In"
@@ -1055,7 +1063,7 @@ function StatPill({
       }}
     >
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: 0, textAlign: "center", lineHeight: 1.2 }}>{label}</span>
       {sub ? (
         <span
           style={{
@@ -2047,6 +2055,8 @@ export default function SalesAnalytics() {
   const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
     const labelByMetric: Record<SalesActivityMetric, string> = {
       emails: "Emails",
+      manual_emails: "Manual Emails Out",
+      instantly_emails: "Instantly Emails Out",
       email_replies: "Emails In",
       calls: "Calls",
       connected_calls: "Connected calls",

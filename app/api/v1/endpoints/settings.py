@@ -19,6 +19,7 @@ from sqlmodel import select as sm_select
 from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.core.analytics_defaults import build_default_analytics_settings
 from app.models.settings import (
     ClickUpCrmSettingsRead,
     ClickUpCrmSettingsUpdate,
@@ -41,6 +42,8 @@ from app.models.settings import (
     ReportSenderSettingsUpdate,
     SalesReportSettingsRead,
     SalesReportSettingsUpdate,
+    SalesAnalyticsRosterRead,
+    SalesAnalyticsRosterUpdate,
     ProspectStageSettingsRead,
     ProspectStageSettingsUpdate,
     PreMeetingAutomationSettingsUpdate,
@@ -55,6 +58,7 @@ from app.models.settings import (
     ZippySystemPromptRead,
     ZippySystemPromptUpdate,
 )
+from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
 from app.services.deal_stages import (
     DEFAULT_DEAL_STAGE_SETTINGS,
@@ -172,6 +176,7 @@ _DEFAULT_CLICKUP_CRM_SETTINGS = {
     "deals_list_id": settings.CLICKUP_DEALS_LIST_ID or None,
 }
 _PROSPECT_STAGES = {"outreach", "in_progress", "meeting_booked", "negative_response", "no_response", "not_a_fit"}
+_DEFAULT_SALES_ANALYTICS_EMAILS = ["jacob@beacon.li"]
 
 
 async def _get_or_create(session) -> WorkspaceSettings:
@@ -219,6 +224,47 @@ def _normalized_role_permissions(value: dict | None) -> RolePermissionsRead:
 
 def _normalized_pre_meeting_settings(value: dict | None) -> PreMeetingAutomationSettingsRead:
     return PreMeetingAutomationSettingsRead(**normalize_pre_meeting_settings(value))
+
+
+def _sales_analytics_default_emails(config: dict | None) -> list[str]:
+    raw = (config or {}).get("sales_analytics_default_emails")
+    emails = raw if isinstance(raw, list) else _DEFAULT_SALES_ANALYTICS_EMAILS
+    cleaned = []
+    seen = set()
+    for item in emails:
+        email = str(item or "").strip().lower()
+        if email and email not in seen:
+            cleaned.append(email)
+            seen.add(email)
+    return cleaned or list(_DEFAULT_SALES_ANALYTICS_EMAILS)
+
+
+async def _normalized_sales_analytics_roster(session, row: WorkspaceSettings) -> SalesAnalyticsRosterRead:
+    config = {
+        **build_default_analytics_settings(),
+        **(row.analytics_settings or {}),
+    }
+    active_users = (
+        await session.execute(sm_select(User.id, User.email).where(User.is_active == True))  # noqa: E712
+    ).all()
+    active_ids = {str(user.id) for user in active_users}
+    active_id_by_email = {str(user.email or "").strip().lower(): str(user.id) for user in active_users if user.email}
+    default_emails = _sales_analytics_default_emails(config)
+
+    user_ids = []
+    seen = set()
+    for value in config.get("sales_analytics_user_ids") or []:
+        user_id = str(value or "").strip()
+        if user_id in active_ids and user_id not in seen:
+            user_ids.append(user_id)
+            seen.add(user_id)
+    if not config.get("sales_analytics_roster_configured"):
+        for email in default_emails:
+            user_id = active_id_by_email.get(email)
+            if user_id and user_id not in seen:
+                user_ids.append(user_id)
+                seen.add(user_id)
+    return SalesAnalyticsRosterRead(user_ids=user_ids, default_emails=default_emails)
 
 
 def _normalized_clickup_crm_settings(value: dict | None) -> ClickUpCrmSettingsRead:
@@ -951,6 +997,47 @@ async def update_prospect_visibility(body: ProspectVisibilityUpdate, session: DB
     await session.commit()
     await session.refresh(row)
     return ProspectVisibilityRead(user_ids=[str(uid) for uid in (row.prospect_view_all_user_ids or [])])
+
+
+@router.get("/sales-analytics-roster", response_model=SalesAnalyticsRosterRead)
+async def get_sales_analytics_roster(session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    return await _normalized_sales_analytics_roster(session, row)
+
+
+@router.patch("/sales-analytics-roster", response_model=SalesAnalyticsRosterRead)
+async def update_sales_analytics_roster(body: SalesAnalyticsRosterUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    active_user_rows = (
+        await session.execute(sm_select(User.id).where(User.is_active == True))  # noqa: E712
+    ).all()
+    active_ids = {str(user.id) for user in active_user_rows}
+    ids = []
+    seen = set()
+    for value in body.user_ids:
+        user_id = str(value or "").strip()
+        if user_id in active_ids and user_id not in seen:
+            ids.append(user_id)
+            seen.add(user_id)
+
+    current = {
+        **build_default_analytics_settings(),
+        **(row.analytics_settings or {}),
+    }
+    current["sales_analytics_user_ids"] = ids
+    current["sales_analytics_default_emails"] = _sales_analytics_default_emails(current)
+    current["sales_analytics_roster_configured"] = True
+    row.analytics_settings = current
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    try:
+        from app.api.v1.endpoints.analytics import _dashboard_cache_clear
+
+        _dashboard_cache_clear()
+    except Exception:
+        pass
+    return await _normalized_sales_analytics_roster(session, row)
 
 
 @router.get("/email-sync", response_model=GmailSettingsRead)

@@ -366,6 +366,8 @@ export type SalesRepActivityRow = {
   connected_calls: number;
   live_calls: number;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   email_opens: number;
   email_replies: number;
   linkedin_reachouts: number;
@@ -407,6 +409,8 @@ export type SalesRepActivityWeekRow = {
   week_start: string;
   week_end: string;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   calls: number;
   connected_calls: number;
   live_calls: number;
@@ -1004,6 +1008,13 @@ export const settingsApi = {
   updateProspectVisibility: (userIds: string[]) =>
     request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility", {
       method: "PUT",
+      body: JSON.stringify({ user_ids: userIds }),
+    }),
+  getSalesAnalyticsRoster: () =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster"),
+  updateSalesAnalyticsRoster: (userIds: string[]) =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster", {
+      method: "PATCH",
       body: JSON.stringify({ user_ids: userIds }),
     }),
   getZippySystemPrompt: () =>

@@ -440,6 +440,16 @@ class ProspectVisibilityUpdate(SQLModel):
     user_ids: list[str] = []
 
 
+class SalesAnalyticsRosterRead(SQLModel):
+    """Active user ids explicitly included in Sales Analytics."""
+    user_ids: list[str] = []
+    default_emails: list[str] = []
+
+
+class SalesAnalyticsRosterUpdate(SQLModel):
+    user_ids: list[str] = []
+
+
 class GmailSettingsRead(SQLModel):
     configured: bool
     inbox: Optional[str] = None
