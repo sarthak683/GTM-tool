@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import re
 from collections import defaultdict
 from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
@@ -604,6 +605,8 @@ EMAIL_SEND_METRICS = {"emails", "manual_emails", "instantly_emails"}
 
 # All known Zippy addresses across every sending domain.
 ZIPPY_ADDRS = {"zippy@beacon.li", "zippy@beaconli.com", "zippy@beaconli.co"}
+_EMAIL_RE = re.compile(r"[\w.!#$%&'*+/=?^_`{|}~-]+@[\w.-]+\.[A-Za-z]{2,}")
+_SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.IGNORECASE)
 
 
 def _zippy_in_cc_or_bcc(row) -> bool:
@@ -653,6 +656,49 @@ def _email_out_bucket(row) -> Literal["manual", "instantly"] | None:
 
 def _should_count_as_email_out(row) -> bool:
     return _email_out_bucket(row) is not None
+
+
+def _email_addresses(value: str | None) -> list[str]:
+    return [match.group(0).lower() for match in _EMAIL_RE.finditer(str(value or ""))]
+
+
+def _normalized_email_subject(value: str | None) -> str:
+    subject = str(value or "").strip().lower()
+    while True:
+        next_subject = _SUBJECT_PREFIX_RE.sub("", subject, count=1)
+        if next_subject == subject:
+            break
+        subject = next_subject.strip()
+    return " ".join(subject.split())
+
+
+def _manual_email_dedupe_key(row, rep_key: str) -> tuple | None:
+    """Same manual thread, same recipient, same UTC day should count once.
+
+    Gmail can sync repeated manual-send rows with different timestamps and even
+    different message ids for the same rep/person/day/thread. Message-id dedupe
+    catches exact row duplication; this catches the remaining same-thread
+    repetition without touching Instantly sends or different-subject manual mail.
+    """
+    if _email_out_bucket(row) != "manual":
+        return None
+    created_at = getattr(row, "created_at", None)
+    if not created_at:
+        return None
+    recipient_key = None
+    contact_id = getattr(row, "contact_id", None)
+    if contact_id:
+        recipient_key = f"contact:{contact_id}"
+    else:
+        to_addrs = _email_addresses(getattr(row, "email_to", None))
+        if to_addrs:
+            recipient_key = f"to:{','.join(sorted(set(to_addrs)))}"
+    if not recipient_key:
+        return None
+    subject_key = _normalized_email_subject(getattr(row, "email_subject", None))
+    if not subject_key:
+        return None
+    return ("manual-email", rep_key, created_at.date(), recipient_key, subject_key)
 
 
 def _beacon_sender_local(email_from) -> "str | None":
@@ -1151,6 +1197,7 @@ async def sales_activity_drilldown(
         if metric in EMAIL_SEND_METRICS:
             send_filtered = []
             seen_send_msg_ids: set[str] = set()
+            seen_send_manual_keys: dict[str, set[tuple]] = {}
             for activity in activities:
                 if _email_event_kind(activity) != "send":
                     continue
@@ -1176,6 +1223,13 @@ async def sales_activity_drilldown(
                     continue
                 if rep_id and row_rep_id != rep_id:
                     continue
+                row_rep_key = _label_for_rep(row_rep_id, users)[0]
+                manual_key = _manual_email_dedupe_key(activity, row_rep_key)
+                if manual_key:
+                    rep_manual_seen = seen_send_manual_keys.setdefault(row_rep_key, set())
+                    if manual_key in rep_manual_seen:
+                        continue
+                    rep_manual_seen.add(manual_key)
                 send_filtered.append(activity)
             send_has_more = len(send_filtered) > offset + limit
             activities = send_filtered[offset:offset + limit + 1]
@@ -1963,6 +2017,7 @@ async def sales_dashboard(
                 Activity.email_cc,
                 Activity.email_bcc,
                 Activity.email_message_id,
+                Activity.email_subject,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -2204,6 +2259,7 @@ async def sales_dashboard(
     # when the same email is captured by both personal_email_sync (rep's own inbox)
     # and gmail_sync (Zippy's shared inbox, e.g. because a beacon rep was in To/CC).
     seen_email_ids: dict[str, set[str]] = {}
+    seen_manual_email_keys: dict[str, set[tuple]] = {}
 
     # Touchpoint breakdown tracking:
     # call_contact_seen[rep_key] = set of contact_ids already called (for first vs 2nd+ detection)
@@ -2334,6 +2390,12 @@ async def sales_dashboard(
                     rep_seen.add(msg_id)
                 email_bucket = _email_out_bucket(row)
                 if email_bucket:
+                    manual_key = _manual_email_dedupe_key(row, rep_key)
+                    if manual_key:
+                        rep_manual_seen = seen_manual_email_keys.setdefault(rep_key, set())
+                        if manual_key in rep_manual_seen:
+                            continue
+                        rep_manual_seen.add(manual_key)
                     activity_bucket["emails"] += 1
                     activity_bucket[f"{email_bucket}_emails"] = int(activity_bucket.get(f"{email_bucket}_emails", 0)) + 1
                     if week_counts is not None:
