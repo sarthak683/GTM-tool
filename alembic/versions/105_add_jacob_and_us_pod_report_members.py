@@ -1,7 +1,7 @@
 """Add Jacob and US pod report members
 
-Revision ID: 104
-Revises: 103
+Revision ID: 105
+Revises: 104_multi_gmail_connections
 Create Date: 2026-07-23
 """
 
@@ -13,8 +13,8 @@ from uuid import uuid4
 from alembic import op
 import sqlalchemy as sa
 
-revision = "104"
-down_revision = "103"
+revision = "105"
+down_revision = "104_multi_gmail_connections"
 branch_labels = None
 depends_on = None
 
