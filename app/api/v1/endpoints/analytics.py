@@ -695,9 +695,7 @@ def _manual_email_dedupe_key(row, rep_key: str) -> tuple | None:
             recipient_key = f"to:{','.join(sorted(set(to_addrs)))}"
     if not recipient_key:
         return None
-    subject_key = _normalized_email_subject(getattr(row, "email_subject", None))
-    if not subject_key:
-        return None
+    subject_key = _normalized_email_subject(getattr(row, "email_subject", None)) or "<blank-subject>"
     return ("manual-email", rep_key, created_at.date(), recipient_key, subject_key)
 
 
