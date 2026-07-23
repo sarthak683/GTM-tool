@@ -20,6 +20,7 @@ from app.database import task_session
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence
+from app.services.personal_email_sync import _normalize_beacon_sender
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,7 @@ async def _backfill_synced_sent_event(
                 "synced_at": datetime.utcnow().isoformat(),
                 "source_timestamp": anchor.isoformat(),
             },
-            email_from=sender,
+            email_from=_normalize_beacon_sender(sender),
             email_to=email,
             created_at=anchor,
         )
@@ -296,7 +297,7 @@ async def _backfill_synced_email_events(
                 "source_timestamp": anchor.isoformat(),
             },
             email_subject=subject,
-            email_from=sender,
+            email_from=_normalize_beacon_sender(sender),
             email_to=email,
             created_at=created_at,
         )

@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -57,7 +56,6 @@ import { accountStatusOption } from "../lib/accountStatus";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
-import OutreachAnalyticsTab from "../components/analytics/OutreachAnalyticsTab";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
   PerformanceTabContent,
@@ -79,7 +77,7 @@ const windowPresetLabel = (days: number): string =>
   WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
-type SalesActivityMetric = "emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted";
+type SalesActivityMetric = "emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted" | "ae_demos_scheduled" | "ae_demos_done" | "ae_demos_converted";
 
 // Brand-green chart palette. Kept here so every Recharts surface on this page
 // pulls from one source of truth instead of scattering hex literals. The funnel
@@ -231,8 +229,8 @@ function MilestoneDealsModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
-                  ["Deal", "Company", dateLabel, "Amount"],
-                  deals.map((d) => [d.deal_name || "", d.company_name || "", fmtMilestoneDate(d.reached_at || d.close_date_est), d.deal_value ?? 0]),
+                  ["Deal", "Amount", "AE", "SDR"],
+                  deals.map((d) => [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
                 style={exportBtnStyle}
               >
@@ -258,9 +256,9 @@ function MilestoneDealsModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 <th style={thSty}>Deal</th>
-                <th style={thSty}>Company</th>
-                <th style={thSty}>{dateLabel}</th>
                 <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
+                <th style={thSty}>AE</th>
+                <th style={thSty}>SDR</th>
               </tr>
             </thead>
             <tbody>
@@ -273,14 +271,14 @@ function MilestoneDealsModal({
                         {d.deal_name || "—"}
                       </span>
                     </td>
-                    <td style={{ ...tdSty, color: "#62748a" }}>
-                      {d.company_name || "—"}
-                    </td>
-                    <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>
-                      {fmtMilestoneDate(d.reached_at || d.close_date_est)}
-                    </td>
                     <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: amt > 0 ? accentColor : "#aab4c2", whiteSpace: "nowrap" }}>
                       {amt > 0 ? formatCurrency(amt) : "—"}
+                    </td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>
+                      {d.assigned_ae || "—"}
+                    </td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>
+                      {d.assigned_sdr || "—"}
                     </td>
                   </tr>
                 );
@@ -289,10 +287,11 @@ function MilestoneDealsModal({
             {total > 0 && (
               <tfoot>
                 <tr style={{ background: "#fafbfd" }}>
-                  <td colSpan={3} style={{ ...tdSty, fontWeight: 800, color: "#1d2b3a" }}>Total</td>
+                  <td style={{ ...tdSty, fontWeight: 800, color: "#1d2b3a" }}>Total</td>
                   <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: accentColor }}>
                     {formatCurrency(total)}
                   </td>
+                  <td colSpan={2} style={tdSty} />
                 </tr>
               </tfoot>
             )}
@@ -488,6 +487,8 @@ function ActivityDrilldownModal({
   loadingMore?: boolean;
   onOpenDeal?: (dealId: string) => void;
 }) {
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -595,11 +596,46 @@ function ActivityDrilldownModal({
                         <p style={{ margin: "4px 0 0", color: "#62748a" }}>{row.company_name || row.deal_name || "—"}</p>
                       </td>
                       <td style={{ ...tdSty, color: "#3f5065" }}>
-                        <p style={{ margin: 0, fontWeight: 700 }}>{row.subject || row.call_outcome || "—"}</p>
-                        <p style={{ margin: "5px 0 0", fontSize: 12, color: "#75869a" }}>
-                          {row.from_email ? `From ${row.from_email}` : row.call_outcome ? `Outcome ${row.call_outcome}` : row.deal_name || ""}
-                          {row.to_email ? ` · To ${row.to_email}` : ""}
-                        </p>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: 0, fontWeight: 700 }}>{row.subject || row.call_outcome || "—"}</p>
+                            <p style={{ margin: "5px 0 0", fontSize: 12, color: "#75869a" }}>
+                              {row.from_email ? `From ${row.from_email}` : row.call_outcome ? `Outcome ${row.call_outcome}` : row.deal_name || ""}
+                              {row.to_email ? ` · To ${row.to_email}` : ""}
+                            </p>
+                          </div>
+                          {row.email_body && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedRowId(expandedRowId === row.id.toString() ? null : row.id.toString());
+                              }}
+                              title={expandedRowId === row.id.toString() ? "Collapse email body" : "Expand email body"}
+                              style={{
+                                flexShrink: 0, padding: "3px 8px", borderRadius: 6,
+                                background: expandedRowId === row.id.toString() ? "#e8edff" : "#f4f6fa",
+                                border: "1px solid #d0d9ef",
+                                color: expandedRowId === row.id.toString() ? "#3555c4" : "#62748a",
+                                fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                              }}
+                            >
+                              {expandedRowId === row.id.toString() ? "▲ Hide" : "▼ Body"}
+                            </button>
+                          )}
+                        </div>
+                        {expandedRowId === row.id.toString() && row.email_body && (
+                          <div style={{
+                            marginTop: 10, padding: "10px 12px",
+                            background: "#f8fafd", borderRadius: 8,
+                            border: "1px solid #e4eaf4",
+                            fontSize: 12, lineHeight: 1.65, color: "#3f5065",
+                            whiteSpace: "pre-wrap", wordBreak: "break-word",
+                            maxHeight: 320, overflowY: "auto",
+                          }}>
+                            {row.email_body}
+                          </div>
+                        )}
                       </td>
                     </tr>
                     );
@@ -751,21 +787,26 @@ function SectionCard({
   subtitle,
   children,
   action,
+  style: styleProp,
+  className: classNameProp,
 }: {
   title: string;
   subtitle: string;
   children: ReactNode;
   action?: ReactNode;
+  style?: React.CSSProperties;
+  className?: string;
 }) {
   return (
     <section
-      className="crm-panel"
+      className={["crm-panel", classNameProp].filter(Boolean).join(" ")}
       style={{
         padding: 22,
         display: "flex",
         flexDirection: "column",
         gap: 18,
         minHeight: 100,
+        ...styleProp,
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -847,11 +888,13 @@ function RepActivityTable({
   rows,
   onOpenMetric,
   showDemos = false,
+  showAeDemos = false,
   emptyLabel = "No rep activity yet for this time range.",
 }: {
   rows: SalesRepActivityRow[];
   onOpenMetric: (row: SalesRepActivityRow, metric: SalesActivityMetric) => void;
   showDemos?: boolean;
+  showAeDemos?: boolean;
   emptyLabel?: string;
 }) {
   if (rows.length === 0) {
@@ -907,7 +950,6 @@ function RepActivityTable({
               onClick={() => onOpenMetric(row, "calls")}
             />
             <StatPill label="LinkedIn" value={row.linkedin_reachouts} tone="#eef4ff" text="#0a66c2" onClick={() => onOpenMetric(row, "linkedin_reachouts")} />
-            <StatPill label="Meetings" value={row.meetings} tone="#fff4ea" text="#c16a18" onClick={() => onOpenMetric(row, "meetings")} />
             {showDemos ? (
               <>
                 <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "demos_scheduled")} />
@@ -919,6 +961,20 @@ function RepActivityTable({
                   text="#b4690e"
                   sub={<span>{row.demos_done > 0 ? Math.round((row.demos_converted / row.demos_done) * 100) : 0}% of done</span>}
                   onClick={() => onOpenMetric(row, "demos_converted")}
+                />
+              </>
+            ) : null}
+            {showAeDemos ? (
+              <>
+                <StatPill label="Demos Sched" value={row.ae_demos_scheduled ?? 0} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "ae_demos_scheduled")} />
+                <StatPill label="Demos Done" value={row.ae_demos_done ?? 0} tone="#eafaf1" text="#1c7a4f" onClick={() => onOpenMetric(row, "ae_demos_done")} />
+                <StatPill
+                  label="Converted"
+                  value={row.ae_demos_converted ?? 0}
+                  tone="#fdf1e3"
+                  text="#b4690e"
+                  sub={<span>{(row.ae_demos_done ?? 0) > 0 ? Math.round(((row.ae_demos_converted ?? 0) / (row.ae_demos_done ?? 0)) * 100) : 0}% of done</span>}
+                  onClick={() => onOpenMetric(row, "ae_demos_converted")}
                 />
               </>
             ) : null}
@@ -1144,9 +1200,16 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
   const callConnectionRate = selectedRow.totals.calls > 0 ? Math.round((selectedRow.totals.connected_calls / selectedRow.totals.calls) * 100) : 0;
   const emailReplyRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_replies / selectedRow.totals.emails) * 100) : 0;
   const emailOpenRate = selectedRow.totals.emails > 0 ? Math.round((selectedRow.totals.email_opens / selectedRow.totals.emails) * 100) : 0;
+  const liAccepted = selectedRow.totals.linkedin_accepted ?? 0;
+  const liMeetingBooked = selectedRow.totals.linkedin_meeting_booked ?? 0;
+  const liTotal = selectedRow.totals.linkedin_reachouts;
+  const liAcceptedRate = liTotal > 0 ? Math.round((liAccepted / liTotal) * 100) : 0;
+  const liMeetingBookedRate = liTotal > 0 ? Math.round((liMeetingBooked / liTotal) * 100) : 0;
+  const callMeetingBooked = selectedRow.totals.call_meeting_booked ?? 0;
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Input</h2>
       <div
         style={{
           borderRadius: 22,
@@ -1195,9 +1258,25 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
                 value={selectedRow.totals.calls}
                 tone="#eef3ff"
                 text="#445fd0"
-                sub={<span>{callConnectionRate}% connected</span>}
+                sub={
+                  <>
+                    <span>{callConnectionRate}% connected</span>
+                    <span>{callMeetingBooked} meeting{callMeetingBooked !== 1 ? "s" : ""} booked</span>
+                  </>
+                }
               />
-              <StatPill label="Meetings" value={selectedRow.totals.meetings} tone="#fff4ea" text="#c16a18" />
+              <StatPill
+                label="LinkedIn"
+                value={selectedRow.totals.linkedin_reachouts}
+                tone="#e8f2ff"
+                text="#0a66c2"
+                sub={
+                  <>
+                    <span>{liAcceptedRate}% accepted</span>
+                    <span>{liMeetingBookedRate}% meeting booked</span>
+                  </>
+                }
+              />
             </div>
           </div>
 
@@ -1244,18 +1323,10 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             </div>
 
             <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 14, display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Pipeline</p>
                   <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{formatShortCurrency(selectedRow.pipeline_amount)}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Active Deals</p>
-                  <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{selectedRow.active_deals}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Buckets</p>
-                  <p style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#1f3144" }}>{selectedRow.weeks.length}</p>
                 </div>
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: "#6f8195" }}>
@@ -1330,92 +1401,59 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
               </div>
             </div>
 
-            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
-              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Metric Totals</p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-                {REP_ACTIVITY_METRICS.map((metric) => {
-                  const Icon = metric.icon;
-                  const value = selectedRow.totals[metric.key] as number;
-                  return (
-                    <div key={`${selectedRow.key}-${String(metric.key)}`} style={{ borderRadius: 14, background: metric.tone, padding: "11px 12px", display: "grid", gap: 6 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: metric.color }}>
-                        <Icon size={12} />
-                        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{metric.label}</span>
-                      </div>
-                      <span style={{ fontSize: 20, fontWeight: 800, color: metric.color, lineHeight: 1 }}>{value}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── OUTPUT ──────────────────────────────────────────────────────── */}
+      <h2 style={{ margin: "8px 0 4px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Output</h2>
+      <div
+        style={{
+          borderRadius: 22,
+          border: "1px solid #e7edf5",
+          background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          padding: 20,
+          display: "grid",
+          gap: 14,
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#1f3144" }}>Meetings Booked</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+          <StatPill
+            label="Next 1 Week"
+            value={selectedRow.totals.meetings_next_1w ?? 0}
+            tone="#fff8ec"
+            text="#c07a1a"
+            sub={<span>scheduled</span>}
+          />
+          <StatPill
+            label="Next 1–2 Weeks"
+            value={selectedRow.totals.meetings_next_2w ?? 0}
+            tone="#edf4ff"
+            text="#3856c8"
+            sub={<span>scheduled</span>}
+          />
+          <StatPill
+            label=">2 Weeks"
+            value={selectedRow.totals.meetings_beyond_2w ?? 0}
+            tone="#eefbf2"
+            text="#1e8a5e"
+            sub={<span>scheduled</span>}
+          />
+          <StatPill
+            label="Direct SQL"
+            value={selectedRow.totals.direct_sql ?? 0}
+            tone="#f3eaff"
+            text="#7c3aed"
+            sub={<span>VP / SVP / Chief</span>}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function PipelineStageView({ rows }: { rows: SalesStageBucket[] }) {
-  const chartData = useMemo(
-    () => rows.map((row) => ({ label: row.label, amount: row.amount, weighted: row.weighted_amount, deal_count: row.deal_count })),
-    [rows],
-  );
 
-  if (rows.length === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No open pipeline to chart yet.</p>;
-  }
-
-  // Horizontal layout keeps long stage names readable and turns the chart into
-  // a natural funnel top-to-bottom. Height scales with the stage count.
-  const height = rows.length * 52 + 44;
-
-  return (
-    <div style={{ width: "100%", height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart layout="vertical" data={chartData} margin={{ top: 8, right: 56, bottom: 0, left: 4 }} barGap={2}>
-          <CartesianGrid horizontal={false} stroke={CHART.grid} />
-          <XAxis type="number" tick={{ fill: CHART.axis, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => formatShortCurrency(Number(v))} />
-          <YAxis type="category" dataKey="label" tick={{ fill: "#46586d", fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} width={132} />
-          <Tooltip content={<CurrencyBarTooltip />} cursor={{ fill: "rgba(111, 174, 39, 0.06)" }} />
-          <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
-          <Bar dataKey="amount" name="Open" fill={CHART.raw} radius={[0, 6, 6, 0]} maxBarSize={16}>
-            <LabelList dataKey="amount" position="right" formatter={(v: number) => formatShortCurrency(Number(v))} fill="#46586d" fontSize={11} fontWeight={700} />
-          </Bar>
-          <Bar dataKey="weighted" name="Weighted" fill={CHART.weighted} radius={[0, 6, 6, 0]} maxBarSize={16} />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function PipelineOwnerView({ rows }: { rows: SalesPipelineOwnerRow[] }) {
-  if (rows.length === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No rep-owned pipeline to chart yet.</p>;
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {rows.map((row) => (
-        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals</p>
-          </div>
-          <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden", display: "flex" }}>
-            {row.stages.map((stage) => {
-              const width = row.amount > 0 ? `${(stage.amount / row.amount) * 100}%` : "0%";
-              return <div key={stage.key} title={`${stage.label}: ${formatShortCurrency(stage.amount)}`} style={{ width, background: stage.color, minWidth: stage.amount > 0 ? 8 : 0 }} />;
-            })}
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{formatShortCurrency(row.amount)}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{formatShortCurrency(row.weighted_amount)} weighted</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function VelocityView({
   rows,
@@ -1697,14 +1735,14 @@ function MultiSelectDropdown({
           onClick={() => { setOpen((o) => !o); setQuery(""); }}
           style={{
             width: "100%",
-            height: 40,
+            height: 46,
             borderRadius: 12,
             border: selected.length > 0 ? "1px solid #b8cff7" : "1px solid #d9e3ef",
             background: selected.length > 0 ? "#eef4ff" : "#fff",
             color: selected.length > 0 ? "#2948b9" : "#203244",
-            fontSize: 13,
+            fontSize: 14,
             fontWeight: 700,
-            padding: "0 36px 0 12px",
+            padding: "0 36px 0 14px",
             textAlign: "left",
             cursor: "pointer",
             display: "flex",
@@ -1746,8 +1784,8 @@ function MultiSelectDropdown({
               overflow: "hidden",
             }}
           >
-            <div style={{ padding: "8px 10px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 8 }}>
-              <Search size={13} style={{ color: "#94a8be", flexShrink: 0 }} />
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 10 }}>
+              <Search size={15} style={{ color: "#94a8be", flexShrink: 0 }} />
               <input
                 autoFocus
                 value={query}
@@ -1757,13 +1795,13 @@ function MultiSelectDropdown({
                   flex: 1,
                   border: "none",
                   outline: "none",
-                  fontSize: 13,
+                  fontSize: 14,
                   color: "#203244",
                   background: "transparent",
                 }}
               />
             </div>
-            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            <div style={{ maxHeight: 260, overflowY: "auto" }}>
               {filtered.length === 0 ? (
                 <p style={{ margin: 0, padding: "12px 14px", fontSize: 13, color: "#94a8be" }}>No results</p>
               ) : (
@@ -1776,25 +1814,25 @@ function MultiSelectDropdown({
                       onClick={() => toggle(opt.value)}
                       style={{
                         width: "100%",
-                        padding: "10px 14px",
+                        padding: "12px 16px",
                         display: "flex",
                         alignItems: "center",
-                        gap: 10,
+                        gap: 12,
                         border: "none",
                         background: isSelected ? "#f0f5ff" : "transparent",
                         cursor: "pointer",
                         textAlign: "left",
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: isSelected ? 700 : 500,
                         color: isSelected ? "#2948b9" : "#2e4260",
                       }}
                     >
                       <span style={{
-                        width: 18, height: 18, borderRadius: 6, border: isSelected ? "none" : "1.5px solid #c8d8ea",
+                        width: 20, height: 20, borderRadius: 6, border: isSelected ? "none" : "1.5px solid #c8d8ea",
                         background: isSelected ? "#3f5fd4" : "#fff",
                         display: "grid", placeItems: "center", flexShrink: 0,
                       }}>
-                        {isSelected && <Check size={11} style={{ color: "#fff" }} />}
+                        {isSelected && <Check size={13} style={{ color: "#fff" }} />}
                       </span>
                       {opt.label}
                     </button>
@@ -1811,7 +1849,6 @@ function MultiSelectDropdown({
 
 const ALL_TABS: Array<{ key: string; label: string }> = [
   { key: "overview", label: "Overview" },
-  { key: "outreach", label: "Outreach" },
   ...PERFORMANCE_TABS.map((t) => ({ key: t.key, label: t.label })),
 ];
 
@@ -1839,9 +1876,9 @@ function TabStrip({ active }: { active: string }) {
             key={t.key}
             to={to}
             style={{
-              padding: "8px 16px",
+              padding: "10px 20px",
               borderRadius: 999,
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: 700,
               textDecoration: "none",
               color: isActive ? "#1f3144" : "#66788d",
@@ -1865,15 +1902,14 @@ export default function SalesAnalytics() {
   const { tab: tabParam } = useParams<{ tab?: string }>();
   const activeTab = (ALL_TABS.find((t) => t.key === tabParam)?.key ?? "overview") as
     | "overview"
-    | "outreach"
     | PerformanceTabKey;
   const [perfReps, setPerfReps] = useState<RepSummary[]>([]);
   const [pods, setPods] = useState<PodSummary[]>([]);
   const tabContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Outreach tab has its own data fetch — don't preload performance reps.
-    if (activeTab !== "overview" && activeTab !== "outreach") {
+    // Performance tabs need reps preloaded; skip for overview.
+    if (activeTab !== "overview") {
       performanceApi
         .listReps()
         .then(setPerfReps)
@@ -1890,7 +1926,6 @@ export default function SalesAnalytics() {
   }, []);
 
   const [windowDays, setWindowDays] = useState<number>(90);
-  const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string[]>([]);
   const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
@@ -2022,6 +2057,9 @@ export default function SalesAnalytics() {
       demos_scheduled: "Demos Scheduled",
       demos_done: "Demos Done",
       demos_converted: "Converted Demos",
+      ae_demos_scheduled: "Demos Scheduled",
+      ae_demos_done: "Demos Done",
+      ae_demos_converted: "Converted Demos",
     };
     setActivityDrilldown(null);
     setActivityDrilldownError("");
@@ -2089,48 +2127,13 @@ export default function SalesAnalytics() {
 
     return [
     {
-      label: "Open Pipeline",
-      value: formatShortCurrency(data.summary.pipeline_amount),
-      hint: `${data.summary.active_deals} active deals currently in play`,
+      label: "Demo Scheduled",
+      value: String(s.demo_scheduled_count ?? 0),
+      hint: "Unique companies that had a demo scheduled for the first time in this window",
       tone: "blue" as const,
-      icon: TrendingUp,
-    },
-    {
-      label: "Weighted Pipeline",
-      value: formatShortCurrency(data.summary.weighted_pipeline_amount),
-      hint: "Stage-weighted estimate for a more realistic forecast baseline",
-      tone: "green" as const,
-      icon: BarChart3,
-    },
-    {
-      label: "Forecast Window",
-      value: formatShortCurrency(data.summary.forecast_amount),
-      hint: data.window_days >= ALL_TIME_DAYS
-        ? "Weighted pipeline expected to land across all open deals"
-        : `Weighted pipeline expected to land inside the next ${data.window_days} days`,
-      tone: "amber" as const,
-      icon: CalendarRange,
-    },
-    {
-      label: "Average Deal Size",
-      value: formatShortCurrency(data.summary.average_deal_size),
-      hint: "Average value across active open deals",
-      tone: "blue" as const,
-      icon: Trophy,
-    },
-    {
-      label: "Overdue Close Dates",
-      value: String(data.summary.overdue_close_count),
-      hint: "Deals with close dates already in the past",
-      tone: data.summary.overdue_close_count > 0 ? "red" : "green" as const,
-      icon: AlertTriangle,
-    },
-    {
-      label: "Stale Deals",
-      value: String(data.summary.stale_deal_count),
-      hint: "Deals sitting in the same stage for 30 days or more",
-      tone: data.summary.stale_deal_count > 0 ? "amber" : "green" as const,
-      icon: Sigma,
+      icon: ArrowUpRight,
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_scheduled"),
+      trend: { curr: s.demo_scheduled_count ?? 0, prev: s.prev_demo_scheduled_count ?? 0 },
     },
     {
       label: "Demo Done",
@@ -2140,6 +2143,15 @@ export default function SalesAnalytics() {
       icon: Check,
       deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "demo_done"),
       trend: { curr: s.demo_done_count, prev: s.prev_demo_done_count ?? 0 },
+    },
+    {
+      label: "Converted",
+      value: String(s.qualified_lead_count ?? 0),
+      hint: "Unique companies that converted to a qualified lead for the first time in this window",
+      tone: "blue" as const,
+      icon: ArrowUpRight,
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "qualified_lead"),
+      trend: { curr: s.qualified_lead_count ?? 0, prev: s.prev_qualified_lead_count ?? 0 },
     },
     {
       label: "POC Agreed",
@@ -2167,6 +2179,24 @@ export default function SalesAnalytics() {
       icon: Check,
       deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "poc_done"),
       trend: { curr: s.poc_done_count, prev: s.prev_poc_done_count ?? 0 },
+    },
+    {
+      label: "Commercial Negotiation",
+      value: String(s.commercial_negotiation_count ?? 0),
+      hint: "Unique companies that entered Commercial Negotiation for the first time in this window",
+      tone: "amber" as const,
+      icon: ArrowUpRight,
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "commercial_negotiation"),
+      trend: { curr: s.commercial_negotiation_count ?? 0, prev: s.prev_commercial_negotiation_count ?? 0 },
+    },
+    {
+      label: "Workshop / MSA",
+      value: String(s.workshop_msa_count ?? 0),
+      hint: "Unique companies that reached Workshop or MSA Review for the first time in this window",
+      tone: "amber" as const,
+      icon: ArrowUpRight,
+      deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "workshop_msa"),
+      trend: { curr: s.workshop_msa_count ?? 0, prev: s.prev_workshop_msa_count ?? 0 },
     },
     {
       label: "Closed Won",
@@ -2211,10 +2241,7 @@ export default function SalesAnalytics() {
     [data?.rep_weekly_activity, hideDeveloper, user?.id],
   );
 
-  const visiblePipelineByOwner = useMemo(
-    () => (!hideDeveloper ? data?.pipeline_by_owner ?? [] : (data?.pipeline_by_owner ?? []).filter((row) => row.user_id !== user?.id && row.rep_name.toLowerCase() !== "sarthak aitha")),
-    [data?.pipeline_by_owner, hideDeveloper, user?.id],
-  );
+
 
   const loadBoardDeals = async () => {
     if (boardDeals) return boardDeals;
@@ -2375,49 +2402,35 @@ export default function SalesAnalytics() {
         style={{
           padding: 24,
           background: "radial-gradient(circle at top left, rgba(154, 206, 61, 0.14), transparent 30%), radial-gradient(circle at top right, rgba(76, 107, 230, 0.12), transparent 26%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
-          display: "grid",
-          gap: 18,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
         }}
       >
-        <div className="sales-analytics-hero" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(300px, 0.8fr)", gap: 18, alignItems: "start" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 900 }}>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
-            <h2 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.75, color: "#66788d" }}>
-              A manager-friendly read on rep activity, pipeline composition, deal aging, forecast timing, and funnel health. The structure follows the best CRM pattern: summary first, diagnosis second, drilldown last.
-            </p>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f3fbe3", border: "1px solid #d8ecb4", color: "#4d7c0f", fontSize: 12, fontWeight: 800 }}>
-                <TrendingUp size={14} />
-                Forecast and hygiene in one view
-              </span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#eef4ff", border: "1px solid #d7e2fb", color: "#3555c4", fontSize: 12, fontWeight: 800 }}>
-                <BarChart3 size={14} />
-                Built from live Beacon CRM data
-              </span>
-            </div>
-          </div>
-          <div style={{ borderRadius: 22, border: "1px solid #e1e8f2", background: "rgba(255,255,255,0.82)", padding: 18, display: "grid", gap: 14, boxShadow: "0 14px 32px rgba(18,44,70,0.06)", alignSelf: "start" }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6f8195" }}>Snapshot</p>
-              <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.7, color: "#5d7288" }}>
-                Compare short-term and longer-window signals without leaving the dashboard.
-              </p>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {/* Title row */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
+          <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
+        </div>
+        {/* Horizontal filter bar — every group has a label so heights align */}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", borderTop: "1px solid #e8eef6", paddingTop: 14, width: "100%", justifyContent: "space-between" }}>
+          {/* Window presets */}
+          <div style={{ display: "grid", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Window</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               {WINDOW_PRESETS.map((preset) => (
                 <button
                   key={preset.days}
                   type="button"
                   onClick={() => { setWindowDays(preset.days); setFromDate(""); setToDate(""); }}
                   style={{
-                    height: 38,
+                    height: 40,
                     padding: "0 14px",
                     borderRadius: 999,
                     border: !usingCustomRange && preset.days === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
                     background: !usingCustomRange && preset.days === windowDays ? "#f3fbe3" : "#fff",
                     color: !usingCustomRange && preset.days === windowDays ? "#4d7c0f" : "#506378",
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: 800,
                     cursor: "pointer",
                   }}
@@ -2426,83 +2439,96 @@ export default function SalesAnalytics() {
                 </button>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 12, border: usingCustomRange ? "1.5px solid #a5b4fc" : "1px solid #d9e3ef", background: usingCustomRange ? "#eef2ff" : "#fff" }}>
-                <CalendarRange size={13} style={{ color: usingCustomRange ? "#4f46e5" : "#94a3b8", flexShrink: 0 }} />
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
-                />
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  style={{ border: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#374151", outline: "none", width: 120 }}
-                />
-                {usingCustomRange && (
-                  <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
-                )}
-              </div>
+          </div>
+          {/* Divider */}
+          <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
+          {/* Date range */}
+          <div style={{ display: "grid", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Custom range</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 12px", height: 40, borderRadius: 12, border: usingCustomRange ? "1.5px solid #a5b4fc" : "1px solid #d9e3ef", background: usingCustomRange ? "#eef2ff" : "#fff" }}>
+              <CalendarRange size={13} style={{ color: usingCustomRange ? "#4f46e5" : "#94a3b8", flexShrink: 0 }} />
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#374151", outline: "none", width: 110 }}
+              />
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#374151", outline: "none", width: 110 }}
+              />
+              {usingCustomRange && (
+                <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
+              )}
             </div>
-            {/* Mine shortcut — one-click filter to current user's pipeline.
-                Hidden for developer/admin accounts since their data is
-                excluded from the funnel anyway (hideDeveloper). */}
-            {user?.id && !hideDeveloper && (
-              (() => {
-                const mineActive = repFilter.length === 1 && repFilter[0] === user.id;
-                return (
-                  <button
-                    type="button"
-                    onClick={() => setRepFilter(mineActive ? [] : [user.id!])}
-                    title={mineActive ? "Showing only your numbers — click to clear" : "Show only your pipeline"}
-                    style={{
-                      height: 36,
-                      padding: "0 14px",
-                      borderRadius: 10,
-                      border: mineActive ? "1.5px solid #cfe89a" : "1px solid #d7e2fb",
-                      background: mineActive ? "#f3fbe3" : "#fff",
-                      color: mineActive ? "#4d7c0f" : "#3555c4",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      alignSelf: "flex-start",
-                    }}
-                  >
-                    {mineActive ? "Mine ✓" : "Mine"}
-                  </button>
-                );
-              })()
-            )}
-            {pods.length > 0 && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pod</span>
-                {pods.map((pod) => {
-                  const ids = pod.rep_ids;
-                  const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
-                  return (
+          </div>
+          {/* Mine */}
+          {user?.id && !hideDeveloper && (
+            (() => {
+              const mineActive = repFilter.length === 1 && repFilter[0] === user.id;
+              return (
+                <>
+                  <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0, marginLeft: 12 }} />
+                  <div style={{ display: "grid", gap: 8, marginRight: 12 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Quick view</span>
                     <button
-                      key={pod.key}
                       type="button"
-                      onClick={() => setRepFilter(active ? [] : ids)}
-                      title={`${pod.label} — scopes the whole dashboard (forecast, pipeline, activity) to: ${pod.reps.map((r) => r.name).join(", ")}`}
+                      onClick={() => setRepFilter(mineActive ? [] : [user.id!])}
+                      title={mineActive ? "Showing only your numbers — click to clear" : "Show only your pipeline"}
                       style={{
-                        height: 32, padding: "0 12px", borderRadius: 999,
-                        border: active ? "1px solid #3555c4" : "1px solid #d7e2fb",
-                        background: active ? "#3555c4" : "#eef4ff",
-                        color: active ? "#fff" : "#3555c4",
-                        fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                        height: 40, padding: "0 28px", borderRadius: 12,
+                        border: mineActive ? "1.5px solid #cfe89a" : "1px solid #d7e2fb",
+                        background: mineActive ? "#f3fbe3" : "#fff",
+                        color: mineActive ? "#4d7c0f" : "#3555c4",
+                        fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
                       }}
                     >
-                      {pod.label}
+                      {mineActive ? "Mine ✓" : "Mine"}
                     </button>
-                  );
-                })}
+                  </div>
+                </>
+              );
+            })()
+          )}
+          {/* Pods — labelled like Rep Filter / Geography */}
+          {pods.length > 0 && (
+            <>
+              <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
+              <div style={{ display: "grid", gap: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Pod</span>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {pods.map((pod) => {
+                    const ids = pod.rep_ids;
+                    const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
+                    return (
+                      <button
+                        key={pod.key}
+                        type="button"
+                        onClick={() => setRepFilter(active ? [] : ids)}
+                        title={`${pod.label} — scopes the whole dashboard to: ${pod.reps.map((r) => r.name).join(", ")}`}
+                        style={{
+                          height: 40, padding: "0 16px", borderRadius: 12,
+                          border: active ? "1px solid #3555c4" : "1px solid #d7e2fb",
+                          background: active ? "#3555c4" : "#eef4ff",
+                          color: active ? "#fff" : "#3555c4",
+                          fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", textTransform: "uppercase",
+                        }}
+                      >
+                        {pod.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            )}
+            </>
+          )}
+          {/* Divider */}
+          <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
+          {/* Rep filter */}
+          <div style={{ flex: 1, minWidth: 140 }}>
             <MultiSelectDropdown
               label="Rep filter"
               options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
@@ -2510,6 +2536,9 @@ export default function SalesAnalytics() {
               onChange={setRepFilter}
               placeholder="All reps"
             />
+          </div>
+          {/* Geography */}
+          <div style={{ flex: 1, minWidth: 140 }}>
             <MultiSelectDropdown
               label="Geography"
               options={GEO_OPTIONS.filter((o) => o !== "all").map((o) => ({ value: o, label: o }))}
@@ -2517,47 +2546,14 @@ export default function SalesAnalytics() {
               onChange={setGeographyFilter}
               placeholder="All geographies"
             />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-              <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
-                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Window</p>
-                <p style={{ margin: "8px 0 0", fontSize: 24, fontWeight: 800, color: "#203244" }}>
-                  {usingCustomRange ? "Custom" : windowDays >= ALL_TIME_DAYS ? "All time" : windowPresetLabel(windowDays)}
-                </p>
-              </div>
-              <div style={{ borderRadius: 16, border: "1px solid #e6edf6", background: "#f8fbff", padding: 14 }}>
-                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>Updated</p>
-                <p style={{ margin: "8px 0 0", fontSize: 14, fontWeight: 800, color: "#203244", lineHeight: 1.4 }}>
-                  {loading ? "Refreshing..." : formatSnapshotTime(data?.generated_at) || "Live"}
-                </p>
-              </div>
-            </div>
           </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: "#f7f9fc", border: "1px solid #e3ebf4", color: "#5e7086", fontSize: 12, fontWeight: 700 }}>
-            <CalendarRange size={14} />
-            {usingCustomRange ? "Window: custom range" : windowDays >= ALL_TIME_DAYS ? "Window: all time" : `Window: last ${windowDays} days`}
-          </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: repFilter.length > 0 ? "#eef4ff" : "#f7f9fc", border: repFilter.length > 0 ? "1px solid #d7e2fb" : "1px solid #e3ebf4", color: repFilter.length > 0 ? "#3555c4" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
-            <BarChart3 size={14} />
-            Scope: {selectedRepNames.length === 0 ? "All reps" : selectedRepNames.length === 1 ? selectedRepNames[0] : `${selectedRepNames.length} reps`}
-          </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, background: geographyFilter.length > 0 ? "#eefbf6" : "#f7f9fc", border: geographyFilter.length > 0 ? "1px solid #cdebdc" : "1px solid #e3ebf4", color: geographyFilter.length > 0 ? "#157347" : "#5e7086", fontSize: 12, fontWeight: 700 }}>
-            <CalendarRange size={14} />
-            Geography: {geographyFilter.length === 0 ? "All" : geographyFilter.length === 1 ? geographyFilter[0] : `${geographyFilter.length} regions`}
-          </div>
-          <p style={{ margin: 0, fontSize: 12, color: "#74869c" }}>
-            {loading ? "Refreshing dashboard..." : `Snapshot updated ${formatSnapshotTime(data?.generated_at)}`}
-          </p>
         </div>
       </section>
 
       <TabStrip active={activeTab} />
 
       <div ref={tabContentRef} className="sa-tab-content">
-        {activeTab === "outreach" ? (
-          <OutreachAnalyticsTab />
-        ) : activeTab !== "overview" ? (
+        {activeTab !== "overview" ? (
           <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
         ) : (
         <>
@@ -2583,18 +2579,20 @@ export default function SalesAnalytics() {
             </div>
           )}
 
+
+          <h2 style={{ margin: "0 0 16px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Overall Performance</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 18 }}>
             {metricCards.map((card) => (
               <MetricCard key={card.label} {...card} />
             ))}
           </div>
 
-          <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18 }}>
             <SectionCard
               title="SDR Leaderboard"
-              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and how many converted to a qualified deal."
+              subtitle="Outbound touches (email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and converted."
+              className="sa-leaderboard"
+              style={{ background: "linear-gradient(160deg, #f2faf3 0%, #eaf6eb 100%)", border: "1px solid #c8e6ca" }}
             >
               <RepActivityTable
                 rows={sdrRepActivity}
@@ -2606,82 +2604,32 @@ export default function SalesAnalytics() {
 
             <SectionCard
               title="AE Leaderboard"
-              subtitle="Outbound touches (outbound email, calls, LinkedIn, meetings) by AE, alongside the live pipeline each one owns."
+              subtitle="Outbound touches (email, calls, LinkedIn, meetings) by AE, alongside the demo funnel and live pipeline each AE owns."
+              className="sa-leaderboard"
+              style={{ background: "linear-gradient(160deg, #f2faf3 0%, #eaf6eb 100%)", border: "1px solid #c8e6ca" }}
             >
               <RepActivityTable
                 rows={aeRepActivity}
                 onOpenMetric={handleOpenActivityMetric}
+                showAeDemos
                 emptyLabel="No AE activity yet for this time range."
               />
             </SectionCard>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(300px, 1fr)", gap: 18 }}>
-            <SectionCard
-              title="Conversion Funnel"
-              subtitle="How this window's pipeline moves from Lead to Closed Won, with step-to-step conversion rates."
-            >
-              <ConversionFunnelView steps={data.conversion_funnel} />
-            </SectionCard>
-
-            <SectionCard
-              title="Accounts by Status"
-              subtitle="Sourced accounts grouped by their manual status. Scoped to the selected reps and geography."
-            >
-              <AccountStatusBreakdown rows={data.accounts_by_status ?? []} />
-            </SectionCard>
-          </div>
-
           <SectionCard
-            title="Weekly Rep Activity"
+            title="Rep Activity"
             subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
           >
             <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} />
           </SectionCard>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 18 }}>
-            <SectionCard
-              title="Pipeline by Stage"
-              subtitle="Use stage totals to inspect composition, or switch to rep view to see how each owner&apos;s pipeline is distributed across stages."
-              action={
-                <div style={{ display: "inline-flex", borderRadius: 999, border: "1px solid #dde6f0", background: "#f8fafc", padding: 4 }}>
-                  {[
-                    { key: "stage", label: "By stage" },
-                    { key: "rep", label: "By rep" },
-                  ].map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setPipelineView(option.key as "stage" | "rep")}
-                      style={{
-                        height: 34,
-                        padding: "0 12px",
-                        borderRadius: 999,
-                        border: "none",
-                        background: pipelineView === option.key ? "#fff" : "transparent",
-                        color: pipelineView === option.key ? "#2948b9" : "#5d6f84",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        boxShadow: pipelineView === option.key ? "0 1px 6px rgba(32, 53, 84, 0.08)" : "none",
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              }
-            >
-              {pipelineView === "stage" ? <PipelineStageView rows={data.pipeline_by_stage} /> : <PipelineOwnerView rows={visiblePipelineByOwner} />}
-            </SectionCard>
-
-            <SectionCard
-              title="Deal Velocity / Aging"
-              subtitle="Average time each stage holds deals, plus how many are already stale enough to deserve a pipeline review."
-            >
-              <VelocityView rows={data.velocity_by_stage} onOpenStalledDeals={handleOpenStalledDeals} />
-            </SectionCard>
-          </div>
+          <SectionCard
+            title="Deal Velocity / Aging"
+            subtitle="Average time each stage holds deals, plus how many are already stale enough to deserve a pipeline review."
+          >
+            <VelocityView rows={data.velocity_by_stage} onOpenStalledDeals={handleOpenStalledDeals} />
+          </SectionCard>
 
            <SectionCard
             title="Forecast View"

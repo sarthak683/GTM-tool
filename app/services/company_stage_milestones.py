@@ -25,18 +25,27 @@ _BACKFILL_MIN_INTERVAL = timedelta(hours=6)
 _last_backfill_at: datetime | None = None
 
 MILESTONE_STAGE_MAP: dict[str, str] = {
+    "demo_scheduled": "demo_scheduled",
+    "qualified_lead": "qualified_lead",
     "demo_done": "demo_done",
     "poc_agreed": "poc_agreed",
     "poc_wip": "poc_wip",
     "poc_done": "poc_done",
+    "commercial_negotiation": "commercial_negotiation",
+    "workshop": "workshop_msa",
+    "msa_review": "workshop_msa",
     "closed_won": "closed_won",
 }
 
 MILESTONE_LABELS: dict[str, str] = {
+    "demo_scheduled": "Demo Scheduled",
+    "qualified_lead": "Converted",
     "demo_done": "Demo Done",
     "poc_agreed": "POC Agreed",
     "poc_wip": "POC WIP",
     "poc_done": "POC Done",
+    "commercial_negotiation": "Commercial Negotiation",
+    "workshop_msa": "Workshop / MSA",
     "closed_won": "Closed Won",
 }
 

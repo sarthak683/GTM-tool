@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.deal_reminders",
         "app.tasks.prospect_reminders",
         "app.tasks.meeting_relink",
+        "app.tasks.ae_meeting_reminder",
     ],
 )
 
@@ -125,6 +126,12 @@ celery_app.conf.update(
         "relink-unlinked-meetings-daily": {
             "task": "app.tasks.meeting_relink.relink_unlinked_meetings_task",
             "schedule": crontab(hour=3, minute=0),
+        },
+        # Daily AE meeting reminder to Google Chat — 6 PM IST = 12:30 UTC.
+        # Posts tomorrow's account meetings (demo_scheduled or no-deal accounts).
+        "send-ae-meeting-reminder-daily": {
+            "task": "app.tasks.ae_meeting_reminder.send_ae_meeting_reminder",
+            "schedule": crontab(hour=12, minute=30),
         },
     },
 )

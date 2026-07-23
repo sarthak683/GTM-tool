@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -90,6 +90,46 @@ class Company(CompanyBase, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # ── Opportunity Details (AE-filled, account-level) ────────────────────────
+    # Core deal fields
+    opp_name: Optional[str] = None
+    opp_amount: Optional[float] = None
+    opp_arr: Optional[float] = None
+    opp_multiyear_license_fee: Optional[float] = None
+    opp_service_fee: Optional[float] = None
+    opp_type: Optional[str] = None
+    opp_sales_category: Optional[str] = None
+    opp_geolocation: Optional[str] = None
+    opp_owner: Optional[str] = None
+    opp_solution_engineer: Optional[str] = None
+    opp_close_date: Optional[date] = None
+    opp_forecast_category: Optional[str] = None
+    opp_probability: Optional[float] = None
+    opp_stage: Optional[str] = None
+    opp_poc_start_date: Optional[date] = None
+    opp_poc_status: Optional[str] = None
+    opp_aop_doc_link: Optional[str] = None
+    opp_msp_doc_link: Optional[str] = None
+    # MEDDPICC
+    medd_business_initiatives: Optional[str] = Field(default=None, sa_column=Column("medd_business_initiatives", Text))
+    medd_business_pains: Optional[str] = Field(default=None, sa_column=Column("medd_business_pains", Text))
+    medd_technical_pains: Optional[str] = Field(default=None, sa_column=Column("medd_technical_pains", Text))
+    medd_size_business_pain: Optional[float] = None
+    medd_who_impacted_business: Optional[str] = Field(default=None, sa_column=Column("medd_who_impacted_business", Text))
+    medd_size_technical_pain: Optional[float] = None
+    medd_who_impacted_technical: Optional[str] = Field(default=None, sa_column=Column("medd_who_impacted_technical", Text))
+    medd_metrics: Optional[str] = Field(default=None, sa_column=Column("medd_metrics", Text))
+    medd_decision_criteria: Optional[str] = Field(default=None, sa_column=Column("medd_decision_criteria", Text))
+    medd_economic_buyer: Optional[str] = None
+    medd_eb_top_2_priorities: Optional[str] = Field(default=None, sa_column=Column("medd_eb_top_2_priorities", Text))
+    medd_decision_process: Optional[str] = Field(default=None, sa_column=Column("medd_decision_process", Text))
+    medd_paper_process: Optional[str] = Field(default=None, sa_column=Column("medd_paper_process", Text))
+    medd_champion: Optional[str] = None
+    medd_champion_win: Optional[str] = Field(default=None, sa_column=Column("medd_champion_win", Text))
+    medd_competition: Optional[str] = Field(default=None, sa_column=Column("medd_competition", Text))
+    # Current deal status note
+    opp_current_deal_status: Optional[str] = Field(default=None, sa_column=Column("opp_current_deal_status", Text))
+
 
 class CompanyCreate(CompanyBase):
     tech_stack: Optional[Any] = None
@@ -140,6 +180,42 @@ class CompanyRead(CompanyBase):
     recotap: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
+    # Opportunity Details
+    opp_name: Optional[str] = None
+    opp_amount: Optional[float] = None
+    opp_arr: Optional[float] = None
+    opp_multiyear_license_fee: Optional[float] = None
+    opp_service_fee: Optional[float] = None
+    opp_type: Optional[str] = None
+    opp_sales_category: Optional[str] = None
+    opp_geolocation: Optional[str] = None
+    opp_owner: Optional[str] = None
+    opp_solution_engineer: Optional[str] = None
+    opp_close_date: Optional[date] = None
+    opp_forecast_category: Optional[str] = None
+    opp_probability: Optional[float] = None
+    opp_stage: Optional[str] = None
+    opp_poc_start_date: Optional[date] = None
+    opp_poc_status: Optional[str] = None
+    opp_aop_doc_link: Optional[str] = None
+    opp_msp_doc_link: Optional[str] = None
+    medd_business_initiatives: Optional[str] = None
+    medd_business_pains: Optional[str] = None
+    medd_technical_pains: Optional[str] = None
+    medd_size_business_pain: Optional[float] = None
+    medd_who_impacted_business: Optional[str] = None
+    medd_size_technical_pain: Optional[float] = None
+    medd_who_impacted_technical: Optional[str] = None
+    medd_metrics: Optional[str] = None
+    medd_decision_criteria: Optional[str] = None
+    medd_economic_buyer: Optional[str] = None
+    medd_eb_top_2_priorities: Optional[str] = None
+    medd_decision_process: Optional[str] = None
+    medd_paper_process: Optional[str] = None
+    medd_champion: Optional[str] = None
+    medd_champion_win: Optional[str] = None
+    medd_competition: Optional[str] = None
+    opp_current_deal_status: Optional[str] = None
 
 
 class CompanySourcingSummary(SQLModel):
@@ -203,6 +279,42 @@ class CompanyUpdate(SQLModel):
     pe_investors: Optional[str] = None
     vc_investors: Optional[str] = None
     strategic_investors: Optional[str] = None
+    # Opportunity Details
+    opp_name: Optional[str] = None
+    opp_amount: Optional[float] = None
+    opp_arr: Optional[float] = None
+    opp_multiyear_license_fee: Optional[float] = None
+    opp_service_fee: Optional[float] = None
+    opp_type: Optional[str] = None
+    opp_sales_category: Optional[str] = None
+    opp_geolocation: Optional[str] = None
+    opp_owner: Optional[str] = None
+    opp_solution_engineer: Optional[str] = None
+    opp_close_date: Optional[date] = None
+    opp_forecast_category: Optional[str] = None
+    opp_probability: Optional[float] = None
+    opp_stage: Optional[str] = None
+    opp_poc_start_date: Optional[date] = None
+    opp_poc_status: Optional[str] = None
+    opp_aop_doc_link: Optional[str] = None
+    opp_msp_doc_link: Optional[str] = None
+    medd_business_initiatives: Optional[str] = None
+    medd_business_pains: Optional[str] = None
+    medd_technical_pains: Optional[str] = None
+    medd_size_business_pain: Optional[float] = None
+    medd_who_impacted_business: Optional[str] = None
+    medd_size_technical_pain: Optional[float] = None
+    medd_who_impacted_technical: Optional[str] = None
+    medd_metrics: Optional[str] = None
+    medd_decision_criteria: Optional[str] = None
+    medd_economic_buyer: Optional[str] = None
+    medd_eb_top_2_priorities: Optional[str] = None
+    medd_decision_process: Optional[str] = None
+    medd_paper_process: Optional[str] = None
+    medd_champion: Optional[str] = None
+    medd_champion_win: Optional[str] = None
+    medd_competition: Optional[str] = None
+    opp_current_deal_status: Optional[str] = None
 
     @field_validator("account_status", mode="before")
     @classmethod

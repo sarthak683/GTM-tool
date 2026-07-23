@@ -14,12 +14,14 @@ import {
   Loader2,
   Mail,
   MessageSquare,
+  Pencil,
   Phone,
   RefreshCw,
   Rocket,
   AlertTriangle,
   Newspaper,
   Radar,
+  Save,
   Target,
   TrendingUp,
   Users,
@@ -327,6 +329,391 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Opportunity Details Panel ──────────────────────────────────────────────
+
+type OppForm = {
+  opp_name: string;
+  opp_amount: string;
+  opp_arr: string;
+  opp_multiyear_license_fee: string;
+  opp_service_fee: string;
+  opp_type: string;
+  opp_sales_category: string;
+  opp_geolocation: string;
+  opp_owner: string;
+  opp_solution_engineer: string;
+  opp_close_date: string;
+  opp_forecast_category: string;
+  opp_probability: string;
+  opp_stage: string;
+  opp_poc_start_date: string;
+  opp_poc_status: string;
+  opp_aop_doc_link: string;
+  opp_msp_doc_link: string;
+  medd_business_initiatives: string;
+  medd_business_pains: string;
+  medd_technical_pains: string;
+  medd_size_business_pain: string;
+  medd_who_impacted_business: string;
+  medd_size_technical_pain: string;
+  medd_who_impacted_technical: string;
+  medd_metrics: string;
+  medd_decision_criteria: string;
+  medd_economic_buyer: string;
+  medd_eb_top_2_priorities: string;
+  medd_decision_process: string;
+  medd_paper_process: string;
+  medd_champion: string;
+  medd_champion_win: string;
+  medd_competition: string;
+  opp_current_deal_status: string;
+};
+
+function companyToOppForm(c: Company): OppForm {
+  const s = (v: string | number | null | undefined) => (v == null ? "" : String(v));
+  return {
+    opp_name: s(c.opp_name),
+    opp_amount: s(c.opp_amount),
+    opp_arr: s(c.opp_arr),
+    opp_multiyear_license_fee: s(c.opp_multiyear_license_fee),
+    opp_service_fee: s(c.opp_service_fee),
+    opp_type: s(c.opp_type),
+    opp_sales_category: s(c.opp_sales_category),
+    opp_geolocation: s(c.opp_geolocation),
+    opp_owner: s(c.opp_owner),
+    opp_solution_engineer: s(c.opp_solution_engineer),
+    opp_close_date: s(c.opp_close_date),
+    opp_forecast_category: s(c.opp_forecast_category),
+    opp_probability: s(c.opp_probability),
+    opp_stage: s(c.opp_stage),
+    opp_poc_start_date: s(c.opp_poc_start_date),
+    opp_poc_status: s(c.opp_poc_status),
+    opp_aop_doc_link: s(c.opp_aop_doc_link),
+    opp_msp_doc_link: s(c.opp_msp_doc_link),
+    medd_business_initiatives: s(c.medd_business_initiatives),
+    medd_business_pains: s(c.medd_business_pains),
+    medd_technical_pains: s(c.medd_technical_pains),
+    medd_size_business_pain: s(c.medd_size_business_pain),
+    medd_who_impacted_business: s(c.medd_who_impacted_business),
+    medd_size_technical_pain: s(c.medd_size_technical_pain),
+    medd_who_impacted_technical: s(c.medd_who_impacted_technical),
+    medd_metrics: s(c.medd_metrics),
+    medd_decision_criteria: s(c.medd_decision_criteria),
+    medd_economic_buyer: s(c.medd_economic_buyer),
+    medd_eb_top_2_priorities: s(c.medd_eb_top_2_priorities),
+    medd_decision_process: s(c.medd_decision_process),
+    medd_paper_process: s(c.medd_paper_process),
+    medd_champion: s(c.medd_champion),
+    medd_champion_win: s(c.medd_champion_win),
+    medd_competition: s(c.medd_competition),
+    opp_current_deal_status: s(c.opp_current_deal_status),
+  };
+}
+
+function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<OppForm>(() => companyToOppForm(company));
+
+  useEffect(() => { setForm(companyToOppForm(company)); }, [company]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const fn = (e: KeyboardEvent) => { if (e.key === "Escape" && !saving) handleClose(); };
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, [open, saving]);
+
+  const set = (k: keyof OppForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const handleClose = () => {
+    setEditing(false);
+    setForm(companyToOppForm(company));
+    setOpen(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
+      const strOrNull = (v: string) => (v.trim() === "" ? null : v.trim());
+      await companiesApi.patch(company.id, {
+        opp_name: strOrNull(form.opp_name),
+        opp_amount: numOrNull(form.opp_amount),
+        opp_arr: numOrNull(form.opp_arr),
+        opp_multiyear_license_fee: numOrNull(form.opp_multiyear_license_fee),
+        opp_service_fee: numOrNull(form.opp_service_fee),
+        opp_type: strOrNull(form.opp_type),
+        opp_sales_category: strOrNull(form.opp_sales_category),
+        opp_geolocation: strOrNull(form.opp_geolocation),
+        opp_owner: strOrNull(form.opp_owner),
+        opp_solution_engineer: strOrNull(form.opp_solution_engineer),
+        opp_close_date: strOrNull(form.opp_close_date) as never,
+        opp_forecast_category: strOrNull(form.opp_forecast_category),
+        opp_probability: numOrNull(form.opp_probability),
+        opp_stage: strOrNull(form.opp_stage),
+        opp_poc_start_date: strOrNull(form.opp_poc_start_date) as never,
+        opp_poc_status: strOrNull(form.opp_poc_status),
+        opp_aop_doc_link: strOrNull(form.opp_aop_doc_link),
+        opp_msp_doc_link: strOrNull(form.opp_msp_doc_link),
+        medd_business_initiatives: strOrNull(form.medd_business_initiatives),
+        medd_business_pains: strOrNull(form.medd_business_pains),
+        medd_technical_pains: strOrNull(form.medd_technical_pains),
+        medd_size_business_pain: numOrNull(form.medd_size_business_pain),
+        medd_who_impacted_business: strOrNull(form.medd_who_impacted_business),
+        medd_size_technical_pain: numOrNull(form.medd_size_technical_pain),
+        medd_who_impacted_technical: strOrNull(form.medd_who_impacted_technical),
+        medd_metrics: strOrNull(form.medd_metrics),
+        medd_decision_criteria: strOrNull(form.medd_decision_criteria),
+        medd_economic_buyer: strOrNull(form.medd_economic_buyer),
+        medd_eb_top_2_priorities: strOrNull(form.medd_eb_top_2_priorities),
+        medd_decision_process: strOrNull(form.medd_decision_process),
+        medd_paper_process: strOrNull(form.medd_paper_process),
+        medd_champion: strOrNull(form.medd_champion),
+        medd_champion_win: strOrNull(form.medd_champion_win),
+        medd_competition: strOrNull(form.medd_competition),
+        opp_current_deal_status: strOrNull(form.opp_current_deal_status),
+      } as never);
+      setEditing(false);
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => { setForm(companyToOppForm(company)); setEditing(false); };
+
+  const inputBase: CSSProperties = {
+    width: "100%", boxSizing: "border-box", border: "1px solid #d6e0eb",
+    borderRadius: 8, padding: "7px 10px", fontSize: 13, color: colors.text,
+    background: "#fff", outline: "none", fontFamily: "inherit",
+  };
+  const taBase: CSSProperties = { ...inputBase, resize: "vertical", minHeight: 72, lineHeight: 1.55 };
+
+  function Field({ label, fkey, type = "text", isTextarea = false }: {
+    label: string; fkey: keyof OppForm; type?: string; isTextarea?: boolean;
+  }) {
+    const val = form[fkey];
+    return (
+      <div style={{ display: "grid", gap: 5 }}>
+        {label && (
+          <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5, color: "#8a9bb0", textTransform: "uppercase" }}>
+            {label}
+          </div>
+        )}
+        {editing ? (
+          isTextarea
+            ? <textarea value={val} onChange={set(fkey)} style={taBase} />
+            : <input type={type} value={val} onChange={set(fkey)} style={inputBase} />
+        ) : (
+          <div style={{ fontSize: 13.5, color: val ? colors.text : "#b0bcc8", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 20 }}>
+            {val || "—"}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const col2: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 };
+
+  // Summary chips shown on the sidebar button when data exists
+  const saved = companyToOppForm(company);
+  const hasData = Object.values(saved).some((v) => v !== "");
+
+  return (
+    <>
+      {/* ── Sidebar trigger card ── */}
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "12px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: colors.faint }}>
+            OPPORTUNITY DETAILS
+          </span>
+          <ExternalLink size={13} color={colors.faint} />
+        </button>
+        {hasData && (
+          <div style={{ padding: "0 14px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {saved.opp_name && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{saved.opp_name}</span>
+            )}
+            {saved.opp_stage && (
+              <span style={{ fontSize: 11, color: "#4a6080", background: "#f0f4fa", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+                {saved.opp_stage}
+              </span>
+            )}
+            {saved.opp_amount && (
+              <span style={{ fontSize: 11, color: "#2d6a4f", fontWeight: 700 }}>
+                ${Number(saved.opp_amount).toLocaleString()}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Modal ── */}
+      {open && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !saving) handleClose(); }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 9100,
+            background: "rgba(10, 22, 40, 0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "24px 16px",
+            backdropFilter: "blur(2px)",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: 20, width: "100%", maxWidth: 780,
+              maxHeight: "88vh", display: "flex", flexDirection: "column",
+              boxShadow: "0 32px 72px rgba(10,22,40,0.28)",
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "20px 28px 18px", borderBottom: "1px solid #eaeff6", flexShrink: 0,
+            }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800, color: colors.text, letterSpacing: "-0.02em" }}>
+                  Opportunity Details
+                </h2>
+                <p style={{ margin: "3px 0 0", fontSize: 12.5, color: colors.sub }}>{company.name}</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {editing ? (
+                  <>
+                    <button
+                      type="button" onClick={handleCancel}
+                      style={{ border: "1px solid #dce4ef", background: "#fff", color: colors.text, borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button" onClick={handleSave} disabled={saving}
+                      style={{ border: "none", background: "#2d6a4f", color: "#fff", borderRadius: 9, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    >
+                      {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button" onClick={() => setEditing(true)}
+                    style={{ border: "1px solid #dce4ef", background: "#fff", color: colors.text, borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Pencil size={13} /> Edit
+                  </button>
+                )}
+                <button
+                  type="button" onClick={handleClose}
+                  style={{ border: "none", background: "#f4f6fa", borderRadius: 8, cursor: "pointer", padding: "7px", color: colors.faint, display: "flex", alignItems: "center" }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable body */}
+            <div style={{ overflowY: "auto", padding: "24px 28px 32px", display: "grid", gap: 28 }}>
+
+              {/* Core Deal */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>Core Deal</div>
+                <div style={{ display: "grid", gap: 14 }}>
+                  <Field label="Opportunity Name" fkey="opp_name" />
+                  <div style={col2}>
+                    <Field label="Amount ($)" fkey="opp_amount" type="number" />
+                    <Field label="ARR ($)" fkey="opp_arr" type="number" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Multiyear License Fee ($)" fkey="opp_multiyear_license_fee" type="number" />
+                    <Field label="Service Fee ($)" fkey="opp_service_fee" type="number" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Opportunity Owner" fkey="opp_owner" />
+                    <Field label="Solution Engineer" fkey="opp_solution_engineer" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Type" fkey="opp_type" />
+                    <Field label="Sales Category" fkey="opp_sales_category" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Stage" fkey="opp_stage" />
+                    <Field label="Forecast Category" fkey="opp_forecast_category" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Probability %" fkey="opp_probability" type="number" />
+                    <Field label="Geolocation" fkey="opp_geolocation" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="Close Date" fkey="opp_close_date" type="date" />
+                    <Field label="POC Start Date" fkey="opp_poc_start_date" type="date" />
+                  </div>
+                  <div style={col2}>
+                    <Field label="POC Status" fkey="opp_poc_status" />
+                    <div />
+                  </div>
+                  <Field label="AOP Doc Link" fkey="opp_aop_doc_link" />
+                  <Field label="MSP Doc Link" fkey="opp_msp_doc_link" />
+                </div>
+              </div>
+
+              {/* MEDDPICC */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>MEDDPICC</div>
+                <div style={{ display: "grid", gap: 14 }}>
+                  <Field label="Business Initiatives" fkey="medd_business_initiatives" isTextarea />
+                  <Field label="Business Pains" fkey="medd_business_pains" isTextarea />
+                  <div style={col2}>
+                    <Field label="Size of Business Pain ($)" fkey="medd_size_business_pain" type="number" />
+                    <Field label="Who is Impacted (Business)" fkey="medd_who_impacted_business" />
+                  </div>
+                  <Field label="Technical Pains" fkey="medd_technical_pains" isTextarea />
+                  <div style={col2}>
+                    <Field label="Size of Technical Pain ($)" fkey="medd_size_technical_pain" type="number" />
+                    <Field label="Who is Impacted (Technical)" fkey="medd_who_impacted_technical" />
+                  </div>
+                  <Field label="Metrics" fkey="medd_metrics" isTextarea />
+                  <Field label="Decision Criteria" fkey="medd_decision_criteria" isTextarea />
+                  <div style={col2}>
+                    <Field label="Economic Buyer" fkey="medd_economic_buyer" />
+                    <Field label="EB Top 2 Priorities" fkey="medd_eb_top_2_priorities" />
+                  </div>
+                  <Field label="Decision Process" fkey="medd_decision_process" isTextarea />
+                  <Field label="Paper Process" fkey="medd_paper_process" isTextarea />
+                  <div style={col2}>
+                    <Field label="Champion" fkey="medd_champion" />
+                    <div />
+                  </div>
+                  <Field label="Champion's Win" fkey="medd_champion_win" isTextarea />
+                  <Field label="Competition" fkey="medd_competition" isTextarea />
+                </div>
+              </div>
+
+              {/* Current Deal Status */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>Current Deal Status</div>
+                <Field label="" fkey="opp_current_deal_status" isTextarea />
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1382,6 +1769,8 @@ export default function AccountSourcingCompanyDetail() {
                   Account-level AE and SDR show up as the default team on prospects, and individual stakeholders can still be adjusted later.
                 </div>
               </div>
+
+              <OpportunityDetailsPanel company={company} onSaved={load} />
             </div>
           </div>
 

@@ -15,8 +15,10 @@ from app.clients.gmail_sender import send_gmail_email
 from app.config import settings
 from app.models.activity import Activity
 from app.models.call_recording import CallRecording
+from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
 from app.models.user import User
 
@@ -43,6 +45,8 @@ US_POD_REPORT_RECIPIENTS = [
     "mahesh@beacon.li",
     "pulkit@beacon.li",
     "sarthak@beacon.li",
+    "maithili@beacon.li",
+    "manognya@beacon.li",
 ]
 
 # India pod — same {name, email, aliases} roster shape as US, sourced from the
@@ -65,6 +69,8 @@ INDIA_POD_REPORT_RECIPIENTS = [
     "sipra@beacon.li",
     "rakesh@beacon.li",  # boss
     "sarthak@beacon.li",
+    "maithili@beacon.li",
+    "manognya@beacon.li",
 ]
 
 # India pod works an IST daytime (it doesn't call US prospects overnight like the
@@ -433,6 +439,96 @@ def _is_meeting_booked_call(activity: Activity) -> bool:
     return outcome in {"demo_scheduled_booked", "meeting_confirmed"}
 
 
+_OUTCOME_LABELS = {
+    "connected": "Connected",
+    "callback": "Callback",
+    "voicemail": "Voicemail",
+    "not_answered": "No answer",
+    "failed": "Rejected",
+    "unknown": "Unknown",
+}
+
+
+def _outcome_label(activity: Activity) -> str:
+    if _is_meeting_booked_call(activity):
+        return "Mtg booked"
+    return _OUTCOME_LABELS.get(_outcome_bucket(activity), "Unknown")
+
+
+async def _build_call_detail_rows(
+    session: AsyncSession, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Enrich raw per-call rows with contact/company/meeting names.
+
+    One batched query per lookup table (contacts, companies, meetings) rather
+    than N+1 per call — the daily call volume across a pod can be 50-100+.
+    """
+    if not candidates:
+        return []
+
+    contact_ids = {c["contact_id"] for c in candidates if c["contact_id"]}
+    deal_ids = {c["deal_id"] for c in candidates if c["deal_id"]}
+
+    contacts_by_id: dict[UUID, Contact] = {}
+    if contact_ids:
+        contacts = (
+            await session.execute(select(Contact).where(Contact.id.in_(contact_ids)))
+        ).scalars().all()
+        contacts_by_id = {c.id: c for c in contacts}
+
+    company_ids = {c.company_id for c in contacts_by_id.values() if c.company_id}
+    companies_by_id: dict[UUID, Company] = {}
+    if company_ids:
+        companies = (
+            await session.execute(select(Company).where(Company.id.in_(company_ids)))
+        ).scalars().all()
+        companies_by_id = {c.id: c for c in companies}
+
+    # For "Mtg booked" calls, show the deal's next scheduled meeting — the one
+    # the call presumably just booked. Picks the earliest upcoming meeting per
+    # deal; falls back to the most recent past one if nothing is upcoming.
+    meeting_by_deal: dict[UUID, datetime] = {}
+    booked_deal_ids = {c["deal_id"] for c in candidates if c["deal_id"] and c["is_meeting_booked"]}
+    if booked_deal_ids:
+        meetings = (
+            await session.execute(
+                select(Meeting)
+                .where(Meeting.deal_id.in_(booked_deal_ids), Meeting.scheduled_at.is_not(None))
+                .order_by(Meeting.scheduled_at.asc())
+            )
+        ).scalars().all()
+        now = datetime.utcnow()
+        for meeting in meetings:
+            existing = meeting_by_deal.get(meeting.deal_id)
+            if existing is None:
+                meeting_by_deal[meeting.deal_id] = meeting.scheduled_at
+                continue
+            # Prefer the first upcoming meeting found; otherwise keep whichever
+            # is closest to now among past meetings already seen.
+            if meeting.scheduled_at >= now and existing < now:
+                meeting_by_deal[meeting.deal_id] = meeting.scheduled_at
+
+    rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        contact = contacts_by_id.get(candidate["contact_id"]) if candidate["contact_id"] else None
+        company = companies_by_id.get(contact.company_id) if contact and contact.company_id else None
+        meeting_at = meeting_by_deal.get(candidate["deal_id"]) if candidate["deal_id"] else None
+        rows.append(
+            {
+                "rep_name": candidate["rep_name"],
+                "company_name": company.name if company else "—",
+                "prospect_name": f"{contact.first_name} {contact.last_name}".strip() if contact else "—",
+                "designation": (contact.title if contact and contact.title else "—"),
+                "outcome_label": candidate["outcome_label"],
+                "meeting_date": meeting_at.strftime("%b %d, %I:%M %p") if meeting_at else "—",
+                "created_at": candidate["created_at"],
+            }
+        )
+
+    rows.sort(key=lambda r: r["created_at"])
+    return rows
+
+
 async def _resolve_reps(session: AsyncSession, reps: list[dict] | None = None) -> list[ResolvedRep]:
     roster = reps if reps is not None else US_POD_REPS
     users = (
@@ -614,6 +710,11 @@ async def _build_us_pod_call_report_for_period(
     deal_owner, contact_owner = await _load_owner_maps(session, activities)
     daily_counts: dict[UUID, dict[date, int]] = defaultdict(lambda: defaultdict(int))
     target_metrics: dict[UUID, dict[str, Any]] = {}
+    rep_name_by_id: dict[UUID, str] = {rep.user_id: rep.name for rep in reps if rep.user_id}
+    # Raw per-call rows for the "Call details" section — filled in below during
+    # the same activity loop, then enriched with contact/company/meeting data
+    # in one batch after the loop (avoids N+1 queries).
+    call_detail_candidates: list[dict[str, Any]] = []
 
     for rep in reps:
         if rep.user_id:
@@ -656,6 +757,17 @@ async def _build_us_pod_call_report_for_period(
             metrics["unique_contacts"].add(activity.contact_id)
         if activity.deal_id:
             metrics["unique_deals"].add(activity.deal_id)
+
+        call_detail_candidates.append(
+            {
+                "rep_name": rep_name_by_id.get(rep_id, "Unknown"),
+                "contact_id": activity.contact_id,
+                "deal_id": activity.deal_id,
+                "outcome_label": _outcome_label(activity),
+                "is_meeting_booked": _is_meeting_booked_call(activity),
+                "created_at": activity.created_at,
+            }
+        )
 
         bucket = _outcome_bucket(activity)
         if bucket == "connected" or _is_connected_call(activity):
@@ -751,6 +863,12 @@ async def _build_us_pod_call_report_for_period(
             }
         )
 
+    # "Call details" is scoped to booked meetings only — the summary table above
+    # still counts every call; this section is a spotlight on the calls that
+    # actually converted, not a full per-call log.
+    meeting_booked_candidates = [c for c in call_detail_candidates if c["is_meeting_booked"]]
+    call_details = await _build_call_detail_rows(session, meeting_booked_candidates)
+
     report = {
         "report_type": report_type,
         "report_date": target_date.isoformat(),
@@ -763,6 +881,7 @@ async def _build_us_pod_call_report_for_period(
         "lookback_days": LOOKBACK_DAYS,
         "recipients": config["recipients"],
         "rows": rows,
+        "call_details": call_details,
     }
     report["subject"] = _report_subject(report)
     report["body"] = _render_report_text(report)
@@ -808,6 +927,26 @@ def _render_report_text(report: dict[str, Any]) -> str:
             f"{flags}"
         )
 
+    call_details = report.get("call_details") or []
+    if call_details:
+        lines.extend(
+            [
+                "",
+                "Call details:",
+                "Rep            Company              Prospect             Designation          Outcome      Meeting date",
+                "-------------  -------------------  -------------------  -------------------  -----------  ----------------",
+            ]
+        )
+        for row in call_details:
+            lines.append(
+                f"{row['rep_name'][:13]:13}  "
+                f"{row['company_name'][:19]:19}  "
+                f"{row['prospect_name'][:19]:19}  "
+                f"{row['designation'][:19]:19}  "
+                f"{row['outcome_label'][:11]:11}  "
+                f"{row['meeting_date']}"
+            )
+
     lines.extend(
         [
             "",
@@ -837,43 +976,92 @@ def _render_report_html(report: dict[str, Any]) -> str:
         "No answer", "Callback", "Rejected",
         "5d avg", "Talk min", "Contacts", "Flags",
     ]
-    th_style = (
-        "padding:6px 10px;border-bottom:1px solid #d4dbe4;background:#f4f7fb;"
-        "font-size:12px;color:#475569;text-align:left;font-weight:600;"
-    )
-    td_style_text = "padding:6px 10px;border-bottom:1px solid #eef2f7;font-size:13px;color:#1f2a37;"
-    td_style_num = td_style_text + "text-align:right;font-variant-numeric:tabular-nums;"
 
-    header_html = "".join(f'<th style="{th_style}">{html.escape(h)}</th>' for h in headers)
+    def _grid_th(label: str, *, last: bool, align: str = "left") -> str:
+        border_right = "" if last else "border-right:1px solid #e5e3dc;"
+        return (
+            f'<th style="text-align:{align};padding:12px 14px;color:#94a3b8;font-weight:500;'
+            f'font-size:11px;{border_right}border-bottom:1px solid #e5e3dc;">{html.escape(label)}</th>'
+        )
+
+    def _grid_td(value, *, last: bool, align: str = "left", color: str = "#1f2a37", size: str = "12.5px") -> str:
+        border_right = "" if last else "border-right:1px solid #eeece5;"
+        return (
+            f'<td style="padding:12px 14px;text-align:{align};color:{color};font-size:{size};'
+            f'{border_right}border-bottom:1px solid #eeece5;">{html.escape(str(value))}</td>'
+        )
+
+    header_html = "".join(
+        _grid_th(h, last=(i == len(headers) - 1), align="left" if i == 0 else "right" if i < len(headers) - 1 else "left")
+        for i, h in enumerate(headers)
+    )
     rows_html = []
     for row in report["rows"]:
         flags = ", ".join(row["flags"]) if row["flags"] else "—"
-        cells = [
-            (row["rep_name"], td_style_text),
-            (row["calls"], td_style_num),
-            (row["connected_calls"], td_style_num),
-            (row["meetings_booked_calls"], td_style_num),
-            (row["not_answered"], td_style_num),
-            (row["callback"], td_style_num),
-            (row["failed"], td_style_num),
-            (row["avg_calls_last_7_days"], td_style_num),
-            (row["duration_minutes"], td_style_num),
-            (row["unique_contacts"], td_style_num),
-            (flags, td_style_text + "color:#7a8ca1;font-size:12px;"),
-        ]
-        rows_html.append(
-            "<tr>"
-            + "".join(f'<td style="{style}">{html.escape(str(value))}</td>' for value, style in cells)
-            + "</tr>"
+        flags_color = "#B45252" if row["flags"] else "#cbd5e1"
+        cells_html = (
+            _grid_td(row["rep_name"], last=False)
+            + _grid_td(row["calls"], last=False, align="right")
+            + _grid_td(row["connected_calls"], last=False, align="right")
+            + _grid_td(row["meetings_booked_calls"], last=False, align="right")
+            + _grid_td(row["not_answered"], last=False, align="right")
+            + _grid_td(row["callback"], last=False, align="right")
+            + _grid_td(row["failed"], last=False, align="right")
+            + _grid_td(row["avg_calls_last_7_days"], last=False, align="right")
+            + _grid_td(row["duration_minutes"], last=False, align="right")
+            + _grid_td(row["unique_contacts"], last=False, align="right")
+            + _grid_td(flags, last=True, color=flags_color, size="11.5px")
         )
+        rows_html.append(f"<tr>{cells_html}</tr>")
+
+    call_details = report.get("call_details") or []
+    call_details_html = ""
+    if call_details:
+        detail_headers = ["Rep", "Company", "Prospect", "Designation", "Meeting date"]
+        detail_header_html = "".join(
+            _grid_th(h, last=(i == len(detail_headers) - 1)) for i, h in enumerate(detail_headers)
+        )
+        detail_rows_html = []
+        for row in call_details:
+            meeting_date = row["meeting_date"]
+            if meeting_date == "—":
+                meeting_date_html = (
+                    '<span style="font-size:11px;padding:2px 9px;border-radius:999px;'
+                    'background:#F1EFE8;color:#5F5E5A;">Pending</span>'
+                )
+            else:
+                meeting_date_html = html.escape(meeting_date)
+            cells_html = (
+                _grid_td(row["rep_name"], last=False)
+                + _grid_td(row["company_name"], last=False)
+                + _grid_td(row["prospect_name"], last=False)
+                + _grid_td(row["designation"], last=False, color="#6b7280")
+                + f'<td style="padding:12px 14px;border-bottom:1px solid #eeece5;">{meeting_date_html}</td>'
+            )
+            detail_rows_html.append(f"<tr>{cells_html}</tr>")
+        call_details_html = f"""
+    <div style="margin:28px 0 12px 0;display:flex;align-items:center;gap:8px;">
+      <span style="font-size:14px;font-weight:500;color:#1f2a37;">Meetings booked</span>
+      <span style="font-size:11px;padding:2px 9px;border-radius:999px;background:#EEEDFE;color:#3C3489;font-weight:500;">{len(call_details)}</span>
+    </div>
+    <div style="border:1px solid #e5e3dc;border-radius:14px;overflow:hidden;">
+    <table style="border-collapse:collapse;width:100%;background:#fff;">
+      <thead><tr style="background:#fafaf8;">{detail_header_html}</tr></thead>
+      <tbody>{''.join(detail_rows_html)}</tbody>
+    </table>
+    </div>
+    """
 
     return f"""
-    <h2 style="margin:0 0 6px 0;font-size:18px;color:#1f2a37;">{html.escape(_report_title(report))}</h2>
-    <p style="margin:0 0 16px 0;color:#64748b;font-size:13px;">Reporting timezone: {html.escape(report['timezone'])}</p>
-    <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5ebf3;border-radius:8px;overflow:hidden;">
-      <thead><tr>{header_html}</tr></thead>
+    <h2 style="margin:0 0 6px 0;font-size:17px;font-weight:500;color:#1f2a37;">{html.escape(_report_title(report))}</h2>
+    <p style="margin:0 0 20px 0;color:#94a3b8;font-size:12px;">Reporting timezone: {html.escape(report['timezone'])}</p>
+    <div style="border:1px solid #e5e3dc;border-radius:14px;overflow:hidden;">
+    <table style="border-collapse:collapse;width:100%;background:#fff;">
+      <thead><tr style="background:#fafaf8;">{header_html}</tr></thead>
       <tbody>{''.join(rows_html)}</tbody>
     </table>
+    </div>
+    {call_details_html}
     <h3 style="margin:24px 0 6px 0;font-size:13px;color:#475569;text-transform:uppercase;letter-spacing:0.04em;">Counting logic</h3>
     <ul style="margin:0;padding-left:20px;color:#475569;font-size:13px;line-height:1.6;">
       <li>Includes activities where type or medium is <code>call</code>.</li>

@@ -356,11 +356,33 @@ async def get_funnel(
 
 # ── Deal Health ──────────────────────────────────────────────────────────────
 
+# Hardcoded per-stage red-alert thresholds (days)
+_RED_ALERT_THRESHOLDS: dict[str, int] = {
+    "demo_scheduled": 21,   # Demo Scheduled > 3 weeks
+    "demo_done": 21,        # Demo Done > 3 weeks
+    "qualified_lead": 21,   # Converted > 3 weeks
+    "poc_agreed": 28,       # PoC Agreed > 4 weeks
+    "poc_wip": 21,          # PoC WIP > 3 weeks
+}
+_POC_DONE_AND_LATER_STAGES = ["poc_done", "commercial_negotiation", "msa_review"]
+_POC_DONE_AND_LATER_THRESHOLD = 56  # PoC Done and Later > 8 weeks
+
+
+class RedAlertDeal(BaseModel):
+    deal_id: str
+    deal_name: str
+    amount: Optional[float] = None
+    stage_entered_at: Optional[str] = None  # ISO datetime string
+    ae_name: Optional[str] = None
+    sdr_name: Optional[str] = None
+
 
 class DealHealthResponse(BaseModel):
     total_stuck: int
     by_stage: dict
     deals: list[AtRiskDeal]
+    red_alert_buckets: dict[str, int] = {}
+    red_alert_deals: dict[str, list[RedAlertDeal]] = {}
 
 
 @router.get("/deal-health", response_model=DealHealthResponse)
@@ -369,6 +391,10 @@ async def get_deal_health(
     current_user: CurrentUser,
     rep_id: Annotated[Optional[UUID], Query()] = None,
 ):
+    from app.models.deal import Deal
+    from app.models.user import User as UserModel
+    from sqlalchemy.orm import aliased
+
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
     settings = await get_analytics_settings(session)
@@ -376,10 +402,164 @@ async def get_deal_health(
     by_stage: dict[str, int] = {}
     for d in rows:
         by_stage[d["stage"]] = by_stage.get(d["stage"], 0) + 1
+
+    # ── Red-alert buckets: counts + deal lists ──────────────────────────────
+    # Timing source: Deal.stage_entered_at — updates immediately on stage move.
+    _all_alert_stages = list(_RED_ALERT_THRESHOLDS.keys()) + _POC_DONE_AND_LATER_STAGES
+    rep_filter = (Deal.id == Deal.id) if rep_uuid is None else (Deal.assigned_to_id == rep_uuid)
+
+    AeUser = aliased(UserModel)
+    SdrUser = aliased(UserModel)
+    alert_stmt = (
+        select(
+            Deal.id,
+            Deal.name,
+            Deal.value,
+            Deal.stage,
+            Deal.stage_entered_at,
+            AeUser.name.label("ae_name"),
+            SdrUser.name.label("sdr_name"),
+        )
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
+        .where(Deal.stage.in_(_all_alert_stages), rep_filter)
+    )
+    alert_rows = (await session.execute(alert_stmt)).all()
+    now_dt = datetime.utcnow()
+
+    red_alert_buckets: dict[str, int] = {k: 0 for k in [
+        "demo_scheduled", "demo_done", "qualified_lead",
+        "poc_agreed", "poc_wip", "poc_done_and_later",
+    ]}
+    red_alert_deals: dict[str, list[RedAlertDeal]] = {k: [] for k in red_alert_buckets}
+
+    for row in alert_rows:
+        if not row.stage_entered_at:
+            continue
+        dwell = (now_dt - row.stage_entered_at).days
+        bucket_key: Optional[str] = None
+        if row.stage in _RED_ALERT_THRESHOLDS:
+            if dwell > _RED_ALERT_THRESHOLDS[row.stage]:
+                bucket_key = row.stage
+        elif row.stage in _POC_DONE_AND_LATER_STAGES:
+            if dwell > _POC_DONE_AND_LATER_THRESHOLD:
+                bucket_key = "poc_done_and_later"
+        if bucket_key:
+            red_alert_buckets[bucket_key] += 1
+            red_alert_deals[bucket_key].append(RedAlertDeal(
+                deal_id=str(row.id),
+                deal_name=row.name,
+                amount=float(row.value) if row.value else None,
+                stage_entered_at=row.stage_entered_at.isoformat() if row.stage_entered_at else None,
+                ae_name=row.ae_name,
+                sdr_name=row.sdr_name,
+            ))
+
     return DealHealthResponse(
         total_stuck=len(rows),
         by_stage=by_stage,
         deals=[AtRiskDeal(**d) for d in rows],
+        red_alert_buckets=red_alert_buckets,
+        red_alert_deals=red_alert_deals,
+    )
+
+
+# ── Pipeline Buckets ─────────────────────────────────────────────────────────
+
+# Stages 7-11: late-stage active pipeline
+_LATE_STAGE_STAGES = ["poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"]
+# Stages 4-11: all active pipeline (demo onwards)
+_ALL_ACTIVE_STAGES = ["demo_scheduled", "demo_done", "qualified_lead"] + _LATE_STAGE_STAGES
+
+# Stage label map for display
+_STAGE_LABELS: dict[str, str] = {
+    "demo_scheduled": "Demo Scheduled",
+    "demo_done": "Demo Done",
+    "qualified_lead": "Converted",
+    "poc_agreed": "PoC Agreed",
+    "poc_wip": "PoC WIP",
+    "poc_done": "PoC Done",
+    "commercial_negotiation": "Commercial Negotiation",
+    "msa_review": "Workshop / MSA",
+    "workshop": "Workshop / MSA",
+}
+
+
+class PipelineBucketDeal(BaseModel):
+    deal_id: str
+    deal_name: str
+    amount: Optional[float] = None
+    stage: str
+    ae_name: Optional[str] = None
+
+
+class PipelineBucketsResponse(BaseModel):
+    low_value_late_stage_count: int
+    low_value_late_stage_deals: list[PipelineBucketDeal]
+    small_avg_count: int
+    small_avg_deals: list[PipelineBucketDeal]
+
+
+@router.get("/pipeline-buckets", response_model=PipelineBucketsResponse)
+async def get_pipeline_buckets(session: DBSession, current_user: CurrentUser):
+    from app.models.deal import Deal
+    from app.models.user import User as UserModel
+    from sqlalchemy.orm import aliased
+
+    AeUser = aliased(UserModel)
+
+    # ── Bucket 1: late-stage deals (7-11) with amount < $750K ──────────────
+    stmt1 = (
+        select(Deal.id, Deal.name, Deal.value, Deal.stage, AeUser.name.label("ae_name"))
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .where(
+            Deal.stage.in_(_LATE_STAGE_STAGES),
+            Deal.value < 750_000,
+        )
+        .order_by(Deal.value.asc())
+    )
+    rows1 = (await session.execute(stmt1)).all()
+    bucket1_deals = [
+        PipelineBucketDeal(
+            deal_id=str(r.id),
+            deal_name=r.name,
+            amount=float(r.value) if r.value else None,
+            stage=_STAGE_LABELS.get(r.stage, r.stage),
+            ae_name=r.ae_name,
+        )
+        for r in rows1
+    ]
+
+    # ── Bucket 2: all active stages (4-11) with amount <= $100K ────────────
+    stmt2 = (
+        select(Deal.id, Deal.name, Deal.value, Deal.stage, AeUser.name.label("ae_name"))
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .where(
+            Deal.stage.in_(_ALL_ACTIVE_STAGES),
+            Deal.value <= 100_000,
+        )
+        .order_by(Deal.value.asc())
+    )
+    rows2 = (await session.execute(stmt2)).all()
+    bucket2_deals = [
+        PipelineBucketDeal(
+            deal_id=str(r.id),
+            deal_name=r.name,
+            amount=float(r.value) if r.value else None,
+            stage=_STAGE_LABELS.get(r.stage, r.stage),
+            ae_name=r.ae_name,
+        )
+        for r in rows2
+    ]
+
+    return PipelineBucketsResponse(
+        low_value_late_stage_count=len(bucket1_deals),
+        low_value_late_stage_deals=bucket1_deals,
+        small_avg_count=len(bucket2_deals),
+        small_avg_deals=bucket2_deals,
     )
 
 

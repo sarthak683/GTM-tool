@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import aliased
 
 from app.core.analytics_defaults import DEFAULT_STAGE_PROBABILITIES
 from app.core.dependencies import CurrentUser, DBSession
@@ -17,12 +18,13 @@ from app.models.company import Company
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.models.deal_stage_history import DealStageHistory
 from app.models.meeting import Meeting
 from app.models.user import User
+from app.models.user_alias import UserAlias
 from app.services.analytics_settings import get_analytics_settings
 from app.services.company_stage_milestones import MILESTONE_LABELS, backfill_company_stage_milestones
 from app.services.deal_stages import get_configured_deal_stages
-from app.services.outreach_analytics import build_outreach_overview
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -183,6 +185,8 @@ class MilestoneDealRow(BaseModel):
     reached_at: str
     close_date_est: Optional[str] = None
     deal_value: Optional[float] = None
+    assigned_ae: Optional[str] = None
+    assigned_sdr: Optional[str] = None
 
 
 class SalesSummary(BaseModel):
@@ -195,20 +199,28 @@ class SalesSummary(BaseModel):
     missing_close_date_count: int
     stale_deal_count: int
     # Milestone-based counts (deduplicated: first time per company)
+    demo_scheduled_count: int = 0
+    qualified_lead_count: int = 0
     demo_done_count: int = 0
     poc_agreed_count: int = 0
     poc_wip_count: int = 0
     poc_done_count: int = 0
+    commercial_negotiation_count: int = 0
+    workshop_msa_count: int = 0
     closed_won_count: int = 0
     closed_won_value: float = 0.0
     milestone_deals: list[MilestoneDealRow] = []
     # Same metrics for the immediately-preceding window of equal length, so the
     # UI can render period-over-period trend deltas on the milestone KPIs. These
     # are window-bound counts (point-in-time pipeline metrics are not compared).
+    prev_demo_scheduled_count: int = 0
+    prev_qualified_lead_count: int = 0
     prev_demo_done_count: int = 0
     prev_poc_agreed_count: int = 0
     prev_poc_wip_count: int = 0
     prev_poc_done_count: int = 0
+    prev_commercial_negotiation_count: int = 0
+    prev_workshop_msa_count: int = 0
     prev_closed_won_count: int = 0
     prev_closed_won_value: float = 0.0
 
@@ -226,15 +238,41 @@ class RepActivityRow(BaseModel):
     email_opens: int = 0
     email_replies: int = 0
     linkedin_reachouts: int = 0
+    linkedin_accepted: int = 0
+    linkedin_meeting_booked: int = 0
+    call_meeting_booked: int = 0
     meetings: int
     total: int
     active_deals: int
     pipeline_amount: float
+    # Upcoming scheduled meetings bucketed by how far ahead they are from today
+    meetings_next_1w: int = 0
+    meetings_next_2w: int = 0
+    meetings_beyond_2w: int = 0
+    # Meetings with VP/SVP/Head/Chief within the selected analytics window
+    direct_sql: int = 0
     # SDR demo funnel (attributed to the account's SDR). demos_converted counts
     # done demos whose account reached a qualified deal or beyond.
     demos_scheduled: int = 0
     demos_done: int = 0
     demos_converted: int = 0
+    # AE demo funnel — only deals where sdr_id == assigned_to_id (AE sourced their own deal).
+    ae_demos_scheduled: int = 0
+    ae_demos_done: int = 0
+    ae_demos_converted: int = 0
+    # Call touchpoint breakdown
+    call_first_attempt: int = 0
+    call_second_plus: int = 0
+    # Email touchpoint breakdown
+    email_first_attempt: int = 0
+    email_min_3_attempts: int = 0
+    # LinkedIn touchpoint breakdown
+    linkedin_connection_requested: int = 0
+    linkedin_intro_msg: int = 0
+    linkedin_followup_msg: int = 0
+    # Prospect / contact coverage
+    total_prospects: int = 0
+    total_mobile_numbers: int = 0
 
 
 class RepActivityWeekRow(BaseModel):
@@ -390,6 +428,7 @@ class SalesActivityDrilldownRow(BaseModel):
     # extra lookups just to fill these for activity rows.
     deal_id: Optional[str] = None
     company_id: Optional[str] = None
+    email_body: Optional[str] = None  # full email body for expand-in-drilldown (1.2)
 
 
 class SalesActivityDrilldownRead(BaseModel):
@@ -498,6 +537,43 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
 # email is mapped to its rep by local-part, not by the full address.
 BEACON_SENDING_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
 
+# Instantly cold-outreach domains — emails from these always count as Emails Out.
+INSTANTLY_DOMAINS = {"beaconli.co", "beaconli.com"}
+
+# All known Zippy addresses across every sending domain.
+ZIPPY_ADDRS = {"zippy@beacon.li", "zippy@beaconli.com", "zippy@beaconli.co"}
+
+
+def _zippy_in_cc_or_bcc(row) -> bool:
+    """True if any Zippy address appears in email_cc or email_bcc of the row."""
+    for field_val in (getattr(row, "email_cc", None), getattr(row, "email_bcc", None)):
+        for addr in str(field_val or "").lower().split(","):
+            if addr.strip() in ZIPPY_ADDRS:
+                return True
+    return False
+
+
+def _should_count_as_email_out(row) -> bool:
+    """
+    Emails Out counting rule (1.1):
+    - From beaconli.com / beaconli.co (Instantly domains) → always count.
+    - From beacon.li → count when:
+        - source is personal_email_sync (personal inbox, already contact-filtered)
+        - source is gmail_sync (rep's connected Gmail account, incl. .com/.co aliases)
+        - Zippy is in CC or BCC (tracked via Zippy inbox)
+    - Anything else → do not count.
+    """
+    from_addr = str(getattr(row, "email_from", None) or "").strip().lower()
+    domain = from_addr.split("@", 1)[1] if "@" in from_addr else ""
+    if domain in INSTANTLY_DOMAINS:
+        return True
+    if domain == "beacon.li":
+        source = str(getattr(row, "source", None) or "").strip().lower()
+        if source in {"personal_email_sync", "gmail_sync"}:
+            return True
+        return _zippy_in_cc_or_bcc(row)
+    return False
+
 
 def _beacon_sender_local(email_from) -> "str | None":
     """Local-part of ``email_from`` when it is one of OUR sending identities,
@@ -557,8 +633,13 @@ def _activity_rep_id(
     if rep_id_by_local is not None and (medium == "email" or kind == "email"):
         email_kind = _email_event_kind(row)
         if email_kind == "send":
-            local = _beacon_sender_local(row.email_from)
-            return rep_id_by_local.get(local) if local else None
+            full_from = str(row.email_from or "").strip().lower()
+            local = _beacon_sender_local(full_from)
+            if local:
+                # Try full-address first (handles aliases with different local-parts),
+                # then fall back to local-part lookup.
+                return rep_id_by_local.get(full_from) or rep_id_by_local.get(local)
+            return None
         if email_kind == "reply":
             # A reply credits the rep whose outreach earned it — the beacon
             # address it was sent TO (recipient-based; the mirror of the send
@@ -567,6 +648,13 @@ def _activity_rep_id(
             rlocal = _beacon_recipient_local(row)
             if rlocal and rlocal in rep_id_by_local:
                 return rep_id_by_local[rlocal]
+            # Instantly reply_received events store the rep's beaconli.com
+            # address in email_from (the account that received the reply),
+            # not in email_to. Try full address first, then local-part fallback.
+            full_from = str(row.email_from or "").strip().lower()
+            flocal = _beacon_sender_local(full_from)
+            if flocal:
+                return rep_id_by_local.get(full_from) or rep_id_by_local.get(flocal)
 
     # Manually logged calls/LinkedIn touches should credit the rep who logged
     # the action, even when the contacted person is assigned to a different rep.
@@ -822,7 +910,7 @@ async def sales_activity_drilldown(
         Literal[
             "emails", "email_replies", "calls", "connected_calls", "live_calls",
             "linkedin_reachouts", "meetings", "total", "demos_scheduled", "demos_done",
-            "demos_converted",
+            "demos_converted", "ae_demos_scheduled", "ae_demos_done", "ae_demos_converted",
         ],
         Query(description="Activity metric to inspect"),
     ],
@@ -842,7 +930,24 @@ async def sales_activity_drilldown(
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
     # email_from local-part -> rep id, for sender-based attribution of email sends.
-    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
+    # Seed from primary @beacon.li addresses first, then layer in all aliases so
+    # that .com/.co senders resolve even when their local-part differs from the
+    # primary address.
+    rep_id_by_local: dict[str, UUID] = {
+        e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")
+    }
+    alias_rows = (await session.execute(select(UserAlias.user_id, UserAlias.email))).all()
+    for alias in alias_rows:
+        alias_email = str(alias.email or "").strip().lower()
+        if not alias_email or "@" not in alias_email:
+            continue
+        alias_local = alias_email.split("@")[0]
+        alias_domain = alias_email.split("@")[1]
+        if alias_domain in BEACON_SENDING_DOMAINS:
+            # Full address lookup (handles different local-parts across domains)
+            rep_id_by_local[alias_email] = alias.user_id
+            # Local-part lookup (only add if not already claimed by primary)
+            rep_id_by_local.setdefault(alias_local, alias.user_id)
     # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
 
@@ -910,6 +1015,15 @@ async def sales_activity_drilldown(
             # that merely sit on deals/contacts they own.
             rep_local = (user_emails.get(rep_id) or "").split("@")[0]
             rep_from = {f"{rep_local}@{d}" for d in BEACON_SENDING_DOMAINS} if rep_local else set()
+            # Also include any alias emails registered for this rep — an alias can
+            # have a different local-part (e.g. primary "sipra.palta@beacon.li" but
+            # Instantly account "sipra@beaconli.com").  Without this, the SQL IN()
+            # clause never fetches those rows regardless of the rep_id_by_local fix.
+            for alias in alias_rows:
+                if alias.user_id == rep_id:
+                    alias_email = str(alias.email or "").strip().lower()
+                    if alias_email and "@" in alias_email:
+                        rep_from.add(alias_email)
             activity_stmt = activity_stmt.where(func.lower(Activity.email_from).in_(rep_from or {"__none__"}))
         elif rep_id and metric == "email_replies":
             # Replies are credited recipient-based (the beacon address the
@@ -1041,6 +1155,7 @@ async def sales_activity_drilldown(
                 for row in (await session.execute(select(Company.id, Company.name).where(Company.id.in_(company_ids)))).all()
             }
 
+        seen_drilldown_msg_ids: set[str] = set()
         for activity in activity_page:
             is_email = str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email"
             if metric == "emails":
@@ -1048,6 +1163,13 @@ async def sales_activity_drilldown(
                 # of contact/deal linkage; opens/replies and inbound are excluded.
                 if _email_event_kind(activity) != "send":
                     continue
+                # Dedup: same email can be captured by both personal_email_sync
+                # and gmail_sync — skip if we've already shown this message.
+                msg_id = str(activity.email_message_id or "").strip()
+                if msg_id and msg_id in seen_drilldown_msg_ids:
+                    continue
+                if msg_id:
+                    seen_drilldown_msg_ids.add(msg_id)
             elif metric == "email_replies":
                 # Replies were already classified, credited and rep-matched (and
                 # the page already paginated) above — independent of contact/deal
@@ -1087,10 +1209,11 @@ async def sales_activity_drilldown(
                     rep_name=_label_for_rep(row_rep_id, users)[2],
                     source=source,
                     source_label=source_label,
-                    subject=activity.email_subject or activity.content,
+                    subject=activity.email_subject,
                     direction=direction,
                     from_email=activity.email_from,
                     to_email=activity.email_to,
+                    email_body=activity.content,
                     call_outcome=activity.call_outcome,
                     call_duration=activity.call_duration,
                     contact_name=contact_names.get(activity.contact_id),
@@ -1211,128 +1334,325 @@ async def sales_activity_drilldown(
             )
 
     demo_has_more = False
-    if metric in {"demos_scheduled", "demos_done", "demos_converted"}:
-        # SDR demo funnel drilldown — mirrors the sales-dashboard funnel exactly
-        # (see "SDR demo funnel" in sales_dashboard). Demos are attributed to the
-        # ACCOUNT'S SDR (Company.sdr_id), so this is rep-scoped: with no rep_id
-        # there is nobody to attribute to, return empty like other rep-only paths.
+    if metric == "demos_scheduled":
+        # Demo Scheduled drilldown: deals that entered "demo_scheduled" stage
+        # within the window, attributed to the account's SDR.
         if rep_id:
-            now = _utcnow()
-            demo_meeting_rows = (
+            sched_hist_rows = (
                 await session.execute(
-                    select(Meeting).where(
-                        Meeting.is_internal.is_(False),
-                        func.lower(func.coalesce(Meeting.meeting_type, "")) == "demo",
-                        Meeting.company_id.isnot(None),
-                        or_(
-                            (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
-                            Meeting.scheduled_at.is_(None)
-                            & (Meeting.created_at >= window_start)
-                            & (Meeting.created_at <= window_end),
-                        ),
-                    )
+                    select(
+                        DealStageHistory.deal_id,
+                        DealStageHistory.changed_at,
+                    ).where(
+                        func.lower(DealStageHistory.to_stage) == "demo_scheduled",
+                        DealStageHistory.changed_at >= window_start,
+                        DealStageHistory.changed_at <= window_end,
+                    ).order_by(DealStageHistory.changed_at.desc())
                 )
-            ).scalars().all()
-            deduped_demos = _dedupe_meetings_across_sources(
-                [m for m in demo_meeting_rows if str(m.external_source or "").strip().lower() in REAL_MEETING_SOURCES]
-            )
-            demo_company_ids = {m.company_id for m in deduped_demos if m.company_id}
+            ).all()
+            # Dedup: keep earliest entry per deal (first time it entered stage)
+            seen_sched: set[UUID] = set()
+            unique_sched: list = []
+            for r in sorted(sched_hist_rows, key=lambda x: x.changed_at):
+                if r.deal_id not in seen_sched:
+                    seen_sched.add(r.deal_id)
+                    unique_sched.append(r)
+            unique_sched.sort(key=lambda r: r.changed_at, reverse=True)
 
-            company_sdr: dict[UUID, UUID | None] = {}
-            company_region_for_demo: dict[UUID, str | None] = {}
-            company_names: dict[UUID, str] = {}
-            converted_company_ids: set[UUID] = set()
-            # Resolve each company's single deal (when exactly one exists) so a
-            # demo whose meeting has no deal_id can still navigate to a deal —
-            # same "exactly one deal" rule used by tldv_sync's auto-link.
-            company_single_deal_id: dict[UUID, UUID] = {}
-            company_single_deal_name: dict[UUID, str | None] = {}
-            deal_name_by_id: dict[UUID, str | None] = {}
-            if demo_company_ids:
-                comp_rows = (
+            sched_deal_ids_dd = {r.deal_id for r in unique_sched}
+            sched_deal_rows_dd: dict[UUID, object] = {}
+            sched_company_ids_dd: set[UUID] = set()
+            if sched_deal_ids_dd:
+                for dr in (
+                    await session.execute(
+                        select(Deal.id, Deal.name, Deal.company_id).where(Deal.id.in_(sched_deal_ids_dd))
+                    )
+                ).all():
+                    sched_deal_rows_dd[dr.id] = dr
+                    if dr.company_id:
+                        sched_company_ids_dd.add(dr.company_id)
+
+            sched_comp_sdr_dd: dict[UUID, UUID | None] = {}
+            sched_comp_name_dd: dict[UUID, str] = {}
+            sched_comp_region_dd: dict[UUID, str | None] = {}
+            if sched_company_ids_dd:
+                for cr in (
                     await session.execute(
                         select(Company.id, Company.name, Company.sdr_id, Company.region).where(
-                            Company.id.in_(demo_company_ids)
+                            Company.id.in_(sched_company_ids_dd)
                         )
                     )
-                ).all()
-                company_sdr = {r.id: r.sdr_id for r in comp_rows}
-                company_region_for_demo = {r.id: r.region for r in comp_rows}
-                company_names = {r.id: r.name for r in comp_rows}
-                deal_rows = (
-                    await session.execute(
-                        select(Deal.id, Deal.name, Deal.company_id, Deal.stage).where(
-                            Deal.company_id.in_(demo_company_ids)
-                        )
-                    )
-                ).all()
-                deals_by_company: dict[UUID, list] = defaultdict(list)
-                for dr in deal_rows:
-                    deal_name_by_id[dr.id] = dr.name
-                    if dr.company_id:
-                        deals_by_company[dr.company_id].append(dr)
-                    if dr.company_id and str(dr.stage or "").strip().lower() in CONVERTED_DEAL_STAGES:
-                        converted_company_ids.add(dr.company_id)
-                for cid, dl in deals_by_company.items():
-                    if len(dl) == 1:
-                        company_single_deal_id[cid] = dl[0].id
-                        company_single_deal_name[cid] = dl[0].name
+                ).all():
+                    sched_comp_sdr_dd[cr.id] = cr.sdr_id
+                    sched_comp_name_dd[cr.id] = cr.name or ""
+                    sched_comp_region_dd[cr.id] = cr.region
 
-            demo_entries = []
-            for meeting in deduped_demos:
-                cid = meeting.company_id
-                # Attribution: the account's SDR must be the requested rep.
-                if company_sdr.get(cid) != rep_id:
+            demo_entries_sched = []
+            for hist_r in unique_sched:
+                dr = sched_deal_rows_dd.get(hist_r.deal_id)
+                if not dr:
                     continue
-                # Geography filter, consistent with the rest of the endpoint and
-                # with the dashboard funnel (region lookup, normalized in Python).
+                cid = dr.company_id
+                if not cid:
+                    continue
+                if sched_comp_sdr_dd.get(cid) != rep_id:
+                    continue
                 if filter_geographies:
-                    region_key = _normalize_geography_key(company_region_for_demo.get(cid))
+                    region_key = _normalize_geography_key(sched_comp_region_dd.get(cid))
                     if region_key not in filter_geographies:
                         continue
-                status_norm = str(meeting.status or "").strip().lower()
-                if status_norm in {"completed", "scored"}:
-                    is_done = True
-                elif status_norm == "cancelled":
-                    is_done = False
-                else:
-                    is_done = meeting.scheduled_at is not None and meeting.scheduled_at <= now
-                is_converted = bool(cid and cid in converted_company_ids)
-                if metric == "demos_done" and not is_done:
-                    continue
-                if metric == "demos_converted" and not (is_done and is_converted):
-                    continue
-                demo_entries.append(meeting)
+                demo_entries_sched.append((hist_r, dr))
 
-            demo_entries.sort(
-                key=lambda m: (m.scheduled_at is None, m.scheduled_at or m.created_at),
-                reverse=True,
-            )
-            demo_has_more = len(demo_entries) > offset + limit
-            for meeting in demo_entries[offset:offset + limit]:
-                cid = meeting.company_id
-                resolved_deal_id = meeting.deal_id or company_single_deal_id.get(cid)
-                resolved_deal_name = (
-                    deal_name_by_id.get(meeting.deal_id)
-                    if meeting.deal_id
-                    else company_single_deal_name.get(cid)
-                )
+            demo_has_more = len(demo_entries_sched) > offset + limit
+            for hist_r, dr in demo_entries_sched[offset:offset + limit]:
                 rows.append(
                     SalesActivityDrilldownRow(
-                        id=meeting.id,
-                        kind="meeting",
-                        activity_type="demo",
-                        occurred_at=meeting.scheduled_at or meeting.created_at,
+                        id=hist_r.deal_id,
+                        kind="activity",
+                        activity_type="demo_scheduled",
+                        occurred_at=hist_r.changed_at,
                         rep_user_id=rep_id,
                         rep_name=_label_for_rep(rep_id, users)[2],
-                        source=meeting.external_source,
-                        subject=meeting.title,
-                        company_name=company_names.get(cid),
-                        deal_name=resolved_deal_name,
-                        deal_id=str(resolved_deal_id) if resolved_deal_id else None,
+                        source="pipeline",
+                        subject=dr.name,
+                        company_name=sched_comp_name_dd.get(dr.company_id or UUID(int=0)),
+                        deal_name=dr.name,
+                        deal_id=str(dr.id),
+                        company_id=str(dr.company_id) if dr.company_id else None,
+                    )
+                )
+
+    if metric == "demos_done":
+        # Demo Done drilldown: deals that moved into demo_done within window.
+        # No demo_scheduled subquery — backfill_current only created one entry
+        # per deal so historical deals in demo_done have no scheduled entry.
+        if rep_id:
+            done_hist_rows = (
+                await session.execute(
+                    select(
+                        DealStageHistory.deal_id,
+                        DealStageHistory.changed_at,
+                    ).where(
+                        func.lower(DealStageHistory.to_stage) == "demo_done",
+                        DealStageHistory.changed_at >= window_start,
+                        DealStageHistory.changed_at <= window_end,
+                    ).order_by(DealStageHistory.changed_at.desc())
+                )
+            ).all()
+            # Dedup: keep first transition per deal
+            seen_done_dd: set[UUID] = set()
+            unique_done: list = []
+            for r in sorted(done_hist_rows, key=lambda x: x.changed_at):
+                if r.deal_id not in seen_done_dd:
+                    seen_done_dd.add(r.deal_id)
+                    unique_done.append(r)
+            unique_done.sort(key=lambda r: r.changed_at, reverse=True)
+
+            done_deal_ids_dd = {r.deal_id for r in unique_done}
+            done_deal_rows_dd: dict[UUID, object] = {}
+            done_company_ids_dd: set[UUID] = set()
+            if done_deal_ids_dd:
+                for dr in (
+                    await session.execute(
+                        select(Deal.id, Deal.name, Deal.company_id).where(Deal.id.in_(done_deal_ids_dd))
+                    )
+                ).all():
+                    done_deal_rows_dd[dr.id] = dr
+                    if dr.company_id:
+                        done_company_ids_dd.add(dr.company_id)
+
+            done_comp_sdr_dd: dict[UUID, UUID | None] = {}
+            done_comp_name_dd: dict[UUID, str] = {}
+            done_comp_region_dd: dict[UUID, str | None] = {}
+            if done_company_ids_dd:
+                for cr in (
+                    await session.execute(
+                        select(Company.id, Company.name, Company.sdr_id, Company.region).where(
+                            Company.id.in_(done_company_ids_dd)
+                        )
+                    )
+                ).all():
+                    done_comp_sdr_dd[cr.id] = cr.sdr_id
+                    done_comp_name_dd[cr.id] = cr.name or ""
+                    done_comp_region_dd[cr.id] = cr.region
+
+            demo_entries_done = []
+            for hist_r in unique_done:
+                dr = done_deal_rows_dd.get(hist_r.deal_id)
+                if not dr:
+                    continue
+                cid = dr.company_id
+                if not cid:
+                    continue
+                if done_comp_sdr_dd.get(cid) != rep_id:
+                    continue
+                if filter_geographies:
+                    region_key = _normalize_geography_key(done_comp_region_dd.get(cid))
+                    if region_key not in filter_geographies:
+                        continue
+                demo_entries_done.append((hist_r, dr))
+
+            demo_has_more = len(demo_entries_done) > offset + limit
+            for hist_r, dr in demo_entries_done[offset:offset + limit]:
+                rows.append(
+                    SalesActivityDrilldownRow(
+                        id=hist_r.deal_id,
+                        kind="activity",
+                        activity_type="demo_done",
+                        occurred_at=hist_r.changed_at,
+                        rep_user_id=rep_id,
+                        rep_name=_label_for_rep(rep_id, users)[2],
+                        source="pipeline",
+                        subject=dr.name,
+                        company_name=done_comp_name_dd.get(dr.company_id or UUID(int=0)),
+                        deal_name=dr.name,
+                        deal_id=str(dr.id),
+                        company_id=str(dr.company_id) if dr.company_id else None,
+                    )
+                )
+
+    if metric == "demos_converted":
+        # Demos converted drilldown — DealStageHistory-based.
+        # A deal counts as converted when it enters "qualified_lead" within window.
+        # Attributed to deal.sdr_id first, then Company.sdr_id.
+        if rep_id:
+            conv_dd_rows = (
+                await session.execute(
+                    select(
+                        DealStageHistory.deal_id,
+                        DealStageHistory.changed_at,
+                    ).where(
+                        func.lower(DealStageHistory.to_stage) == "qualified_lead",
+                        DealStageHistory.changed_at >= window_start,
+                        DealStageHistory.changed_at <= window_end,
+                    ).order_by(DealStageHistory.changed_at.desc())
+                )
+            ).all()
+            # Dedup: keep first transition per deal
+            seen_conv_dd: set[UUID] = set()
+            unique_conv: list = []
+            for r in sorted(conv_dd_rows, key=lambda x: x.changed_at):
+                if r.deal_id not in seen_conv_dd:
+                    seen_conv_dd.add(r.deal_id)
+                    unique_conv.append(r)
+            conv_dd_deal_ids = {r.deal_id for r in unique_conv}
+            conv_dd_deal_rows = (
+                await session.execute(
+                    select(Deal.id, Deal.name, Deal.company_id, Deal.sdr_id).where(
+                        Deal.id.in_(conv_dd_deal_ids)
+                    )
+                )
+            ).all()
+            conv_dd_deal_company: dict[UUID, UUID | None] = {r.id: r.company_id for r in conv_dd_deal_rows}
+            conv_dd_deal_sdr: dict[UUID, UUID | None] = {r.id: r.sdr_id for r in conv_dd_deal_rows}
+            conv_dd_deal_name: dict[UUID, str | None] = {r.id: r.name for r in conv_dd_deal_rows}
+            conv_dd_company_ids = {cid for cid in conv_dd_deal_company.values() if cid}
+            conv_dd_company_sdr: dict[UUID, UUID | None] = {}
+            conv_dd_company_name: dict[UUID, str | None] = {}
+            conv_dd_company_region: dict[UUID, str | None] = {}
+            if conv_dd_company_ids:
+                conv_dd_comp_rows = (
+                    await session.execute(
+                        select(Company.id, Company.name, Company.sdr_id, Company.region).where(
+                            Company.id.in_(conv_dd_company_ids)
+                        )
+                    )
+                ).all()
+                conv_dd_company_sdr = {r.id: r.sdr_id for r in conv_dd_comp_rows}
+                conv_dd_company_name = {r.id: r.name for r in conv_dd_comp_rows}
+                conv_dd_company_region = {r.id: r.region for r in conv_dd_comp_rows}
+
+            demo_has_more = len(unique_conv) > offset + limit
+            for hist_row in sorted(unique_conv, key=lambda r: r.changed_at, reverse=True)[offset:offset + limit]:
+                cid = conv_dd_deal_company.get(hist_row.deal_id)
+                sdr_id = conv_dd_deal_sdr.get(hist_row.deal_id) or (conv_dd_company_sdr.get(cid) if cid else None)
+                if sdr_id != rep_id:
+                    continue
+                if filter_geographies:
+                    region_key = _normalize_geography_key(conv_dd_company_region.get(cid) if cid else None)
+                    if region_key not in filter_geographies:
+                        continue
+                rows.append(
+                    SalesActivityDrilldownRow(
+                        id=hist_row.deal_id,
+                        kind="activity",
+                        activity_type="qualified_lead",
+                        occurred_at=hist_row.changed_at,
+                        rep_user_id=rep_id,
+                        rep_name=_label_for_rep(rep_id, users)[2],
+                        source="pipeline",
+                        subject=conv_dd_deal_name.get(hist_row.deal_id),
+                        company_name=conv_dd_company_name.get(cid) if cid else None,
+                        deal_name=conv_dd_deal_name.get(hist_row.deal_id),
+                        deal_id=str(hist_row.deal_id),
                         company_id=str(cid) if cid else None,
                     )
                 )
+
+    # ── AE demo funnel drilldowns ────────────────────────────────────────────────
+    # Only deals where assigned_to_id == sdr_id, attributed to the AE.
+    if metric in {"ae_demos_scheduled", "ae_demos_done", "ae_demos_converted"} and rep_id:
+        stage_map = {
+            "ae_demos_scheduled": "demo_scheduled",
+            "ae_demos_done": "demo_done",
+            "ae_demos_converted": "qualified_lead",
+        }
+        target_stage = stage_map[metric]
+        # Self-sourced deals for this AE
+        ae_self_rows = (
+            await session.execute(
+                select(Deal.id, Deal.name, Deal.company_id).where(
+                    Deal.assigned_to_id == rep_id,
+                    Deal.sdr_id == rep_id,
+                )
+            )
+        ).all()
+        ae_self_ids = {r.id for r in ae_self_rows}
+        ae_self_name: dict[UUID, str | None] = {r.id: r.name for r in ae_self_rows}
+        ae_self_company: dict[UUID, UUID | None] = {r.id: r.company_id for r in ae_self_rows}
+        ae_company_ids = {cid for cid in ae_self_company.values() if cid}
+        ae_comp_name: dict[UUID, str] = {}
+        if ae_company_ids:
+            for cr in (await session.execute(
+                select(Company.id, Company.name).where(Company.id.in_(ae_company_ids))
+            )).all():
+                ae_comp_name[cr.id] = cr.name or ""
+
+        ae_hist_rows = (
+            await session.execute(
+                select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                    func.lower(DealStageHistory.to_stage) == target_stage,
+                    DealStageHistory.changed_at >= window_start,
+                    DealStageHistory.changed_at <= window_end,
+                    DealStageHistory.deal_id.in_(ae_self_ids),
+                ).order_by(DealStageHistory.changed_at.desc())
+            )
+        ).all()
+        seen_ae_dd: set[UUID] = set()
+        unique_ae: list = []
+        for r in sorted(ae_hist_rows, key=lambda x: x.changed_at):
+            if r.deal_id not in seen_ae_dd:
+                seen_ae_dd.add(r.deal_id)
+                unique_ae.append(r)
+        demo_has_more = len(unique_ae) > offset + limit
+        for hist_row in sorted(unique_ae, key=lambda r: r.changed_at, reverse=True)[offset:offset + limit]:
+            cid = ae_self_company.get(hist_row.deal_id)
+            rows.append(
+                SalesActivityDrilldownRow(
+                    id=hist_row.deal_id,
+                    kind="activity",
+                    activity_type=target_stage,
+                    occurred_at=hist_row.changed_at,
+                    rep_user_id=rep_id,
+                    rep_name=_label_for_rep(rep_id, users)[2],
+                    source="pipeline",
+                    subject=ae_self_name.get(hist_row.deal_id),
+                    company_name=ae_comp_name.get(cid) if cid else None,
+                    deal_name=ae_self_name.get(hist_row.deal_id),
+                    deal_id=str(hist_row.deal_id),
+                    company_id=str(cid) if cid else None,
+                )
+            )
 
     rows.sort(key=lambda row: row.occurred_at, reverse=True)
     selected_rep_name = _label_for_rep(rep_id, users)[2] if rep_id else None
@@ -1349,7 +1669,7 @@ async def sales_activity_drilldown(
         # Pagination happened on the Python-filtered reply list (offset/limit +
         # sentinel), so use that list's overflow flag, not the SQL page size.
         has_more = locals().get("reply_has_more", False)
-    elif metric in {"demos_scheduled", "demos_done", "demos_converted"}:
+    elif metric in {"demos_scheduled", "demos_done", "demos_converted", "ae_demos_scheduled", "ae_demos_done", "ae_demos_converted"}:
         has_more = demo_has_more
     else:
         has_more = len(locals().get("activities", [])) > limit
@@ -1479,7 +1799,21 @@ async def sales_dashboard(
     user_roles = {row.id: str(row.role or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
     # email_from local-part -> rep id, for sender-based attribution of email sends.
-    rep_id_by_local = {e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")}
+    # Seed from primary @beacon.li addresses first, then layer in all aliases so
+    # that .com/.co senders resolve even when their local-part differs.
+    rep_id_by_local: dict[str, UUID] = {
+        e.split("@")[0]: uid for uid, e in user_emails.items() if e.endswith("@beacon.li")
+    }
+    alias_rows_dd = (await session.execute(select(UserAlias.user_id, UserAlias.email))).all()
+    for alias in alias_rows_dd:
+        alias_email = str(alias.email or "").strip().lower()
+        if not alias_email or "@" not in alias_email:
+            continue
+        alias_local = alias_email.split("@")[0]
+        alias_domain = alias_email.split("@")[1]
+        if alias_domain in BEACON_SENDING_DOMAINS:
+            rep_id_by_local[alias_email] = alias.user_id
+            rep_id_by_local.setdefault(alias_local, alias.user_id)
     # Only ae/sdr users are reps; admin activity must not inflate rep metrics
     # or create an admin rep row (the "Rakesh 419 emails" leak).
     rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
@@ -1498,7 +1832,12 @@ async def sales_dashboard(
                 Activity.aircall_user_name,
                 Activity.call_outcome,
                 Activity.call_duration,
+                Activity.content,
                 Activity.email_from,
+                Activity.email_to,
+                Activity.email_cc,
+                Activity.email_bcc,
+                Activity.email_message_id,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -1732,7 +2071,19 @@ async def sales_dashboard(
             },
         }
 
-    for row in activity_rows:
+    # Per-rep set of email_message_ids already counted — prevents double-counting
+    # when the same email is captured by both personal_email_sync (rep's own inbox)
+    # and gmail_sync (Zippy's shared inbox, e.g. because a beacon rep was in To/CC).
+    seen_email_ids: dict[str, set[str]] = {}
+
+    # Touchpoint breakdown tracking:
+    # call_contact_seen[rep_key] = set of contact_ids already called (for first vs 2nd+ detection)
+    call_contact_seen: dict[str, set[str]] = {}
+    # email_contact_counts[rep_key][contact_id] = number of emails sent to that contact
+    email_contact_counts: dict[str, dict[str, int]] = {}
+
+    # Sort by created_at so first/subsequent detection is chronologically accurate
+    for row in sorted(activity_rows, key=lambda r: r.created_at or datetime.min):
         row_rep_id = _activity_rep_id(
             row,
             deal_owner=deal_owner,
@@ -1804,6 +2155,18 @@ async def sales_dashboard(
                 activity_bucket["live_calls"] += 1
                 if week_counts is not None:
                     week_counts["live_calls"] += 1
+            # Breakdown: first call vs 2nd+ per contact
+            contact_id_str = str(row.contact_id or "").strip()
+            if contact_id_str:
+                rep_call_seen = call_contact_seen.setdefault(rep_key, set())
+                if contact_id_str not in rep_call_seen:
+                    activity_bucket["call_first_attempt"] = activity_bucket.get("call_first_attempt", 0) + 1
+                    rep_call_seen.add(contact_id_str)
+                else:
+                    activity_bucket["call_second_plus"] = activity_bucket.get("call_second_plus", 0) + 1
+            else:
+                # No contact_id → count as first attempt (can't track uniqueness)
+                activity_bucket["call_first_attempt"] = activity_bucket.get("call_first_attempt", 0) + 1
         elif medium == "email" or kind == "email":
             # All email events share type="email"; the sent/opened/replied
             # distinction lives in event_metadata.event_type (Instantly) or
@@ -1825,14 +2188,56 @@ async def sales_dashboard(
             elif event_type == "reply_received" or src == "email_reply":
                 activity_bucket["email_replies"] = activity_bucket.get("email_replies", 0) + 1
             elif event_type in {"email_sent", ""}:
-                # Outbound send by this rep (inbound already excluded upstream).
-                activity_bucket["emails"] += 1
-                if week_counts is not None:
-                    week_counts["emails"] += 1
+                # Outbound send by this rep — apply Emails Out rule (1.1):
+                # beaconli.com/beaconli.co always count; beacon.li only when
+                # Zippy is in CC or BCC, or source is personal_email_sync.
+                # Dedup by email_message_id per rep — the same email can be
+                # captured by both personal_email_sync and gmail_sync.
+                msg_id = str(row.email_message_id or "").strip()
+                rep_seen = seen_email_ids.setdefault(rep_key, set())
+                if msg_id and msg_id in rep_seen:
+                    continue
+                if msg_id:
+                    rep_seen.add(msg_id)
+                if _should_count_as_email_out(row):
+                    activity_bucket["emails"] += 1
+                    if week_counts is not None:
+                        week_counts["emails"] += 1
+                    # Breakdown: first email and 3+ emails per contact
+                    contact_id_str = str(row.contact_id or "").strip()
+                    if contact_id_str:
+                        rep_email_counts = email_contact_counts.setdefault(rep_key, {})
+                        prev_count = rep_email_counts.get(contact_id_str, 0)
+                        new_count = prev_count + 1
+                        rep_email_counts[contact_id_str] = new_count
+                        if prev_count == 0:
+                            activity_bucket["email_first_attempt"] = activity_bucket.get("email_first_attempt", 0) + 1
+                        if new_count == 3:
+                            # Contact just reached 3 emails — count them in the "min 3 attempts" bucket
+                            activity_bucket["email_min_3_attempts"] = activity_bucket.get("email_min_3_attempts", 0) + 1
+                    else:
+                        # No contact_id → count as first attempt
+                        activity_bucket["email_first_attempt"] = activity_bucket.get("email_first_attempt", 0) + 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
             if week_counts is not None:
                 week_counts["linkedin_reachouts"] += 1
+            # Parse outcome from Activity.content (set by the frontend log-touch modal)
+            li_content = str(row.content or "").strip().lower()
+            if "meeting booked via linkedin" in li_content:
+                activity_bucket["linkedin_meeting_booked"] = activity_bucket.get("linkedin_meeting_booked", 0) + 1
+                activity_bucket["linkedin_accepted"] = activity_bucket.get("linkedin_accepted", 0) + 1
+                # meeting booked implies accepted + intro sent
+                activity_bucket["linkedin_intro_msg"] = activity_bucket.get("linkedin_intro_msg", 0) + 1
+            elif "follow-up" in li_content or "follow_up" in li_content:
+                activity_bucket["linkedin_accepted"] = activity_bucket.get("linkedin_accepted", 0) + 1
+                activity_bucket["linkedin_followup_msg"] = activity_bucket.get("linkedin_followup_msg", 0) + 1
+            elif "accepted" in li_content:
+                activity_bucket["linkedin_accepted"] = activity_bucket.get("linkedin_accepted", 0) + 1
+                activity_bucket["linkedin_intro_msg"] = activity_bucket.get("linkedin_intro_msg", 0) + 1
+            else:
+                # "Sent" / connection request (no acceptance yet)
+                activity_bucket["linkedin_connection_requested"] = activity_bucket.get("linkedin_connection_requested", 0) + 1
         # Touches = calls + emails + LinkedIn only. A meeting is the OUTCOME of
         # those touches, not a touch itself, so it is excluded from the touch
         # total (meetings stay reported via the separate `meetings` metric).
@@ -1965,7 +2370,9 @@ async def sales_dashboard(
                 Meeting.external_source,
             ).where(
                 Meeting.is_internal.is_(False),
-                func.lower(func.coalesce(Meeting.meeting_type, "")) == "demo",
+                func.lower(func.coalesce(Meeting.meeting_type, "")).in_(
+                    ["demo", "discovery", "introductory call", "discovery call"]
+                ),
                 Meeting.company_id.isnot(None),
                 or_(
                     (Meeting.scheduled_at >= window_start) & (Meeting.scheduled_at <= window_end),
@@ -2031,12 +2438,6 @@ async def sales_dashboard(
                 "pipeline_amount": 0.0,
             },
         )
-        bucket["demos_scheduled"] = int(bucket.get("demos_scheduled", 0)) + 1
-        if done:
-            bucket["demos_done"] = int(bucket.get("demos_done", 0)) + 1
-            if converted:
-                bucket["demos_converted"] = int(bucket.get("demos_converted", 0)) + 1
-
     for row in deduped_demos:
         if filter_geographies:
             region_key = _normalize_geography_key(company_region_for_demo.get(row.company_id))
@@ -2048,15 +2449,421 @@ async def sales_dashboard(
         # demo/completed), so requiring the manual flag left demos_done ~0
         # board-wide. Time-based inference treats a past, non-cancelled demo as
         # held. Trade-off: a no-show left in "scheduled" is counted as done.
-        status_norm = str(row.status or "").strip().lower()
-        if status_norm in {"completed", "scored"}:
-            is_done = True
-        elif status_norm == "cancelled":
-            is_done = False
-        else:
-            is_done = row.scheduled_at is not None and row.scheduled_at <= now
-        is_converted = bool(row.company_id and row.company_id in converted_company_ids)
-        bump_demo(company_sdr.get(row.company_id), done=is_done, converted=is_converted)
+        # Meeting loop retained for potential future use (demos_converted is now
+        # DealStageHistory-based). Nothing is bumped here anymore.
+        pass
+
+    # ── Demo Scheduled: deal entered "demo_scheduled" stage within window ──────
+    # A deal must actually exist in the Demo Schedule pipeline stage — booking a
+    # call alone is not enough. Date = when the deal was created/moved there
+    # (DealStageHistory.changed_at), not the meeting date.
+    demo_sched_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "demo_scheduled",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+            )
+        )
+    ).all()
+    if demo_sched_hist:
+        sched_deal_ids = {row.deal_id for row in demo_sched_hist}
+        sched_deal_rows = (
+            await session.execute(
+                select(Deal.id, Deal.company_id, Deal.sdr_id).where(Deal.id.in_(sched_deal_ids))
+            )
+        ).all()
+        sched_deal_company: dict[UUID, UUID | None] = {r.id: r.company_id for r in sched_deal_rows}
+        sched_deal_sdr: dict[UUID, UUID | None] = {r.id: r.sdr_id for r in sched_deal_rows}
+        sched_company_ids = {cid for cid in sched_deal_company.values() if cid}
+        sched_company_sdr: dict[UUID, UUID | None] = {}
+        sched_company_region: dict[UUID, str | None] = {}
+        if sched_company_ids:
+            sched_comp_rows = (
+                await session.execute(
+                    select(Company.id, Company.sdr_id, Company.region).where(
+                        Company.id.in_(sched_company_ids)
+                    )
+                )
+            ).all()
+            sched_company_sdr = {r.id: r.sdr_id for r in sched_comp_rows}
+            sched_company_region = {r.id: r.region for r in sched_comp_rows}
+        # Dedup: one deal should only count once even if it re-entered the stage
+        seen_sched_deal_ids: set[UUID] = set()
+        for hist_row in sorted(demo_sched_hist, key=lambda r: r.changed_at):
+            if hist_row.deal_id in seen_sched_deal_ids:
+                continue
+            seen_sched_deal_ids.add(hist_row.deal_id)
+            cid = sched_deal_company.get(hist_row.deal_id)
+            # SDR: deal.sdr_id takes priority, fall back to Company.sdr_id
+            sdr_id = sched_deal_sdr.get(hist_row.deal_id) or (sched_company_sdr.get(cid) if cid else None)
+            if filter_geographies:
+                region_key = _normalize_geography_key(sched_company_region.get(cid) if cid else None)
+                if region_key not in filter_geographies:
+                    continue
+            if not sdr_id or not _is_rep(sdr_id, rep_user_ids):
+                continue
+            if filter_rep_ids and sdr_id not in filter_rep_ids:
+                continue
+            rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
+            bucket = rep_activity.setdefault(
+                rep_key,
+                {
+                    "key": rep_key,
+                    "user_id": rep_user_id,
+                    "rep_name": rep_name,
+                    "calls": 0,
+                    "connected_calls": 0,
+                    "live_calls": 0,
+                    "emails": 0,
+                    "linkedin_reachouts": 0,
+                    "meetings": 0,
+                    "total": 0,
+                    "active_deals": 0,
+                    "pipeline_amount": 0.0,
+                },
+            )
+            bucket["demos_scheduled"] = int(bucket.get("demos_scheduled", 0)) + 1
+
+    # ── Demo Done: deal moved into demo_done within window.
+    # We match on to_stage="demo_done" only — the backfill_current migration
+    # created just one entry per deal (its current stage), so historical deals
+    # in demo_done have no corresponding demo_scheduled entry. Requiring that
+    # subquery would exclude all pre-migration data.
+    demo_done_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "demo_done",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+            )
+        )
+    ).all()
+    if demo_done_hist:
+        done_deal_ids = {row.deal_id for row in demo_done_hist}
+        done_deal_rows = (
+            await session.execute(
+                select(Deal.id, Deal.company_id, Deal.sdr_id).where(Deal.id.in_(done_deal_ids))
+            )
+        ).all()
+        done_deal_company: dict[UUID, UUID | None] = {r.id: r.company_id for r in done_deal_rows}
+        done_deal_sdr: dict[UUID, UUID | None] = {r.id: r.sdr_id for r in done_deal_rows}
+        done_company_ids = {cid for cid in done_deal_company.values() if cid}
+        done_company_sdr: dict[UUID, UUID | None] = {}
+        done_company_region: dict[UUID, str | None] = {}
+        if done_company_ids:
+            done_comp_rows = (
+                await session.execute(
+                    select(Company.id, Company.sdr_id, Company.region).where(
+                        Company.id.in_(done_company_ids)
+                    )
+                )
+            ).all()
+            done_company_sdr = {r.id: r.sdr_id for r in done_comp_rows}
+            done_company_region = {r.id: r.region for r in done_comp_rows}
+        seen_done_deal_ids: set[UUID] = set()
+        for hist_row in sorted(demo_done_hist, key=lambda r: r.changed_at):
+            if hist_row.deal_id in seen_done_deal_ids:
+                continue
+            seen_done_deal_ids.add(hist_row.deal_id)
+            cid = done_deal_company.get(hist_row.deal_id)
+            # SDR: deal.sdr_id takes priority, fall back to Company.sdr_id
+            sdr_id = done_deal_sdr.get(hist_row.deal_id) or (done_company_sdr.get(cid) if cid else None)
+            if filter_geographies:
+                region_key = _normalize_geography_key(done_company_region.get(cid) if cid else None)
+                if region_key not in filter_geographies:
+                    continue
+            if not sdr_id or not _is_rep(sdr_id, rep_user_ids):
+                continue
+            if filter_rep_ids and sdr_id not in filter_rep_ids:
+                continue
+            rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
+            bucket = rep_activity.setdefault(
+                rep_key,
+                {
+                    "key": rep_key,
+                    "user_id": rep_user_id,
+                    "rep_name": rep_name,
+                    "calls": 0,
+                    "connected_calls": 0,
+                    "live_calls": 0,
+                    "emails": 0,
+                    "linkedin_reachouts": 0,
+                    "meetings": 0,
+                    "total": 0,
+                    "active_deals": 0,
+                    "pipeline_amount": 0.0,
+                },
+            )
+            bucket["demos_done"] = int(bucket.get("demos_done", 0)) + 1
+
+    # ── Demo Converted: deal entered "qualified_lead" stage within window ───────
+    # Converted = deal moved from demo_done → qualified_lead. We match on
+    # to_stage="qualified_lead" only (no from_stage constraint) since the
+    # backfill_current migration only created one entry per deal.
+    conv_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "qualified_lead",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+            )
+        )
+    ).all()
+    if conv_hist:
+        conv_deal_ids = {row.deal_id for row in conv_hist}
+        conv_deal_rows = (
+            await session.execute(
+                select(Deal.id, Deal.company_id, Deal.sdr_id).where(Deal.id.in_(conv_deal_ids))
+            )
+        ).all()
+        conv_deal_company: dict[UUID, UUID | None] = {r.id: r.company_id for r in conv_deal_rows}
+        conv_deal_sdr: dict[UUID, UUID | None] = {r.id: r.sdr_id for r in conv_deal_rows}
+        conv_company_ids = {cid for cid in conv_deal_company.values() if cid}
+        conv_company_sdr: dict[UUID, UUID | None] = {}
+        conv_company_region: dict[UUID, str | None] = {}
+        if conv_company_ids:
+            conv_comp_rows = (
+                await session.execute(
+                    select(Company.id, Company.sdr_id, Company.region).where(
+                        Company.id.in_(conv_company_ids)
+                    )
+                )
+            ).all()
+            conv_company_sdr = {r.id: r.sdr_id for r in conv_comp_rows}
+            conv_company_region = {r.id: r.region for r in conv_comp_rows}
+        seen_conv_deal_ids: set[UUID] = set()
+        for hist_row in sorted(conv_hist, key=lambda r: r.changed_at):
+            if hist_row.deal_id in seen_conv_deal_ids:
+                continue
+            seen_conv_deal_ids.add(hist_row.deal_id)
+            cid = conv_deal_company.get(hist_row.deal_id)
+            # SDR: deal.sdr_id takes priority, fall back to Company.sdr_id
+            sdr_id = conv_deal_sdr.get(hist_row.deal_id) or (conv_company_sdr.get(cid) if cid else None)
+            if filter_geographies:
+                region_key = _normalize_geography_key(conv_company_region.get(cid) if cid else None)
+                if region_key not in filter_geographies:
+                    continue
+            if not sdr_id or not _is_rep(sdr_id, rep_user_ids):
+                continue
+            if filter_rep_ids and sdr_id not in filter_rep_ids:
+                continue
+            rep_key, rep_user_id, rep_name = _label_for_rep(sdr_id, users)
+            bucket = rep_activity.setdefault(
+                rep_key,
+                {
+                    "key": rep_key,
+                    "user_id": rep_user_id,
+                    "rep_name": rep_name,
+                    "calls": 0,
+                    "connected_calls": 0,
+                    "live_calls": 0,
+                    "emails": 0,
+                    "linkedin_reachouts": 0,
+                    "meetings": 0,
+                    "total": 0,
+                    "active_deals": 0,
+                    "pipeline_amount": 0.0,
+                },
+            )
+            bucket["demos_converted"] = int(bucket.get("demos_converted", 0)) + 1
+
+    # ── AE Demo Funnel: only deals where sdr_id == assigned_to_id ───────────────
+    # Fetch all three stages in one deal query to avoid repeated round-trips.
+    ae_funnel_deal_rows = (
+        await session.execute(
+            select(Deal.id, Deal.assigned_to_id, Deal.sdr_id, Deal.company_id).where(
+                Deal.assigned_to_id.isnot(None),
+                Deal.sdr_id.isnot(None),
+                Deal.assigned_to_id == Deal.sdr_id,
+            )
+        )
+    ).all()
+    # Map deal_id → assigned_to_id for quick lookup; only self-sourced deals.
+    ae_deal_ae: dict[UUID, UUID] = {r.id: r.assigned_to_id for r in ae_funnel_deal_rows}
+    ae_self_sourced_ids: set[UUID] = set(ae_deal_ae.keys())
+
+    def _bump_ae_demo(deal_id: UUID, field: str) -> None:
+        ae_id = ae_deal_ae.get(deal_id)
+        if not ae_id or not _is_rep(ae_id, rep_user_ids):
+            return
+        if filter_rep_ids and ae_id not in filter_rep_ids:
+            return
+        rep_key, rep_user_id, rep_name = _label_for_rep(ae_id, users)
+        bucket = rep_activity.setdefault(
+            rep_key,
+            {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "calls": 0, "connected_calls": 0, "live_calls": 0,
+                "emails": 0, "linkedin_reachouts": 0, "meetings": 0,
+                "total": 0, "active_deals": 0, "pipeline_amount": 0.0,
+            },
+        )
+        bucket[field] = int(bucket.get(field, 0)) + 1
+
+    # AE demos_scheduled
+    ae_sched_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "demo_scheduled",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
+            )
+        )
+    ).all()
+    seen_ae_sched: set[UUID] = set()
+    for r in sorted(ae_sched_hist, key=lambda x: x.changed_at):
+        if r.deal_id not in seen_ae_sched:
+            seen_ae_sched.add(r.deal_id)
+            _bump_ae_demo(r.deal_id, "ae_demos_scheduled")
+
+    # AE demos_done
+    ae_done_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "demo_done",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
+            )
+        )
+    ).all()
+    seen_ae_done: set[UUID] = set()
+    for r in sorted(ae_done_hist, key=lambda x: x.changed_at):
+        if r.deal_id not in seen_ae_done:
+            seen_ae_done.add(r.deal_id)
+            _bump_ae_demo(r.deal_id, "ae_demos_done")
+
+    # AE demos_converted (qualified_lead)
+    ae_conv_hist = (
+        await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "qualified_lead",
+                DealStageHistory.changed_at >= window_start,
+                DealStageHistory.changed_at <= window_end,
+                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
+            )
+        )
+    ).all()
+    seen_ae_conv: set[UUID] = set()
+    for r in sorted(ae_conv_hist, key=lambda x: x.changed_at):
+        if r.deal_id not in seen_ae_conv:
+            seen_ae_conv.add(r.deal_id)
+            _bump_ae_demo(r.deal_id, "ae_demos_converted")
+
+    # Per-rep meeting-booked count from Contact.sequence_status — covers meetings
+    # booked through any channel (call, email, LinkedIn). Used for the "meeting
+    # booked" stat in the Calls box.
+    call_meeting_booked_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        cmb_rows = (
+            await session.execute(
+                select(Contact.assigned_to_id, func.count().label("cnt"))
+                .where(
+                    Contact.assigned_to_id.in_(list(rep_user_ids)),
+                    func.lower(Contact.sequence_status) == "meeting_booked",
+                )
+                .group_by(Contact.assigned_to_id)
+            )
+        ).all()
+        for cmb in cmb_rows:
+            if cmb.assigned_to_id:
+                call_meeting_booked_by_uid[cmb.assigned_to_id] = cmb.cnt
+
+    # ── upcoming scheduled meetings per rep, bucketed forward from today ─────
+    meetings_next_1w_by_uid: dict[UUID, int] = {}
+    meetings_next_2w_by_uid: dict[UUID, int] = {}
+    meetings_beyond_2w_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        _today_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        _today_dt = _today_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        _week1_dt = _today_dt + timedelta(days=7)
+        _week2_dt = _today_dt + timedelta(days=14)
+        upcoming_mtg_rows = (await session.execute(
+            select(Meeting.owner_user_id, Meeting.scheduled_at)
+            .where(
+                Meeting.owner_user_id.in_(list(rep_user_ids)),
+                Meeting.status == "scheduled",
+                Meeting.scheduled_at >= _today_dt,
+            )
+        )).all()
+        for um in upcoming_mtg_rows:
+            uid = um.owner_user_id
+            if uid is None:
+                continue
+            sat = um.scheduled_at
+            if sat is None:
+                continue
+            if sat < _week1_dt:
+                meetings_next_1w_by_uid[uid] = meetings_next_1w_by_uid.get(uid, 0) + 1
+            elif sat < _week2_dt:
+                meetings_next_2w_by_uid[uid] = meetings_next_2w_by_uid.get(uid, 0) + 1
+            else:
+                meetings_beyond_2w_by_uid[uid] = meetings_beyond_2w_by_uid.get(uid, 0) + 1
+
+    # ── Direct SQL: scheduled meetings with VP/SVP/Head/Chief within window ──
+    _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
+    direct_sql_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        _direct_sql_end = _today_dt + timedelta(days=window_days)
+        direct_sql_rows = (await session.execute(
+            select(Meeting.owner_user_id, func.count().label("cnt"))
+            .join(Deal, Meeting.deal_id == Deal.id)
+            .where(
+                Meeting.owner_user_id.in_(list(rep_user_ids)),
+                Meeting.status == "scheduled",
+                Meeting.scheduled_at >= _today_dt,
+                Meeting.scheduled_at <= _direct_sql_end,
+                Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
+            )
+            .group_by(Meeting.owner_user_id)
+        )).all()
+        for ds in direct_sql_rows:
+            if ds.owner_user_id:
+                direct_sql_by_uid[ds.owner_user_id] = ds.cnt
+
+    # ── Prospect count & mobile coverage per rep ─────────────────────────────
+    # Count contacts owned via sdr_id (for SDR reps) — primary attribution.
+    # Fall back to assigned_to_id for reps who appear as AE but not SDR.
+    prospect_count_by_uid: dict[UUID, int] = {}
+    mobile_count_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        _uid_list = list(rep_user_ids)
+        # sdr_id-based (SDRs / prospecting owners)
+        sdr_prospect_rows = (await session.execute(
+            select(
+                Contact.sdr_id.label("uid"),
+                func.count(Contact.id.distinct()).label("cnt"),
+                func.count(Contact.id.distinct()).filter(
+                    Contact.phone.isnot(None), Contact.phone != ""
+                ).label("with_phone"),
+            )
+            .where(Contact.sdr_id.in_(_uid_list))
+            .group_by(Contact.sdr_id)
+        )).all()
+        for r in sdr_prospect_rows:
+            if r.uid:
+                prospect_count_by_uid[r.uid] = r.cnt
+                mobile_count_by_uid[r.uid] = r.with_phone
+        # assigned_to_id-based (AEs) — only fills in reps not already counted
+        ae_prospect_rows = (await session.execute(
+            select(
+                Contact.assigned_to_id.label("uid"),
+                func.count(Contact.id.distinct()).label("cnt"),
+                func.count(Contact.id.distinct()).filter(
+                    Contact.phone.isnot(None), Contact.phone != ""
+                ).label("with_phone"),
+            )
+            .where(Contact.assigned_to_id.in_(_uid_list))
+            .group_by(Contact.assigned_to_id)
+        )).all()
+        for r in ae_prospect_rows:
+            if r.uid and r.uid not in prospect_count_by_uid:
+                prospect_count_by_uid[r.uid] = r.cnt
+                mobile_count_by_uid[r.uid] = r.with_phone
 
     rep_activity_rows = [
         RepActivityRow(
@@ -2071,6 +2878,9 @@ async def sales_dashboard(
             email_opens=int(bucket.get("email_opens", 0)),
             email_replies=int(bucket.get("email_replies", 0)),
             linkedin_reachouts=int(bucket["linkedin_reachouts"]),
+            linkedin_accepted=int(bucket.get("linkedin_accepted", 0)),
+            linkedin_meeting_booked=int(bucket.get("linkedin_meeting_booked", 0)),
+            call_meeting_booked=call_meeting_booked_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             meetings=int(bucket["meetings"]),
             total=int(bucket["total"]),
             active_deals=int(bucket["active_deals"]),
@@ -2078,6 +2888,22 @@ async def sales_dashboard(
             demos_scheduled=int(bucket.get("demos_scheduled", 0)),
             demos_done=int(bucket.get("demos_done", 0)),
             demos_converted=int(bucket.get("demos_converted", 0)),
+            ae_demos_scheduled=int(bucket.get("ae_demos_scheduled", 0)),
+            ae_demos_done=int(bucket.get("ae_demos_done", 0)),
+            ae_demos_converted=int(bucket.get("ae_demos_converted", 0)),
+            meetings_next_1w=meetings_next_1w_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            meetings_next_2w=meetings_next_2w_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            meetings_beyond_2w=meetings_beyond_2w_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            direct_sql=direct_sql_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            call_first_attempt=int(bucket.get("call_first_attempt", 0)),
+            call_second_plus=int(bucket.get("call_second_plus", 0)),
+            email_first_attempt=int(bucket.get("email_first_attempt", 0)),
+            email_min_3_attempts=int(bucket.get("email_min_3_attempts", 0)),
+            linkedin_connection_requested=int(bucket.get("linkedin_connection_requested", 0)),
+            linkedin_intro_msg=int(bucket.get("linkedin_intro_msg", 0)),
+            linkedin_followup_msg=int(bucket.get("linkedin_followup_msg", 0)),
+            total_prospects=prospect_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            total_mobile_numbers=mobile_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
         )
         for bucket in sorted(
             rep_activity.values(),
@@ -2319,6 +3145,7 @@ async def sales_dashboard(
 
     # Milestone-based deduplicated counts for the selected window
     # Each company counted only once (first time it reached the milestone)
+    AEUser = aliased(User)
     milestone_stmt = (
         select(
             CompanyStageMilestone.milestone_key,
@@ -2328,13 +3155,16 @@ async def sales_dashboard(
             Deal.close_date_est.label("close_date_est"),
             Deal.geography.label("deal_geography"),
             Company.name.label("company_name"),
+            AEUser.name.label("ae_name"),
+            Company.sdr_name.label("sdr_name"),
         )
         .outerjoin(Deal, CompanyStageMilestone.deal_id == Deal.id)
         .outerjoin(Company, CompanyStageMilestone.company_id == Company.id)
+        .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
         .where(
             CompanyStageMilestone.first_reached_at >= window_start,
             CompanyStageMilestone.first_reached_at <= window_end,
-            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_wip", "poc_done", "closed_won"]),
+            CompanyStageMilestone.milestone_key.in_(["demo_scheduled", "qualified_lead", "demo_done", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "workshop_msa", "closed_won"]),
         )
     )
     if filter_rep_ids:
@@ -2346,10 +3176,14 @@ async def sales_dashboard(
             if _normalize_geography_key(row.deal_geography) in filter_geographies
         ]
 
+    ms_demo_scheduled = sum(1 for r in milestone_summary_rows if r.milestone_key == "demo_scheduled")
+    ms_qualified_lead = sum(1 for r in milestone_summary_rows if r.milestone_key == "qualified_lead")
     ms_demo_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "demo_done")
     ms_poc_agreed = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_agreed")
     ms_poc_wip = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_wip")
     ms_poc_done = sum(1 for r in milestone_summary_rows if r.milestone_key == "poc_done")
+    ms_commercial_negotiation = sum(1 for r in milestone_summary_rows if r.milestone_key == "commercial_negotiation")
+    ms_workshop_msa = sum(1 for r in milestone_summary_rows if r.milestone_key == "workshop_msa")
     ms_closed_won = sum(1 for r in milestone_summary_rows if r.milestone_key == "closed_won")
     ms_closed_won_value = sum(_to_float(r.deal_value) for r in milestone_summary_rows if r.milestone_key == "closed_won")
 
@@ -2369,7 +3203,7 @@ async def sales_dashboard(
         .where(
             CompanyStageMilestone.first_reached_at >= prev_window_start,
             CompanyStageMilestone.first_reached_at < prev_window_end,
-            CompanyStageMilestone.milestone_key.in_(["demo_done", "poc_agreed", "poc_wip", "poc_done", "closed_won"]),
+            CompanyStageMilestone.milestone_key.in_(["demo_scheduled", "qualified_lead", "demo_done", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "workshop_msa", "closed_won"]),
         )
     )
     if filter_rep_ids:
@@ -2378,10 +3212,14 @@ async def sales_dashboard(
     if filter_geographies:
         prev_rows = [r for r in prev_rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
 
+    prev_demo_scheduled = sum(1 for r in prev_rows if r.milestone_key == "demo_scheduled")
+    prev_qualified_lead = sum(1 for r in prev_rows if r.milestone_key == "qualified_lead")
     prev_demo_done = sum(1 for r in prev_rows if r.milestone_key == "demo_done")
     prev_poc_agreed = sum(1 for r in prev_rows if r.milestone_key == "poc_agreed")
     prev_poc_wip = sum(1 for r in prev_rows if r.milestone_key == "poc_wip")
     prev_poc_done = sum(1 for r in prev_rows if r.milestone_key == "poc_done")
+    prev_commercial_negotiation = sum(1 for r in prev_rows if r.milestone_key == "commercial_negotiation")
+    prev_workshop_msa = sum(1 for r in prev_rows if r.milestone_key == "workshop_msa")
     prev_closed_won = sum(1 for r in prev_rows if r.milestone_key == "closed_won")
     prev_closed_won_value = sum(_to_float(r.deal_value) for r in prev_rows if r.milestone_key == "closed_won")
     ms_milestone_deals = [
@@ -2392,6 +3230,8 @@ async def sales_dashboard(
             reached_at=r.first_reached_at.strftime("%Y-%m-%d"),
             close_date_est=r.close_date_est.strftime("%Y-%m-%d") if r.close_date_est else None,
             deal_value=_to_float(r.deal_value) if r.deal_value else None,
+            assigned_ae=r.ae_name or None,
+            assigned_sdr=r.sdr_name or None,
         )
         for r in milestone_summary_rows
     ]
@@ -2526,17 +3366,25 @@ async def sales_dashboard(
             overdue_close_count=overdue_close_count,
             missing_close_date_count=missing_close_date_count,
             stale_deal_count=stale_deal_count,
+            demo_scheduled_count=ms_demo_scheduled,
+            qualified_lead_count=ms_qualified_lead,
             demo_done_count=ms_demo_done,
             poc_agreed_count=ms_poc_agreed,
             poc_wip_count=ms_poc_wip,
             poc_done_count=ms_poc_done,
+            commercial_negotiation_count=ms_commercial_negotiation,
+            workshop_msa_count=ms_workshop_msa,
             closed_won_count=ms_closed_won,
             closed_won_value=round(ms_closed_won_value, 2),
             milestone_deals=ms_milestone_deals,
+            prev_demo_scheduled_count=prev_demo_scheduled,
+            prev_qualified_lead_count=prev_qualified_lead,
             prev_demo_done_count=prev_demo_done,
             prev_poc_agreed_count=prev_poc_agreed,
             prev_poc_wip_count=prev_poc_wip,
             prev_poc_done_count=prev_poc_done,
+            prev_commercial_negotiation_count=prev_commercial_negotiation,
+            prev_workshop_msa_count=prev_workshop_msa,
             prev_closed_won_count=prev_closed_won,
             prev_closed_won_value=round(prev_closed_won_value, 2),
         ),
@@ -2561,21 +3409,3 @@ async def sales_dashboard(
     )
     _dashboard_cache_set(cache_key, result)
     return result
-
-
-@router.get("/outreach")
-async def get_outreach_analytics(
-    session: DBSession,
-    _user: CurrentUser,
-    window_days: int = Query(default=90, ge=7, le=365),
-    rep_email: Optional[str] = Query(default=None),
-):
-    """Outreach funnel, per-rep, per-sequence, and subject-line performance.
-
-    Returns real-data aggregations from outreach_sequences + contacts +
-    activities. Engagement counters (opens, clicks) are kept fresh by the
-    periodic Instantly sync — this endpoint just reads them.
-    """
-    return await build_outreach_overview(
-        session, window_days=window_days, rep_email=rep_email
-    )

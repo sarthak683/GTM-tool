@@ -776,7 +776,15 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
 
     if event_type == "email_sent":
         step_note = f" (step {step_number})" if step_number else ""
-        content = f"Email sent{step_note}: {subject} → {lead_email}"
+        # Use the actual email body if Instantly includes it in the payload;
+        # fall back to a short log line so the activity still has a description.
+        email_body_text = (
+            payload.get("body")
+            or payload.get("email_body")
+            or payload.get("html_body")
+            or ""
+        ).strip()
+        content = email_body_text if email_body_text else f"Email sent{step_note}: {subject} → {lead_email}"
         activity_type = "email"
         email_subject = subject
         email_sender = payload.get("email_account") or ""

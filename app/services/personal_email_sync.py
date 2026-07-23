@@ -162,8 +162,29 @@ def _domain_from_email(addr: str) -> str:
     return _normalize_domain(addr.split("@", 1)[1])
 
 
+# All sending domains that belong to Beacon — treat as internal regardless of
+# which specific domain the connected inbox uses.
+_ALL_BEACON_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+
+
 def _is_internal_address(addr: str, internal_domain: str) -> bool:
-    return bool(addr and internal_domain and _domain_from_email(addr) == internal_domain)
+    addr_domain = _domain_from_email(addr)
+    return bool(
+        addr
+        and addr_domain
+        and (addr_domain == internal_domain or addr_domain in _ALL_BEACON_DOMAINS)
+    )
+
+
+def _normalize_beacon_sender(addr: str) -> str:
+    """Normalize any Beacon sending-domain address to its @beacon.li canonical form.
+    e.g. sipra@beaconli.com → sipra@beacon.li.  Non-beacon addresses are returned as-is."""
+    if "@" not in addr:
+        return addr
+    local, domain = addr.rsplit("@", 1)
+    if domain.strip().lower() in _ALL_BEACON_DOMAINS:
+        return f"{local}@beacon.li"
+    return addr
 
 
 def _is_bulk_sender_domain(addr: str) -> bool:
@@ -763,7 +784,7 @@ async def process_personal_emails(
             ai_summary=ai_summary,
             email_message_id=msg.message_id,
             email_subject=msg.subject,
-            email_from=msg.from_addr,
+            email_from=_normalize_beacon_sender(msg.from_addr),
             email_to=", ".join(msg.to_addrs),
             email_cc=", ".join(msg.cc_addrs),
             created_by_id=sync_user.id,
@@ -771,6 +792,7 @@ async def process_personal_emails(
             event_metadata={
                 "synced_by_user_id": str(sync_user.id),
                 "synced_by_email": connection.email_address,
+                "raw_email_from": msg.from_addr,
                 "gmail_thread_id": msg.thread_id or None,
                 "intent_detected": thread_latest_intent,
                 "thread_latest_intent": thread_latest_intent,

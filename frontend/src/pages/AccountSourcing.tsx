@@ -568,9 +568,11 @@ export default function AccountSourcing() {
   const [syncingRecotap, setSyncingRecotap] = useState(false);
   const hasAdvancedFilter = prospectsMin !== undefined || prospectsMax !== undefined;
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() => (initParams.get("owner") === "mine" ? "mine" : "all"));
-  // Multi-select Owner filter: matches assigned_to_id OR sdr_id for any
-  // selected user. Different from ownerScope (binary mine vs all).
+  // Multi-select AE Assigned filter: matches assigned_to_id only.
+  // Different from ownerScope (binary mine vs all).
   const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
+  // Multi-select SDR Assigned filter: matches sdr_id only.
+  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("disp")));
@@ -643,19 +645,20 @@ export default function AccountSourcing() {
     // instead of swapping it for a spinner on every tick.
     if (!opts?.silent) setLoading(true);
     try {
-      // ownerScope === "mine" wins over the multi-select; otherwise the
-      // multi-select drives. Both ultimately collapse to a single owner_id
-      // string param the backend parses as comma-separated UUIDs.
-      const effectiveOwnerId =
-        ownerScope === "mine"
-          ? user?.id
-          : (ownerFilter.length ? ownerFilter : undefined);
+      // ownerScope === "mine" uses owner_id (matches both AE and SDR).
+      // The AE/SDR dropdowns use dedicated ae_id / sdr_id params so each
+      // filters its specific role only.
+      const effectiveOwnerId = ownerScope === "mine" ? user?.id : undefined;
+      const effectiveAeId = ownerScope !== "mine" && ownerFilter.length ? ownerFilter : undefined;
+      const effectiveSdrId = sdrFilter.length ? sdrFilter : undefined;
       const [companyPage, companySummary, b, rtpSummary] = await Promise.all([
         accountSourcingApi.listCompaniesPaginated({
           skip: (page - 1) * pageSize,
           limit: pageSize,
           q: debouncedSearch || undefined,
           ownerId: effectiveOwnerId,
+          aeId: effectiveAeId,
+          sdrId: effectiveSdrId,
           icpTier: tierFilter.length ? tierFilter : undefined,
           disposition: dispositionFilter.length ? dispositionFilter : undefined,
           accountStatus: statusFilter.length ? statusFilter : undefined,
@@ -683,7 +686,7 @@ export default function AccountSourcing() {
       // superseded non-silent request left loading=true behind.
       if (seq === loadSeqRef.current) setLoading(false);
     }
-  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, sdrFilter, ownerScope, page, tierFilter, user?.id, prospectsMin, prospectsMax]);
 
   // Pull live Recotap signals + (re)seed mock data, then reload so the funnel
   // and rows reflect the new data.
@@ -727,6 +730,7 @@ export default function AccountSourcing() {
       search.trim() ? next.set("q", search.trim()) : next.delete("q");
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
+      sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       tierFilter.length ? next.set("tier", tierFilter.join(",")) : next.delete("tier");
       dispositionFilter.length ? next.set("disp", dispositionFilter.join(",")) : next.delete("disp");
       statusFilter.length ? next.set("status", statusFilter.join(",")) : next.delete("status");
@@ -746,7 +750,7 @@ export default function AccountSourcing() {
       }
       return next;
     }, { replace: true });
-  }, [activeTab, laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [activeTab, laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, sdrFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -757,7 +761,7 @@ export default function AccountSourcing() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, ownerScope, tierFilter, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, prospectsMin, prospectsMax]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -861,7 +865,7 @@ export default function AccountSourcing() {
     [selectedCompanyIds, teamUsers, toast, clearCompanySelection, load],
   );
 
-  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
+  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -1292,6 +1296,7 @@ export default function AccountSourcing() {
             setSearch("");
             setOwnerScope("all");
             setOwnerFilter([]);
+            setSdrFilter([]);
             setTierFilter([]);
             setDispositionFilter([]);
             setStatusFilter([]);
@@ -1876,16 +1881,20 @@ export default function AccountSourcing() {
                 <MultiSelectFilter
                   values={ownerFilter}
                   onChange={setOwnerFilter}
-                  options={[
-                    // Sentinel for "no owner" — backend maps "__unassigned__" to
-                    // assigned_to_id IS NULL AND sdr_id IS NULL so reps can
-                    // surface accounts that slipped through with no owner.
-                    { value: "__unassigned__", label: "Unassigned" },
-                    ...teamUsers.map((u) => ({ value: u.id, label: u.name || u.email })),
-                  ]}
-                  label="Owner"
-                  allLabel="Owner: All"
-                  minWidth={170}
+                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                  label="AE Assigned"
+                  allLabel="AE Assigned: All"
+                  minWidth={180}
+                />
+              )}
+              {teamUsers.length > 0 && (
+                <MultiSelectFilter
+                  values={sdrFilter}
+                  onChange={setSdrFilter}
+                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                  label="SDR Assigned"
+                  allLabel="SDR Assigned: All"
+                  minWidth={190}
                 />
               )}
               <MultiSelectFilter
@@ -1954,6 +1963,7 @@ export default function AccountSourcing() {
                     setSearch("");
                     setOwnerScope("all");
                     setOwnerFilter([]);
+                    setSdrFilter([]);
                     setTierFilter([]);
                     setDispositionFilter([]);
                     setStatusFilter([]);
