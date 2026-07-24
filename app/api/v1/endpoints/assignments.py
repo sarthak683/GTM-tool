@@ -20,6 +20,7 @@ from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
 from app.services.account_sourcing import append_company_activity_log
+from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -72,22 +73,6 @@ def _is_self_claim_or_self_release(
     if current_assigned_id == actor.id and (is_unassign or is_self_target):
         return True
     return False
-
-
-def _reset_contact_outreach_progress(contact: Contact) -> None:
-    """Wipe call/outreach progress so a newly assigned SDR starts clean.
-
-    Raw Activity records are intentionally left untouched — they are the
-    audit log of what the previous SDR actually did. Only the contact's
-    current-state snapshot (displayed in the prospecting queue) is cleared
-    so the new rep sees a fresh "not called yet" prospect.
-    """
-    contact.call_status = None
-    contact.call_disposition = None
-    contact.call_notes = None
-    contact.call_last_at = None
-    contact.next_followup_at = None
-    contact.sequence_status = None
 
 
 def _can_assign_team(actor: User) -> bool:
@@ -155,30 +140,19 @@ async def assign_company(
             company.assigned_rep_email = None
             company.assigned_rep_name = None
 
-    contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
-    ).scalars().all()
-    for contact in contacts:
-        if is_sdr:
-            # Preserve deliberate per-contact splits: only cascade onto contacts
-            # that were following the company's previous SDR (or are unassigned).
-            # A contact pointed at a DIFFERENT SDR (e.g. a timezone split) is left
-            # untouched. `current_assigned_id` is the company's pre-change SDR.
-            if contact.sdr_id not in (None, current_assigned_id):
-                continue
-            contact.sdr_id = company.sdr_id
-            contact.sdr_name = company.sdr_name
-            # New SDR → wipe outreach progress so they start from scratch.
-            # Activity log records (Activity table) are intentionally untouched.
-            if body.user_id and body.user_id != current_assigned_id:
-                _reset_contact_outreach_progress(contact)
-        else:
+    if is_sdr:
+        await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
+    else:
+        contacts = (
+            await session.execute(select(Contact).where(Contact.company_id == company.id))
+        ).scalars().all()
+        for contact in contacts:
             if contact.assigned_to_id not in (None, current_assigned_id):
                 continue
             contact.assigned_to_id = company.assigned_to_id
             contact.assigned_rep_email = company.assigned_rep_email
-        contact.updated_at = datetime.utcnow()
-        session.add(contact)
+            contact.updated_at = datetime.utcnow()
+            session.add(contact)
 
     next_name = (
         company.sdr_name or company.sdr_email
@@ -345,27 +319,19 @@ async def bulk_assign_companies(
                 company.assigned_rep_email = None
                 company.assigned_rep_name = None
 
-        contacts = (
-            await session.execute(select(Contact).where(Contact.company_id == company.id))
-        ).scalars().all()
-        for contact in contacts:
-            if is_sdr:
-                # Preserve deliberate per-contact SDR splits (see assign_company).
-                if contact.sdr_id not in (None, current_assigned_id):
-                    continue
-                contact.sdr_id = company.sdr_id
-                contact.sdr_name = company.sdr_name
-                # New SDR → wipe outreach progress so they start from scratch.
-                # Activity log records (Activity table) are intentionally untouched.
-                if body.user_id and body.user_id != current_assigned_id:
-                    _reset_contact_outreach_progress(contact)
-            else:
+        if is_sdr:
+            await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
+        else:
+            contacts = (
+                await session.execute(select(Contact).where(Contact.company_id == company.id))
+            ).scalars().all()
+            for contact in contacts:
                 if contact.assigned_to_id not in (None, current_assigned_id):
                     continue
                 contact.assigned_to_id = company.assigned_to_id
                 contact.assigned_rep_email = company.assigned_rep_email
-            contact.updated_at = datetime.utcnow()
-            session.add(contact)
+                contact.updated_at = datetime.utcnow()
+                session.add(contact)
         company.updated_at = datetime.utcnow()
         session.add(company)
         updated += 1

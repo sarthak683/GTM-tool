@@ -264,11 +264,16 @@ class ContactRepository(BaseRepository[Contact]):
         # Correlated subquery: number of activity rows of type='call' for this
         # contact. Drives the new prospect-page progress dots (one yellow dot
         # per attempt) and the `call_attempts_bucket` filter below.
+        after_current_sdr_assignment = or_(
+            Company.sdr_assigned_at.is_(None),
+            Activity.created_at >= Company.sdr_assigned_at,
+        )
         call_attempt_count_subq = (
             select(func.count(Activity.id))
             .where(Activity.contact_id == Contact.id)
             .where(Activity.type == "call")
-            .correlate(Contact)
+            .where(after_current_sdr_assignment)
+            .correlate(Contact, Company)
             .scalar_subquery()
         )
         # Rep comments are stored as Activity rows (type='comment'). Surface the

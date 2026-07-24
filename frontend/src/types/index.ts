@@ -28,6 +28,7 @@ export interface Company {
   sdr_id?: string;
   sdr_email?: string;
   sdr_name?: string;
+  sdr_assigned_at?: string | null;
   outreach_status?: string;
   disposition?: string;
   // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)

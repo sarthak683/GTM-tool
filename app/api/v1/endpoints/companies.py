@@ -14,6 +14,7 @@ from app.models.deal import Deal, DealRead
 from app.repositories.company import CompanyRepository, company_visibility_filter
 from app.schemas.common import PaginatedResponse
 from app.services.icp_scorer import score_company
+from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -41,6 +42,15 @@ def _visible_company_selector_filter():
         Company.sourcing_batch_id.isnot(None),
         select(Deal.id).where(Deal.company_id == Company.id).exists(),
     )
+
+
+async def _apply_company_update(session, company: Company, update_data: dict) -> None:
+    previous_sdr_id = company.sdr_id
+    sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
+    for key, value in update_data.items():
+        setattr(company, key, value)
+    if sdr_update_requested:
+        await sync_company_sdr_assignment_to_contacts(session, company, previous_sdr_id)
 
 
 class DuplicateCheckRequest(BaseModel):
@@ -153,8 +163,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
     if not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(company, key, value)
+    await _apply_company_update(session, company, update_data)
     company.icp_score, company.icp_tier = score_company(company)
     company.updated_at = datetime.utcnow()
     return await repo.save(company)
@@ -167,8 +176,7 @@ async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSes
     if not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(company, key, value)
+    await _apply_company_update(session, company, update_data)
     company.updated_at = datetime.utcnow()
     return await repo.save(company)
 
