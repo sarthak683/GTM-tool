@@ -399,6 +399,8 @@ export type SalesRepActivityRow = {
   // Prospect / contact coverage
   total_prospects?: number;
   total_mobile_numbers?: number;
+  // Demo reschedules within the analytics window
+  demos_rescheduled?: number;
 };
 
 export type SalesRepActivityWeekRow = {

@@ -33,7 +33,7 @@ export default function AircallPhonePanel() {
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [sdkUnavailable, setSdkUnavailable] = useState(false);
-  const [verticalOffset, setVerticalOffset] = useState(0);
+  const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [callState, setCallState] = useState<CallState>({
     active: false,
     duration: 0,
@@ -44,14 +44,18 @@ export default function AircallPhonePanel() {
   const sdkReadyRef = useRef(false);   // tracks login state inside closures
   const dialSentRef = useRef(false);   // prevents double dial_number sends
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dragStateRef = useRef<{ startY: number; startOffset: number } | null>(null);
+  const dragStateRef = useRef<{ startX: number; startY: number; startOffsetX: number; startOffsetY: number } | null>(null);
   const dragMovedRef = useRef(false);
   const suppressOpenClickRef = useRef(false);
 
-  const clampVerticalOffset = (nextOffset: number) => {
-    if (typeof window === "undefined") return 0;
+  const clampOffset = (x: number, y: number): { x: number; y: number } => {
+    if (typeof window === "undefined") return { x: 0, y: 0 };
     const maxUp = Math.max(window.innerHeight - 160, 0);
-    return Math.max(-maxUp, Math.min(0, nextOffset));
+    const maxLeft = Math.max(window.innerWidth - 80, 0);
+    return {
+      x: Math.max(-maxLeft, Math.min(maxLeft, x)),
+      y: Math.max(-maxUp, Math.min(0, y)),
+    };
   };
 
   // ── Init SDK once ──────────────────────────────────────────────────────────
@@ -210,22 +214,24 @@ export default function AircallPhonePanel() {
   }, []);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("crm.aircall.verticalOffset");
+    const saved = window.localStorage.getItem("crm.aircall.offset");
     if (saved) {
-      const parsed = Number(saved);
-      if (!Number.isNaN(parsed)) {
-        setVerticalOffset(clampVerticalOffset(parsed));
-      }
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number") {
+          setOffset(clampOffset(parsed.x, parsed.y));
+        }
+      } catch { /* ignore corrupt data */ }
     }
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("crm.aircall.verticalOffset", String(verticalOffset));
-  }, [verticalOffset]);
+    window.localStorage.setItem("crm.aircall.offset", JSON.stringify(offset));
+  }, [offset]);
 
   useEffect(() => {
     const handleResize = () => {
-      setVerticalOffset((current) => clampVerticalOffset(current));
+      setOffset((current) => clampOffset(current.x, current.y));
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
@@ -235,11 +241,12 @@ export default function AircallPhonePanel() {
     const handlePointerMove = (event: PointerEvent) => {
       const drag = dragStateRef.current;
       if (!drag) return;
+      const deltaX = event.clientX - drag.startX;
       const deltaY = event.clientY - drag.startY;
-      if (Math.abs(deltaY) > 3) {
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
         dragMovedRef.current = true;
       }
-      setVerticalOffset(clampVerticalOffset(drag.startOffset + deltaY));
+      setOffset(clampOffset(drag.startOffsetX + deltaX, drag.startOffsetY + deltaY));
     };
 
     const handlePointerUp = () => {
@@ -257,8 +264,8 @@ export default function AircallPhonePanel() {
     };
   }, []);
 
-  const beginDrag = (clientY: number) => {
-    dragStateRef.current = { startY: clientY, startOffset: verticalOffset };
+  const beginDrag = (clientX: number, clientY: number) => {
+    dragStateRef.current = { startX: clientX, startY: clientY, startOffsetX: offset.x, startOffsetY: offset.y };
     dragMovedRef.current = false;
   };
 
@@ -305,7 +312,7 @@ export default function AircallPhonePanel() {
             setOpen(true);
             setMinimised(false);
           }}
-          onPointerDown={(event) => beginDrag(event.clientY)}
+          onPointerDown={(event) => beginDrag(event.clientX, event.clientY)}
           style={{
             position: "fixed", bottom: panelBottom, right: 24, zIndex: 900,
             width: 194,
@@ -321,7 +328,7 @@ export default function AircallPhonePanel() {
             transition: "all 0.2s ease",
             textAlign: "left",
             backdropFilter: "blur(12px)",
-            transform: `translateY(${verticalOffset}px)`,
+            transform: `translate(${offset.x}px, ${offset.y}px)`,
             touchAction: "none",
           }}
           title="Open Aircall phone"
@@ -384,7 +391,7 @@ export default function AircallPhonePanel() {
         transition: "width 0.2s ease, transform 0.2s ease",
         display: open ? "flex" : "none", flexDirection: "column",
         backdropFilter: "blur(14px)",
-        transform: `translateY(${verticalOffset}px)`,
+        transform: `translate(${offset.x}px, ${offset.y}px)`,
       }}>
           {/* Header — z-index ensures it stays clickable above iframe */}
           <div style={{
@@ -398,7 +405,7 @@ export default function AircallPhonePanel() {
             borderBottom: "1px solid #e3edf6",
           }}>
             <div
-              onPointerDown={(event) => beginDrag(event.clientY)}
+              onPointerDown={(event) => beginDrag(event.clientX, event.clientY)}
               style={{ display: "flex", alignItems: "center", gap: 10, cursor: "grab", flex: 1, minWidth: 0, touchAction: "none" }}
               title="Drag Aircall widget"
             >

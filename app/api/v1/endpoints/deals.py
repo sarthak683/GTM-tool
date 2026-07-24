@@ -352,6 +352,17 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         update_data["days_in_stage"] = 0
         stage_changed = True
 
+    # Detect demo reschedule: close_date_est changed to a new value on a
+    # demo_scheduled deal that already had a date set. Logged as a separate
+    # activity so analytics can count it independently from general field changes.
+    close_date_rescheduled = (
+        "close_date_est" in update_data
+        and update_data["close_date_est"] is not None
+        and deal.close_date_est is not None         # had a date before → reschedule
+        and str(update_data["close_date_est"]) != str(deal.close_date_est)  # actually changed
+        and deal.stage == "demo_scheduled"
+    )
+
     # Auto-log field changes
     changes: list[str] = []
     if "value" in update_data and update_data["value"] != deal.value:
@@ -424,7 +435,16 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         )
         session.add(activity)
 
-    if stage_changed or changes or company_changed:
+    if close_date_rescheduled:
+        session.add(Activity(
+            deal_id=deal_id,
+            type="demo_rescheduled",
+            source="system",
+            content=f"Demo rescheduled to {update_data['close_date_est']}",
+            created_by_id=_user.id,
+        ))
+
+    if stage_changed or changes or close_date_rescheduled or company_changed:
         await session.commit()
 
     return await repo.get_with_joins(deal_id) or updated

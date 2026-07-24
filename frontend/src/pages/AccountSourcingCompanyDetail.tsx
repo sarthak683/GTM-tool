@@ -535,13 +535,15 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
           onClick={() => setOpen(true)}
           style={{
             width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "12px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
+            padding: "10px 14px",
+            background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+            border: "none", cursor: "pointer", textAlign: "left",
           }}
         >
-          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: colors.faint }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.6, color: "#ffffff" }}>
             OPPORTUNITY DETAILS
           </span>
-          <ExternalLink size={13} color={colors.faint} />
+          <ExternalLink size={13} color="rgba(255,255,255,0.8)" />
         </button>
         {hasData && (
           <div style={{ padding: "0 14px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>

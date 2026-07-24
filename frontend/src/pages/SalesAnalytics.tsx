@@ -1447,6 +1447,13 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             text="#7c3aed"
             sub={<span>VP / SVP / Chief</span>}
           />
+          <StatPill
+            label="Demo Rescheduled"
+            value={selectedRow.totals.demos_rescheduled ?? 0}
+            tone="#fff2f2"
+            text="#c0392b"
+            sub={<span>date changed</span>}
+          />
         </div>
       </div>
     </div>

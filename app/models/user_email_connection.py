@@ -1,8 +1,10 @@
 """
 UserEmailConnection — per-user personal Gmail OAuth token store.
 
-One row per connected Gmail account. A user can only have one connected
-personal inbox at a time (enforced via unique constraint on user_id).
+One row per connected Gmail account. A user may connect multiple inboxes
+(e.g. personal Gmail + a @beaconli.com Instantly account).  The composite
+unique constraint on (user_id, email_address) prevents duplicates while
+allowing more than one inbox per user.
 
 Token refresh: the Celery sync task refreshes the token on each run and
 writes the updated payload back here. The `last_error` field captures the
@@ -23,7 +25,7 @@ class UserEmailConnection(SQLModel, table=True):
     __tablename__ = "user_email_connections"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True, unique=True)
+    user_id: UUID = Field(foreign_key="users.id", unique=True)
 
     # Connected inbox address (e.g. "john@company.com")
     email_address: str = Field(index=True)

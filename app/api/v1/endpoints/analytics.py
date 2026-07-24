@@ -273,6 +273,9 @@ class RepActivityRow(BaseModel):
     # Prospect / contact coverage
     total_prospects: int = 0
     total_mobile_numbers: int = 0
+    # Demo reschedules: deal in demo_scheduled stage with close_date_est updated
+    # after it was already set. Logged as Activity(type="demo_rescheduled").
+    demos_rescheduled: int = 0
 
 
 class RepActivityWeekRow(BaseModel):
@@ -2865,6 +2868,23 @@ async def sales_dashboard(
                 prospect_count_by_uid[r.uid] = r.cnt
                 mobile_count_by_uid[r.uid] = r.with_phone
 
+    # ── Demo reschedules: Activity(type="demo_rescheduled") within the window ──
+    demos_rescheduled_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        dr_rows = (await session.execute(
+            select(Activity.created_by_id, func.count().label("cnt"))
+            .where(
+                Activity.created_by_id.in_(list(rep_user_ids)),
+                Activity.type == "demo_rescheduled",
+                Activity.created_at >= window_start,
+                Activity.created_at <= window_end,
+            )
+            .group_by(Activity.created_by_id)
+        )).all()
+        for dr in dr_rows:
+            if dr.created_by_id:
+                demos_rescheduled_by_uid[dr.created_by_id] = dr.cnt
+
     rep_activity_rows = [
         RepActivityRow(
             key=str(bucket["key"]),
@@ -2904,6 +2924,7 @@ async def sales_dashboard(
             linkedin_followup_msg=int(bucket.get("linkedin_followup_msg", 0)),
             total_prospects=prospect_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             total_mobile_numbers=mobile_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            demos_rescheduled=demos_rescheduled_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
         )
         for bucket in sorted(
             rep_activity.values(),
