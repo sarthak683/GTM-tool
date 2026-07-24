@@ -4611,6 +4611,39 @@ export default function Contacts() {
                     setCallNotes((existing) => existing.trim() ? existing : s.summary);
                   }}
                 />
+
+                {/* Notes — moved here so the left column has brief + notes
+                    and the right column has outcome → disposition → activity. */}
+                <div style={{ padding: "0 18px 20px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+                    Notes
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                    {noteChips.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => setCallNotes((current) => (current ? `${current}\n${chip}` : chip))}
+                        style={{
+                          padding: "6px 12px", borderRadius: 999,
+                          border: "1px dashed #c8d6e6", background: "#f7fafc",
+                          color: "#475569", fontSize: 12.5, fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                        title="Add to notes"
+                      >
+                        + {chip}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={callNotes}
+                    onChange={(e) => setCallNotes(e.target.value)}
+                    placeholder="What came up on the call? Objections, signals, next steps..."
+                    rows={6}
+                    style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "13px 15px", fontSize: 14.5, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }}
+                  />
+                </div>
                   </div>{/* end left column */}
 
                   <div style={{ overflowY: "auto", minHeight: 0 }}>
@@ -4814,38 +4847,6 @@ export default function Contacts() {
                       />
                     </div>
                   )}
-
-                  {/* Notes — with quick chips */}
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: "#5e7290", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
-                      Notes
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-                      {noteChips.map((chip) => (
-                        <button
-                          key={chip}
-                          type="button"
-                          onClick={() => setCallNotes((current) => (current ? `${current}\n${chip}` : chip))}
-                          style={{
-                            padding: "6px 12px", borderRadius: 999,
-                            border: "1px dashed #c8d6e6", background: "#f7fafc",
-                            color: "#475569", fontSize: 12.5, fontWeight: 600,
-                            cursor: "pointer",
-                          }}
-                          title="Add to notes"
-                        >
-                          + {chip}
-                        </button>
-                      ))}
-                    </div>
-                    <textarea
-                      value={callNotes}
-                      onChange={(e) => setCallNotes(e.target.value)}
-                      placeholder="What came up on the call? Objections, signals, next steps..."
-                      rows={6}
-                      style={{ width: "100%", border: "1px solid #d8e2ed", borderRadius: 12, padding: "13px 15px", fontSize: 14.5, color: "#0f1f33", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }}
-                    />
-                  </div>
 
                   {/* RECENT ACTIVITY — session entries appear at top immediately
                       after save; historical entries come from the precall brief. */}

@@ -1,15 +1,15 @@
 """
 Personal email sync endpoints.
 
-Each sales rep can connect their own personal Gmail inbox so the CRM can
+Each sales rep can connect their personal Gmail inbox so the CRM can
 scan their past and ongoing email conversations.
 
 Endpoints:
-  GET  /personal-email-sync/status          — current user's connection status
-  GET  /personal-email-sync/connect         — start OAuth flow (returns redirect URL)
-  GET  /personal-email-sync/callback        — OAuth callback (called by Google)
-  POST /personal-email-sync/trigger         — manually kick off a sync for current user
-  POST /personal-email-sync/disconnect      — remove connection + revoke
+  GET  /personal-email-sync/status            — connection status for current user
+  GET  /personal-email-sync/connect           — start OAuth flow (returns redirect URL)
+  GET  /personal-email-sync/callback          — OAuth callback (called by Google)
+  POST /personal-email-sync/trigger           — manually trigger sync for current user
+  POST /personal-email-sync/disconnect        — deactivate the connection
   GET  /personal-email-sync/threads/{deal_id} — email threads for a deal from personal inboxes
 """
 from __future__ import annotations
@@ -120,16 +120,16 @@ async def personal_gmail_callback(
     if not email_address or not token_data:
         raise ValidationError("Failed to obtain Gmail credentials")
 
-    # Upsert UserEmailConnection
+    # Upsert by user_id — one inbox per user.
     result = await session.execute(
         sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == UUID(user_id)
+            UserEmailConnection.user_id == UUID(user_id),
         )
     )
     connection = result.scalar_one_or_none()
 
     if connection:
-        # Reconnect: reset backfill state so we re-scan
+        # Reconnect: refresh token + reset backfill state
         connection.email_address = email_address
         connection.token_data = token_data
         connection.is_active = True
@@ -138,6 +138,7 @@ async def personal_gmail_callback(
         connection.last_error = None
         connection.updated_at = datetime.utcnow()
     else:
+        # First connection for this user
         connection = UserEmailConnection(
             user_id=UUID(user_id),
             email_address=email_address,
@@ -292,10 +293,10 @@ async def send_personal_email(
 
 @router.post("/disconnect")
 async def disconnect_personal_email(session: DBSession, current_user: CurrentUser):
-    """Remove the current user's personal Gmail connection."""
+    """Deactivate the current user's personal Gmail connection."""
     result = await session.execute(
         sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id
+            UserEmailConnection.user_id == current_user.id,
         )
     )
     connection = result.scalar_one_or_none()

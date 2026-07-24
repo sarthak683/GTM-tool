@@ -1978,17 +1978,33 @@ function TouchpointPill({
   color,
   tone,
   rows,
+  mobileCount,
 }: {
   label: string;
   total: number;
   color: string;
   tone: string;
   rows: { label: string; value: number | string }[];
+  mobileCount?: number;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "14px 12px", borderRadius: 14, background: tone, border: "1px solid transparent", flex: 1, minWidth: 160 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>{total}</span>
+        {mobileCount !== undefined && (
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 12, fontWeight: 700, color,
+            background: "rgba(255,255,255,0.6)", borderRadius: 999,
+            padding: "2px 8px", border: `1px solid ${color}33`,
+          }}>
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" style={{ flexShrink: 0 }}>
+              <rect x="2.5" y="0.5" width="6" height="10" rx="1.5" stroke={color} strokeWidth="1.2"/>
+              <circle cx="5.5" cy="8.5" r="0.6" fill={color}/>
+            </svg>
+            {mobileCount}
+          </span>
+        )}
       </div>
       <span style={{ fontSize: 10, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</span>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
@@ -2095,11 +2111,11 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
               total={selectedRow.totals.calls}
               color="#445fd0"
               tone="#eef3ff"
+              mobileCount={selectedRow.totals.total_mobile_numbers ?? 0}
               rows={[
                 { label: "First Attempt",   value: callFirst },
                 { label: "2nd+ Attempts",   value: callSecondPlus },
                 { label: "Meetings Booked", value: callMtgBooked },
-                { label: "Mobile Numbers",  value: selectedRow.totals.total_mobile_numbers ?? 0 },
               ]}
             />
             <TouchpointPill
@@ -2222,14 +2238,22 @@ export function OutreachAnalysisTab() {
   );
 }
 
-export const PERFORMANCE_TABS = [
-  { key: "scorecard",          label: "Scorecard",         icon: Target },
-  { key: "funnel",             label: "Funnel",            icon: Layers },
-  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle },
-  { key: "forecast",           label: "Forecast",          icon: TrendingUp },
-  { key: "targets",            label: "Targets",           icon: Gauge },
-  { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3 },
+// Visibility flags — set to false to hide a tab, true to show
+const SHOW_TAB_SCORECARD   = false;
+const SHOW_TAB_FUNNEL      = false;
+const SHOW_TAB_FORECAST    = false;
+const SHOW_TAB_TARGETS     = false;
+
+const _ALL_PERFORMANCE_TABS = [
+  { key: "scorecard",          label: "Scorecard",         icon: Target,        show: SHOW_TAB_SCORECARD },
+  { key: "funnel",             label: "Funnel",            icon: Layers,        show: SHOW_TAB_FUNNEL },
+  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle, show: true },
+  { key: "forecast",           label: "Forecast",          icon: TrendingUp,    show: SHOW_TAB_FORECAST },
+  { key: "targets",            label: "Targets",           icon: Gauge,         show: SHOW_TAB_TARGETS },
+  { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3,     show: true },
 ] as const;
+
+export const PERFORMANCE_TABS = _ALL_PERFORMANCE_TABS.filter((t) => t.show) as unknown as typeof _ALL_PERFORMANCE_TABS;
 
 export type PerformanceTabKey = (typeof PERFORMANCE_TABS)[number]["key"];
 
