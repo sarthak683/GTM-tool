@@ -726,6 +726,11 @@ export interface SalesReportSettings {
   last_scheduled_send_at?: string | null;
 }
 
+export interface SalesAnalyticsRosterSettings {
+  user_ids: string[];
+  default_emails: string[];
+}
+
 export interface DealStageSetting {
   id: string;
   label: string;

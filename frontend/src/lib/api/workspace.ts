@@ -366,6 +366,8 @@ export type SalesRepActivityRow = {
   connected_calls: number;
   live_calls: number;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   email_opens: number;
   email_replies: number;
   linkedin_reachouts: number;
@@ -409,6 +411,8 @@ export type SalesRepActivityWeekRow = {
   week_start: string;
   week_end: string;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   calls: number;
   connected_calls: number;
   live_calls: number;
@@ -694,6 +698,11 @@ export const authApi = {
   googleLoginUrl: () => `${BASE}/api/v1/auth/google/login`,
   listAllUsers: () => request<User[]>("/api/v1/auth/users/all"),
   listUsers: () => request<User[]>("/api/v1/auth/users"),
+  createUser: (data: { email: string; name: string; role: string }) =>
+    request<User>("/api/v1/auth/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   updateUser: (userId: string, data: { name?: string; role?: string; is_active?: boolean }) =>
     request<User>(`/api/v1/auth/users/${userId}`, {
       method: "PATCH",
@@ -1001,6 +1010,13 @@ export const settingsApi = {
   updateProspectVisibility: (userIds: string[]) =>
     request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility", {
       method: "PUT",
+      body: JSON.stringify({ user_ids: userIds }),
+    }),
+  getSalesAnalyticsRoster: () =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster"),
+  updateSalesAnalyticsRoster: (userIds: string[]) =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster", {
+      method: "PATCH",
       body: JSON.stringify({ user_ids: userIds }),
     }),
   getZippySystemPrompt: () =>

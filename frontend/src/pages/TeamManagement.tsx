@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Shield, User, UserPlus, Loader2, CheckCircle2 } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Shield, User, UserPlus, Loader2, CheckCircle2, Mail, Save } from "lucide-react";
 import { authApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers, invalidateUsersCache } from "../lib/cachedFetch";
 import { SkeletonList } from "../components/ui/Skeleton";
@@ -37,6 +37,10 @@ export default function TeamManagement() {
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserRole, setNewUserRole] = useState<UserType["role"]>("sdr");
+  const [creatingUser, setCreatingUser] = useState(false);
 
   useEffect(() => {
     if (isAdmin) {
@@ -102,6 +106,30 @@ export default function TeamManagement() {
     }
   };
 
+  const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const email = newUserEmail.trim().toLowerCase();
+    const name = newUserName.trim();
+    if (!email || !name) {
+      alert("Name and email are required");
+      return;
+    }
+
+    setCreatingUser(true);
+    try {
+      const created = await authApi.createUser({ email, name, role: newUserRole });
+      invalidateUsersCache();
+      setUsers((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewUserEmail("");
+      setNewUserName("");
+      setNewUserRole("sdr");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to add user");
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
   const [seeding, setSeeding] = useState(false);
 
   const BEACON_TEAM = [
@@ -150,6 +178,9 @@ export default function TeamManagement() {
           .team-mgmt-table {
             min-width: 0 !important;
           }
+          .team-mgmt-add-form {
+            grid-template-columns: 1fr !important;
+          }
         }
       `}</style>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
@@ -163,18 +194,80 @@ export default function TeamManagement() {
                 ? "You can manage teammate roles and access because your role has been granted team management permissions."
               : "View your team members."}
           </p>
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={handleSeedTeam}
-              disabled={seeding}
-              style={{ marginTop: 10, border: "1px solid #c7d5e5", background: "#fff", color: "#1d2b3c", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
-            >
-              <UserPlus size={14} />
-              {seeding ? "Seeding..." : "Seed missing Beacon teammates"}
-            </button>
-          )}
         </div>
+
+        {canManageTeam && (
+          <form
+            className="team-mgmt-add-form"
+            onSubmit={handleCreateUser}
+            style={{
+              background: "#fff",
+              border: "1px solid #d9e1ec",
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 20,
+              display: "grid",
+              gridTemplateColumns: "minmax(160px, 1fr) minmax(220px, 1.2fr) 120px auto",
+              gap: 12,
+              alignItems: "end",
+            }}
+          >
+            <label style={{ display: "grid", gap: 6, minWidth: 0 }}>
+              <span style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 700, textTransform: "uppercase" }}>Name</span>
+              <input
+                value={newUserName}
+                onChange={(event) => setNewUserName(event.target.value)}
+                placeholder="Jacob"
+                style={{ width: "100%", border: "1px solid #c7d5e5", borderRadius: 8, padding: "9px 10px", fontSize: 13, color: "#1d2b3c" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6, minWidth: 0 }}>
+              <span style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 700, textTransform: "uppercase" }}>Email</span>
+              <div style={{ position: "relative" }}>
+                <Mail size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7f8fa5" }} />
+                <input
+                  type="email"
+                  value={newUserEmail}
+                  onChange={(event) => setNewUserEmail(event.target.value)}
+                  placeholder="name@beacon.li"
+                  style={{ width: "100%", border: "1px solid #c7d5e5", borderRadius: 8, padding: "9px 10px 9px 30px", fontSize: 13, color: "#1d2b3c" }}
+                />
+              </div>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 11, color: "#7f8fa5", fontWeight: 700, textTransform: "uppercase" }}>Role</span>
+              <select
+                value={newUserRole}
+                onChange={(event) => setNewUserRole(event.target.value as UserType["role"])}
+                style={{ border: "1px solid #c7d5e5", borderRadius: 8, padding: "9px 10px", fontSize: 13, color: "#1d2b3c", background: "#fff" }}
+              >
+                <option value="sdr">SDR</option>
+                <option value="ae">AE</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <button
+              type="submit"
+              disabled={creatingUser}
+              style={{ border: "1px solid #1f8f5f", background: "#1f8f5f", color: "#fff", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 700, cursor: creatingUser ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, minHeight: 38 }}
+            >
+              {creatingUser ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={14} />}
+              Add
+            </button>
+          </form>
+        )}
+
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={handleSeedTeam}
+            disabled={seeding}
+            style={{ marginBottom: 20, border: "1px solid #c7d5e5", background: "#fff", color: "#1d2b3c", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: seeding ? "wait" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
+          >
+            <UserPlus size={14} />
+            {seeding ? "Seeding..." : "Seed missing Beacon teammates"}
+          </button>
+        )}
 
         {/* Stats */}
         <div className="team-mgmt-stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
@@ -360,7 +453,7 @@ export default function TeamManagement() {
         </div>
 
         <p style={{ fontSize: 12, color: "#7f8fa5", marginTop: 16, textAlign: "center" }}>
-          New members join automatically when they sign in with Google. Share the app URL with your team.
+          Added members can sign in with Google using the same email.
         </p>
       </div>
     </div>

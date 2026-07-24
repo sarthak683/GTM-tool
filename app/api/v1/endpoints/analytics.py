@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import re
 from collections import defaultdict
 from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
@@ -59,6 +60,10 @@ def _dashboard_cache_set(key: tuple, value: "SalesDashboardRead") -> None:
         for stale in [k for k, (ts, _) in _DASHBOARD_CACHE.items() if now - ts >= _DASHBOARD_CACHE_TTL_SECONDS]:
             _DASHBOARD_CACHE.pop(stale, None)
 
+
+def _dashboard_cache_clear() -> None:
+    _DASHBOARD_CACHE.clear()
+
 PROPOSAL_STAGES = {"poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"}
 HOT_MEETING_MARKERS = {"meeting_booked", "call booked", "demo booked"}
 REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
@@ -67,6 +72,59 @@ REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 # role) are NOT reps — their emails/calls/meetings must not inflate rep metrics
 # or appear as a rep row. User.role is one of: admin | ae | sdr.
 REP_ROLES = {"ae", "sdr"}
+DEFAULT_SALES_ANALYTICS_EMAILS = {"jacob@beacon.li"}
+
+
+def _sales_analytics_rep_user_ids(user_rows, analytics_settings: dict | None) -> set[UUID]:
+    """AE/SDR users plus configured active users who should appear as reps."""
+    config = analytics_settings or {}
+    active_user_rows = [row for row in user_rows if getattr(row, "is_active", True) is not False]
+    ids = {
+        row.id
+        for row in active_user_rows
+        if str(row.role or "").strip().lower() in REP_ROLES
+    }
+    active_ids_by_str = {str(row.id): row.id for row in active_user_rows}
+    for value in config.get("sales_analytics_user_ids") or []:
+        user_id = active_ids_by_str.get(str(value or "").strip())
+        if user_id:
+            ids.add(user_id)
+    if not config.get("sales_analytics_roster_configured"):
+        default_emails = {
+            str(email or "").strip().lower()
+            for email in (config.get("sales_analytics_default_emails") or DEFAULT_SALES_ANALYTICS_EMAILS)
+            if str(email or "").strip()
+        } or DEFAULT_SALES_ANALYTICS_EMAILS
+        active_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in active_user_rows if row.email}
+        for email in default_emails:
+            user_id = active_ids_by_email.get(email)
+            if user_id:
+                ids.add(user_id)
+    return ids
+
+
+def _sales_analytics_seed_user_ids(user_rows, analytics_settings: dict | None) -> set[UUID]:
+    """Configured/default users who should get a visible zero row if needed."""
+    config = analytics_settings or {}
+    active_user_rows = [row for row in user_rows if getattr(row, "is_active", True) is not False]
+    ids = set()
+    active_ids_by_str = {str(row.id): row.id for row in active_user_rows}
+    for value in config.get("sales_analytics_user_ids") or []:
+        user_id = active_ids_by_str.get(str(value or "").strip())
+        if user_id:
+            ids.add(user_id)
+    if not config.get("sales_analytics_roster_configured"):
+        default_emails = {
+            str(email or "").strip().lower()
+            for email in (config.get("sales_analytics_default_emails") or DEFAULT_SALES_ANALYTICS_EMAILS)
+            if str(email or "").strip()
+        } or DEFAULT_SALES_ANALYTICS_EMAILS
+        active_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in active_user_rows if row.email}
+        for email in default_emails:
+            user_id = active_ids_by_email.get(email)
+            if user_id:
+                ids.add(user_id)
+    return ids
 
 # A demo "converts" when its account reaches a qualified opportunity or beyond.
 # Lost/dead stages (closed_lost, not_a_fit, churned, cold, on_hold, nurture) are
@@ -235,6 +293,8 @@ class RepActivityRow(BaseModel):
     connected_calls: int = 0
     live_calls: int = 0
     emails: int
+    manual_emails: int = 0
+    instantly_emails: int = 0
     email_opens: int = 0
     email_replies: int = 0
     linkedin_reachouts: int = 0
@@ -284,6 +344,8 @@ class RepActivityWeekRow(BaseModel):
     week_start: str
     week_end: str
     emails: int = 0
+    manual_emails: int = 0
+    instantly_emails: int = 0
     calls: int = 0
     connected_calls: int = 0
     live_calls: int = 0
@@ -542,9 +604,12 @@ BEACON_SENDING_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
 
 # Instantly cold-outreach domains — emails from these always count as Emails Out.
 INSTANTLY_DOMAINS = {"beaconli.co", "beaconli.com"}
+EMAIL_SEND_METRICS = {"emails", "manual_emails", "instantly_emails"}
 
 # All known Zippy addresses across every sending domain.
 ZIPPY_ADDRS = {"zippy@beacon.li", "zippy@beaconli.com", "zippy@beaconli.co"}
+_EMAIL_RE = re.compile(r"[\w.!#$%&'*+/=?^_`{|}~-]+@[\w.-]+\.[A-Za-z]{2,}")
+_SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.IGNORECASE)
 
 
 def _zippy_in_cc_or_bcc(row) -> bool:
@@ -556,26 +621,85 @@ def _zippy_in_cc_or_bcc(row) -> bool:
     return False
 
 
-def _should_count_as_email_out(row) -> bool:
+def _email_from_domain(row) -> str:
+    from_addr = str(getattr(row, "email_from", None) or "").strip().lower()
+    return from_addr.split("@", 1)[1] if "@" in from_addr else ""
+
+
+def _is_instantly_email(row) -> bool:
+    source = str(getattr(row, "source", None) or "").strip().lower()
+    external_source = str(getattr(row, "external_source", None) or "").strip().lower()
+    return (
+        source == "instantly"
+        or external_source.startswith("instantly")
+        or _email_from_domain(row) in INSTANTLY_DOMAINS
+    )
+
+
+def _email_out_bucket(row) -> Literal["manual", "instantly"] | None:
     """
-    Emails Out counting rule (1.1):
-    - From beaconli.com / beaconli.co (Instantly domains) → always count.
-    - From beacon.li → count when:
+    Emails Out bucket rule:
+    - Instantly rows count as Instantly even when the sender is a @beacon.li
+      account; prod has both webhook and campaign-sync rows in that shape.
+    - Non-Instantly @beacon.li rows count as Manual when:
         - source is personal_email_sync (personal inbox, already contact-filtered)
         - source is gmail_sync (rep's connected Gmail account, incl. .com/.co aliases)
         - Zippy is in CC or BCC (tracked via Zippy inbox)
-    - Anything else → do not count.
+    - Anything else: do not count.
     """
-    from_addr = str(getattr(row, "email_from", None) or "").strip().lower()
-    domain = from_addr.split("@", 1)[1] if "@" in from_addr else ""
-    if domain in INSTANTLY_DOMAINS:
-        return True
+    if _is_instantly_email(row):
+        return "instantly"
+    domain = _email_from_domain(row)
     if domain == "beacon.li":
         source = str(getattr(row, "source", None) or "").strip().lower()
-        if source in {"personal_email_sync", "gmail_sync"}:
-            return True
-        return _zippy_in_cc_or_bcc(row)
-    return False
+        if source in {"personal_email_sync", "gmail_sync"} or _zippy_in_cc_or_bcc(row):
+            return "manual"
+    return None
+
+
+def _should_count_as_email_out(row) -> bool:
+    return _email_out_bucket(row) is not None
+
+
+def _email_addresses(value: str | None) -> list[str]:
+    return [match.group(0).lower() for match in _EMAIL_RE.finditer(str(value or ""))]
+
+
+def _normalized_email_subject(value: str | None) -> str:
+    subject = str(value or "").strip().lower()
+    while True:
+        next_subject = _SUBJECT_PREFIX_RE.sub("", subject, count=1)
+        if next_subject == subject:
+            break
+        subject = next_subject.strip()
+    return " ".join(subject.split())
+
+
+def _manual_email_dedupe_key(row, rep_key: str) -> tuple | None:
+    """Same manual thread, same recipient, same UTC day should count once.
+
+    Gmail can sync repeated manual-send rows with different timestamps and even
+    different message ids for the same rep/person/day/thread. Message-id dedupe
+    catches exact row duplication; this catches the remaining same-thread
+    repetition without touching Instantly sends or different-subject manual mail.
+    """
+    if _email_out_bucket(row) != "manual":
+        return None
+    created_at = getattr(row, "created_at", None)
+    if not created_at:
+        return None
+    recipient_key = None
+    contact_id = getattr(row, "contact_id", None)
+    if contact_id:
+        recipient_key = f"contact:{contact_id}"
+    else:
+        to_addrs = _email_addresses(getattr(row, "email_to", None))
+        if to_addrs:
+            recipient_key = f"to:{','.join(sorted(set(to_addrs)))}"
+    if not recipient_key:
+        return None
+    subject_key = _normalized_email_subject(getattr(row, "email_subject", None)) or "<blank-subject>"
+    return ("manual-email", rep_key, created_at.date(), recipient_key, subject_key)
 
 
 def _beacon_sender_local(email_from) -> "str | None":
@@ -911,7 +1035,7 @@ async def sales_activity_drilldown(
     _user: CurrentUser,
     metric: Annotated[
         Literal[
-            "emails", "email_replies", "calls", "connected_calls", "live_calls",
+            "emails", "manual_emails", "instantly_emails", "email_replies", "calls", "connected_calls", "live_calls",
             "linkedin_reachouts", "meetings", "total", "demos_scheduled", "demos_done",
             "demos_converted", "ae_demos_scheduled", "ae_demos_done", "ae_demos_converted",
         ],
@@ -928,7 +1052,8 @@ async def sales_activity_drilldown(
     window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
 
-    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
+    analytics_settings = await get_analytics_settings(session)
+    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role, User.is_active))).all()
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_ids_by_email = {str(row.email or "").strip().lower(): row.id for row in user_rows if row.email}
@@ -951,8 +1076,8 @@ async def sales_activity_drilldown(
             rep_id_by_local[alias_email] = alias.user_id
             # Local-part lookup (only add if not already claimed by primary)
             rep_id_by_local.setdefault(alias_local, alias.user_id)
-    # Only ae/sdr users are reps; admin activity must not surface in the drilldown.
-    rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
+    # AE/SDR users plus any admins explicitly configured for Sales Analytics.
+    rep_user_ids = _sales_analytics_rep_user_ids(user_rows, analytics_settings)
 
     # Geography must be applied via _normalize_geography_key in Python, exactly
     # like sales_dashboard does — the filter param holds bucket labels
@@ -987,7 +1112,7 @@ async def sales_activity_drilldown(
     def activity_metric_filter():
         type_lower = func.lower(Activity.type)
         medium_lower = func.lower(Activity.medium)
-        if metric in {"emails", "email_replies"}:
+        if metric in EMAIL_SEND_METRICS or metric == "email_replies":
             return or_(type_lower == "email", medium_lower == "email")
         if metric in {"calls", "connected_calls", "live_calls"}:
             base = or_(type_lower == "call", medium_lower == "call")
@@ -1006,13 +1131,13 @@ async def sales_activity_drilldown(
     rows: list[SalesActivityDrilldownRow] = []
     # Demo-funnel metrics are NOT activity-table backed; the activity stream must
     # only run for the activity metrics (and "total", which merges in meetings).
-    if metric in {"emails", "email_replies", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "total"}:
+    if metric in EMAIL_SEND_METRICS or metric in {"email_replies", "calls", "connected_calls", "live_calls", "linkedin_reachouts", "total"}:
         activity_stmt = (
             select(Activity)
             .where(Activity.created_at >= window_start, Activity.created_at <= window_end)
             .where(activity_metric_filter())
         )
-        if rep_id and metric == "emails":
+        if rep_id and metric in EMAIL_SEND_METRICS:
             # Emails are sender-based: fetch this rep's OUTBOUND sends across all
             # our sending domains (beacon.li + outreach lookalikes), not emails
             # that merely sit on deals/contacts they own.
@@ -1063,11 +1188,52 @@ async def sales_activity_drilldown(
         # Other metrics paginate this stream alone, so keep the SQL offset.
         if metric == "total":
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).limit(offset + limit + 1)
-        elif metric == "email_replies":
+        elif metric in EMAIL_SEND_METRICS or metric == "email_replies":
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc())
         else:
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
         activities = (await session.execute(activity_stmt)).scalars().all()
+
+        send_has_more = False
+        if metric in EMAIL_SEND_METRICS:
+            send_filtered = []
+            seen_send_msg_ids: set[str] = set()
+            seen_send_manual_keys: dict[str, set[tuple]] = {}
+            for activity in activities:
+                if _email_event_kind(activity) != "send":
+                    continue
+                bucket = _email_out_bucket(activity)
+                if bucket is None:
+                    continue
+                if metric == "manual_emails" and bucket != "manual":
+                    continue
+                if metric == "instantly_emails" and bucket != "instantly":
+                    continue
+                msg_id = str(activity.email_message_id or "").strip()
+                if msg_id and msg_id in seen_send_msg_ids:
+                    continue
+                if msg_id:
+                    seen_send_msg_ids.add(msg_id)
+                row_rep_id = _activity_rep_id(
+                    activity,
+                    deal_owner={},
+                    contact_owner={},
+                    rep_id_by_local=rep_id_by_local,
+                )
+                if not _is_rep(row_rep_id, rep_user_ids):
+                    continue
+                if rep_id and row_rep_id != rep_id:
+                    continue
+                row_rep_key = _label_for_rep(row_rep_id, users)[0]
+                manual_key = _manual_email_dedupe_key(activity, row_rep_key)
+                if manual_key:
+                    rep_manual_seen = seen_send_manual_keys.setdefault(row_rep_key, set())
+                    if manual_key in rep_manual_seen:
+                        continue
+                    rep_manual_seen.add(manual_key)
+                send_filtered.append(activity)
+            send_has_more = len(send_filtered) > offset + limit
+            activities = send_filtered[offset:offset + limit + 1]
 
         # email_replies: keep only inbound replies credited to the requested rep,
         # using the SAME _email_event_kind/_activity_rep_id the dashboard uses, so
@@ -1161,10 +1327,17 @@ async def sales_activity_drilldown(
         seen_drilldown_msg_ids: set[str] = set()
         for activity in activity_page:
             is_email = str(activity.type or "").strip().lower() == "email" or str(activity.medium or "").strip().lower() == "email"
-            if metric == "emails":
+            if metric in EMAIL_SEND_METRICS:
                 # The emails metric is sender-based and SENDS only — independent
                 # of contact/deal linkage; opens/replies and inbound are excluded.
                 if _email_event_kind(activity) != "send":
+                    continue
+                bucket = _email_out_bucket(activity)
+                if bucket is None:
+                    continue
+                if metric == "manual_emails" and bucket != "manual":
+                    continue
+                if metric == "instantly_emails" and bucket != "instantly":
                     continue
                 # Dedup: same email can be captured by both personal_email_sync
                 # and gmail_sync — skip if we've already shown this message.
@@ -1668,6 +1841,10 @@ async def sales_activity_drilldown(
         rows = rows[offset:offset + limit]
     elif metric == "meetings":
         has_more = meeting_has_more
+    elif metric in EMAIL_SEND_METRICS:
+        # Pagination happened on the Python-filtered send list because send
+        # classification is source/domain based.
+        has_more = locals().get("send_has_more", False)
     elif metric == "email_replies":
         # Pagination happened on the Python-filtered reply list (offset/limit +
         # sentinel), so use that list's overflow flag, not the SQL page size.
@@ -1796,7 +1973,7 @@ async def sales_dashboard(
     # doesn't generate thousands of weekly buckets per rep.
     week_window_start = max(window_start, window_end - timedelta(weeks=52))
     week_starts = _rolling_week_starts(week_window_start, window_end)
-    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role))).all()
+    user_rows = (await session.execute(select(User.id, User.name, User.email, User.role, User.is_active))).all()
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
     user_roles = {row.id: str(row.role or "").strip().lower() for row in user_rows}
@@ -1817,9 +1994,9 @@ async def sales_dashboard(
         if alias_domain in BEACON_SENDING_DOMAINS:
             rep_id_by_local[alias_email] = alias.user_id
             rep_id_by_local.setdefault(alias_local, alias.user_id)
-    # Only ae/sdr users are reps; admin activity must not inflate rep metrics
-    # or create an admin rep row (the "Rakesh 419 emails" leak).
-    rep_user_ids = {row.id for row in user_rows if str(row.role or "").strip().lower() in REP_ROLES}
+    # AE/SDR users plus any admins explicitly configured for Sales Analytics.
+    rep_user_ids = _sales_analytics_rep_user_ids(user_rows, analytics_settings)
+    seed_rep_user_ids = _sales_analytics_seed_user_ids(user_rows, analytics_settings)
 
     activity_rows = (
         await session.execute(
@@ -1841,6 +2018,7 @@ async def sales_dashboard(
                 Activity.email_cc,
                 Activity.email_bcc,
                 Activity.email_message_id,
+                Activity.email_subject,
             ).where(Activity.created_at >= window_start, Activity.created_at <= window_end)
         )
     ).all()
@@ -2044,6 +2222,8 @@ async def sales_dashboard(
             "connected_calls": 0,
             "live_calls": 0,
             "emails": 0,
+            "manual_emails": 0,
+            "instantly_emails": 0,
             "linkedin_reachouts": 0,
             "meetings": 0,
             "total": 0,
@@ -2063,6 +2243,8 @@ async def sales_dashboard(
                     "week_start": week_start.isoformat(),
                     "week_end": (week_start + timedelta(days=6)).isoformat(),
                     "emails": 0,
+                    "manual_emails": 0,
+                    "instantly_emails": 0,
                     "calls": 0,
                     "connected_calls": 0,
                     "live_calls": 0,
@@ -2078,6 +2260,7 @@ async def sales_dashboard(
     # when the same email is captured by both personal_email_sync (rep's own inbox)
     # and gmail_sync (Zippy's shared inbox, e.g. because a beacon rep was in To/CC).
     seen_email_ids: dict[str, set[str]] = {}
+    seen_manual_email_keys: dict[str, set[tuple]] = {}
 
     # Touchpoint breakdown tracking:
     # call_contact_seen[rep_key] = set of contact_ids already called (for first vs 2nd+ detection)
@@ -2108,6 +2291,8 @@ async def sales_dashboard(
                 "connected_calls": 0,
                 "live_calls": 0,
                 "emails": 0,
+                "manual_emails": 0,
+                "instantly_emails": 0,
                 "linkedin_reachouts": 0,
                 "meetings": 0,
                 "total": 0,
@@ -2130,6 +2315,8 @@ async def sales_dashboard(
                         "week_start": week_start.isoformat(),
                         "week_end": (week_start + timedelta(days=6)).isoformat(),
                         "emails": 0,
+                        "manual_emails": 0,
+                        "instantly_emails": 0,
                         "calls": 0,
                         "connected_calls": 0,
                         "live_calls": 0,
@@ -2202,10 +2389,19 @@ async def sales_dashboard(
                     continue
                 if msg_id:
                     rep_seen.add(msg_id)
-                if _should_count_as_email_out(row):
+                email_bucket = _email_out_bucket(row)
+                if email_bucket:
+                    manual_key = _manual_email_dedupe_key(row, rep_key)
+                    if manual_key:
+                        rep_manual_seen = seen_manual_email_keys.setdefault(rep_key, set())
+                        if manual_key in rep_manual_seen:
+                            continue
+                        rep_manual_seen.add(manual_key)
                     activity_bucket["emails"] += 1
+                    activity_bucket[f"{email_bucket}_emails"] = int(activity_bucket.get(f"{email_bucket}_emails", 0)) + 1
                     if week_counts is not None:
                         week_counts["emails"] += 1
+                        week_counts[f"{email_bucket}_emails"] = int(week_counts.get(f"{email_bucket}_emails", 0)) + 1
                     # Breakdown: first email and 3+ emails per contact
                     contact_id_str = str(row.contact_id or "").strip()
                     if contact_id_str:
@@ -2271,6 +2467,8 @@ async def sales_dashboard(
                 "connected_calls": 0,
                 "live_calls": 0,
                 "emails": 0,
+                "manual_emails": 0,
+                "instantly_emails": 0,
                 "linkedin_reachouts": 0,
                 "meetings": 0,
                 "total": 0,
@@ -2293,6 +2491,8 @@ async def sales_dashboard(
                         "week_start": week_start.isoformat(),
                         "week_end": (week_start + timedelta(days=6)).isoformat(),
                         "emails": 0,
+                        "manual_emails": 0,
+                        "instantly_emails": 0,
                         "calls": 0,
                         "connected_calls": 0,
                         "live_calls": 0,
@@ -2434,6 +2634,8 @@ async def sales_dashboard(
                 "connected_calls": 0,
                 "live_calls": 0,
                 "emails": 0,
+                "manual_emails": 0,
+                "instantly_emails": 0,
                 "linkedin_reachouts": 0,
                 "meetings": 0,
                 "total": 0,
@@ -2519,6 +2721,8 @@ async def sales_dashboard(
                     "connected_calls": 0,
                     "live_calls": 0,
                     "emails": 0,
+                    "manual_emails": 0,
+                    "instantly_emails": 0,
                     "linkedin_reachouts": 0,
                     "meetings": 0,
                     "total": 0,
@@ -2591,6 +2795,8 @@ async def sales_dashboard(
                     "connected_calls": 0,
                     "live_calls": 0,
                     "emails": 0,
+                    "manual_emails": 0,
+                    "instantly_emails": 0,
                     "linkedin_reachouts": 0,
                     "meetings": 0,
                     "total": 0,
@@ -2662,6 +2868,8 @@ async def sales_dashboard(
                     "connected_calls": 0,
                     "live_calls": 0,
                     "emails": 0,
+                    "manual_emails": 0,
+                    "instantly_emails": 0,
                     "linkedin_reachouts": 0,
                     "meetings": 0,
                     "total": 0,
@@ -2700,7 +2908,8 @@ async def sales_dashboard(
                 "user_id": rep_user_id,
                 "rep_name": rep_name,
                 "calls": 0, "connected_calls": 0, "live_calls": 0,
-                "emails": 0, "linkedin_reachouts": 0, "meetings": 0,
+                "emails": 0, "manual_emails": 0, "instantly_emails": 0,
+                "linkedin_reachouts": 0, "meetings": 0,
                 "total": 0, "active_deals": 0, "pipeline_amount": 0.0,
             },
         )
@@ -2895,6 +3104,8 @@ async def sales_dashboard(
             connected_calls=int(bucket["connected_calls"]),
             live_calls=int(bucket["live_calls"]),
             emails=int(bucket["emails"]),
+            manual_emails=int(bucket.get("manual_emails", 0)),
+            instantly_emails=int(bucket.get("instantly_emails", 0)),
             email_opens=int(bucket.get("email_opens", 0)),
             email_replies=int(bucket.get("email_replies", 0)),
             linkedin_reachouts=int(bucket["linkedin_reachouts"]),
@@ -2950,6 +3161,8 @@ async def sales_dashboard(
                     connected_calls=0,
                     live_calls=0,
                     emails=0,
+                    manual_emails=0,
+                    instantly_emails=0,
                     linkedin_reachouts=0,
                     meetings=0,
                     total=0,
@@ -2964,6 +3177,8 @@ async def sales_dashboard(
                     week_start=str(week["week_start"]),
                     week_end=str(week["week_end"]),
                     emails=int(week["emails"]),
+                    manual_emails=int(week.get("manual_emails", 0)),
+                    instantly_emails=int(week.get("instantly_emails", 0)),
                     calls=int(week["calls"]),
                     connected_calls=int(week["connected_calls"]),
                     live_calls=int(week["live_calls"]),
@@ -2984,6 +3199,8 @@ async def sales_dashboard(
                     connected_calls=0,
                     live_calls=0,
                     emails=0,
+                    manual_emails=0,
+                    instantly_emails=0,
                     linkedin_reachouts=0,
                     meetings=0,
                     total=0,

@@ -32,12 +32,16 @@ DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 WEEKDAY_TO_KEY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 US_POD_REPS = [
+    {"name": "Awinja", "email": "awinja@beacon.li", "aliases": ["awinja"]},
+    {"name": "Jacob", "email": "jacob@beacon.li", "aliases": ["jacob"]},
     {"name": "Pravalika Jamalpur", "email": "pravalika@beacon.li", "aliases": ["pravalika"]},
     {"name": "Mahesh Pothula", "email": "mahesh@beacon.li", "aliases": ["mahesh"]},
     {"name": "Pulkit Anand", "email": "pulkit@beacon.li", "aliases": ["pulkit"]},
 ]
 
 US_POD_REPORT_RECIPIENTS = [
+    "awinja@beacon.li",
+    "jacob@beacon.li",
     "sehar@beacon.li",
     "rakesh@beacon.li",
     "shahruk@beacon.li",

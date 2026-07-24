@@ -125,4 +125,7 @@ def build_default_analytics_settings() -> dict:
         "conversion_transitions": DEFAULT_CONVERSION_TRANSITIONS,
         "workspace_timezone": "UTC",
         "email_reply_lookback_days": 30,
+        "sales_analytics_user_ids": [],
+        "sales_analytics_default_emails": ["jacob@beacon.li"],
+        "sales_analytics_roster_configured": False,
     }

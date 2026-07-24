@@ -38,6 +38,7 @@ import type {
   GmailSyncSettings,
   ReportSenderSettings,
   SalesReportSettings,
+  SalesAnalyticsRosterSettings,
   OutreachContentSettings,
   OutreachTemplateStep,
   PreMeetingAutomationSettings,
@@ -124,6 +125,8 @@ export default function SettingsPage() {
   const [allUsers, setAllUsers] = useState<Array<{ id: string; name?: string | null; email?: string | null; role: string }>>([]);
   const [prospectViewAll, setProspectViewAll] = useState<string[]>([]);
   const [savingProspectVis, setSavingProspectVis] = useState(false);
+  const [salesAnalyticsRoster, setSalesAnalyticsRoster] = useState<SalesAnalyticsRosterSettings | null>(null);
+  const [savingSalesAnalyticsRoster, setSavingSalesAnalyticsRoster] = useState(false);
   const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
@@ -1086,19 +1089,21 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
-  // Lazy-load users + prospect-visibility grants when the Permissions tab opens.
+  // Lazy-load users + person-level settings when the Permissions tab opens.
   useEffect(() => {
-    if (activeTab === "permissions" && isAdmin && allUsers.length === 0) {
+    if (activeTab === "permissions" && isAdmin && (allUsers.length === 0 || !salesAnalyticsRoster)) {
       Promise.all([
         authApi.listUsers().catch(() => []),
         settingsApi.getProspectVisibility().catch(() => ({ user_ids: [] as string[] })),
-      ]).then(([users, vis]) => {
+        settingsApi.getSalesAnalyticsRoster().catch(() => ({ user_ids: [] as string[], default_emails: [] as string[] })),
+      ]).then(([users, vis, roster]) => {
         setAllUsers(users as Array<{ id: string; name?: string | null; email?: string | null; role: string }>);
         setProspectViewAll(vis.user_ids || []);
+        setSalesAnalyticsRoster(roster);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, isAdmin]);
+  }, [activeTab, isAdmin, salesAnalyticsRoster]);
 
   const toggleProspectViewAll = async (userId: string, checked: boolean) => {
     const prev = prospectViewAll;
@@ -1114,6 +1119,26 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to update prospect visibility");
     } finally {
       setSavingProspectVis(false);
+    }
+  };
+
+  const toggleSalesAnalyticsRoster = async (userId: string, checked: boolean) => {
+    const prev = salesAnalyticsRoster ?? { user_ids: [], default_emails: [] };
+    const nextIds = checked
+      ? Array.from(new Set([...(prev.user_ids || []), userId]))
+      : (prev.user_ids || []).filter((id) => id !== userId);
+    setSalesAnalyticsRoster({ ...prev, user_ids: nextIds });
+    setSavingSalesAnalyticsRoster(true);
+    setError(null);
+    try {
+      const res = await settingsApi.updateSalesAnalyticsRoster(nextIds);
+      setSalesAnalyticsRoster(res);
+      setMessage("Sales Analytics roster saved");
+    } catch (err) {
+      setSalesAnalyticsRoster(prev);
+      setError(err instanceof Error ? err.message : "Failed to update Sales Analytics roster");
+    } finally {
+      setSavingSalesAnalyticsRoster(false);
     }
   };
 
@@ -1939,6 +1964,44 @@ export default function SettingsPage() {
                   })}
                   {allUsers.filter((u) => u.role !== "admin").length === 0 && (
                     <p className="crm-muted" style={{ fontSize: 13 }}>No non-admin teammates to configure yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>Sales Analytics roster</h3>
+                  <p className="crm-muted" style={{ maxWidth: 760, fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
+                    AEs and SDRs appear automatically. Turn someone on here when they should also show in Sales Analytics activity rows and drilldowns.
+                  </p>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {allUsers.map((u) => {
+                    const role = (u.role || "").toLowerCase();
+                    const autoIncluded = role === "ae" || role === "sdr";
+                    const explicitlyIncluded = Boolean(salesAnalyticsRoster?.user_ids?.includes(u.id));
+                    const on = autoIncluded || explicitlyIncluded;
+                    return (
+                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "11px 14px", background: "#fbfdff" }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>{u.name || u.email || u.id}</div>
+                          <div className="crm-muted" style={{ fontSize: 12 }}>
+                            {(u.role || "").toUpperCase()} · {autoIncluded ? "Included by role" : on ? "Included in Sales Analytics" : "Hidden from Sales Analytics"}
+                          </div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={autoIncluded || savingSalesAnalyticsRoster || !salesAnalyticsRoster}
+                          onChange={(event) => void toggleSalesAnalyticsRoster(u.id, event.target.checked)}
+                        />
+                      </label>
+                    );
+                  })}
+                  {allUsers.length === 0 && (
+                    <p className="crm-muted" style={{ fontSize: 13 }}>No teammates to configure yet.</p>
                   )}
                 </div>
               </div>
