@@ -2985,57 +2985,69 @@ async def sales_dashboard(
             if cmb.assigned_to_id:
                 call_meeting_booked_by_uid[cmb.assigned_to_id] = cmb.cnt
 
-    # ── upcoming scheduled meetings per rep, bucketed forward from today ─────
+    # ── Output buckets: Demo Scheduled deals, bucketed by Meeting.scheduled_at ─
+    # Source: deals in "demo_scheduled" stage joined to their meeting records.
+    # Uses Meeting.scheduled_at (the actual meeting date) not close_date_est.
+    # Each deal is attributed to both AE and SDR. Deduped by deal_id per rep.
     meetings_next_1w_by_uid: dict[UUID, int] = {}
     meetings_next_2w_by_uid: dict[UUID, int] = {}
     meetings_beyond_2w_by_uid: dict[UUID, int] = {}
+    _today_dt = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    _week1_dt = _today_dt + timedelta(days=7)
+    _week2_dt = _today_dt + timedelta(days=14)
     if rep_user_ids:
-        _today_dt = datetime.now(timezone.utc).replace(tzinfo=None)
-        _today_dt = _today_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        _week1_dt = _today_dt + timedelta(days=7)
-        _week2_dt = _today_dt + timedelta(days=14)
-        upcoming_mtg_rows = (await session.execute(
-            select(Meeting.owner_user_id, Meeting.scheduled_at)
+        demo_mtg_rows = (await session.execute(
+            select(Deal.id, Deal.assigned_to_id, Deal.sdr_id, Meeting.scheduled_at)
+            .join(Meeting, Meeting.deal_id == Deal.id)
             .where(
-                Meeting.owner_user_id.in_(list(rep_user_ids)),
-                Meeting.status == "scheduled",
-                Meeting.scheduled_at >= _today_dt,
+                Deal.stage == "demo_scheduled",
+                Meeting.scheduled_at.is_not(None),
+                or_(
+                    Deal.assigned_to_id.in_(list(rep_user_ids)),
+                    Deal.sdr_id.in_(list(rep_user_ids)),
+                ),
             )
         )).all()
-        for um in upcoming_mtg_rows:
-            uid = um.owner_user_id
-            if uid is None:
-                continue
-            sat = um.scheduled_at
-            if sat is None:
-                continue
-            if sat < _week1_dt:
-                meetings_next_1w_by_uid[uid] = meetings_next_1w_by_uid.get(uid, 0) + 1
-            elif sat < _week2_dt:
-                meetings_next_2w_by_uid[uid] = meetings_next_2w_by_uid.get(uid, 0) + 1
-            else:
-                meetings_beyond_2w_by_uid[uid] = meetings_beyond_2w_by_uid.get(uid, 0) + 1
+        # Deduplicate: for each (rep, deal) pair count only once
+        seen_demo_buckets: set[tuple] = set()
+        for row in demo_mtg_rows:
+            uids_for_row: set[UUID] = set()
+            if row.assigned_to_id and row.assigned_to_id in rep_user_ids:
+                uids_for_row.add(row.assigned_to_id)
+            if row.sdr_id and row.sdr_id in rep_user_ids:
+                uids_for_row.add(row.sdr_id)
+            sat = row.scheduled_at
+            for uid in uids_for_row:
+                key = (uid, row.id)
+                if key in seen_demo_buckets:
+                    continue
+                seen_demo_buckets.add(key)
+                if sat < _week1_dt:
+                    meetings_next_1w_by_uid[uid] = meetings_next_1w_by_uid.get(uid, 0) + 1
+                elif sat < _week2_dt:
+                    meetings_next_2w_by_uid[uid] = meetings_next_2w_by_uid.get(uid, 0) + 1
+                else:
+                    meetings_beyond_2w_by_uid[uid] = meetings_beyond_2w_by_uid.get(uid, 0) + 1
 
-    # ── Direct SQL: scheduled meetings with VP/SVP/Head/Chief within window ──
+    # ── Direct SQL: demo_scheduled deals where meeting_booked_with = VP/SVP/Chief
     _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
     direct_sql_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
-        _direct_sql_end = _today_dt + timedelta(days=window_days)
         direct_sql_rows = (await session.execute(
-            select(Meeting.owner_user_id, func.count().label("cnt"))
-            .join(Deal, Meeting.deal_id == Deal.id)
+            select(Deal.assigned_to_id, Deal.sdr_id)
             .where(
-                Meeting.owner_user_id.in_(list(rep_user_ids)),
-                Meeting.status == "scheduled",
-                Meeting.scheduled_at >= _today_dt,
-                Meeting.scheduled_at <= _direct_sql_end,
+                Deal.stage == "demo_scheduled",
                 Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
+                or_(
+                    Deal.assigned_to_id.in_(list(rep_user_ids)),
+                    Deal.sdr_id.in_(list(rep_user_ids)),
+                ),
             )
-            .group_by(Meeting.owner_user_id)
         )).all()
         for ds in direct_sql_rows:
-            if ds.owner_user_id:
-                direct_sql_by_uid[ds.owner_user_id] = ds.cnt
+            for uid in [ds.assigned_to_id, ds.sdr_id]:
+                if uid and uid in rep_user_ids:
+                    direct_sql_by_uid[uid] = direct_sql_by_uid.get(uid, 0) + 1
 
     # ── Prospect count & mobile coverage per rep ─────────────────────────────
     # Count contacts owned via sdr_id (for SDR reps) — primary attribution.
@@ -3081,12 +3093,13 @@ async def sales_dashboard(
     demos_rescheduled_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
         dr_rows = (await session.execute(
-            select(Activity.created_by_id, func.count().label("cnt"))
+            select(Activity.created_by_id, func.count(Activity.deal_id.distinct()).label("cnt"))
             .where(
                 Activity.created_by_id.in_(list(rep_user_ids)),
                 Activity.type == "demo_rescheduled",
                 Activity.created_at >= window_start,
                 Activity.created_at <= window_end,
+                Activity.deal_id.is_not(None),
             )
             .group_by(Activity.created_by_id)
         )).all()
@@ -3646,4 +3659,181 @@ async def sales_dashboard(
         ),
     )
     _dashboard_cache_set(cache_key, result)
+    return result
+
+
+# ── Meeting-bucket drill-down ────────────────────────────────────────────────
+
+class MeetingBucketDealRow(BaseModel):
+    deal_id: str
+    deal_name: str
+    ae_name: str
+    sdr_name: str
+    date_of_meeting: Optional[str] = None
+    meeting_booked_with: Optional[str] = None
+
+
+class MeetingBucketDealsResponse(BaseModel):
+    deals: list[MeetingBucketDealRow]
+
+
+@router.get("/meeting-bucket-deals")
+async def meeting_bucket_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    bucket: Annotated[
+        Literal["next_1w", "next_2w", "beyond_2w", "direct_sql", "demo_rescheduled"],
+        Query(),
+    ],
+    user_id: Annotated[Optional[UUID], Query()] = None,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
+    geography: Annotated[Optional[str], Query()] = None,
+) -> MeetingBucketDealsResponse:
+    """Return the individual deals behind each Meetings Booked StatPill.
+    Source: deals in demo_scheduled stage joined to Meeting.scheduled_at."""
+    today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    week1_dt = today_dt + timedelta(days=7)
+    week2_dt = today_dt + timedelta(days=14)
+
+    AEUser = aliased(User)
+    SDRUser = aliased(User)
+
+    deals: list[MeetingBucketDealRow] = []
+
+    if bucket in ("next_1w", "next_2w", "beyond_2w", "direct_sql"):
+        _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
+        stmt = (
+            select(
+                Deal.id.label("deal_id"),
+                Deal.name.label("deal_name"),
+                Deal.meeting_booked_with.label("meeting_booked_with"),
+                Meeting.scheduled_at.label("scheduled_at"),
+                AEUser.name.label("ae_name"),
+                SDRUser.name.label("sdr_name"),
+            )
+            .join(Meeting, Meeting.deal_id == Deal.id)
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+            .where(Deal.stage == "demo_scheduled", Meeting.scheduled_at.is_not(None))
+        )
+        if user_id is not None:
+            stmt = stmt.where(or_(Deal.assigned_to_id == user_id, Deal.sdr_id == user_id))
+        if bucket == "next_1w":
+            stmt = stmt.where(Meeting.scheduled_at < week1_dt)
+        elif bucket == "next_2w":
+            stmt = stmt.where(Meeting.scheduled_at >= week1_dt, Meeting.scheduled_at < week2_dt)
+        elif bucket == "beyond_2w":
+            stmt = stmt.where(Meeting.scheduled_at >= week2_dt)
+        elif bucket == "direct_sql":
+            stmt = stmt.where(Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)))
+
+        # Deduplicate by deal_id (a deal may have multiple meetings)
+        seen: set[str] = set()
+        rows = (await session.execute(stmt)).all()
+        for row in rows:
+            did = str(row.deal_id)
+            if did in seen:
+                continue
+            seen.add(did)
+            deals.append(MeetingBucketDealRow(
+                deal_id=did,
+                deal_name=str(row.deal_name or ""),
+                ae_name=str(row.ae_name or "Unassigned"),
+                sdr_name=str(row.sdr_name or ""),
+                date_of_meeting=row.scheduled_at.date().isoformat() if row.scheduled_at else None,
+                meeting_booked_with=row.meeting_booked_with if bucket == "direct_sql" else None,
+            ))
+
+    elif bucket == "demo_rescheduled":
+        seen_deal_ids: set[str] = set()
+        stmt = (
+            select(
+                Deal.id.label("deal_id"),
+                Deal.name.label("deal_name"),
+                Deal.close_date_est.label("close_date_est"),
+                AEUser.name.label("ae_name"),
+                Company.sdr_name.label("sdr_name"),
+            )
+            .select_from(Activity)
+            .join(Deal, Activity.deal_id == Deal.id)
+            .outerjoin(Company, Deal.company_id == Company.id)
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .where(
+                Activity.type == "demo_rescheduled",
+                Activity.created_at >= window_start,
+                Activity.created_at <= today_dt,
+            )
+        )
+        if user_id is not None:
+            stmt = stmt.where(Activity.created_by_id == user_id)
+
+        rows = (await session.execute(stmt)).all()
+        for row in rows:
+            did = str(row.deal_id)
+            if did in seen_deal_ids:
+                continue
+            seen_deal_ids.add(did)
+            deals.append(MeetingBucketDealRow(
+                deal_id=did,
+                deal_name=str(row.deal_name or ""),
+                ae_name=str(row.ae_name or "Unassigned"),
+                sdr_name=str(row.sdr_name or ""),
+                date_of_meeting=row.close_date_est.isoformat() if row.close_date_est else None,
+                meeting_booked_with=None,
+            ))
+
+    return MeetingBucketDealsResponse(deals=deals)
+
+
+# ── Pipeline Deals drilldown ──────────────────────────────────────────────────
+
+
+class PipelineDealItem(BaseModel):
+    deal_id: str
+    deal_name: str
+    stage: str
+    stage_label: str
+    deal_value: float
+    ae_name: Optional[str]
+
+
+@router.get("/pipeline-deals", response_model=list[PipelineDealItem])
+async def pipeline_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    user_id: Annotated[Optional[UUID], Query()] = None,
+) -> list[PipelineDealItem]:
+    """Return active-stage deals for a rep (or all reps) for the Pipeline drilldown."""
+    stage_settings = await get_configured_deal_stages(session)
+    active_stage_ids = {s["id"] for s in stage_settings if s.get("group") != "closed"}
+    stage_label_map = {s["id"]: s["label"] for s in stage_settings}
+
+    AEUser = aliased(User)
+    stmt = (
+        select(
+            Deal.id,
+            Deal.name,
+            Deal.stage,
+            Deal.value,
+            AEUser.name.label("ae_name"),
+        )
+        .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+        .where(Deal.stage.in_(list(active_stage_ids)))
+    )
+    if user_id is not None:
+        stmt = stmt.where(Deal.assigned_to_id == user_id)
+
+    rows = (await session.execute(stmt)).all()
+    result = [
+        PipelineDealItem(
+            deal_id=str(row.id),
+            deal_name=str(row.name or "—"),
+            stage=str(row.stage or ""),
+            stage_label=stage_label_map.get(str(row.stage or ""), str(row.stage or "")),
+            deal_value=float(row.value or 0),
+            ae_name=row.ae_name,
+        )
+        for row in rows
+    ]
+    result.sort(key=lambda r: -r.deal_value)
     return result

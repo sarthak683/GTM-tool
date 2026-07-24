@@ -2238,14 +2238,22 @@ export function OutreachAnalysisTab() {
   );
 }
 
-export const PERFORMANCE_TABS = [
-  { key: "scorecard",          label: "Scorecard",         icon: Target },
-  { key: "funnel",             label: "Funnel",            icon: Layers },
-  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle },
-  { key: "forecast",           label: "Forecast",          icon: TrendingUp },
-  { key: "targets",            label: "Targets",           icon: Gauge },
-  { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3 },
+// Visibility flags — set to false to hide a tab, true to show
+const SHOW_TAB_SCORECARD   = false;
+const SHOW_TAB_FUNNEL      = false;
+const SHOW_TAB_FORECAST    = false;
+const SHOW_TAB_TARGETS     = false;
+
+const _ALL_PERFORMANCE_TABS = [
+  { key: "scorecard",          label: "Scorecard",         icon: Target,        show: SHOW_TAB_SCORECARD },
+  { key: "funnel",             label: "Funnel",            icon: Layers,        show: SHOW_TAB_FUNNEL },
+  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle, show: true },
+  { key: "forecast",           label: "Forecast",          icon: TrendingUp,    show: SHOW_TAB_FORECAST },
+  { key: "targets",            label: "Targets",           icon: Gauge,         show: SHOW_TAB_TARGETS },
+  { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3,     show: true },
 ] as const;
+
+export const PERFORMANCE_TABS = _ALL_PERFORMANCE_TABS.filter((t) => t.show) as unknown as typeof _ALL_PERFORMANCE_TABS;
 
 export type PerformanceTabKey = (typeof PERFORMANCE_TABS)[number]["key"];
 

@@ -1,10 +1,17 @@
 import "./sales-analytics-refresh.css";
+
+// ── Visibility flags — set to false to hide, true to show ────────────────────
+const SHOW_DEAL_VELOCITY    = false;
+const SHOW_FORECAST_VIEW    = false;
+const SHOW_MONTHLY_FUNNEL   = false;
+// ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
   CartesianGrid,
+  Label,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -46,6 +53,8 @@ import {
   type SalesFunnelStep,
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
+  type MeetingBucketDeal,
+  type PipelineDealRow,
   type SalesRepActivityRow,
   type SalesRepWeeklyActivityRow,
   type SalesStageBucket,
@@ -302,6 +311,123 @@ function MilestoneDealsModal({
   );
 }
 
+function PipelineDealModal({
+  repName,
+  deals,
+  loading,
+  onClose,
+}: {
+  repName: string;
+  deals: PipelineDealRow[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${repName} pipeline`}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 120,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(820px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#4561d5", textTransform: "uppercase" }}>Pipeline</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
+              {repName}
+              {!loading && deals.length > 0 && (
+                <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>
+                  · {deals.length} deal{deals.length === 1 ? "" : "s"} · {formatCurrency(total)}
+                </span>
+              )}
+            </h3>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {!loading && deals.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadCsv(
+                  `${repName.toLowerCase().replace(/\s+/g, "-")}-pipeline`,
+                  ["Deal Name", "Stage", "Amount"],
+                  deals.map((d) => [d.deal_name, d.stage_label, d.deal_value]),
+                )}
+                style={exportBtnStyle}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {loading ? (
+            <div style={{ minHeight: 200, display: "grid", placeItems: "center", color: "#62748a" }}>Loading…</div>
+          ) : deals.length === 0 ? (
+            <div style={{ minHeight: 200, display: "grid", placeItems: "center", color: "#6f8095", padding: 24, textAlign: "center" }}>No active deals in pipeline.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                  <th style={thSty}>Deal Name</th>
+                  <th style={thSty}>Stage in Pipeline</th>
+                  <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deals.map((d, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                    <td style={{ ...tdSty, fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
+                    <td style={tdSty}>
+                      <span style={{ display: "inline-flex", padding: "3px 9px", borderRadius: 999, background: "#eef4ff", color: "#3555c4", fontSize: 11, fontWeight: 800 }}>
+                        {d.stage_label || d.stage || "—"}
+                      </span>
+                    </td>
+                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: d.deal_value > 0 ? "#22c55e" : "#aab4c2", whiteSpace: "nowrap" }}>
+                      {d.deal_value > 0 ? formatCurrency(d.deal_value) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {total > 0 && (
+                <tfoot>
+                  <tr style={{ background: "#fafbfd" }}>
+                    <td style={{ ...tdSty, fontWeight: 800, color: "#1d2b3a" }}>Total</td>
+                    <td style={tdSty} />
+                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: "#22c55e" }}>{formatCurrency(total)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HighlightDealsModal({
   title,
   subtitle,
@@ -464,6 +590,136 @@ function HighlightDealsModal({
   );
 }
 
+function MeetingBucketModal({
+  title,
+  bucket,
+  deals,
+  loading,
+  onClose,
+}: {
+  title: string;
+  bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled";
+  deals: MeetingBucketDeal[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const showMeetingBookedWith = bucket === "direct_sql";
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 120,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(860px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: "18px 22px", borderBottom: "1px solid #ebeff5",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7556cb", textTransform: "uppercase" }}>Meetings Booked — Drilldown</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
+              border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
+              cursor: "pointer", display: "grid", placeItems: "center",
+            }}
+          >×</button>
+        </div>
+        {/* Sub-header */}
+        <div style={{ padding: "12px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fafbfd" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#203244" }}>
+            {loading ? "Loading..." : `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
+          </span>
+          {!loading && deals.length > 0 && (
+            <button
+              type="button"
+              onClick={() => downloadCsv(
+                `meetings-${bucket}`,
+                showMeetingBookedWith
+                  ? ["Deal", "AE", "SDR", "Date of Meeting", "Meeting Booked With"]
+                  : ["Deal", "AE", "SDR", "Date of Meeting"],
+                deals.map((d) =>
+                  showMeetingBookedWith
+                    ? [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? "", d.meeting_booked_with ?? ""]
+                    : [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? ""],
+                ),
+              )}
+              style={exportBtnStyle}
+            >
+              <Download size={13} /> Export CSV
+            </button>
+          )}
+        </div>
+        {/* Body */}
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          {loading ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095" }}>
+              <LoaderCircle size={20} className="spin" />
+              <span style={{ fontSize: 12 }}>Loading deals...</span>
+            </div>
+          ) : deals.length === 0 ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095", padding: 24, textAlign: "center" }}>
+              <strong style={{ color: "#203244" }}>No deals found.</strong>
+              <span>No meetings match this bucket for the selected rep and window.</span>
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                  <th style={thSty}>Deal</th>
+                  <th style={thSty}>AE</th>
+                  <th style={thSty}>SDR</th>
+                  <th style={thSty}>Date of Meeting</th>
+                  {showMeetingBookedWith && <th style={thSty}>Meeting Booked With</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {deals.map((deal, idx) => (
+                  <tr key={`${deal.deal_id}-${idx}`} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                    <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.deal_name || "—"}</span></td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.ae_name || "—"}</td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.sdr_name || "—"}</td>
+                    <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>{fmtMilestoneDate(deal.date_of_meeting)}</td>
+                    {showMeetingBookedWith && <td style={{ ...tdSty, color: "#7c3aed", fontWeight: 700 }}>{deal.meeting_booked_with || "—"}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Rows fetched per drilldown page. The backend caps limit at 100; 50 keeps each
 // "Load more" request light while paging through large sets (e.g. 400 emails).
 const DRILLDOWN_PAGE_SIZE = 50;
@@ -488,12 +744,22 @@ function ActivityDrilldownModal({
   onOpenDeal?: (dealId: string) => void;
 }) {
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const [filterConnected, setFilterConnected] = useState(false);
+
+  const isCallsModal = title.toLowerCase().includes("call");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const displayedRows = (data?.rows ?? []).filter((row) => {
+    if (filterConnected && isCallsModal && row.call_outcome) {
+      return row.call_outcome.toLowerCase() !== "attempted";
+    }
+    return true;
+  });
 
   return (
     <div
@@ -520,7 +786,24 @@ function ActivityDrilldownModal({
         <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#4561d5", textTransform: "uppercase" }}>Source validation</p>
-            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+              <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+              {isCallsModal && (
+                <button
+                  type="button"
+                  onClick={() => setFilterConnected((v) => !v)}
+                  style={{
+                    padding: "4px 12px", borderRadius: 8,
+                    background: filterConnected ? "#4561d5" : "#f4f6fa",
+                    color: filterConnected ? "#fff" : "#5d6f84",
+                    border: `1px solid ${filterConnected ? "#4561d5" : "#e0e6ef"}`,
+                    fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                  }}
+                >
+                  {filterConnected ? "Connected only ✓" : "Filter"}
+                </button>
+              )}
+            </div>
             <p style={{ margin: "6px 0 0", fontSize: 13, color: "#62748a", lineHeight: 1.5 }}>
               Showing the latest source rows for this metric. The dashboard count remains the source of truth; this view is sampled and paginated for fast validation.
             </p>
@@ -563,7 +846,7 @@ function ActivityDrilldownModal({
           ) : (
             <>
               <div style={{ padding: "12px 22px", background: "#fafbfd", borderBottom: "1px solid #ebeff5", fontSize: 12, color: "#62748a", fontWeight: 700 }}>
-                Showing {data.rows.length} row{data.rows.length === 1 ? "" : "s"}{data.has_more ? " · more available below" : ""}
+                Showing {displayedRows.length} row{displayedRows.length === 1 ? "" : "s"}{data.has_more ? " · more available below" : ""}{filterConnected && isCallsModal ? " · connected only" : ""}
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
@@ -575,7 +858,7 @@ function ActivityDrilldownModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map((row) => {
+                  {displayedRows.map((row) => {
                     const canOpenDeal = Boolean(row.deal_id && onOpenDeal);
                     return (
                     <tr
@@ -1168,14 +1451,22 @@ function CurrencyBarTooltip({ active, payload, label }: TooltipProps<number, str
   );
 }
 
-function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
+function RepWeeklyActivityFocus({
+  rows,
+  onOpenBucket,
+  onOpenPipeline,
+}: {
+  rows: SalesRepWeeklyActivityRow[];
+  onOpenBucket?: (bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled", title: string, userId: string | null | undefined) => void;
+  onOpenPipeline?: (userId: string | null | undefined, repName: string) => void;
+}) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-      const totalDelta = (b.totals.total ?? 0) - (a.totals.total ?? 0);
-      if (totalDelta !== 0) return totalDelta;
       const meetingsDelta = (b.totals.meetings ?? 0) - (a.totals.meetings ?? 0);
       if (meetingsDelta !== 0) return meetingsDelta;
-      return (b.pipeline_amount ?? 0) - (a.pipeline_amount ?? 0);
+      const aRatio = (a.totals.total ?? 0) > 0 ? (a.totals.meetings ?? 0) / (a.totals.total ?? 0) : 0;
+      const bRatio = (b.totals.total ?? 0) > 0 ? (b.totals.meetings ?? 0) / (b.totals.total ?? 0) : 0;
+      return bRatio - aRatio;
     }),
     [rows],
   );
@@ -1292,7 +1583,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Rep</p>
-                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total weekly touches in the current window, so the strongest rep is always the default first view.</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by meetings scheduled (output). Ties broken by output-to-input ratio.</p>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {sortedRows.map((row, index) => {
@@ -1330,7 +1621,13 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
               </div>
             </div>
 
-            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 14, display: "grid", gap: 10 }}>
+            <div
+              style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 14, display: "grid", gap: 10, cursor: selectedRow.pipeline_amount > 0 ? "pointer" : "default", transition: "box-shadow 0.15s ease" }}
+              onClick={() => selectedRow.pipeline_amount > 0 && onOpenPipeline && onOpenPipeline(selectedRow.user_id, selectedRow.rep_name)}
+              onMouseEnter={(e) => { if (selectedRow.pipeline_amount > 0) e.currentTarget.style.boxShadow = "0 4px 18px rgba(23,43,77,0.10)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
+              title={selectedRow.pipeline_amount > 0 ? "Click to view pipeline deals" : undefined}
+            >
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Pipeline</p>
@@ -1354,8 +1651,12 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
                   <CartesianGrid vertical={false} stroke="#edf2f8" />
-                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
+                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
+                    <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
+                  </XAxis>
+                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
+                    <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
+                  </YAxis>
                   <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
                   <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                   {OUTREACH_MIX_KEYS.map((key) => {
@@ -1387,8 +1688,12 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barGap={6}>
                     <CartesianGrid vertical={false} stroke="#edf2f8" />
-                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
+                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
+                      <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
+                    </XAxis>
+                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
+                      <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
+                    </YAxis>
                     <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
                     <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                     {CALL_QUALITY_KEYS.map((key) => {
@@ -1433,6 +1738,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             tone="#fff8ec"
             text="#c07a1a"
             sub={<span>scheduled</span>}
+            onClick={onOpenBucket ? () => onOpenBucket("next_1w", "Next 1 Week", selectedRow.user_id) : undefined}
           />
           <StatPill
             label="Next 1–2 Weeks"
@@ -1440,6 +1746,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             tone="#edf4ff"
             text="#3856c8"
             sub={<span>scheduled</span>}
+            onClick={onOpenBucket ? () => onOpenBucket("next_2w", "Next 1–2 Weeks", selectedRow.user_id) : undefined}
           />
           <StatPill
             label=">2 Weeks"
@@ -1447,6 +1754,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             tone="#eefbf2"
             text="#1e8a5e"
             sub={<span>scheduled</span>}
+            onClick={onOpenBucket ? () => onOpenBucket("beyond_2w", ">2 Weeks", selectedRow.user_id) : undefined}
           />
           <StatPill
             label="Direct SQL"
@@ -1454,6 +1762,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             tone="#f3eaff"
             text="#7c3aed"
             sub={<span>VP / SVP / Chief</span>}
+            onClick={onOpenBucket ? () => onOpenBucket("direct_sql", "Direct SQL", selectedRow.user_id) : undefined}
           />
           <StatPill
             label="Demo Rescheduled"
@@ -1461,6 +1770,7 @@ function RepWeeklyActivityFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] })
             tone="#fff2f2"
             text="#c0392b"
             sub={<span>date changed</span>}
+            onClick={onOpenBucket ? () => onOpenBucket("demo_rescheduled", "Demo Rescheduled", selectedRow.user_id) : undefined}
           />
         </div>
       </div>
@@ -1971,6 +2281,12 @@ export default function SalesAnalytics() {
   const [creatingHighlightTasks, setCreatingHighlightTasks] = useState(false);
   const [highlightTaskMessage, setHighlightTaskMessage] = useState("");
   const [createdHighlightTaskKeys, setCreatedHighlightTaskKeys] = useState<Set<string>>(new Set());
+  const [meetingBucketModal, setMeetingBucketModal] = useState<{ bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled"; title: string; userId: string | null | undefined } | null>(null);
+  const [meetingBucketDeals, setMeetingBucketDeals] = useState<MeetingBucketDeal[]>([]);
+  const [meetingBucketLoading, setMeetingBucketLoading] = useState(false);
+  const [pipelineDealModal, setPipelineDealModal] = useState<{ userId: string | null | undefined; repName: string } | null>(null);
+  const [pipelineDealDeals, setPipelineDealDeals] = useState<PipelineDealRow[]>([]);
+  const [pipelineDealLoading, setPipelineDealLoading] = useState(false);
 
   // When a custom date range is set, window buttons are ignored
   const usingCustomRange = !!(fromDate && toDate);
@@ -2097,6 +2413,32 @@ export default function SalesAnalytics() {
       .then(setActivityDrilldown)
       .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load source rows"))
       .finally(() => setActivityDrilldownLoading(false));
+  };
+
+  const handleOpenPipelineDeals = (userId: string | null | undefined, repName: string) => {
+    setPipelineDealModal({ userId, repName });
+    setPipelineDealDeals([]);
+    setPipelineDealLoading(true);
+    analyticsApi
+      .pipelineDeals(userId ?? undefined)
+      .then((rows) => setPipelineDealDeals(rows))
+      .catch(() => setPipelineDealDeals([]))
+      .finally(() => setPipelineDealLoading(false));
+  };
+
+  const handleOpenMeetingBucket = (
+    bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled",
+    title: string,
+    userId: string | null | undefined,
+  ) => {
+    setMeetingBucketModal({ bucket, title, userId });
+    setMeetingBucketDeals([]);
+    setMeetingBucketLoading(true);
+    analyticsApi
+      .meetingBucketDeals(bucket, userId, windowDays, geographyFilter[0])
+      .then((r) => setMeetingBucketDeals(r.deals))
+      .catch(() => setMeetingBucketDeals([]))
+      .finally(() => setMeetingBucketLoading(false));
   };
 
   // Fetch the next page and append, so reps can page through all rows (e.g. all
@@ -2638,17 +2980,17 @@ export default function SalesAnalytics() {
             title="Rep Activity"
             subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
           >
-            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} />
+            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} onOpenBucket={handleOpenMeetingBucket} onOpenPipeline={handleOpenPipelineDeals} />
           </SectionCard>
 
-          <SectionCard
+          {SHOW_DEAL_VELOCITY && <SectionCard
             title="Deal Velocity / Aging"
             subtitle="Average time each stage holds deals, plus how many are already stale enough to deserve a pipeline review."
           >
             <VelocityView rows={data.velocity_by_stage} onOpenStalledDeals={handleOpenStalledDeals} />
-          </SectionCard>
+          </SectionCard>}
 
-           <SectionCard
+          {SHOW_FORECAST_VIEW && <SectionCard
             title="Forecast View"
             subtitle="Raw versus weighted pipeline by expected close date. Switch between weekly and monthly buckets, or set a custom date range below to scope the chart."
           >
@@ -2722,14 +3064,14 @@ export default function SalesAnalytics() {
             ) : (
               <ForecastView rows={displayForecastRows} />
             )}
-          </SectionCard>
+          </SectionCard>}
 
-          <SectionCard
+          {SHOW_MONTHLY_FUNNEL && <SectionCard
             title="Monthly Unique Funnel Counts"
             subtitle="Each company is counted once per milestone, based on the first time it reaches Demo Done, POC WIP, POC Done, or Closed Won. Repeats and reschedules do not inflate the count."
           >
             <MonthlyUniqueFunnelView rows={data.monthly_unique_funnel} />
-          </SectionCard>
+          </SectionCard>}
         </>
       )}
         </>
@@ -2772,6 +3114,23 @@ export default function SalesAnalytics() {
             setActivityDrilldownQuery(null);
             setActivityDrilldownLoadingMore(false);
           }}
+        />
+      )}
+      {meetingBucketModal && (
+        <MeetingBucketModal
+          title={meetingBucketModal.title}
+          bucket={meetingBucketModal.bucket}
+          deals={meetingBucketDeals}
+          loading={meetingBucketLoading}
+          onClose={() => setMeetingBucketModal(null)}
+        />
+      )}
+      {pipelineDealModal && (
+        <PipelineDealModal
+          repName={pipelineDealModal.repName}
+          deals={pipelineDealDeals}
+          loading={pipelineDealLoading}
+          onClose={() => setPipelineDealModal(null)}
         />
       )}
     </div>
