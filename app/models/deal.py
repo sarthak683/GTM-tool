@@ -16,7 +16,7 @@ from app.models.meeting import to_naive_utc
 DEAL_STAGES = [
     "reprospect", "demo_scheduled", "demo_done", "qualified_lead",
     "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop",
-    "closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed",
+    "closed_won", "backlog", "churned", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "closed",
 ]
 
 PROSPECT_STAGES = [

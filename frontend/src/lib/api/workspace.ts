@@ -401,6 +401,8 @@ export type SalesRepActivityRow = {
   // Prospect / contact coverage
   total_prospects?: number;
   total_mobile_numbers?: number;
+  // Demo reschedules within the analytics window
+  demos_rescheduled?: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -573,6 +575,24 @@ export type SalesActivityDrilldown = {
   rows: SalesActivityDrilldownRow[];
 };
 
+export type PipelineDealRow = {
+  deal_id: string;
+  deal_name: string;
+  stage: string;
+  stage_label: string;
+  deal_value: number;
+  ae_name: string | null;
+};
+
+export type MeetingBucketDeal = {
+  deal_id: string;
+  deal_name: string;
+  ae_name: string;
+  sdr_name: string;
+  date_of_meeting: string | null;
+  meeting_booked_with?: string | null;
+};
+
 export const analyticsApi = {
   salesDashboard: (
     windowDays = 90,
@@ -611,6 +631,23 @@ export const analyticsApi = {
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
+  meetingBucketDeals: (
+    bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled",
+    userId?: string | null,
+    windowDays?: number,
+    geography?: string,
+  ) => {
+    const params = new URLSearchParams({ bucket });
+    if (userId) params.set("user_id", userId);
+    if (windowDays != null) params.set("window_days", String(windowDays));
+    if (geography) params.set("geography", geography);
+    return request<{ deals: MeetingBucketDeal[] }>(`/api/v1/analytics/meeting-bucket-deals?${params.toString()}`);
+  },
+  pipelineDeals: (userId?: string | null) => {
+    const params = new URLSearchParams();
+    if (userId) params.set("user_id", userId);
+    return request<PipelineDealRow[]>(`/api/v1/analytics/pipeline-deals?${params.toString()}`);
+  },
 };
 
 // ── Global search ─────────────────────────────────────────────────────────────

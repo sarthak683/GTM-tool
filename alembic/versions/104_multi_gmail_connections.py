@@ -1,16 +1,13 @@
-"""allow multiple Gmail connections per user
+"""allow multiple Gmail connections per user (reverted — kept for alembic history)
 
-Replace the unique constraint on user_id alone with a composite unique on
-(user_id, email_address). This lets each rep connect a second inbox
-(e.g. their @beaconli.com Instantly account) without replacing the first.
-
-The sync task already iterates all active rows -- no changes needed there.
+This migration ran and added a composite unique on (user_id, email_address).
+The feature was subsequently reverted at the application layer; the DB schema
+change is left in place since it is backwards-compatible with single-inbox use.
 
 Revision ID: 104_multi_gmail_connections
-Revises: 103_opportunity_details
+Revises: 103
 Create Date: 2026-07-21
 """
-
 from alembic import op
 
 revision = "104_multi_gmail_connections"
@@ -20,47 +17,71 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Drop the single-column unique constraint that limits one row per user.
-    op.drop_constraint(
-        "uq_user_email_connections_user_id",
-        "user_email_connections",
-        type_="unique",
-    )
-    op.drop_index(
-        "ix_user_email_connections_user_id",
-        table_name="user_email_connections",
-    )
-    op.create_index(
-        "ix_user_email_connections_user_id",
-        "user_email_connections",
-        ["user_id"],
-        unique=False,
-    )
-    op.create_unique_constraint(
-        "uq_user_email_connections_user_email",
-        "user_email_connections",
-        ["user_id", "email_address"],
-    )
+    # Already applied — no-op on re-run (idempotent guard via try/except).
+    try:
+        op.drop_constraint(
+            "uq_user_email_connections_user_id",
+            "user_email_connections",
+            type_="unique",
+        )
+    except Exception:
+        pass
+    try:
+        op.drop_index(
+            "ix_user_email_connections_user_id",
+            table_name="user_email_connections",
+        )
+    except Exception:
+        pass
+    try:
+        op.create_index(
+            "ix_user_email_connections_user_id",
+            "user_email_connections",
+            ["user_id"],
+            unique=False,
+        )
+    except Exception:
+        pass
+    try:
+        op.create_unique_constraint(
+            "uq_user_email_connections_user_email",
+            "user_email_connections",
+            ["user_id", "email_address"],
+        )
+    except Exception:
+        pass
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "uq_user_email_connections_user_email",
-        "user_email_connections",
-        type_="unique",
-    )
-    op.drop_index(
-        "ix_user_email_connections_user_id",
-        table_name="user_email_connections",
-    )
-    op.create_index(
-        "ix_user_email_connections_user_id",
-        "user_email_connections",
-        ["user_id"],
-        unique=True,
-    )
-    op.create_unique_constraint(
-        "uq_user_email_connections_user_id",
-        "user_email_connections",
-        ["user_id"],
-    )
+    try:
+        op.drop_constraint(
+            "uq_user_email_connections_user_email",
+            "user_email_connections",
+            type_="unique",
+        )
+    except Exception:
+        pass
+    try:
+        op.drop_index(
+            "ix_user_email_connections_user_id",
+            table_name="user_email_connections",
+        )
+    except Exception:
+        pass
+    try:
+        op.create_index(
+            "ix_user_email_connections_user_id",
+            "user_email_connections",
+            ["user_id"],
+            unique=True,
+        )
+    except Exception:
+        pass
+    try:
+        op.create_unique_constraint(
+            "uq_user_email_connections_user_id",
+            "user_email_connections",
+            ["user_id"],
+        )
+    except Exception:
+        pass

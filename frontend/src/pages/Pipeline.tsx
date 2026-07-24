@@ -23,15 +23,16 @@ type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
 const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
-  { id: "demo_scheduled", label: "4.DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
-  { id: "demo_done", label: "5.DEMO DONE", group: "active", color: "#1d4ed8" },
-  { id: "qualified_lead", label: "6.QUALIFIED LEAD", group: "active", color: "#6d5efc" },
-  { id: "poc_agreed", label: "7.POC AGREED", group: "active", color: "#0ea5e9" },
-  { id: "poc_wip", label: "8.POC WIP", group: "active", color: "#06b6d4" },
-  { id: "poc_done", label: "9.POC DONE", group: "active", color: "#14b8a6" },
-  { id: "commercial_negotiation", label: "10.COMMERCIAL NEGOTIATION", group: "active", color: "#f59e0b" },
-  { id: "msa_review", label: "11.WORKSHOP/MSA", group: "active", color: "#a855f7" },
-  { id: "closed_won", label: "12.CLOSED WON", group: "closed", color: "#22c55e" },
+  { id: "demo_scheduled", label: "DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
+  { id: "demo_done", label: "DEMO DONE", group: "active", color: "#1d4ed8" },
+  { id: "qualified_lead", label: "QUALIFIED LEAD", group: "active", color: "#6d5efc" },
+  { id: "poc_agreed", label: "POC AGREED", group: "active", color: "#0ea5e9" },
+  { id: "poc_wip", label: "POC WIP", group: "active", color: "#06b6d4" },
+  { id: "poc_done", label: "POC DONE", group: "active", color: "#14b8a6" },
+  { id: "commercial_negotiation", label: "COMMERCIAL NEGOTIATION", group: "active", color: "#f59e0b" },
+  { id: "msa_review", label: "WORKSHOP/MSA", group: "active", color: "#a855f7" },
+  { id: "closed_won", label: "CLOSED WON", group: "closed", color: "#22c55e" },
+  { id: "backlog", label: "BACKLOG", group: "closed", color: "#f97316" },
   { id: "churned", label: "CHURNED", group: "closed", color: "#ef4444" },
   { id: "not_a_fit", label: "NOT FIT", group: "closed", color: "#9ca3af" },
   { id: "cold", label: "COLD", group: "closed", color: "#94a3b8" },
@@ -53,7 +54,7 @@ const PROSPECT_STAGES: Array<StageMeta & { id: ProspectStageId }> = [
 const STAGE_COLOR: Record<string, string> = {
   reprospect: "#8b5cf6", demo_scheduled: "#6366f1", demo_done: "#8b5cf6", qualified_lead: "#2563eb",
   poc_agreed: "#0ea5e9", poc_wip: "#06b6d4", poc_done: "#14b8a6", commercial_negotiation: "#f59e0b",
-  msa_review: "#a855f7", workshop: "#f97316", closed_won: "#22c55e", closed_lost: "#94a3b8",
+  msa_review: "#a855f7", workshop: "#f97316", closed_won: "#22c55e", backlog: "#f97316", closed_lost: "#94a3b8",
   not_a_fit: "#9ca3af", on_hold: "#a78bfa", nurture: "#67e8f9", churned: "#ef4444",
   outreach: "#2563eb", in_progress: "#7c3aed", meeting_booked: "#0ea5e9", negative_response: "#ef4444", no_response: "#94a3b8",
 };
@@ -68,7 +69,7 @@ const SUMMARY_CARD_META: Array<{ key: SummaryCardKey; label: string; tone?: "def
 ];
 const DEFAULT_FUNNEL: FunnelConfig = {
   active: ["reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review"],
-  inactive: ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
+  inactive: ["closed_won", "backlog", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
   tofu: ["qualified_lead", "poc_agreed"],
   mofu: ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
   bofu: ["closed_won"],
@@ -822,7 +823,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                 onChange={(event) => { setForm((current) => ({ ...current, sdr_id: event.target.value })); if (validationErrors.sdr_id && event.target.value) setValidationErrors((current) => ({ ...current, sdr_id: false })); }}
               >
                 <option value="">Assigned SDR *</option>
-                {users.filter((u) => u.role === "sdr").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1695,7 +1696,7 @@ export default function Pipeline() {
       .map((stageId) => ({
         id: stageId,
         label: stageId.replace(/_/g, " ").toUpperCase(),
-        group: ["closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"].includes(stageId) ? "closed" as const : "active" as const,
+        group: ["closed_won", "backlog", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"].includes(stageId) ? "closed" as const : "active" as const,
         color: STAGE_COLOR[stageId] ?? "#94a3b8",
       }));
     return [...configured, ...extras];

@@ -570,7 +570,7 @@ export default function SettingsPage() {
       return {
         tone: "warning" as const,
         title: "Beacon needs you to reconnect this inbox",
-        body: `${personalEmail.last_error} Reconnect Gmail to resume email and calendar sync.`,
+        body: `${personalEmail.last_error?.includes("unauthorized_client") || personalEmail.last_error?.includes("invalid_grant") ? "Your Gmail authorisation has expired or been revoked." : "An error occurred while syncing your inbox."} Reconnect Gmail to resume email and calendar sync.`,
       };
     }
     if (!personalEmail?.connected) {
@@ -1517,35 +1517,23 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  {!personalEmail?.connected ? (
+                  <button
+                    className="crm-button primary"
+                    onClick={handleConnectPersonalEmail}
+                    disabled={connectingPersonal}
+                  >
+                    {connectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
+                    {personalEmail?.connected ? "Reconnect Gmail" : "Connect my Gmail"}
+                  </button>
+                  {personalEmail?.connected && (
                     <button
-                      className="crm-button primary"
-                      onClick={handleConnectPersonalEmail}
-                      disabled={connectingPersonal}
+                      className="crm-button soft"
+                      onClick={handleSyncPersonalNow}
+                      disabled={syncingPersonal}
                     >
-                      {connectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
-                      Connect my Gmail
+                      {syncingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                      Sync now
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        className="crm-button soft"
-                        onClick={handleSyncPersonalNow}
-                        disabled={syncingPersonal}
-                      >
-                        {syncingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                        Sync now
-                      </button>
-                      <button
-                        className="crm-button soft"
-                        onClick={handleDisconnectPersonalEmail}
-                        disabled={disconnectingPersonal}
-                        style={{ color: "#c53030" }}
-                      >
-                        {disconnectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
-                        Disconnect
-                      </button>
-                    </>
                   )}
                 </div>
               </div>
