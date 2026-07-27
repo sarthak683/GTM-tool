@@ -92,9 +92,10 @@ async def _record_zippy_tagged_email(session, msg, *, contact_id) -> bool:
     backlog run would otherwise pay for hundreds of summaries. Deduped on
     message id alone so it can never double up with the deal path or a re-run.
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from app.models.activity import Activity
+    from app.models.user import User
     from app.services.personal_email_sync import _normalize_beacon_sender
 
     if not msg.message_id:
@@ -107,17 +108,32 @@ async def _record_zippy_tagged_email(session, msg, *, contact_id) -> bool:
     if existing:
         return False
 
+    # Attribute the send to the rep who made it. This is REQUIRED, not cosmetic:
+    # the per-rep Emails Out query matches an activity by created_by_id OR a
+    # scoped deal_id OR a scoped contact_id, so a row with none of the three is
+    # invisible to every rep's number no matter how it buckets. Prospecting mail
+    # has no deal and often no known contact, leaving created_by_id as the only
+    # link back to the sender. Resolved from the NORMALIZED address so a send
+    # from sipra@beaconli.com finds sipra@beacon.li.
+    sender = _normalize_beacon_sender(msg.from_addr)
+    created_by_id = (
+        await session.execute(
+            select(User.id).where(func.lower(User.email) == (sender or "").strip().lower())
+        )
+    ).scalars().first()
+
     session.add(
         Activity(
             type="email",
             source="gmail_sync",
             deal_id=None,
             contact_id=contact_id,
+            created_by_id=created_by_id,
             content=msg.body_text[:2000] if msg.body_text else None,
             email_message_id=msg.message_id,
             email_subject=msg.subject,
             # Normalized so sipra@beaconli.com is credited to Sipra.
-            email_from=_normalize_beacon_sender(msg.from_addr),
+            email_from=sender,
             email_to=", ".join(msg.to_addrs),
             email_cc=", ".join(msg.cc_addrs),
             email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
