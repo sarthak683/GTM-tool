@@ -612,11 +612,29 @@ _EMAIL_RE = re.compile(r"[\w.!#$%&'*+/=?^_`{|}~-]+@[\w.-]+\.[A-Za-z]{2,}")
 _SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.IGNORECASE)
 
 
+def _is_zippy_address(addr: str) -> bool:
+    """True for any Zippy tagging address on any of our sending domains.
+
+    Reps CC Zippy in two shapes: the plain mailbox (``zippy@beacon.li``) and the
+    per-deal alias (``zippy+acme-corp@beacon.li``) that email_sync uses to bind
+    the thread to a deal. Only the plain form used to be recognised here, so an
+    alias-tagged manual email was not credited as a Zippy-tracked send. Both
+    forms count, on beacon.li and the beaconli.com/.co sending domains.
+    """
+    addr = (addr or "").strip().lower()
+    if "@" not in addr:
+        return False
+    local, domain = addr.rsplit("@", 1)
+    if domain not in BEACON_SENDING_DOMAINS:
+        return False
+    return local == "zippy" or local.startswith("zippy+")
+
+
 def _zippy_in_cc_or_bcc(row) -> bool:
     """True if any Zippy address appears in email_cc or email_bcc of the row."""
     for field_val in (getattr(row, "email_cc", None), getattr(row, "email_bcc", None)):
         for addr in str(field_val or "").lower().split(","):
-            if addr.strip() in ZIPPY_ADDRS:
+            if _is_zippy_address(addr):
                 return True
     return False
 
@@ -638,22 +656,44 @@ def _is_instantly_email(row) -> bool:
 
 def _email_out_bucket(row) -> Literal["manual", "instantly"] | None:
     """
-    Emails Out bucket rule:
-    - Instantly rows count as Instantly even when the sender is a @beacon.li
-      account; prod has both webhook and campaign-sync rows in that shape.
-    - Non-Instantly @beacon.li rows count as Manual when:
-        - source is personal_email_sync (personal inbox, already contact-filtered)
-        - source is gmail_sync (rep's connected Gmail account, incl. .com/.co aliases)
-        - Zippy is in CC or BCC (tracked via Zippy inbox)
-    - Anything else: do not count.
+    Emails Out bucket rule, in priority order:
+    1. source/external_source says Instantly -> Instantly, whatever the domain.
+       Checked FIRST because many Instantly rows have a blank or prospect-domain
+       sender; requiring one of our domains before this drops them.
+    2. Not one of our sending domains -> not an outbound send, do not count.
+    3. Positive manual evidence -> Manual, on ANY of our sending domains:
+        - source personal_email_sync (rep's own inbox, already contact-filtered)
+        - source gmail_sync (shared Zippy inbox)
+        - Zippy in CC/BCC, plain or zippy+<deal-alias> form
+    4. Otherwise, the beaconli.com/.co cold-outreach domains default to
+       Instantly; a bare @beacon.li row with no signal is not counted.
     """
-    if _is_instantly_email(row):
+    source = str(getattr(row, "source", None) or "").strip().lower()
+    external_source = str(getattr(row, "external_source", None) or "").strip().lower()
+
+    # An Instantly row identifies itself by source/external_source. This MUST be
+    # checked before any sending-domain requirement: prod has ~466 Instantly rows
+    # whose email_from is blank or carries the prospect's domain (reply/webhook
+    # shapes), and gating on our domains first silently dropped them.
+    if source == "instantly" or external_source.startswith("instantly"):
         return "instantly"
+
     domain = _email_from_domain(row)
-    if domain == "beacon.li":
-        source = str(getattr(row, "source", None) or "").strip().lower()
-        if source in {"personal_email_sync", "gmail_sync"} or _zippy_in_cc_or_bcc(row):
-            return "manual"
+    if domain not in BEACON_SENDING_DOMAINS and not domain.startswith("beaconli."):
+        return None
+
+    # Positive evidence of a human send beats the sending-domain heuristic below.
+    # A rep working from sipra@beaconli.com is still sending manually; Instantly
+    # campaigns never CC Zippy and never arrive via a rep's own inbox sync. This
+    # is why the domain check is no longer restricted to beacon.li — that
+    # restriction silently filed alternate-domain manual sends under Instantly.
+    if source in {"personal_email_sync", "gmail_sync"} or _zippy_in_cc_or_bcc(row):
+        return "manual"
+
+    # No manual signal: the cold-outreach lookalike domains are Instantly by
+    # default (unattributed sends on them are campaign traffic).
+    if domain in INSTANTLY_DOMAINS:
+        return "instantly"
     return None
 
 

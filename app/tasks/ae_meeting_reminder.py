@@ -54,7 +54,10 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-BEACON_DOMAINS = {"beacon.li", "beaconli.com"}
+# Keep in step with BEACON_SENDING_DOMAINS (analytics) and _ALL_BEACON_DOMAINS
+# (personal_email_sync) — beaconli.co was missing here, so an attendee on that
+# domain was not recognised as internal.
+BEACON_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
 FREE_EMAIL_PROVIDERS = {
     "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
     "icloud.com", "protonmail.com", "googlemail.com",

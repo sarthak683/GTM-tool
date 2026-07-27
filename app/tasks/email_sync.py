@@ -35,11 +35,19 @@ def _split_inbox_parts(inbox: str) -> tuple[str, str]:
     return local, domain
 
 
+# Every domain we send from. A rep CC'ing zippy+<deal> from their
+# sipra@beaconli.com account may address it on that domain rather than the
+# inbox's own, so the alias is accepted on any of them — matching it only
+# against the connected inbox's domain silently dropped those tags.
+_BEACON_ALIAS_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+
+
 def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
     local, domain = _split_inbox_parts(inbox)
     if not local or not domain:
         return []
 
+    accepted_domains = _BEACON_ALIAS_DOMAINS | {domain}
     aliases: list[str] = []
     prefix = f"{local}+"
     for addr in addresses:
@@ -47,7 +55,7 @@ def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
         if not normalized or "@" not in normalized:
             continue
         addr_local, addr_domain = normalized.split("@", 1)
-        if addr_domain != domain:
+        if addr_domain not in accepted_domains:
             continue
         if not addr_local.startswith(prefix):
             continue
