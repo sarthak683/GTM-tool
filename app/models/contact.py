@@ -35,6 +35,11 @@ class Contact(ContactBase, table=True):
     assigned_rep_email: Optional[str] = None
     sdr_id: Optional[UUID] = Field(default=None, index=True)  # SDR
     sdr_name: Optional[str] = None
+    # Set when this prospect's SDR ownership changes (see
+    # app/services/sdr_reassignment.py). Read paths that aggregate over the
+    # Activity table ignore rows older than this so the incoming SDR starts
+    # from zero while the raw activity history stays intact for audit.
+    sdr_assigned_at: Optional[datetime] = None
     outreach_lane: Optional[str] = Field(default=None, index=True)
     sequence_status: Optional[str] = Field(default=None, index=True)
     instantly_status: Optional[str] = None
@@ -47,6 +52,12 @@ class Contact(ContactBase, table=True):
     # Per-channel tracking
     email_open_count: int = Field(default=0)
     email_click_count: int = Field(default=0)
+    # Instantly reports LIFETIME open/click totals per lead, so a reassignment
+    # reset would be undone on the next poll ("7 > 0, restore 7"). These hold
+    # the totals wiped at reassignment; the poller reports `lead_total - baseline`
+    # so the new SDR only sees engagement earned since they took over.
+    instantly_open_baseline: int = Field(default=0)
+    instantly_click_baseline: int = Field(default=0)
     email_last_opened_at: Optional[datetime] = None
     call_status: Optional[str] = None   # none | attempted | connected | voicemail | callback
     call_disposition: Optional[str] = None  # interested | not_interested | callback | wrong_number | no_answer
@@ -82,6 +93,7 @@ class ContactRead(ContactBase):
     assigned_rep_email: Optional[str] = None
     sdr_id: Optional[UUID] = None            # SDR
     sdr_name: Optional[str] = None           # populated via JOIN
+    sdr_assigned_at: Optional[datetime] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     instantly_status: Optional[str] = None

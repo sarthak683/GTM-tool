@@ -56,6 +56,7 @@ from app.services.data_reset import (
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.icp_scorer import score_company
+from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
 from app.services.recotap import (
     normalize_domain as recotap_domain,
@@ -730,8 +731,16 @@ async def _process_uploaded_rows(
 
             if company:
                 already_in_batch = company.sourcing_batch_id == batch_id
+                # A re-upload whose sheet names a different SDR is a
+                # reassignment, so it must cascade + reset like the assignment
+                # endpoints do — this is the path bulk sheet handovers use.
+                previous_sdr_id = company.sdr_id
                 company = merge_company_from_upload(company, fields)
                 company.sourcing_batch_id = batch_id
+                if company.sdr_id != previous_sdr_id:
+                    await sync_company_sdr_assignment_to_contacts(
+                        session, company, previous_sdr_id
+                    )
                 append_company_activity_log(
                     company,
                     action="company_import_updated",
@@ -1737,6 +1746,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
         raise HTTPException(status_code=404, detail="Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    previous_sdr_id = company.sdr_id
+    sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     changed_fields = {
         key: {"before": getattr(company, key, None), "after": value}
         for key, value in update_data.items()
@@ -1744,6 +1755,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     }
     for key, value in update_data.items():
         setattr(company, key, value)
+    if sdr_update_requested:
+        await sync_company_sdr_assignment_to_contacts(session, company, previous_sdr_id)
 
     if (
         "outreach_status" in update_data

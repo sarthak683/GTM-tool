@@ -264,10 +264,19 @@ class ContactRepository(BaseRepository[Contact]):
         # Correlated subquery: number of activity rows of type='call' for this
         # contact. Drives the new prospect-page progress dots (one yellow dot
         # per attempt) and the `call_attempts_bucket` filter below.
+        # Attempts made before this prospect's current SDR took over are not
+        # theirs to inherit — the watermark is per-contact, so a deliberate
+        # per-contact SDR split keeps its own full history (see
+        # app/services/sdr_reassignment.py).
+        after_current_sdr_assignment = or_(
+            Contact.sdr_assigned_at.is_(None),
+            Activity.created_at >= Contact.sdr_assigned_at,
+        )
         call_attempt_count_subq = (
             select(func.count(Activity.id))
             .where(Activity.contact_id == Contact.id)
             .where(Activity.type == "call")
+            .where(after_current_sdr_assignment)
             .correlate(Contact)
             .scalar_subquery()
         )

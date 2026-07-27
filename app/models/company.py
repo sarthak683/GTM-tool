@@ -58,6 +58,7 @@ class Company(CompanyBase, table=True):
     sdr_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     sdr_email: Optional[str] = Field(default=None, index=True)
     sdr_name: Optional[str] = None
+    sdr_assigned_at: Optional[datetime] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = Field(default=None, index=True)
     # Manual sourcing status (see ACCOUNT_STATUS_VALUES). Distinct from
@@ -154,6 +155,7 @@ class CompanyRead(CompanyBase):
     sdr_id: Optional[UUID] = None
     sdr_email: Optional[str] = None
     sdr_name: Optional[str] = None
+    sdr_assigned_at: Optional[datetime] = None
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     account_status: Optional[str] = None

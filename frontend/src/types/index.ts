@@ -28,6 +28,7 @@ export interface Company {
   sdr_id?: string;
   sdr_email?: string;
   sdr_name?: string;
+  sdr_assigned_at?: string | null;
   outreach_status?: string;
   disposition?: string;
   // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)
@@ -133,6 +134,9 @@ export interface Contact {
   assigned_rep_email?: string;
   sdr_id?: string;            // SDR
   sdr_name?: string;
+  // Set when SDR ownership changed; activity older than this is excluded from
+  // the prospect's counts so the incoming rep starts from zero.
+  sdr_assigned_at?: string | null;
   outreach_lane?: string;
   sequence_status?: string;
   instantly_status?: string;
