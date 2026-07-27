@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.core.analytics_defaults import DEFAULT_STAGE_PROBABILITIES
@@ -18,7 +18,7 @@ from app.models.activity import Activity
 from app.models.company import Company
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
-from app.models.deal import Deal
+from app.models.deal import Deal, DealContact
 from app.models.deal_stage_history import DealStageHistory
 from app.models.meeting import Meeting
 from app.models.user import User
@@ -304,6 +304,7 @@ class RepActivityRow(BaseModel):
     linkedin_reachouts: int = 0
     linkedin_accepted: int = 0
     linkedin_meeting_booked: int = 0
+    email_meeting_booked: int = 0
     call_meeting_booked: int = 0
     meetings: int
     total: int
@@ -2995,24 +2996,71 @@ async def sales_dashboard(
             seen_ae_conv.add(r.deal_id)
             _bump_ae_demo(r.deal_id, "ae_demos_converted")
 
-    # Per-rep meeting-booked count from Contact.sequence_status — covers meetings
-    # booked through any channel (call, email, LinkedIn). Used for the "meeting
-    # booked" stat in the Calls box.
+    # Per-rep meeting-booked count from call activities where the SDR picked
+    # "Demo Scheduled/Booked" (or "Meeting Confirmed") disposition within the
+    # analytics window. Credited to the rep who logged the call (created_by_id).
     call_meeting_booked_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
+        type_lower = func.lower(Activity.type)
+        medium_lower = func.lower(Activity.medium)
+        outcome_lower = func.lower(Activity.call_outcome)
+        content_lower = func.lower(Activity.content)
+        is_call = or_(type_lower == "call", medium_lower == "call")
+        is_booked = or_(
+            outcome_lower.in_(["demo_scheduled_booked", "meeting_confirmed"]),
+            and_(
+                func.lower(Activity.source) == "manual",
+                or_(
+                    content_lower.startswith("demo scheduled/booked"),
+                    content_lower.startswith("meeting confirmed"),
+                ),
+            ),
+        )
         cmb_rows = (
             await session.execute(
-                select(Contact.assigned_to_id, func.count().label("cnt"))
+                select(Activity.created_by_id, func.count().label("cnt"))
                 .where(
-                    Contact.assigned_to_id.in_(list(rep_user_ids)),
-                    func.lower(Contact.sequence_status) == "meeting_booked",
+                    Activity.created_by_id.in_(list(rep_user_ids)),
+                    Activity.created_at >= window_start,
+                    Activity.created_at <= window_end,
+                    is_call,
+                    is_booked,
                 )
-                .group_by(Contact.assigned_to_id)
+                .group_by(Activity.created_by_id)
             )
         ).all()
         for cmb in cmb_rows:
-            if cmb.assigned_to_id:
-                call_meeting_booked_by_uid[cmb.assigned_to_id] = cmb.cnt
+            if cmb.created_by_id:
+                call_meeting_booked_by_uid[cmb.created_by_id] = cmb.cnt
+
+    # ── Email / LinkedIn meetings booked: from Deal.meeting_booked_from ─────────
+    # Count deals created in the window where meeting_booked_from matches,
+    # attributed to both AE (assigned_to_id) and SDR (sdr_id). Deduped per rep.
+    email_meeting_booked_by_uid: dict[UUID, int] = {}
+    linkedin_meeting_booked_by_uid: dict[UUID, int] = {}
+    if rep_user_ids:
+        for channel, bucket_dict in [("Email", email_meeting_booked_by_uid), ("LinkedIn", linkedin_meeting_booked_by_uid)]:
+            channel_rows = (await session.execute(
+                select(Deal.id, Deal.assigned_to_id, Deal.sdr_id)
+                .where(
+                    Deal.meeting_booked_from == channel,
+                    Deal.created_at >= window_start,
+                    Deal.created_at <= window_end,
+                    or_(
+                        Deal.assigned_to_id.in_(list(rep_user_ids)),
+                        Deal.sdr_id.in_(list(rep_user_ids)),
+                    ),
+                )
+            )).all()
+            seen_channel: set[tuple] = set()
+            for row in channel_rows:
+                for uid in [row.assigned_to_id, row.sdr_id]:
+                    if uid and uid in rep_user_ids:
+                        key = (uid, row.id)
+                        if key in seen_channel:
+                            continue
+                        seen_channel.add(key)
+                        bucket_dict[uid] = bucket_dict.get(uid, 0) + 1
 
     # ── Output buckets: Demo Scheduled deals, bucketed by Meeting.scheduled_at ─
     # Source: deals in "demo_scheduled" stage joined to their meeting records.
@@ -3063,7 +3111,7 @@ async def sales_dashboard(
     direct_sql_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
         direct_sql_rows = (await session.execute(
-            select(Deal.assigned_to_id, Deal.sdr_id)
+            select(Deal.id, Deal.assigned_to_id, Deal.sdr_id)
             .where(
                 Deal.stage == "demo_scheduled",
                 Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
@@ -3073,9 +3121,14 @@ async def sales_dashboard(
                 ),
             )
         )).all()
+        seen_direct_sql: set[tuple] = set()
         for ds in direct_sql_rows:
             for uid in [ds.assigned_to_id, ds.sdr_id]:
                 if uid and uid in rep_user_ids:
+                    key = (uid, ds.id)
+                    if key in seen_direct_sql:
+                        continue
+                    seen_direct_sql.add(key)
                     direct_sql_by_uid[uid] = direct_sql_by_uid.get(uid, 0) + 1
 
     # ── Prospect count & mobile coverage per rep ─────────────────────────────
@@ -3136,6 +3189,27 @@ async def sales_dashboard(
             if dr.created_by_id:
                 demos_rescheduled_by_uid[dr.created_by_id] = dr.cnt
 
+    # Inject zero rows for seed reps who have no activity in the window
+    for seed_uid in seed_rep_user_ids:
+        rep_key, rep_user_id, rep_name = _label_for_rep(seed_uid, users)
+        if rep_key not in rep_activity:
+            rep_activity[rep_key] = {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
+                "emails": 0,
+                "manual_emails": 0,
+                "instantly_emails": 0,
+                "linkedin_reachouts": 0,
+                "meetings": 0,
+                "total": 0,
+                "active_deals": 0,
+                "pipeline_amount": 0.0,
+            }
+
     rep_activity_rows = [
         RepActivityRow(
             key=str(bucket["key"]),
@@ -3152,7 +3226,8 @@ async def sales_dashboard(
             email_replies=int(bucket.get("email_replies", 0)),
             linkedin_reachouts=int(bucket["linkedin_reachouts"]),
             linkedin_accepted=int(bucket.get("linkedin_accepted", 0)),
-            linkedin_meeting_booked=int(bucket.get("linkedin_meeting_booked", 0)),
+            linkedin_meeting_booked=linkedin_meeting_booked_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            email_meeting_booked=email_meeting_booked_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             call_meeting_booked=call_meeting_booked_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             meetings=int(bucket["meetings"]),
             total=int(bucket["total"]),
@@ -3723,6 +3798,7 @@ async def meeting_bucket_deals(
     today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     week1_dt = today_dt + timedelta(days=7)
     week2_dt = today_dt + timedelta(days=14)
+    window_start = today_dt - timedelta(days=window_days)
 
     AEUser = aliased(User)
     SDRUser = aliased(User)
@@ -3770,7 +3846,7 @@ async def meeting_bucket_deals(
                 ae_name=str(row.ae_name or "Unassigned"),
                 sdr_name=str(row.sdr_name or ""),
                 date_of_meeting=row.scheduled_at.date().isoformat() if row.scheduled_at else None,
-                meeting_booked_with=row.meeting_booked_with if bucket == "direct_sql" else None,
+                meeting_booked_with=row.meeting_booked_with,
             ))
 
     elif bucket == "demo_rescheduled":
@@ -3780,6 +3856,7 @@ async def meeting_bucket_deals(
                 Deal.id.label("deal_id"),
                 Deal.name.label("deal_name"),
                 Deal.close_date_est.label("close_date_est"),
+                Deal.meeting_booked_with.label("meeting_booked_with"),
                 AEUser.name.label("ae_name"),
                 Company.sdr_name.label("sdr_name"),
             )
@@ -3790,7 +3867,7 @@ async def meeting_bucket_deals(
             .where(
                 Activity.type == "demo_rescheduled",
                 Activity.created_at >= window_start,
-                Activity.created_at <= today_dt,
+                Activity.created_at <= _utcnow(),
             )
         )
         if user_id is not None:
@@ -3808,7 +3885,7 @@ async def meeting_bucket_deals(
                 ae_name=str(row.ae_name or "Unassigned"),
                 sdr_name=str(row.sdr_name or ""),
                 date_of_meeting=row.close_date_est.isoformat() if row.close_date_est else None,
-                meeting_booked_with=None,
+                meeting_booked_with=row.meeting_booked_with,
             ))
 
     return MeetingBucketDealsResponse(deals=deals)
@@ -3865,4 +3942,154 @@ async def pipeline_deals(
         for row in rows
     ]
     result.sort(key=lambda r: -r.deal_value)
+    return result
+
+
+# ── Meeting Booked From drilldown ─────────────────────────────────────────────
+
+
+class MeetingBookedFromDealItem(BaseModel):
+    deal_id: str
+    deal_name: str
+    meeting_booked_with: Optional[str]
+    meeting_booked_from: Optional[str]
+    ae_name: Optional[str]
+    sdr_name: Optional[str]
+
+
+@router.get("/meeting-booked-from-deals", response_model=list[MeetingBookedFromDealItem])
+async def meeting_booked_from_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    channel: Annotated[Literal["Email", "LinkedIn", "Call"], Query()],
+    user_id: Annotated[Optional[UUID], Query()] = None,
+    window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
+) -> list[MeetingBookedFromDealItem]:
+    """Return deals where meeting was booked from the given channel within the window.
+
+    For Email/LinkedIn: uses Deal.meeting_booked_from field.
+    For Call: uses activities with demo_scheduled_booked/meeting_confirmed disposition
+              (same source as the call_meeting_booked stat) to avoid missing deals
+              that pre-date the meeting_booked_from field.
+    """
+    today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    window_start = today_dt - timedelta(days=window_days)
+    window_end = _utcnow()
+
+    AEUser = aliased(User)
+    SDRUser = aliased(User)
+
+    if channel == "Call":
+        # Find deals via activities with demo_scheduled_booked/meeting_confirmed
+        # disposition — same logic as call_meeting_booked stat.
+        # Activities may be linked via deal_id (direct) or contact_id (prospect view).
+        type_lower = func.lower(Activity.type)
+        medium_lower = func.lower(Activity.medium)
+        outcome_lower = func.lower(Activity.call_outcome)
+        content_lower = func.lower(Activity.content)
+        is_call = or_(type_lower == "call", medium_lower == "call")
+        is_booked = or_(
+            outcome_lower.in_(["demo_scheduled_booked", "meeting_confirmed"]),
+            and_(
+                func.lower(Activity.source) == "manual",
+                or_(
+                    content_lower.startswith("demo scheduled/booked"),
+                    content_lower.startswith("meeting confirmed"),
+                ),
+            ),
+        )
+        base_activity_filters = [
+            Activity.created_at >= window_start,
+            Activity.created_at <= window_end,
+            is_call,
+            is_booked,
+        ]
+        if user_id is not None:
+            base_activity_filters.append(Activity.created_by_id == user_id)
+
+        # Path 1: activities directly linked to a deal
+        direct_act_rows = (
+            await session.execute(
+                select(Activity.deal_id.label("deal_id"))
+                .where(*base_activity_filters, Activity.deal_id.isnot(None))
+                .distinct()
+            )
+        ).all()
+        deal_ids: set[UUID] = {r.deal_id for r in direct_act_rows}
+
+        # Path 2: activities linked to a contact → resolve deals via deal_contacts
+        contact_act_rows = (
+            await session.execute(
+                select(Activity.contact_id.label("contact_id"))
+                .where(*base_activity_filters, Activity.contact_id.isnot(None))
+                .distinct()
+            )
+        ).all()
+        contact_ids = [r.contact_id for r in contact_act_rows]
+        if contact_ids:
+            dc_rows = (
+                await session.execute(
+                    select(DealContact.deal_id)
+                    .where(DealContact.contact_id.in_(contact_ids))
+                )
+            ).all()
+            for dc in dc_rows:
+                deal_ids.add(dc.deal_id)
+
+        if not deal_ids:
+            return []
+
+        stmt = (
+            select(
+                Deal.id.label("deal_id"),
+                Deal.name.label("deal_name"),
+                Deal.meeting_booked_with.label("meeting_booked_with"),
+                Deal.meeting_booked_from.label("meeting_booked_from"),
+                AEUser.name.label("ae_name"),
+                SDRUser.name.label("sdr_name"),
+            )
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+            .where(Deal.id.in_(list(deal_ids)))
+        )
+    else:
+        # Email / LinkedIn: use Deal.meeting_booked_from field
+        stmt = (
+            select(
+                Deal.id.label("deal_id"),
+                Deal.name.label("deal_name"),
+                Deal.meeting_booked_with.label("meeting_booked_with"),
+                Deal.meeting_booked_from.label("meeting_booked_from"),
+                AEUser.name.label("ae_name"),
+                SDRUser.name.label("sdr_name"),
+            )
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+            .where(
+                Deal.meeting_booked_from == channel,
+                Deal.created_at >= window_start,
+                Deal.created_at <= window_end,
+            )
+        )
+        if user_id is not None:
+            stmt = stmt.where(
+                or_(Deal.assigned_to_id == user_id, Deal.sdr_id == user_id)
+            )
+
+    rows = (await session.execute(stmt)).all()
+    seen: set[str] = set()
+    result = []
+    for row in rows:
+        did = str(row.deal_id)
+        if did in seen:
+            continue
+        seen.add(did)
+        result.append(MeetingBookedFromDealItem(
+            deal_id=did,
+            deal_name=str(row.deal_name or ""),
+            meeting_booked_with=row.meeting_booked_with,
+            meeting_booked_from=row.meeting_booked_from,
+            ae_name=row.ae_name,
+            sdr_name=row.sdr_name,
+        ))
     return result
