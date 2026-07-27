@@ -70,6 +70,18 @@ def test_prospect_addresses_are_not_ours():
     assert not is_our_sending_address(None)
 
 
+def test_unmatched_alias_is_still_our_send():
+    """The shape that made the first fix useless in practice.
+
+    Reps tag `zippy+<alias>` on 59 of every 72 tagged emails. When that alias
+    names no deal — a typo, or far more often a prospecting thread with no deal
+    yet — ingestion used to return early and drop the email, before any
+    dealless fallback could see it. The send is still ours and still counts.
+    """
+    assert is_zippy_address("zippy+no-such-deal@beacon.li")
+    assert is_our_sending_address("sipra@beaconli.com")
+
+
 def test_the_fallback_gate_as_ingestion_applies_it():
     """Mirrors the condition in email_sync: a dealless email is recorded only
     when Zippy is tagged AND the sender is one of ours."""

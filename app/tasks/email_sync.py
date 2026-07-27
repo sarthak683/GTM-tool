@@ -329,10 +329,22 @@ async def _async_sync() -> dict:
                         if zippy_only:
                             await _notify_unmatched_zippy_alias(session, msg, matched_aliases)
                         logger.warning(
-                            "Email sync skipped message %s because alias %s did not map to a deal",
-                            msg.message_id,
+                            "Email sync: alias %s did not map to a deal for message %s",
                             ", ".join(matched_aliases),
+                            msg.message_id,
                         )
+                        # The alias names a deal we don't have — a typo, or more
+                        # often a prospecting thread where no deal exists yet.
+                        # The rep still tagged Zippy on their own send, which is
+                        # the whole point of Zippy, so count it. This is the
+                        # dominant shape: reps use zippy+<alias> on 59 of every
+                        # 72 tagged emails, so returning early here dropped
+                        # nearly all prospecting mail.
+                        if is_our_sending_address(msg.from_addr):
+                            if await _record_zippy_tagged_email(
+                                session, msg, contact_id=None
+                            ):
+                                activities_created += 1
                         continue
 
                 # Find matching contacts (case-insensitive: parsed addresses
