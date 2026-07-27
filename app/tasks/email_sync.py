@@ -20,11 +20,7 @@ from datetime import datetime, timezone
 from email.utils import parseaddr, parsedate_to_datetime
 
 from app.celery_app import celery_app
-from app.services.zippy_tagging import (
-    BEACON_SENDING_DOMAINS,
-    any_zippy_address,
-    is_our_sending_address,
-)
+from app.services.zippy_tagging import BEACON_SENDING_DOMAINS, is_our_sending_address
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -375,7 +371,13 @@ async def _async_sync() -> dict:
                     # without connecting that mailbox; prospecting mail by
                     # definition has no deal yet, so requiring one silently
                     # dropped exactly the emails the Emails Out metric needs.
-                    if any_zippy_address(all_addrs) and is_our_sending_address(msg.from_addr):
+                    # Being in Zippy's mailbox IS the tag. Do not look for a Zippy
+                    # address in the headers: `all_addrs` has the inbox address
+                    # discarded above, bcc_addrs is never added to it, and a BCC'd
+                    # copy carries no trace of the recipient at all — so a header
+                    # check silently missed every plain-CC and BCC tag. The
+                    # sender guard is what keeps a prospect's reply-all out.
+                    if is_our_sending_address(msg.from_addr):
                         if await _record_zippy_tagged_email(
                             session,
                             msg,
