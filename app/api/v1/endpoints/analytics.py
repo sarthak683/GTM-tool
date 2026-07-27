@@ -26,6 +26,10 @@ from app.models.user_alias import UserAlias
 from app.services.analytics_settings import get_analytics_settings
 from app.services.company_stage_milestones import MILESTONE_LABELS, backfill_company_stage_milestones
 from app.services.deal_stages import get_configured_deal_stages
+from app.services.zippy_tagging import (
+    BEACON_SENDING_DOMAINS as _SHARED_SENDING_DOMAINS,
+    is_zippy_address,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -600,7 +604,10 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
 # cold-outreach lookalike domains. A rep shares one local-part across all of them
 # (annie@beacon.li == annie@beaconli.com == annie@beaconli.co), so an outbound
 # email is mapped to its rep by local-part, not by the full address.
-BEACON_SENDING_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+# Shared with the ingestion side so "CC'd to Zippy" cannot drift between the
+# two. See app/services/zippy_tagging.py.
+BEACON_SENDING_DOMAINS = set(_SHARED_SENDING_DOMAINS)
+_is_zippy_address = is_zippy_address
 
 # Instantly cold-outreach domains — emails from these always count as Emails Out.
 INSTANTLY_DOMAINS = {"beaconli.co", "beaconli.com"}
@@ -610,24 +617,6 @@ EMAIL_SEND_METRICS = {"emails", "manual_emails", "instantly_emails"}
 ZIPPY_ADDRS = {"zippy@beacon.li", "zippy@beaconli.com", "zippy@beaconli.co"}
 _EMAIL_RE = re.compile(r"[\w.!#$%&'*+/=?^_`{|}~-]+@[\w.-]+\.[A-Za-z]{2,}")
 _SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.IGNORECASE)
-
-
-def _is_zippy_address(addr: str) -> bool:
-    """True for any Zippy tagging address on any of our sending domains.
-
-    Reps CC Zippy in two shapes: the plain mailbox (``zippy@beacon.li``) and the
-    per-deal alias (``zippy+acme-corp@beacon.li``) that email_sync uses to bind
-    the thread to a deal. Only the plain form used to be recognised here, so an
-    alias-tagged manual email was not credited as a Zippy-tracked send. Both
-    forms count, on beacon.li and the beaconli.com/.co sending domains.
-    """
-    addr = (addr or "").strip().lower()
-    if "@" not in addr:
-        return False
-    local, domain = addr.rsplit("@", 1)
-    if domain not in BEACON_SENDING_DOMAINS:
-        return False
-    return local == "zippy" or local.startswith("zippy+")
 
 
 def _zippy_in_cc_or_bcc(row) -> bool:

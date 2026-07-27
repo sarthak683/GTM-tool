@@ -16,9 +16,15 @@ Flow:
 import asyncio
 import logging
 import time
-from email.utils import parseaddr
+from datetime import datetime, timezone
+from email.utils import parseaddr, parsedate_to_datetime
 
 from app.celery_app import celery_app
+from app.services.zippy_tagging import (
+    BEACON_SENDING_DOMAINS,
+    any_zippy_address,
+    is_our_sending_address,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -35,11 +41,11 @@ def _split_inbox_parts(inbox: str) -> tuple[str, str]:
     return local, domain
 
 
-# Every domain we send from. A rep CC'ing zippy+<deal> from their
-# sipra@beaconli.com account may address it on that domain rather than the
-# inbox's own, so the alias is accepted on any of them — matching it only
-# against the connected inbox's domain silently dropped those tags.
-_BEACON_ALIAS_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+# A rep CC'ing zippy+<deal> from their sipra@beaconli.com account may address it
+# on that domain rather than the inbox's own, so the alias is accepted on any of
+# our sending domains — matching only the connected inbox's domain silently
+# dropped those tags. Shared set, not a local copy.
+_BEACON_ALIAS_DOMAINS = BEACON_SENDING_DOMAINS
 
 
 def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
@@ -63,6 +69,72 @@ def _extract_deal_aliases(addresses: set[str], inbox: str) -> list[str]:
         if alias:
             aliases.append(alias)
     return list(dict.fromkeys(aliases))
+
+
+def _message_sent_at(msg) -> datetime:
+    """When the email was actually sent, from its RFC 2822 Date header.
+
+    Without this a backlog run stamps every recovered email with the sync time,
+    so a month of outreach all lands on today and the per-period Emails Out
+    numbers are wrong.
+    """
+    try:
+        sent = parsedate_to_datetime(msg.date) if getattr(msg, "date", "") else None
+    except (TypeError, ValueError):
+        sent = None
+    if sent is None:
+        return datetime.utcnow()
+    # Store naive UTC, matching every other created_at in the schema.
+    return sent.astimezone(timezone.utc).replace(tzinfo=None) if sent.tzinfo else sent
+
+
+async def _record_zippy_tagged_email(session, msg, *, contact_id) -> bool:
+    """Record a Zippy-CC'd rep send that maps to no deal. Returns True if created.
+
+    Deliberately lean compared with the deal path: no Google Docs fetch and no
+    AI summary. This row exists so the send is counted and visible, and a
+    backlog run would otherwise pay for hundreds of summaries. Deduped on
+    message id alone so it can never double up with the deal path or a re-run.
+    """
+    from sqlalchemy import select
+
+    from app.models.activity import Activity
+    from app.services.personal_email_sync import _normalize_beacon_sender
+
+    if not msg.message_id:
+        return False
+    existing = (
+        await session.execute(
+            select(Activity.id).where(Activity.email_message_id == msg.message_id).limit(1)
+        )
+    ).first()
+    if existing:
+        return False
+
+    session.add(
+        Activity(
+            type="email",
+            source="gmail_sync",
+            deal_id=None,
+            contact_id=contact_id,
+            content=msg.body_text[:2000] if msg.body_text else None,
+            email_message_id=msg.message_id,
+            email_subject=msg.subject,
+            # Normalized so sipra@beaconli.com is credited to Sipra.
+            email_from=_normalize_beacon_sender(msg.from_addr),
+            email_to=", ".join(msg.to_addrs),
+            email_cc=", ".join(msg.cc_addrs),
+            email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
+            event_metadata={
+                "matched_via": "zippy_tag",
+                "raw_email_from": msg.from_addr,
+                "gmail_thread_id": msg.thread_id or None,
+                "no_deal_match": True,
+            },
+            created_at=_message_sent_at(msg),
+        )
+    )
+    return True
 
 
 def _normalize_domain(value: str | None) -> str:
@@ -272,9 +344,6 @@ async def _async_sync() -> dict:
                 )
                 matched_contacts = contact_result.all()
 
-                if not matched_contacts and not deal_ids:
-                    continue
-
                 contact_ids = [c.id for c in matched_contacts]
                 matched_contact_emails = {str(c.email or "").strip().lower() for c in matched_contacts if c.email}
 
@@ -288,6 +357,19 @@ async def _async_sync() -> dict:
                     deal_ids = [row.deal_id for row in deal_result.all()]
 
                 if not deal_ids:
+                    # No deal — but if the rep CC'd Zippy on their own outbound,
+                    # that IS the send we are here to track. Zippy exists so a
+                    # rep can tag any email from any of their sending addresses
+                    # without connecting that mailbox; prospecting mail by
+                    # definition has no deal yet, so requiring one silently
+                    # dropped exactly the emails the Emails Out metric needs.
+                    if any_zippy_address(all_addrs) and is_our_sending_address(msg.from_addr):
+                        if await _record_zippy_tagged_email(
+                            session,
+                            msg,
+                            contact_id=contact_ids[0] if contact_ids else None,
+                        ):
+                            activities_created += 1
                     continue
 
                 # Determine sender contact (for activity.contact_id)
