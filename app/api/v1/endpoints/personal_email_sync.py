@@ -27,6 +27,11 @@ from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity, ActivityRead
 from app.models.user_email_connection import UserEmailConnection, UserEmailConnectionRead, UserEmailConnectionStatus
+from app.services.email_connections import (
+    all_connections_stmt,
+    connection_for_mailbox_stmt,
+    primary_connection_stmt,
+)
 from app.services.gmail_oauth import (
     CALENDAR_SCOPE,
     DRIVE_FILE_SCOPE,
@@ -44,12 +49,9 @@ router = APIRouter(prefix="/personal-email-sync", tags=["personal-email-sync"])
 @router.get("/status", response_model=UserEmailConnectionStatus)
 async def get_personal_email_status(session: DBSession, current_user: CurrentUser):
     """Return the current user's personal Gmail connection status."""
-    result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id
-        )
-    )
-    connection = result.scalar_one_or_none()
+    # A user may have several mailboxes; the status header describes the PRIMARY.
+    result = await session.execute(primary_connection_stmt(current_user.id))
+    connection = result.scalars().first()
     if not connection or not connection.is_active:
         return UserEmailConnectionStatus(connected=False)
     scopes = connection.token_data.get("scopes") if isinstance(connection.token_data, dict) else []
@@ -120,16 +122,18 @@ async def personal_gmail_callback(
     if not email_address or not token_data:
         raise ValidationError("Failed to obtain Gmail credentials")
 
-    # Upsert by user_id — one inbox per user.
+    # Upsert by (user_id, email_address) so connecting a SECOND mailbox ADDS it
+    # instead of overwriting the first. Reps send manual outreach from their
+    # alternate sending domains too, and each of those inboxes has to be synced
+    # in its own right for those emails to be counted.
+    email_address = (email_address or "").strip().lower()
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == UUID(user_id),
-        )
+        connection_for_mailbox_stmt(UUID(user_id), email_address)
     )
-    connection = result.scalar_one_or_none()
+    connection = result.scalars().first()
 
     if connection:
-        # Reconnect: refresh token + reset backfill state
+        # Reconnect of this same mailbox: refresh token + reset backfill state
         connection.email_address = email_address
         connection.token_data = token_data
         connection.is_active = True
@@ -166,19 +170,23 @@ async def personal_gmail_callback(
 @router.post("/trigger")
 async def trigger_personal_email_sync(session: DBSession, current_user: CurrentUser):
     """Manually trigger an immediate sync for the current user's personal inbox."""
-    result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id,
-            UserEmailConnection.is_active == True,  # noqa: E712
-        )
-    )
-    connection = result.scalar_one_or_none()
-    if not connection:
+    # Sync EVERY mailbox this rep has connected, not just the primary — an
+    # alternate sending domain is exactly the inbox someone would want to
+    # force-sync after checking their numbers.
+    result = await session.execute(all_connections_stmt(current_user.id))
+    connections = list(result.scalars().all())
+    if not connections:
         raise NotFoundError("No active personal Gmail connection found. Connect your inbox first.")
 
     from app.tasks.personal_email_sync import sync_personal_inbox
-    task = sync_personal_inbox.delay(str(connection.id))
-    return {"status": "queued", "task_id": task.id, "email_address": connection.email_address}
+    task_ids = [sync_personal_inbox.delay(str(c.id)).id for c in connections]
+    return {
+        "status": "queued",
+        "task_id": task_ids[0],
+        "task_ids": task_ids,
+        "email_address": connections[0].email_address,
+        "mailboxes": [c.email_address for c in connections],
+    }
 
 
 @router.post("/send")
@@ -209,13 +217,11 @@ async def send_personal_email(
     if not to or not subject or not body.strip():
         raise ValidationError("to, subject, and body are all required")
 
+    # Outbound always goes from the rep's PRIMARY mailbox, never an alternate.
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id,
-            UserEmailConnection.is_active == True,  # noqa: E712
-        )
+        primary_connection_stmt(current_user.id, active_only=True)
     )
-    connection = result.scalar_one_or_none()
+    connection = result.scalars().first()
     if not connection:
         raise ValidationError("No active personal Gmail connection. Connect your inbox first.")
 
@@ -293,23 +299,31 @@ async def send_personal_email(
 
 @router.post("/disconnect")
 async def disconnect_personal_email(session: DBSession, current_user: CurrentUser):
-    """Deactivate the current user's personal Gmail connection."""
+    """Deactivate ALL of the current user's personal Gmail connections.
+
+    One button, one meaning: "stop syncing my email". With alternate sending
+    domains a rep can have several mailboxes, and leaving some still syncing
+    after they pressed Disconnect would be the wrong kind of surprise.
+    """
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id,
-        )
+        all_connections_stmt(current_user.id, active_only=False)
     )
-    connection = result.scalar_one_or_none()
-    if not connection:
+    connections = list(result.scalars().all())
+    if not connections:
         return {"status": "not_connected"}
 
-    connection.is_active = False
-    connection.token_data = {}
-    connection.last_error = None
-    connection.updated_at = datetime.utcnow()
-    session.add(connection)
+    for connection in connections:
+        connection.is_active = False
+        connection.token_data = {}
+        connection.last_error = None
+        connection.updated_at = datetime.utcnow()
+        session.add(connection)
     await session.commit()
-    return {"status": "disconnected", "email_address": connection.email_address}
+    return {
+        "status": "disconnected",
+        "email_address": connections[0].email_address,
+        "mailboxes": [c.email_address for c in connections],
+    }
 
 
 @router.get("/threads/{deal_id}")

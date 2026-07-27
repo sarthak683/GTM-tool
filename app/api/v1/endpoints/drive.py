@@ -29,6 +29,7 @@ from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.user_email_connection import UserEmailConnection
+from app.services.email_connections import primary_connection_stmt
 
 router = APIRouter(prefix="/drive", tags=["drive"])
 
@@ -80,12 +81,9 @@ def _as_drive_folder(raw: dict[str, Any]) -> DriveFolder:
 
 async def _get_active_connection(session, user_id) -> UserEmailConnection:
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == user_id,
-            UserEmailConnection.is_active == True,  # noqa: E712
-        )
+        primary_connection_stmt(user_id, active_only=True)
     )
-    connection = result.scalar_one_or_none()
+    connection = result.scalars().first()
     if not connection:
         raise NotFoundError(
             "No active Gmail/Drive connection. Connect your Google account first."
@@ -262,11 +260,9 @@ async def select_admin_folder(
 async def get_current_user_folder(session: DBSession, current_user: CurrentUser):
     """Return the folder currently selected by the logged-in user."""
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id,
-        )
+        primary_connection_stmt(current_user.id)
     )
-    connection = result.scalar_one_or_none()
+    connection = result.scalars().first()
     if not connection:
         return SelectedFolder()
     return SelectedFolder(
@@ -291,7 +287,9 @@ async def get_admin_folder(session: DBSession, current_user: CurrentUser):
             UserEmailConnection.is_active == True,  # noqa: E712
         )
     )
-    connection = result.scalar_one_or_none()
+    # Tolerate several rows: a user with multiple mailboxes could in principle
+    # have flagged more than one. Deterministically take the first.
+    connection = result.scalars().first()
     if not connection:
         return SelectedFolder()
     return SelectedFolder(
@@ -306,11 +304,9 @@ async def get_admin_folder(session: DBSession, current_user: CurrentUser):
 async def clear_user_folder(session: DBSession, current_user: CurrentUser):
     """Clear the current user's folder selection (does not touch admin folder)."""
     result = await session.execute(
-        sm_select(UserEmailConnection).where(
-            UserEmailConnection.user_id == current_user.id,
-        )
+        primary_connection_stmt(current_user.id)
     )
-    connection = result.scalar_one_or_none()
+    connection = result.scalars().first()
     if not connection:
         return SelectedFolder()
 

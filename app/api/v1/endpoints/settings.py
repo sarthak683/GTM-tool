@@ -60,6 +60,7 @@ from app.models.settings import (
 )
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
+from app.services.email_connections import connection_for_mailbox_stmt, primary_connection_stmt
 from app.services.deal_stages import (
     DEFAULT_DEAL_STAGE_SETTINGS,
     filter_funnel_config_to_stage_ids,
@@ -1129,11 +1130,9 @@ async def gmail_callback(
             user_id = payload.get("sub")
             if user_id:
                 result = await session.execute(
-                    sm_select(UserEmailConnection).where(
-                        UserEmailConnection.user_id == UUID(user_id)
-                    )
+                    primary_connection_stmt(UUID(user_id))
                 )
-                connection = result.scalar_one_or_none()
+                connection = result.scalars().first()
                 if connection:
                     connection.last_error = "Failed to complete Gmail OAuth exchange"
                     connection.updated_at = datetime.utcnow()
@@ -1156,14 +1155,16 @@ async def gmail_callback(
         if not user_id:
             return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
 
+        # Upsert by (user_id, email_address): connecting an additional mailbox
+        # must ADD it, not overwrite the rep's existing inbox. Mirrors the
+        # personal-email-sync callback.
+        _addr = (gmail_info["email_address"] or "").strip().lower()
         result = await session.execute(
-            sm_select(UserEmailConnection).where(
-                UserEmailConnection.user_id == UUID(user_id)
-            )
+            connection_for_mailbox_stmt(UUID(user_id), _addr)
         )
-        connection = result.scalar_one_or_none()
+        connection = result.scalars().first()
         if connection:
-            connection.email_address = gmail_info["email_address"]
+            connection.email_address = _addr
             connection.token_data = gmail_info["token_data"]
             connection.is_active = True
             connection.backfill_completed = False

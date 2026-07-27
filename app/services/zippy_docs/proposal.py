@@ -81,7 +81,10 @@ async def _get_connection(user_id: Optional[str]):
     async with async_session() as session:
         stmt = sm_select(UserEmailConnection).where(
             UserEmailConnection.is_active == True,  # noqa: E712
-        )
+        ).order_by(
+                UserEmailConnection.connected_at.asc().nullslast(),
+                UserEmailConnection.id.asc(),
+            )
         if user_id is not None:
             stmt = stmt.where(
                 or_(
@@ -94,7 +97,7 @@ async def _get_connection(user_id: Optional[str]):
             )
             stmt = stmt.order_by(priority)
         result = await session.execute(stmt.limit(1))
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
 
 async def _export_google_doc_as_docx(file_id: str, connection) -> Optional[bytes]:

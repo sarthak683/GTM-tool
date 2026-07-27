@@ -166,9 +166,12 @@ async def _fetch_template_bytes(
             sm_select(UserEmailConnection).where(
                 UserEmailConnection.user_id == row.owner_user_id,
                 UserEmailConnection.is_active == True,  # noqa: E712
+            ).order_by(
+                UserEmailConnection.connected_at.asc().nullslast(),
+                UserEmailConnection.id.asc(),
             )
         )
-        connection = result.scalar_one_or_none()
+        connection = result.scalars().first()
 
     if not connection:
         return None, (
@@ -418,6 +421,9 @@ async def _try_upload_to_slides(
         async with async_session() as session:
             stmt = sm_select(UserEmailConnection).where(
                 UserEmailConnection.is_active == True,  # noqa: E712
+            ).order_by(
+                UserEmailConnection.connected_at.asc().nullslast(),
+                UserEmailConnection.id.asc(),
             )
             if user_id:
                 stmt = stmt.where(
@@ -431,7 +437,7 @@ async def _try_upload_to_slides(
                 )
                 stmt = stmt.order_by(priority)
             result = await session.execute(stmt.limit(1))
-            connection = result.scalar_one_or_none()
+            connection = result.scalars().first()
 
         if not connection:
             logger.info(
