@@ -141,38 +141,6 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
           </div>
         )}
 
-        {message.citations && message.citations.length > 0 && (
-          <div className="mt-5 border-t border-stone-100 pt-3">
-            <div
-              className="font-semibold uppercase tracking-wide text-stone-500"
-              style={{ fontSize: 12, marginBottom: 6, letterSpacing: 0.4 }}
-            >
-              Sources
-            </div>
-            <ul className="flex flex-col" style={{ gap: 4 }}>
-              {message.citations.slice(0, 5).map((c) => (
-                <li key={`${c.source_id}-${c.chunk_index}`} style={{ fontSize: 13 }}>
-                  <a
-                    href={c.drive_url || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-violet-700 hover:underline"
-                    title={c.snippet}
-                  >
-                    <span>•</span>
-                    <span className="truncate">{c.source_name}</span>
-                    <span
-                      className="rounded bg-violet-100 text-violet-700"
-                      style={{ fontSize: 12, padding: "1px 6px" }}
-                    >
-                      {Math.round(c.score * 100)}%
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {timestamp && (
           <div
