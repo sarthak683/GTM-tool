@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.google_docs import fetch_google_doc_context
@@ -35,7 +35,6 @@ from app.models.meeting import Meeting
 from app.models.task import Task
 from app.services.activity_signal_classifier import detect_latest_intent_from_segments
 from app.models.user import User
-from app.services.zippy_tagging import is_our_sending_address
 from app.models.user_email_connection import UserEmailConnection
 from app.services.prospect_hygiene import is_valid_prospect_candidate
 from app.services.tasks import refresh_system_tasks_for_entity
@@ -186,30 +185,6 @@ def _normalize_beacon_sender(addr: str) -> str:
     if domain.strip().lower() in _ALL_BEACON_DOMAINS:
         return f"{local}@beacon.li"
     return addr
-
-
-async def _sending_rep_user_id(session, from_addr: str, sync_user) -> "UUID":
-    """Credit an outbound email to the rep who SENT it, not the mailbox owner.
-
-    A connection does not always belong to the sender — a shared tracking
-    mailbox, or one connected by mistake — and per-rep Emails Out keys off
-    created_by_id. Crediting the owner therefore books one rep's sends to
-    someone else: in prod, 16 alternate-domain sends by Sipra, Dyuthith and
-    Annie were all attributed to a "Zippy Beacon" pseudo-user this way, so they
-    counted for nobody.
-
-    Resolved from the NORMALIZED address so sipra@beaconli.com finds
-    sipra@beacon.li. Inbound mail and unknown senders keep the old behaviour.
-    """
-    normalized = _normalize_beacon_sender(from_addr)
-    if not is_our_sending_address(normalized):
-        return sync_user.id
-    found = (
-        await session.execute(
-            select(User.id).where(func.lower(User.email) == normalized.strip().lower())
-        )
-    ).scalars().first()
-    return found or sync_user.id
 
 
 def _is_bulk_sender_domain(addr: str) -> bool:
@@ -812,7 +787,7 @@ async def process_personal_emails(
             email_from=_normalize_beacon_sender(msg.from_addr),
             email_to=", ".join(msg.to_addrs),
             email_cc=", ".join(msg.cc_addrs),
-            created_by_id=await _sending_rep_user_id(session, msg.from_addr, sync_user),
+            created_by_id=sync_user.id,
             created_at=_parse_message_datetime(msg.date),
             event_metadata={
                 "synced_by_user_id": str(sync_user.id),
