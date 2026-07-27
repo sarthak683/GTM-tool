@@ -134,6 +134,9 @@ export interface Contact {
   assigned_rep_email?: string;
   sdr_id?: string;            // SDR
   sdr_name?: string;
+  // Set when SDR ownership changed; activity older than this is excluded from
+  // the prospect's counts so the incoming rep starts from zero.
+  sdr_assigned_at?: string | null;
   outreach_lane?: string;
   sequence_status?: string;
   instantly_status?: string;

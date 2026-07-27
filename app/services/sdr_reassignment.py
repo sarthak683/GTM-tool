@@ -9,7 +9,31 @@ from app.models.contact import Contact
 
 
 def reset_contact_outreach_progress(contact: Contact) -> None:
-    """Clear current prospect progress when account SDR ownership changes."""
+    """Clear current prospect progress when SDR ownership changes.
+
+    Two things happen here:
+
+    1. The denormalized per-channel state (the columns the prospect table and
+       ProgressCell read directly) is wiped so the incoming SDR sees an
+       untouched prospect.
+    2. `sdr_assigned_at` is stamped. Counts that are *aggregates* over the
+       Activity table — call attempts, latest-activity signal, sequence step
+       state — cannot be zeroed without destroying the audit trail, so read
+       paths compare against this watermark and ignore anything older.
+
+    Raw Activity rows are deliberately left untouched: they are the record of
+    what the previous SDR actually did.
+    """
+    now = datetime.utcnow()
+    # Instantly holds LIFETIME totals per lead and the poller only ever moves
+    # the count upwards, so remember what we wiped — otherwise the next sync
+    # restores the previous SDR's opens/clicks. See app/tasks/instantly_sync.py.
+    contact.instantly_open_baseline = (contact.instantly_open_baseline or 0) + (
+        contact.email_open_count or 0
+    )
+    contact.instantly_click_baseline = (contact.instantly_click_baseline or 0) + (
+        contact.email_click_count or 0
+    )
     contact.email_open_count = 0
     contact.email_click_count = 0
     contact.email_last_opened_at = None
@@ -22,6 +46,32 @@ def reset_contact_outreach_progress(contact: Contact) -> None:
     contact.linkedin_last_at = None
     contact.sequence_status = None
     contact.instantly_status = None
+    contact.sdr_assigned_at = now
+
+
+def instantly_counts_since_assignment(contact: Contact, lead: dict) -> tuple[int, int]:
+    """Return the (opens, clicks) an Instantly lead has earned under the current SDR.
+
+    Instantly's API reports LIFETIME totals per lead and has no notion of our
+    reassignments, so the raw numbers would resurrect the previous SDR's
+    engagement on the first poll after a reset. Subtracting the baseline
+    recorded at reassignment leaves only what accrued since.
+    """
+    opens = int(lead.get("email_open_count") or 0) - (contact.instantly_open_baseline or 0)
+    clicks = int(lead.get("email_click_count") or 0) - (contact.instantly_click_baseline or 0)
+    return max(0, opens), max(0, clicks)
+
+
+def open_timestamp_within_assignment(
+    contact: Contact, opened_at: datetime | None
+) -> datetime | None:
+    """Drop an Instantly open timestamp that predates the current SDR's tenure."""
+    if opened_at is None:
+        return None
+    watermark = contact.sdr_assigned_at
+    if watermark is not None and opened_at < watermark:
+        return None
+    return opened_at
 
 
 async def sync_company_sdr_assignment_to_contacts(
@@ -31,9 +81,10 @@ async def sync_company_sdr_assignment_to_contacts(
 ) -> list[Contact]:
     """Cascade company SDR changes to contacts that followed the old account SDR.
 
-    Historical Activity rows are kept for audit/timeline purposes. The company
-    timestamp lets read paths ignore pre-reassignment call activity, while the
-    denormalized contact fields are cleared so the new SDR starts from zero.
+    Contacts pointed at a DIFFERENT SDR (a deliberate per-contact split, e.g. a
+    timezone handoff) are left entirely alone — both their owner and their
+    progress. Because the watermark lives on the contact, skipping them here is
+    enough: their aggregates keep reading their own full history.
     """
     sdr_changed = company.sdr_id != previous_sdr_id
     if sdr_changed:

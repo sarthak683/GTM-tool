@@ -21,6 +21,10 @@ from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence
 from app.services.personal_email_sync import _normalize_beacon_sender
+from app.services.sdr_reassignment import (
+    instantly_counts_since_assignment,
+    open_timestamp_within_assignment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -470,13 +474,22 @@ async def _async_sync_active_campaigns() -> dict:
                                 # email reply" flags. Genuine negatives flow through
                                 # the human-set lead_not_interested webhook instead.
 
-                                if lead.get("email_open_count", 0) > (contact.email_open_count or 0):
-                                    contact.email_open_count = lead["email_open_count"]
-                                    last_open = _parse_instantly_datetime(lead.get("timestamp_last_open"))
+                                # Instantly totals are lifetime-per-lead, so they
+                                # are rebased against whatever an SDR reassignment
+                                # wiped — otherwise the reset is undone here.
+                                lead_opens, lead_clicks = instantly_counts_since_assignment(
+                                    contact, lead
+                                )
+                                if lead_opens > (contact.email_open_count or 0):
+                                    contact.email_open_count = lead_opens
+                                    last_open = open_timestamp_within_assignment(
+                                        contact,
+                                        _parse_instantly_datetime(lead.get("timestamp_last_open")),
+                                    )
                                     if last_open:
                                         contact.email_last_opened_at = last_open
-                                if lead.get("email_click_count", 0) > (contact.email_click_count or 0):
-                                    contact.email_click_count = lead["email_click_count"]
+                                if lead_clicks > (contact.email_click_count or 0):
+                                    contact.email_click_count = lead_clicks
 
                                 events_created = 0
                                 # One "sent" marker per contacted lead so

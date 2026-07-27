@@ -731,8 +731,16 @@ async def _process_uploaded_rows(
 
             if company:
                 already_in_batch = company.sourcing_batch_id == batch_id
+                # A re-upload whose sheet names a different SDR is a
+                # reassignment, so it must cascade + reset like the assignment
+                # endpoints do — this is the path bulk sheet handovers use.
+                previous_sdr_id = company.sdr_id
                 company = merge_company_from_upload(company, fields)
                 company.sourcing_batch_id = batch_id
+                if company.sdr_id != previous_sdr_id:
+                    await sync_company_sdr_assignment_to_contacts(
+                        session, company, previous_sdr_id
+                    )
                 append_company_activity_log(
                     company,
                     action="company_import_updated",

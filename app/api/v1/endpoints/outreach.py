@@ -23,6 +23,10 @@ from app.models.outreach import (
 )
 from app.repositories.outreach import OutreachRepository
 from app.services.outreach_generator import generate_sequence
+from app.services.sdr_reassignment import (
+    instantly_counts_since_assignment,
+    open_timestamp_within_assignment,
+)
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 logger = logging.getLogger(__name__)
@@ -1063,15 +1067,22 @@ async def sync_campaign_from_instantly(
                     elif lead_status == 1:
                         contact.instantly_status = "active"
 
-                    # Sync open/click counts
-                    if lead.get("email_open_count", 0) > (contact.email_open_count or 0):
-                        contact.email_open_count = lead["email_open_count"]
+                    # Sync open/click counts. Rebased against any SDR-reassignment
+                    # reset — Instantly only knows lifetime totals. (Matches instantly_sync.)
+                    lead_opens, lead_clicks = instantly_counts_since_assignment(contact, lead)
+                    if lead_opens > (contact.email_open_count or 0):
+                        contact.email_open_count = lead_opens
                         if lead.get("timestamp_last_open"):
-                            contact.email_last_opened_at = datetime.fromisoformat(
-                                lead["timestamp_last_open"].replace("Z", "+00:00")
-                            ).replace(tzinfo=None)
-                    if lead.get("email_click_count", 0) > (contact.email_click_count or 0):
-                        contact.email_click_count = lead["email_click_count"]
+                            last_open = open_timestamp_within_assignment(
+                                contact,
+                                datetime.fromisoformat(
+                                    lead["timestamp_last_open"].replace("Z", "+00:00")
+                                ).replace(tzinfo=None),
+                            )
+                            if last_open:
+                                contact.email_last_opened_at = last_open
+                    if lead_clicks > (contact.email_click_count or 0):
+                        contact.email_click_count = lead_clicks
 
                     contact.updated_at = now
                     session.add(contact)

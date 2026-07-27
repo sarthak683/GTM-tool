@@ -20,7 +20,10 @@ from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
 from app.services.account_sourcing import append_company_activity_log
-from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
+from app.services.sdr_reassignment import (
+    reset_contact_outreach_progress,
+    sync_company_sdr_assignment_to_contacts,
+)
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -222,6 +225,12 @@ async def assign_contact(
         else:
             contact.assigned_to_id = None
             contact.assigned_rep_email = None
+
+    # A per-prospect SDR handoff is still a handoff: the incoming rep starts
+    # from zero, exactly as they would from the account-level reassignment.
+    # AE changes do not reset — outreach progress belongs to the SDR motion.
+    if is_sdr and contact.sdr_id != current_assigned_id:
+        reset_contact_outreach_progress(contact)
 
     contact.updated_at = datetime.utcnow()
     session.add(contact)
