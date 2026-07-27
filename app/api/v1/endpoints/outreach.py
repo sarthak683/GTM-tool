@@ -26,6 +26,7 @@ from app.services.outreach_generator import generate_sequence
 from app.services.sdr_reassignment import (
     instantly_counts_since_assignment,
     open_timestamp_within_assignment,
+    status_within_assignment,
 )
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
@@ -1046,8 +1047,21 @@ async def sync_campaign_from_instantly(
                     lead_status = lead.get("status")
                     interest = lead.get("lt_interest_status")
 
-                    # Map Instantly lead status -> CRM status
-                    if lead_status == -1:
+                    # Map Instantly lead status -> CRM status. Skipped entirely when
+                    # the lead's Instantly activity predates an SDR handover, so the
+                    # previous rep's outcome is not re-applied. (Matches instantly_sync.)
+                    _last_contact_at = None
+                    if lead.get("timestamp_last_contact"):
+                        try:
+                            _last_contact_at = datetime.fromisoformat(
+                                lead["timestamp_last_contact"].replace("Z", "+00:00")
+                            ).replace(tzinfo=None)
+                        except (ValueError, AttributeError):
+                            _last_contact_at = None
+
+                    if not status_within_assignment(contact, _last_contact_at):
+                        pass
+                    elif lead_status == -1:
                         contact.sequence_status = "bounced"
                         contact.instantly_status = "bounced"
                         contact.email_verified = False

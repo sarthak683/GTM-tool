@@ -74,6 +74,34 @@ def open_timestamp_within_assignment(
     return opened_at
 
 
+def status_within_assignment(
+    contact: Contact, last_activity_at: datetime | None
+) -> bool:
+    """Whether an Instantly-derived STATUS may be applied to this prospect.
+
+    Instantly has no notion of our reassignments, so on every poll it re-offers
+    the campaign outcome it has always held ("bounced", "unsubscribed", …). For a
+    prospect that changed hands, re-applying an outcome earned under the previous
+    SDR undoes the reset — the count reset alone is not enough, because the
+    status is what lights the channel lane up in the UI.
+
+    `last_activity_at` is when Instantly last did something with this lead
+    (normally `timestamp_last_contact`). A prospect that was never reassigned is
+    unaffected. A missing timestamp means Instantly cannot show the activity is
+    the current owner's, so for a reassigned prospect it is treated as stale.
+
+    NOTE: suppressing the status does NOT lose the "do not email this address"
+    signal — a bounce also clears `email_verified`, which is never restored by
+    the reset, and the bounce Activity row is kept for the timeline.
+    """
+    watermark = contact.sdr_assigned_at
+    if watermark is None:
+        return True
+    if last_activity_at is None:
+        return False
+    return last_activity_at >= watermark
+
+
 async def sync_company_sdr_assignment_to_contacts(
     session: AsyncSession,
     company: Company,

@@ -5,6 +5,7 @@ from app.services.sdr_reassignment import (
     instantly_counts_since_assignment,
     open_timestamp_within_assignment,
     reset_contact_outreach_progress,
+    status_within_assignment,
 )
 
 
@@ -122,3 +123,41 @@ def test_open_timestamp_kept_when_never_reassigned():
     stamp = datetime(2026, 7, 1, 12, 0, 0)
 
     assert open_timestamp_within_assignment(contact, stamp) == stamp
+
+
+def test_previous_reps_bounce_is_not_reapplied_after_reassignment():
+    """The real prod case: the poller re-set sequence_status='bounced' on three
+    reassigned prospects ~15 min after the reset cleared it, re-lighting the
+    email lane. Counts alone were not enough — the status had to be gated too."""
+    contact = _engaged_contact()
+    reset_contact_outreach_progress(contact)
+    watermark = contact.sdr_assigned_at
+
+    # Instantly last touched this lead before the handover -> stale outcome.
+    assert status_within_assignment(contact, watermark - timedelta(days=2)) is False
+
+
+def test_status_applies_for_activity_under_the_current_rep():
+    contact = _engaged_contact()
+    reset_contact_outreach_progress(contact)
+    watermark = contact.sdr_assigned_at
+
+    assert status_within_assignment(contact, watermark + timedelta(hours=2)) is True
+
+
+def test_status_always_applies_when_never_reassigned():
+    contact = _engaged_contact()
+
+    assert status_within_assignment(contact, datetime(2026, 1, 1)) is True
+    assert status_within_assignment(contact, None) is True
+
+
+def test_missing_timestamp_is_treated_as_stale_only_for_reassigned_prospects():
+    """Instantly cannot prove the activity is the new owner's, so a reassigned
+    prospect must not inherit it; an untouched prospect is unaffected."""
+    reassigned = _engaged_contact()
+    reset_contact_outreach_progress(reassigned)
+    assert status_within_assignment(reassigned, None) is False
+
+    untouched = _engaged_contact()
+    assert status_within_assignment(untouched, None) is True

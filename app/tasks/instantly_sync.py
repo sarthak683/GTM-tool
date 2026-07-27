@@ -24,6 +24,7 @@ from app.services.personal_email_sync import _normalize_beacon_sender
 from app.services.sdr_reassignment import (
     instantly_counts_since_assignment,
     open_timestamp_within_assignment,
+    status_within_assignment,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,8 +220,13 @@ async def _backfill_synced_sent_event(
     )
     # Keep the contact's denormalized send marker in step with the new activity
     # so the inline progress bar shows "sent" too. Only advance from a pre-send
-    # state — never clobber a more specific status (bounced/replied/…).
-    if (contact.instantly_status or "").lower() in _PRE_SEND_INSTANTLY:
+    # state — never clobber a more specific status (bounced/replied/…), and never
+    # for a send that happened before the current SDR took the prospect over (the
+    # Activity row above is already hidden by the watermark, so the marker would
+    # otherwise re-light a lane the reassignment reset just cleared).
+    if (contact.instantly_status or "").lower() in _PRE_SEND_INSTANTLY and status_within_assignment(
+        contact, anchor
+    ):
         contact.instantly_status = "pushed"
         session.add(contact)
     return 1
@@ -454,7 +460,18 @@ async def _async_sync_active_campaigns() -> dict:
                                 lead_status = lead.get("status")
                                 interest = lead.get("lt_interest_status")
 
-                                if lead_status == -1 and contact.sequence_status != "bounced":
+                                # Statuses are campaign outcomes Instantly re-offers on
+                                # every poll. For a reassigned prospect, an outcome the
+                                # PREVIOUS SDR earned must not be re-applied or it undoes
+                                # the reset (it is the status that lights the lane up).
+                                may_apply_status = status_within_assignment(
+                                    contact,
+                                    _parse_instantly_datetime(lead.get("timestamp_last_contact")),
+                                )
+
+                                if not may_apply_status:
+                                    pass
+                                elif lead_status == -1 and contact.sequence_status != "bounced":
                                     contact.sequence_status = "bounced"
                                     contact.instantly_status = "bounced"
                                     contact.email_verified = False
