@@ -1413,6 +1413,22 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 </span>
               </label>
             </FieldRow>
+            {/* Meeting Booked With */}
+            <FieldRow label="Meeting Booked With" icon={<UserCircle2 size={13} />}>
+              <select
+                value={deal.meeting_booked_with ?? ""}
+                onChange={(e) => patchDeal({ meeting_booked_with: e.target.value || null } as Partial<Deal>)}
+                style={{ ...fieldInputStyle }}
+              >
+                <option value="">—</option>
+                <option value="VP">VP</option>
+                <option value="SVP">SVP</option>
+                <option value="Head/Chief">Head/Chief</option>
+                <option value="Director">Director</option>
+                <option value="Manager">Manager</option>
+                <option value="IC">IC</option>
+              </select>
+            </FieldRow>
           </div>
           </div>
 

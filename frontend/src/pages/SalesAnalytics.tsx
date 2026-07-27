@@ -609,7 +609,7 @@ function MeetingBucketModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const showMeetingBookedWith = bucket === "direct_sql";
+  const showMeetingBookedWith = true;
 
   return (
     <div
@@ -1462,10 +1462,14 @@ function RepWeeklyActivityFocus({
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-      const meetingsDelta = (b.totals.meetings ?? 0) - (a.totals.meetings ?? 0);
+      const outputMeetings = (r: typeof a) =>
+        (r.totals.meetings_next_1w ?? 0) + (r.totals.meetings_next_2w ?? 0) + (r.totals.meetings_beyond_2w ?? 0);
+      const meetingsDelta = outputMeetings(b) - outputMeetings(a);
       if (meetingsDelta !== 0) return meetingsDelta;
-      const aRatio = (a.totals.total ?? 0) > 0 ? (a.totals.meetings ?? 0) / (a.totals.total ?? 0) : 0;
-      const bRatio = (b.totals.total ?? 0) > 0 ? (b.totals.meetings ?? 0) / (b.totals.total ?? 0) : 0;
+      const aTotal = a.totals.total ?? 0;
+      const bTotal = b.totals.total ?? 0;
+      const aRatio = aTotal > 0 ? outputMeetings(a) / aTotal : 0;
+      const bRatio = bTotal > 0 ? outputMeetings(b) / bTotal : 0;
       return bRatio - aRatio;
     }),
     [rows],

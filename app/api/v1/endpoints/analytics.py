@@ -2966,24 +2966,42 @@ async def sales_dashboard(
             seen_ae_conv.add(r.deal_id)
             _bump_ae_demo(r.deal_id, "ae_demos_converted")
 
-    # Per-rep meeting-booked count from Contact.sequence_status — covers meetings
-    # booked through any channel (call, email, LinkedIn). Used for the "meeting
-    # booked" stat in the Calls box.
+    # Per-rep meeting-booked count from call activities where the SDR picked
+    # "Demo Scheduled/Booked" (or "Meeting Confirmed") disposition within the
+    # analytics window. Credited to the rep who logged the call (created_by_id).
     call_meeting_booked_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
+        type_lower = func.lower(Activity.type)
+        medium_lower = func.lower(Activity.medium)
+        outcome_lower = func.lower(Activity.call_outcome)
+        content_lower = func.lower(Activity.content)
+        is_call = or_(type_lower == "call", medium_lower == "call")
+        is_booked = or_(
+            outcome_lower.in_(["demo_scheduled_booked", "meeting_confirmed"]),
+            and_(
+                func.lower(Activity.source) == "manual",
+                or_(
+                    content_lower.startswith("demo scheduled/booked"),
+                    content_lower.startswith("meeting confirmed"),
+                ),
+            ),
+        )
         cmb_rows = (
             await session.execute(
-                select(Contact.assigned_to_id, func.count().label("cnt"))
+                select(Activity.created_by_id, func.count().label("cnt"))
                 .where(
-                    Contact.assigned_to_id.in_(list(rep_user_ids)),
-                    func.lower(Contact.sequence_status) == "meeting_booked",
+                    Activity.created_by_id.in_(list(rep_user_ids)),
+                    Activity.created_at >= window_start,
+                    Activity.created_at <= window_end,
+                    is_call,
+                    is_booked,
                 )
-                .group_by(Contact.assigned_to_id)
+                .group_by(Activity.created_by_id)
             )
         ).all()
         for cmb in cmb_rows:
-            if cmb.assigned_to_id:
-                call_meeting_booked_by_uid[cmb.assigned_to_id] = cmb.cnt
+            if cmb.created_by_id:
+                call_meeting_booked_by_uid[cmb.created_by_id] = cmb.cnt
 
     # ── Output buckets: Demo Scheduled deals, bucketed by Meeting.scheduled_at ─
     # Source: deals in "demo_scheduled" stage joined to their meeting records.
@@ -3694,6 +3712,7 @@ async def meeting_bucket_deals(
     today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     week1_dt = today_dt + timedelta(days=7)
     week2_dt = today_dt + timedelta(days=14)
+    window_start = today_dt - timedelta(days=window_days)
 
     AEUser = aliased(User)
     SDRUser = aliased(User)
@@ -3741,7 +3760,7 @@ async def meeting_bucket_deals(
                 ae_name=str(row.ae_name or "Unassigned"),
                 sdr_name=str(row.sdr_name or ""),
                 date_of_meeting=row.scheduled_at.date().isoformat() if row.scheduled_at else None,
-                meeting_booked_with=row.meeting_booked_with if bucket == "direct_sql" else None,
+                meeting_booked_with=row.meeting_booked_with,
             ))
 
     elif bucket == "demo_rescheduled":
@@ -3751,6 +3770,7 @@ async def meeting_bucket_deals(
                 Deal.id.label("deal_id"),
                 Deal.name.label("deal_name"),
                 Deal.close_date_est.label("close_date_est"),
+                Deal.meeting_booked_with.label("meeting_booked_with"),
                 AEUser.name.label("ae_name"),
                 Company.sdr_name.label("sdr_name"),
             )
@@ -3761,7 +3781,7 @@ async def meeting_bucket_deals(
             .where(
                 Activity.type == "demo_rescheduled",
                 Activity.created_at >= window_start,
-                Activity.created_at <= today_dt,
+                Activity.created_at <= _utcnow(),
             )
         )
         if user_id is not None:
@@ -3779,7 +3799,7 @@ async def meeting_bucket_deals(
                 ae_name=str(row.ae_name or "Unassigned"),
                 sdr_name=str(row.sdr_name or ""),
                 date_of_meeting=row.close_date_est.isoformat() if row.close_date_est else None,
-                meeting_booked_with=None,
+                meeting_booked_with=row.meeting_booked_with,
             ))
 
     return MeetingBucketDealsResponse(deals=deals)
