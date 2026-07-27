@@ -195,6 +195,7 @@ function MilestoneDealsModal({
   const dateLabel = isClosedWon ? "Closed On" : "Reached On";
   const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
   const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
+  const showDateOfMeeting = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
 
   return (
     <div
@@ -238,8 +239,10 @@ function MilestoneDealsModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
-                  ["Deal", "Amount", "AE", "SDR"],
-                  deals.map((d) => [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
+                  showDateOfMeeting ? ["Deal", "Amount", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR"],
+                  deals.map((d) => showDateOfMeeting
+                    ? [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                    : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
                 style={exportBtnStyle}
               >
@@ -268,6 +271,7 @@ function MilestoneDealsModal({
                 <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
                 <th style={thSty}>AE</th>
                 <th style={thSty}>SDR</th>
+                {showDateOfMeeting && <th style={thSty}>Date of Meeting</th>}
               </tr>
             </thead>
             <tbody>
@@ -289,6 +293,11 @@ function MilestoneDealsModal({
                     <td style={{ ...tdSty, color: "#62748a" }}>
                       {d.assigned_sdr || "—"}
                     </td>
+                    {showDateOfMeeting && (
+                      <td style={{ ...tdSty, color: "#62748a" }}>
+                        {d.close_date_est || "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -300,7 +309,7 @@ function MilestoneDealsModal({
                   <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: accentColor }}>
                     {formatCurrency(total)}
                   </td>
-                  <td colSpan={2} style={tdSty} />
+                  <td colSpan={showDateOfMeeting ? 3 : 2} style={tdSty} />
                 </tr>
               </tfoot>
             )}
@@ -800,7 +809,7 @@ function ActivityDrilldownModal({
                     fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
                   }}
                 >
-                  {filterConnected ? "Connected only ✓" : "Filter"}
+                  {filterConnected ? "Connected ✓" : "Connected"}
                 </button>
               )}
             </div>
@@ -1653,14 +1662,10 @@ function RepWeeklyActivityFocus({
             </div>
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="#edf2f8" />
-                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                    <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                  </XAxis>
-                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                    <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                  </YAxis>
+                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                   <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
                   <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                   {OUTREACH_MIX_KEYS.map((key) => {
@@ -1690,14 +1695,10 @@ function RepWeeklyActivityFocus({
               </div>
               <div style={{ width: "100%", height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barGap={6}>
+                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={6}>
                     <CartesianGrid vertical={false} stroke="#edf2f8" />
-                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                      <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                    </XAxis>
-                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                      <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                    </YAxis>
+                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                     <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
                     <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                     {CALL_QUALITY_KEYS.map((key) => {

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.core.analytics_defaults import DEFAULT_STAGE_PROBABILITIES
@@ -3052,7 +3052,7 @@ async def sales_dashboard(
     direct_sql_by_uid: dict[UUID, int] = {}
     if rep_user_ids:
         direct_sql_rows = (await session.execute(
-            select(Deal.assigned_to_id, Deal.sdr_id)
+            select(Deal.id, Deal.assigned_to_id, Deal.sdr_id)
             .where(
                 Deal.stage == "demo_scheduled",
                 Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
@@ -3062,9 +3062,14 @@ async def sales_dashboard(
                 ),
             )
         )).all()
+        seen_direct_sql: set[tuple] = set()
         for ds in direct_sql_rows:
             for uid in [ds.assigned_to_id, ds.sdr_id]:
                 if uid and uid in rep_user_ids:
+                    key = (uid, ds.id)
+                    if key in seen_direct_sql:
+                        continue
+                    seen_direct_sql.add(key)
                     direct_sql_by_uid[uid] = direct_sql_by_uid.get(uid, 0) + 1
 
     # ── Prospect count & mobile coverage per rep ─────────────────────────────
@@ -3124,6 +3129,27 @@ async def sales_dashboard(
         for dr in dr_rows:
             if dr.created_by_id:
                 demos_rescheduled_by_uid[dr.created_by_id] = dr.cnt
+
+    # Inject zero rows for seed reps who have no activity in the window
+    for seed_uid in seed_rep_user_ids:
+        rep_key, rep_user_id, rep_name = _label_for_rep(seed_uid, users)
+        if rep_key not in rep_activity:
+            rep_activity[rep_key] = {
+                "key": rep_key,
+                "user_id": rep_user_id,
+                "rep_name": rep_name,
+                "calls": 0,
+                "connected_calls": 0,
+                "live_calls": 0,
+                "emails": 0,
+                "manual_emails": 0,
+                "instantly_emails": 0,
+                "linkedin_reachouts": 0,
+                "meetings": 0,
+                "total": 0,
+                "active_deals": 0,
+                "pipeline_amount": 0.0,
+            }
 
     rep_activity_rows = [
         RepActivityRow(
