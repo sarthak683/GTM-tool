@@ -48,14 +48,13 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   // edited; null means nothing is being renamed.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-
-  // Confirm-before-delete: holds the id of the session pending deletion.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Knowledge footer — "Grounded in N files · Last synced Xm ago"
   const [userStatus, setUserStatus] = useState<IndexStatus | null>(null);
   const [adminStatus, setAdminStatus] = useState<IndexStatus | null>(null);
   const [emailConnected, setEmailConnected] = useState(false);
+  const [companyNames, setCompanyNames] = useState<string[]>([]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -65,6 +64,7 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     void refreshConversations();
     void loadKnowledgeStatus();
     void loadEmailStatus();
+    zippyApi.getCompanies().then(setCompanyNames).catch(() => {});
     return undefined;
   }, [open]);
 
@@ -148,6 +148,22 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages.length, loadingThread]);
 
+  // When the latest assistant message carries an aircall_dial artifact,
+  // trigger the Aircall dial pad directly (frontend-only — the backend
+  // only looked up the number, it never placed the call).
+  useEffect(() => {
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== "assistant" || !last.artifacts) return;
+    const dialArtifact = (last.artifacts as any[]).find(
+      (a) => a?.type === "aircall_dial",
+    );
+    if (!dialArtifact) return;
+    if (typeof window.__aircallDial === "function") {
+      window.__aircallDial(dialArtifact.phone, dialArtifact.contact_name);
+    }
+  }, [messages]);
+
   const footerStats = useMemo(() => {
     const userFiles = userStatus?.total_files ?? 0;
     const adminFiles = adminStatus?.total_files ?? 0;
@@ -160,30 +176,33 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
   }, [userStatus, adminStatus]);
 
   const suggestions = useMemo(
-    () => {
-      const hasFiles = footerStats.totalFiles > 0;
-      if (!emailConnected) {
-        return [
-          "Connect your Gmail in Settings to unlock Drive search.",
-          "What can Zippy help me with?",
-          "How do I get started with Beacon CRM?",
-        ];
-      }
-      if (!hasFiles) {
-        return [
-          "Pick a Drive folder in Settings so I can search your files.",
-          "Summarise the last client call with Beacon.",
-          "Draft a mutual NDA for Beacon and Acme Corp (India).",
-        ];
-      }
-      return [
-        "Summarise the last client call with Optera.",
-        "Draft a mutual NDA for Beacon and Acme Corp (India).",
-        "Generate a MOM from the notes below.",
-        "What's in the ROI deck for e2open?",
-      ];
-    },
-    [emailConnected, footerStats.totalFiles],
+    () => [
+      {
+        icon: "folder",
+        title: "Pick a Drive folder",
+        subtitle: "In Settings so I can search your files",
+        message: "Pick a Drive folder in Settings so I can search your files.",
+      },
+      {
+        icon: "messages",
+        title: "Last client call",
+        subtitle: "Summarise the last call with Beacon",
+        message: "Summarise the last client call with Beacon.",
+      },
+      {
+        icon: "search",
+        title: "Search files",
+        subtitle: "Drive + knowledge base",
+        message: "Search my Drive and knowledge base.",
+      },
+      {
+        icon: "chart-bar",
+        title: "ROI Analysis",
+        subtitle: "From survey data",
+        message: "Generate ROI analysis from survey data.",
+      },
+    ],
+    [],
   );
 
   const filteredConversations = useMemo(() => {
@@ -512,7 +531,6 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
                     {group.items.map((c) => {
                       const isActive = activeId === c.id;
                       const isRenamingThis = renamingId === c.id;
-                      const isDeleting = confirmDeleteId === c.id;
                       return (
                         <div
                           key={c.id}
@@ -606,7 +624,7 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
 
                           {/* Right side — relative time fades out on hover so
                               action buttons can appear in its place. */}
-                          {!isRenamingThis && !isDeleting && (
+                          {!isRenamingThis && (
                             <>
                               <span
                                 className={`flex-shrink-0 text-stone-400 ${
@@ -638,45 +656,10 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
                                     <path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z" />
                                   </svg>
                                 </SessionActionButton>
-                                <SessionActionButton
-                                  label="Delete"
-                                  danger
-                                  onClick={() => setConfirmDeleteId(c.id)}
-                                >
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: 13, height: 13 }}>
-                                    <path d="M3 6h18" />
-                                    <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-                                  </svg>
-                                </SessionActionButton>
                               </div>
                             </>
                           )}
 
-                          {/* Inline delete confirm — replaces the row's right side */}
-                          {isDeleting && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-red-600" style={{ fontSize: 11, fontWeight: 600 }}>
-                                Delete?
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => void commitDelete(c.id)}
-                                className="rounded bg-red-600 text-white hover:bg-red-700"
-                                style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700 }}
-                              >
-                                Yes
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDeleteId(null)}
-                                className="rounded border border-stone-300 text-stone-600 hover:bg-stone-100"
-                                style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700 }}
-                              >
-                                No
-                              </button>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
@@ -724,8 +707,6 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
           {messages.length === 0 && !loadingThread && (
             <ZippyWelcome
               suggestions={suggestions}
-              emailConnected={emailConnected}
-              hasKnowledge={footerStats.totalFiles > 0}
               onPick={(text) => void sendMessage(text)}
             />
           )}
@@ -736,7 +717,11 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
           )}
           <div className="flex flex-col" style={{ gap: 18 }}>
             {messages.map((m) => (
-              <ZippyMessageBubble key={m.id} message={m} />
+              <ZippyMessageBubble
+                key={m.id}
+                message={m}
+                onQuickReply={(text) => void sendMessage(text)}
+              />
             ))}
             {sending && (
               <div className="flex items-center gap-2 px-1 text-xs text-stone-400">
@@ -757,7 +742,7 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
           </div>
         )}
 
-        <ZippyComposer disabled={sending} onSubmit={sendMessage} />
+        <ZippyComposer disabled={sending} onSubmit={sendMessage} companyNames={companyNames} />
 
         {/* Status chip */}
         <div className="flex items-center gap-2 border-t border-stone-200 bg-white px-4 py-2 text-[11px] text-stone-500">
@@ -907,20 +892,41 @@ function HeaderIconButton({
 
 function ZippyWelcome({
   suggestions,
-  emailConnected,
-  hasKnowledge,
   onPick,
 }: {
-  suggestions: string[];
-  emailConnected: boolean;
-  hasKnowledge: boolean;
+  suggestions: {
+    icon: string;
+    title: string;
+    subtitle: string;
+    message: string;
+  }[];
   onPick: (text: string) => void;
 }) {
-  const subtitle = !emailConnected
-    ? "Connect your Gmail in Settings → Zippy to let me search your Drive, generate documents, and more."
-    : !hasKnowledge
-    ? "Pick a Drive folder in Settings so I can answer from your files. I can still generate documents without it."
-    : "Ask about files in your Drive, generate a MOM from call notes, or draft an NDA for any jurisdiction.";
+  const iconMap: Record<string, React.ReactNode> = {
+    folder: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}>
+        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+      </svg>
+    ),
+    messages: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}>
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+      </svg>
+    ),
+    search: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}>
+        <circle cx="11" cy="11" r="8" />
+        <path d="M21 21l-4.35-4.35" />
+      </svg>
+    ),
+    "chart-bar": (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}>
+        <rect x="18" y="3" width="4" height="18" rx="1" />
+        <rect x="10" y="8" width="4" height="13" rx="1" />
+        <rect x="2" y="13" width="4" height="8" rx="1" />
+      </svg>
+    ),
+  };
 
   return (
     <div
@@ -945,25 +951,39 @@ function ZippyWelcome({
         className="text-stone-500"
         style={{ marginTop: 8, maxWidth: 360, fontSize: 13.5, lineHeight: 1.55 }}
       >
-        {subtitle}
+        Grounded in your Drive + Beacon's shared knowledge base.
       </p>
+
       <div
-        className="grid w-full grid-cols-1"
-        style={{ marginTop: 24, gap: 10 }}
+        className="grid w-full"
+        style={{ marginTop: 24, gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
       >
         {suggestions.map((s) => (
           <button
-            key={s}
+            key={s.title}
             type="button"
-            onClick={() => onPick(s)}
-            className="rounded-xl border border-stone-200 bg-white text-left text-stone-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-50"
-            style={{
-              padding: "12px 14px",
-              fontSize: 13.5,
-              lineHeight: 1.5,
-            }}
+            onClick={() => onPick(s.message)}
+            className="rounded-xl border border-stone-200 bg-stone-50 text-left transition hover:border-violet-300 hover:bg-violet-50"
+            style={{ padding: "12px 14px" }}
           >
-            {s}
+            <span
+              className="mb-2 flex text-violet-600"
+              style={{ display: "block", marginBottom: 8 }}
+            >
+              {iconMap[s.icon]}
+            </span>
+            <span
+              className="block font-medium text-stone-800"
+              style={{ fontSize: 13, marginBottom: 2 }}
+            >
+              {s.title}
+            </span>
+            <span
+              className="block text-stone-400"
+              style={{ fontSize: 11.5, lineHeight: 1.4 }}
+            >
+              {s.subtitle}
+            </span>
           </button>
         ))}
       </div>

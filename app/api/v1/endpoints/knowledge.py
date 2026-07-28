@@ -90,8 +90,15 @@ async def _get_connection_for_scope(
             UserEmailConnection.user_id == user_id,
             UserEmailConnection.is_active.is_(True),
         )
-    result = await session.execute(stmt)
-    connection = result.scalar_one_or_none()
+    # A user may have several mailboxes now; take a deterministic one rather
+    # than raising MultipleResultsFound.
+    result = await session.execute(
+        stmt.order_by(
+            UserEmailConnection.connected_at.asc().nullslast(),
+            UserEmailConnection.id.asc(),
+        )
+    )
+    connection = result.scalars().first()
     if not connection:
         raise HTTPException(
             status_code=404,

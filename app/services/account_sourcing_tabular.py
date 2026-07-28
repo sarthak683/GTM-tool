@@ -266,14 +266,18 @@ def parse_csv(content: bytes) -> list[dict[str, str]]:
     appears on the group's first row are kept and linked rather than dropped.
     """
     text = content.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
+    # Use csv.reader + _normalize_row (NOT DictReader): DictReader is last-wins on
+    # DUPLICATE headers, so a file with two "Phone" columns (direct + mobile, as
+    # Apollo / Sales Nav and the Beacon template export) collapsed to a single
+    # "phone" = the last column, silently dropping the first column's numbers.
+    # _normalize_row de-collides duplicates to "phone" + "phone 2" (matching the
+    # XLSX path), and _detect_header_row skips any preamble rows before the header.
+    all_rows = list(csv.reader(io.StringIO(text)))
+    if not all_rows:
+        return []
+    header_index, headers = _detect_header_row(all_rows)
     cleaned_rows = [
-        {
-            _normalize_header(k): (v or "").strip()
-            for k, v in row.items()
-            if k and k.strip()
-        }
-        for row in reader
+        _normalize_row(headers, values) for values in all_rows[header_index + 1 :]
     ]
     _forward_fill_company(cleaned_rows)
     rows = []

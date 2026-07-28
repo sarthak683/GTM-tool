@@ -292,16 +292,31 @@
   align-items: center;
   column-gap: 16px;
 }
+/* Admin multi-select adds a fixed leading checkbox column. Header and rows
+   share the same track so the checkboxes line up under each other. */
+.account-sourcing-page .as-company-row.as-selectable,
+.account-sourcing-page .as-company-table-header.as-selectable {
+  grid-template-columns: 28px minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(260px, 300px);
+}
 .account-sourcing-page .as-company-table-header {
   border: 1px solid transparent; /* match the card's 1px border for alignment */
 }
+.account-sourcing-page .as-company-row.as-selected {
+  border-color: #cfe89a;
+}
 @media (max-width: 980px) {
   .account-sourcing-page .as-company-table-header { display: none; }
-  .account-sourcing-page .as-company-row {
+  .account-sourcing-page .as-company-row,
+  .account-sourcing-page .as-company-row.as-selectable {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+  }
+  /* On mobile the checkbox sits as a small inline control at the top of the
+     stacked card rather than a grid column. */
+  .account-sourcing-page .as-company-row .as-col-select {
+    justify-content: flex-start !important;
   }
   /* On mobile the owner chips left-align beneath the account + signals stack. */
   .account-sourcing-page .as-company-row .as-col-owners { justify-content: flex-start !important; }

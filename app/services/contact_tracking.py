@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
-from app.models.contact import ContactRead
+from app.models.contact import Contact, ContactRead
 from app.models.deal import Deal, DealContact
 
 
@@ -260,12 +260,20 @@ async def load_activity_signals(
     if not contact_ids:
         return {}
 
+    # Ignore activity the current SDR did not do — see the watermark note in
+    # app/services/sdr_reassignment.py.
+    current_assignment_activity = or_(
+        Contact.sdr_assigned_at.is_(None),
+        Activity.created_at >= Contact.sdr_assigned_at,
+    )
     latest_subquery = (
         select(
             Activity.contact_id.label("contact_id"),
             func.max(Activity.created_at).label("latest_created_at"),
         )
+        .join(Contact, Contact.id == Activity.contact_id)
         .where(Activity.contact_id.in_(contact_ids))
+        .where(current_assignment_activity)
         .group_by(Activity.contact_id)
         .subquery()
     )
@@ -273,6 +281,7 @@ async def load_activity_signals(
     rows = (
         await session.execute(
             select(Activity)
+            .join(Contact, Contact.id == Activity.contact_id)
             .join(
                 latest_subquery,
                 and_(
@@ -280,6 +289,7 @@ async def load_activity_signals(
                     Activity.created_at == latest_subquery.c.latest_created_at,
                 ),
             )
+            .where(current_assignment_activity)
             .order_by(Activity.contact_id, Activity.created_at.desc())
         )
     ).scalars().all()
@@ -378,13 +388,16 @@ async def to_contact_read(
     # endpoint, which computes it via a correlated subquery. Without this the
     # single-contact response always reports 0 calls.
     if getattr(contact, "id", None) is not None:
-        call_count = (
-            await session.execute(
-                select(func.count(Activity.id))
-                .where(Activity.contact_id == contact.id)
-                .where(Activity.type == "call")
-            )
-        ).scalar_one()
+        call_stmt = (
+            select(func.count(Activity.id))
+            .where(Activity.contact_id == contact.id)
+            .where(Activity.type == "call")
+        )
+        # Same watermark the list path applies, read straight off the contact.
+        sdr_assigned_at = getattr(contact, "sdr_assigned_at", None)
+        if sdr_assigned_at is not None:
+            call_stmt = call_stmt.where(Activity.created_at >= sdr_assigned_at)
+        call_count = (await session.execute(call_stmt)).scalar_one()
         read.call_attempt_count = int(call_count or 0)
     await apply_contact_tracking(session, [read])
     return read

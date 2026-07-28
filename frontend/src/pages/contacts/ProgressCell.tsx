@@ -110,6 +110,11 @@ function getEmailChannel(contact: Contact): ChannelState {
   // as a red "Negative reply · email" (the reported bug). The call's own red dot
   // (from call_disposition, handled separately below) still shows correctly.
   const negative = inst === "not_interested";
+  // A bounce is a HARD stop: the mail never landed. It used to fall through to
+  // the plain "Sent · Awaiting open" yellow, so a dead address read as a
+  // delivered email that just hadn't been opened yet. The palette contract at
+  // the top of this file already assigns RED to bounces.
+  const bounced = inst === "bounced" || seq === "bounced";
   const sent = reallySent;
 
   const dots: OutcomeDot[] = [];
@@ -125,14 +130,16 @@ function getEmailChannel(contact: Contact): ChannelState {
   }
   const overflowCount = Math.max(0, opens - MAX_BLUE_OPENS);
   let terminalDot: OutcomeDot | undefined;
-  if (booked) terminalDot = { color: "green", title: "Meeting booked" };
+  if (bounced) terminalDot = { color: "red", title: "Email bounced" };
+  else if (booked) terminalDot = { color: "green", title: "Meeting booked" };
   else if (replied) terminalDot = { color: "green", title: "Positive reply" };
   else if (negative) terminalDot = { color: "red", title: "Negative reply" };
 
   let heroColor: OutcomeColor | null;
   let label: string;
   let sub: string;
-  if (booked) { heroColor = "green"; label = "Meeting booked"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "From email"; }
+  if (bounced) { heroColor = "red"; label = "Bounced"; sub = "Address invalid · do not retry"; }
+  else if (booked) { heroColor = "green"; label = "Meeting booked"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "From email"; }
   else if (replied) { heroColor = "green"; label = "Positive reply"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "Reply received"; }
   else if (negative) { heroColor = "red"; label = "Negative reply"; sub = "Not interested · email"; }
   else if (opens > 0) { heroColor = "blue"; label = "Opened"; sub = `${opens} open${opens === 1 ? "" : "s"} · no reply yet`; }
@@ -524,9 +531,11 @@ export function ProgressCell({
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
         <ChannelRow Icon={Mail} channel="Email" state={email} />
         <ChannelRow Icon={PhoneCall} channel="Call" state={call} />
-        {/* LinkedIn lane only renders once there's a logged motion, so the
-            common email/call-only rows stay compact. */}
-        {linkedin.heroColor ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
+        {/* LinkedIn lane renders when it's a viable channel (the prospect has a
+            LinkedIn URL) OR once a motion is logged — so a new prospect shows its
+            LinkedIn touchpoint alongside Email/Call instead of it going missing.
+            Only prospects with no LinkedIn URL and no motion stay compact. */}
+        {linkedin.heroColor || contact.linkedin_url ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
       </div>
 
       {hasLiveSequence ? (

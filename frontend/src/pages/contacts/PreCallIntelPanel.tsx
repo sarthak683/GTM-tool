@@ -177,24 +177,7 @@ export function PreCallIntelPanel({
         </details>
       )}
 
-      {/* Recent activities — short trail of what's been happening on this
-          contact across all channels. */}
-      {brief?.recent_activities && brief.recent_activities.length > 0 && (
-        <details style={{ fontSize: 12 }}>
-          <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 800, color: "#546679", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Recent activity ({brief.recent_activities.length})
-          </summary>
-          <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-            {brief.recent_activities.map((a, i) => (
-              <div key={i} style={{ fontSize: 12, color: "#3d5268", lineHeight: 1.5 }}>
-                <span style={{ fontWeight: 700, color: "#24364b" }}>{a.type}</span>
-                {a.medium && <span style={{ color: "#7a96b0" }}> · {a.medium}</span>}
-                {a.ai_summary || a.content ? <> — {a.ai_summary || a.content}</> : null}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
+      {/* Recent activity removed — shown on the right column only */}
 
       {!loading && !brief && (
         <div style={{ fontSize: 13, color: "#7a96b0", fontStyle: "italic" }}>

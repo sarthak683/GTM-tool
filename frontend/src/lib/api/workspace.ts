@@ -195,6 +195,7 @@ export const performanceApi = {
     const tail = qs.toString();
     return request<DealHealthResponse>(`/api/v1/performance/deal-health${tail ? `?${tail}` : ""}`);
   },
+  getPipelineBuckets: () => request<PipelineBucketsResponse>("/api/v1/performance/pipeline-buckets"),
   getForecast: (params: {
     period?: "month" | "quarter";
     anchor?: string;
@@ -226,6 +227,15 @@ export const performanceApi = {
   },
 };
 
+export type RedAlertDeal = {
+  deal_id: string;
+  deal_name: string;
+  amount?: number | null;
+  stage_entered_at?: string | null;
+  ae_name?: string | null;
+  sdr_name?: string | null;
+};
+
 export type DealHealthResponse = {
   total_stuck: number;
   by_stage: Record<string, number>;
@@ -237,6 +247,23 @@ export type DealHealthResponse = {
     threshold_days: number;
     over_by_days: number;
   }>;
+  red_alert_buckets: Record<string, number>;
+  red_alert_deals: Record<string, RedAlertDeal[]>;
+};
+
+export type PipelineBucketDeal = {
+  deal_id: string;
+  deal_name: string;
+  amount?: number | null;
+  stage: string;
+  ae_name?: string | null;
+};
+
+export type PipelineBucketsResponse = {
+  low_value_late_stage_count: number;
+  low_value_late_stage_deals: PipelineBucketDeal[];
+  small_avg_count: number;
+  small_avg_deals: PipelineBucketDeal[];
 };
 
 export type ForecastResponse = {
@@ -293,6 +320,8 @@ export type MilestoneDealRow = {
   reached_at: string;
   close_date_est: string | null;
   deal_value: number | null;
+  assigned_ae: string | null;
+  assigned_sdr: string | null;
 };
 
 export type SalesDashboardSummary = {
@@ -304,18 +333,26 @@ export type SalesDashboardSummary = {
   overdue_close_count: number;
   missing_close_date_count: number;
   stale_deal_count: number;
+  demo_scheduled_count?: number;
+  qualified_lead_count?: number;
   demo_done_count: number;
   poc_agreed_count: number;
   poc_wip_count?: number;
   poc_done_count: number;
+  commercial_negotiation_count?: number;
+  workshop_msa_count?: number;
   closed_won_count: number;
   closed_won_value: number;
   milestone_deals: MilestoneDealRow[];
   // Previous equal-length window — for period-over-period trend deltas.
+  prev_demo_scheduled_count?: number;
+  prev_qualified_lead_count?: number;
   prev_demo_done_count?: number;
   prev_poc_agreed_count?: number;
   prev_poc_wip_count?: number;
   prev_poc_done_count?: number;
+  prev_commercial_negotiation_count?: number;
+  prev_workshop_msa_count?: number;
   prev_closed_won_count?: number;
   prev_closed_won_value?: number;
 };
@@ -329,16 +366,43 @@ export type SalesRepActivityRow = {
   connected_calls: number;
   live_calls: number;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   email_opens: number;
   email_replies: number;
   linkedin_reachouts: number;
+  linkedin_accepted?: number;
+  linkedin_meeting_booked?: number;
+  call_meeting_booked?: number;
   meetings: number;
   total: number;
+  meetings_next_1w?: number;
+  meetings_next_2w?: number;
+  meetings_beyond_2w?: number;
+  direct_sql?: number;
   active_deals: number;
   pipeline_amount: number;
   demos_scheduled: number;
   demos_done: number;
   demos_converted: number;
+  ae_demos_scheduled: number;
+  ae_demos_done: number;
+  ae_demos_converted: number;
+  // Call touchpoint breakdown
+  call_first_attempt?: number;
+  call_second_plus?: number;
+  // Email touchpoint breakdown
+  email_first_attempt?: number;
+  email_min_3_attempts?: number;
+  // LinkedIn touchpoint breakdown
+  linkedin_connection_requested?: number;
+  linkedin_intro_msg?: number;
+  linkedin_followup_msg?: number;
+  // Prospect / contact coverage
+  total_prospects?: number;
+  total_mobile_numbers?: number;
+  // Demo reschedules within the analytics window
+  demos_rescheduled?: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -347,6 +411,8 @@ export type SalesRepActivityWeekRow = {
   week_start: string;
   week_end: string;
   emails: number;
+  manual_emails: number;
+  instantly_emails: number;
   calls: number;
   connected_calls: number;
   live_calls: number;
@@ -489,6 +555,9 @@ export type SalesActivityDrilldownRow = {
   contact_email?: string | null;
   company_name?: string | null;
   deal_name?: string | null;
+  deal_id?: string | null;
+  company_id?: string | null;
+  email_body?: string | null;  // full body for expand-in-drilldown (1.2)
 };
 
 export type SalesActivityDrilldown = {
@@ -504,6 +573,24 @@ export type SalesActivityDrilldown = {
   limit: number;
   offset: number;
   rows: SalesActivityDrilldownRow[];
+};
+
+export type PipelineDealRow = {
+  deal_id: string;
+  deal_name: string;
+  stage: string;
+  stage_label: string;
+  deal_value: number;
+  ae_name: string | null;
+};
+
+export type MeetingBucketDeal = {
+  deal_id: string;
+  deal_name: string;
+  ae_name: string;
+  sdr_name: string;
+  date_of_meeting: string | null;
+  meeting_booked_with?: string | null;
 };
 
 export const analyticsApi = {
@@ -544,74 +631,26 @@ export const analyticsApi = {
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
-  outreach: (windowDays = 90, repEmail?: string) => {
-    const params = new URLSearchParams({ window_days: String(windowDays) });
-    if (repEmail) params.set("rep_email", repEmail);
-    return request<OutreachAnalyticsResponse>(`/api/v1/analytics/outreach?${params.toString()}`);
+  meetingBucketDeals: (
+    bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled",
+    userId?: string | null,
+    windowDays?: number,
+    geography?: string,
+  ) => {
+    const params = new URLSearchParams({ bucket });
+    if (userId) params.set("user_id", userId);
+    if (windowDays != null) params.set("window_days", String(windowDays));
+    if (geography) params.set("geography", geography);
+    return request<{ deals: MeetingBucketDeal[] }>(`/api/v1/analytics/meeting-bucket-deals?${params.toString()}`);
+  },
+  pipelineDeals: (userId?: string | null) => {
+    const params = new URLSearchParams();
+    if (userId) params.set("user_id", userId);
+    return request<PipelineDealRow[]>(`/api/v1/analytics/pipeline-deals?${params.toString()}`);
   },
 };
 
-// ── Outreach analytics types ─────────────────────────────────────────────────
-
-export interface OutreachAnalyticsFunnel {
-  launched_sequences: number;
-  contacts_in_play: number;
-  sent: number;
-  opened: number;
-  clicked: number;
-  interested: number;
-  meeting_booked: number;
-  not_interested: number;
-  bounced: number;
-  unsubscribed: number;
-  open_rate: number;
-  reply_rate: number;
-  booking_rate: number;
-}
-
-export interface OutreachAnalyticsRepRow {
-  rep_email: string;
-  contacts: number;
-  opened: number;
-  clicked: number;
-  interested: number;
-  booked: number;
-  bounced: number;
-  open_rate: number;
-  reply_rate: number;
-}
-
-export interface OutreachAnalyticsSequenceRow {
-  campaign_id: string | null;
-  sequence_id: string;
-  subject: string | null;
-  persona: string | null;
-  status: string | null;
-  launched_at: string | null;
-  contacts: number;
-  opened: number;
-  clicked: number;
-  interested: number;
-  booked: number;
-  bounced: number;
-  open_rate: number;
-  reply_rate: number;
-}
-
-export interface OutreachAnalyticsSubjectRow {
-  subject: string;
-  sends: number;
-  distinct_contacts: number;
-}
-
-export interface OutreachAnalyticsResponse {
-  window_days: number;
-  rep_email: string | null;
-  funnel: OutreachAnalyticsFunnel;
-  per_rep: OutreachAnalyticsRepRow[];
-  sequences: OutreachAnalyticsSequenceRow[];
-  subjects: OutreachAnalyticsSubjectRow[];
-}
+// ── Global search ─────────────────────────────────────────────────────────────
 
 export const globalSearchApi = {
   search: (query: string) =>
@@ -694,6 +733,11 @@ export const authApi = {
   googleLoginUrl: () => `${BASE}/api/v1/auth/google/login`,
   listAllUsers: () => request<User[]>("/api/v1/auth/users/all"),
   listUsers: () => request<User[]>("/api/v1/auth/users"),
+  createUser: (data: { email: string; name: string; role: string }) =>
+    request<User>("/api/v1/auth/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   updateUser: (userId: string, data: { name?: string; role?: string; is_active?: boolean }) =>
     request<User>(`/api/v1/auth/users/${userId}`, {
       method: "PATCH",
@@ -1001,6 +1045,13 @@ export const settingsApi = {
   updateProspectVisibility: (userIds: string[]) =>
     request<{ user_ids: string[] }>("/api/v1/settings/prospect-visibility", {
       method: "PUT",
+      body: JSON.stringify({ user_ids: userIds }),
+    }),
+  getSalesAnalyticsRoster: () =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster"),
+  updateSalesAnalyticsRoster: (userIds: string[]) =>
+    request<{ user_ids: string[]; default_emails: string[] }>("/api/v1/settings/sales-analytics-roster", {
+      method: "PATCH",
       body: JSON.stringify({ user_ids: userIds }),
     }),
   getZippySystemPrompt: () =>

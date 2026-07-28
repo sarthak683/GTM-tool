@@ -19,6 +19,7 @@ from sqlmodel import select as sm_select
 from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.core.analytics_defaults import build_default_analytics_settings
 from app.models.settings import (
     ClickUpCrmSettingsRead,
     ClickUpCrmSettingsUpdate,
@@ -41,6 +42,8 @@ from app.models.settings import (
     ReportSenderSettingsUpdate,
     SalesReportSettingsRead,
     SalesReportSettingsUpdate,
+    SalesAnalyticsRosterRead,
+    SalesAnalyticsRosterUpdate,
     ProspectStageSettingsRead,
     ProspectStageSettingsUpdate,
     PreMeetingAutomationSettingsUpdate,
@@ -55,7 +58,9 @@ from app.models.settings import (
     ZippySystemPromptRead,
     ZippySystemPromptUpdate,
 )
+from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
+from app.services.email_connections import connection_for_mailbox_stmt, primary_connection_stmt
 from app.services.deal_stages import (
     DEFAULT_DEAL_STAGE_SETTINGS,
     filter_funnel_config_to_stage_ids,
@@ -63,6 +68,7 @@ from app.services.deal_stages import (
     normalize_deal_stage_settings,
 )
 from app.services.gmail_oauth import (
+    CALENDAR_SCOPE,
     GMAIL_SEND_SCOPE,
     GOOGLE_EMAIL_SCOPE,
     build_gmail_connect_url,
@@ -171,6 +177,7 @@ _DEFAULT_CLICKUP_CRM_SETTINGS = {
     "deals_list_id": settings.CLICKUP_DEALS_LIST_ID or None,
 }
 _PROSPECT_STAGES = {"outreach", "in_progress", "meeting_booked", "negative_response", "no_response", "not_a_fit"}
+_DEFAULT_SALES_ANALYTICS_EMAILS = ["jacob@beacon.li"]
 
 
 async def _get_or_create(session) -> WorkspaceSettings:
@@ -218,6 +225,47 @@ def _normalized_role_permissions(value: dict | None) -> RolePermissionsRead:
 
 def _normalized_pre_meeting_settings(value: dict | None) -> PreMeetingAutomationSettingsRead:
     return PreMeetingAutomationSettingsRead(**normalize_pre_meeting_settings(value))
+
+
+def _sales_analytics_default_emails(config: dict | None) -> list[str]:
+    raw = (config or {}).get("sales_analytics_default_emails")
+    emails = raw if isinstance(raw, list) else _DEFAULT_SALES_ANALYTICS_EMAILS
+    cleaned = []
+    seen = set()
+    for item in emails:
+        email = str(item or "").strip().lower()
+        if email and email not in seen:
+            cleaned.append(email)
+            seen.add(email)
+    return cleaned or list(_DEFAULT_SALES_ANALYTICS_EMAILS)
+
+
+async def _normalized_sales_analytics_roster(session, row: WorkspaceSettings) -> SalesAnalyticsRosterRead:
+    config = {
+        **build_default_analytics_settings(),
+        **(row.analytics_settings or {}),
+    }
+    active_users = (
+        await session.execute(sm_select(User.id, User.email).where(User.is_active == True))  # noqa: E712
+    ).all()
+    active_ids = {str(user.id) for user in active_users}
+    active_id_by_email = {str(user.email or "").strip().lower(): str(user.id) for user in active_users if user.email}
+    default_emails = _sales_analytics_default_emails(config)
+
+    user_ids = []
+    seen = set()
+    for value in config.get("sales_analytics_user_ids") or []:
+        user_id = str(value or "").strip()
+        if user_id in active_ids and user_id not in seen:
+            user_ids.append(user_id)
+            seen.add(user_id)
+    if not config.get("sales_analytics_roster_configured"):
+        for email in default_emails:
+            user_id = active_id_by_email.get(email)
+            if user_id and user_id not in seen:
+                user_ids.append(user_id)
+                seen.add(user_id)
+    return SalesAnalyticsRosterRead(user_ids=user_ids, default_emails=default_emails)
 
 
 def _normalized_clickup_crm_settings(value: dict | None) -> ClickUpCrmSettingsRead:
@@ -952,6 +1000,47 @@ async def update_prospect_visibility(body: ProspectVisibilityUpdate, session: DB
     return ProspectVisibilityRead(user_ids=[str(uid) for uid in (row.prospect_view_all_user_ids or [])])
 
 
+@router.get("/sales-analytics-roster", response_model=SalesAnalyticsRosterRead)
+async def get_sales_analytics_roster(session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    return await _normalized_sales_analytics_roster(session, row)
+
+
+@router.patch("/sales-analytics-roster", response_model=SalesAnalyticsRosterRead)
+async def update_sales_analytics_roster(body: SalesAnalyticsRosterUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    active_user_rows = (
+        await session.execute(sm_select(User.id).where(User.is_active == True))  # noqa: E712
+    ).all()
+    active_ids = {str(user.id) for user in active_user_rows}
+    ids = []
+    seen = set()
+    for value in body.user_ids:
+        user_id = str(value or "").strip()
+        if user_id in active_ids and user_id not in seen:
+            ids.append(user_id)
+            seen.add(user_id)
+
+    current = {
+        **build_default_analytics_settings(),
+        **(row.analytics_settings or {}),
+    }
+    current["sales_analytics_user_ids"] = ids
+    current["sales_analytics_default_emails"] = _sales_analytics_default_emails(current)
+    current["sales_analytics_roster_configured"] = True
+    row.analytics_settings = current
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    try:
+        from app.api.v1.endpoints.analytics import _dashboard_cache_clear
+
+        _dashboard_cache_clear()
+    except Exception:
+        pass
+    return await _normalized_sales_analytics_roster(session, row)
+
+
 @router.get("/email-sync", response_model=GmailSettingsRead)
 async def get_gmail_settings(session: DBSession, _user: CurrentUser):
     return await _gmail_status(session)
@@ -1006,6 +1095,17 @@ async def get_report_sender_connect_url(admin: AdminUser, session: DBSession):
     return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=f"{GOOGLE_EMAIL_SCOPE} {GMAIL_SEND_SCOPE}"))
 
 
+@router.get("/zippy-calendar/google/connect-url", response_model=GmailConnectUrlRead)
+async def get_zippy_calendar_connect_url(admin: AdminUser, _session: DBSession):
+    """Admin-only: get the OAuth URL to connect zippy@beacon.li's calendar.
+    Used by the daily AE meeting reminder Celery task to fetch tomorrow's meetings.
+    """
+    if not settings.gmail_client_id or not settings.gmail_client_secret:
+        raise UnauthorizedError("Gmail OAuth is not configured. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET.")
+    state = create_gmail_oauth_state(str(admin.id), flow="zippy_calendar")
+    return GmailConnectUrlRead(url=build_gmail_connect_url(state, scopes=CALENDAR_SCOPE))
+
+
 @router.get("/email-sync/google/callback")
 async def gmail_callback(
     session: DBSession,
@@ -1016,7 +1116,12 @@ async def gmail_callback(
     if not payload:
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
     flow = str(payload.get("flow") or "shared").lower()
-    failure_query = "report_sender=error" if flow == "report_sender" else "gmail=error"
+    if flow == "report_sender":
+        failure_query = "report_sender=error"
+    elif flow == "zippy_calendar":
+        failure_query = "zippy_calendar=error"
+    else:
+        failure_query = "gmail=error"
 
     try:
         gmail_info = await exchange_gmail_code(code)
@@ -1025,11 +1130,9 @@ async def gmail_callback(
             user_id = payload.get("sub")
             if user_id:
                 result = await session.execute(
-                    sm_select(UserEmailConnection).where(
-                        UserEmailConnection.user_id == UUID(user_id)
-                    )
+                    primary_connection_stmt(UUID(user_id))
                 )
-                connection = result.scalar_one_or_none()
+                connection = result.scalars().first()
                 if connection:
                     connection.last_error = "Failed to complete Gmail OAuth exchange"
                     connection.updated_at = datetime.utcnow()
@@ -1039,6 +1142,8 @@ async def gmail_callback(
             row = await _get_or_create(session)
             if flow == "report_sender":
                 row.report_sender_last_error = "Failed to complete Gmail OAuth exchange"
+            elif flow == "zippy_calendar":
+                row.zippy_calendar_last_error = "Failed to complete Gmail OAuth exchange"
             else:
                 row.gmail_last_error = "Failed to complete Gmail OAuth exchange"
             session.add(row)
@@ -1050,14 +1155,16 @@ async def gmail_callback(
         if not user_id:
             return RedirectResponse(f"{settings.FRONTEND_URL}/settings?gmail=error")
 
+        # Upsert by (user_id, email_address): connecting an additional mailbox
+        # must ADD it, not overwrite the rep's existing inbox. Mirrors the
+        # personal-email-sync callback.
+        _addr = (gmail_info["email_address"] or "").strip().lower()
         result = await session.execute(
-            sm_select(UserEmailConnection).where(
-                UserEmailConnection.user_id == UUID(user_id)
-            )
+            connection_for_mailbox_stmt(UUID(user_id), _addr)
         )
-        connection = result.scalar_one_or_none()
+        connection = result.scalars().first()
         if connection:
-            connection.email_address = gmail_info["email_address"]
+            connection.email_address = _addr
             connection.token_data = gmail_info["token_data"]
             connection.is_active = True
             connection.backfill_completed = False
@@ -1103,6 +1210,17 @@ async def gmail_callback(
         session.add(row)
         await session.commit()
         query = urlencode({"report_sender": "connected", "email": gmail_info["email_address"]})
+        return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
+
+    if flow == "zippy_calendar":
+        row = await _get_or_create(session)
+        row.zippy_calendar_connected_email = gmail_info["email_address"]
+        row.zippy_calendar_token_data = gmail_info["token_data"]
+        row.zippy_calendar_connected_at = datetime.utcnow()
+        row.zippy_calendar_last_error = None
+        session.add(row)
+        await session.commit()
+        query = urlencode({"zippy_calendar": "connected", "email": gmail_info["email_address"]})
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?{query}")
 
     row = await _get_or_create(session)

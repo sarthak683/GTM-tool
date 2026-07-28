@@ -28,6 +28,7 @@ export interface Company {
   sdr_id?: string;
   sdr_email?: string;
   sdr_name?: string;
+  sdr_assigned_at?: string | null;
   outreach_status?: string;
   disposition?: string;
   // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)
@@ -54,6 +55,44 @@ export interface Company {
   recotap?: RecotapSignals | null;
   created_at: string;
   updated_at: string;
+  // Opportunity Details (AE-filled, account-level)
+  opp_name?: string | null;
+  opp_amount?: number | null;
+  opp_arr?: number | null;
+  opp_multiyear_license_fee?: number | null;
+  opp_service_fee?: number | null;
+  opp_type?: string | null;
+  opp_sales_category?: string | null;
+  opp_geolocation?: string | null;
+  opp_owner?: string | null;
+  opp_solution_engineer?: string | null;
+  opp_close_date?: string | null;
+  opp_forecast_category?: string | null;
+  opp_probability?: number | null;
+  opp_stage?: string | null;
+  opp_poc_start_date?: string | null;
+  opp_poc_status?: string | null;
+  opp_aop_doc_link?: string | null;
+  opp_msp_doc_link?: string | null;
+  // MEDDPICC
+  medd_business_initiatives?: string | null;
+  medd_business_pains?: string | null;
+  medd_technical_pains?: string | null;
+  medd_size_business_pain?: number | null;
+  medd_who_impacted_business?: string | null;
+  medd_size_technical_pain?: number | null;
+  medd_who_impacted_technical?: string | null;
+  medd_metrics?: string | null;
+  medd_decision_criteria?: string | null;
+  medd_economic_buyer?: string | null;
+  medd_eb_top_2_priorities?: string | null;
+  medd_decision_process?: string | null;
+  medd_paper_process?: string | null;
+  medd_champion?: string | null;
+  medd_champion_win?: string | null;
+  medd_competition?: string | null;
+  // Current deal status note
+  opp_current_deal_status?: string | null;
 }
 
 export interface RecotapSignals {
@@ -82,6 +121,7 @@ export interface Contact {
   email?: string;
   email_verified: boolean;
   phone?: string;
+  additional_phones?: { number: string; label?: string }[];
   title?: string;
   seniority?: string;
   linkedin_url?: string;
@@ -94,6 +134,9 @@ export interface Contact {
   assigned_rep_email?: string;
   sdr_id?: string;            // SDR
   sdr_name?: string;
+  // Set when SDR ownership changed; activity older than this is excluded from
+  // the prospect's counts so the incoming rep starts from zero.
+  sdr_assigned_at?: string | null;
   outreach_lane?: string;
   sequence_status?: string;
   instantly_status?: string;
@@ -185,7 +228,8 @@ export interface Paginated<T> {
 export interface Deal {
   id: string;
   company_id?: string;
-  assigned_to_id?: string;
+  assigned_to_id?: string;  // AE
+  sdr_id?: string;          // SDR
   email_cc_alias?: string;
   name: string;
   pipeline_type: string;
@@ -206,6 +250,7 @@ export interface Deal {
   next_step_due_at?: string;
   qualification_reason?: string;
   priority_tag?: "P0" | "P1" | "P2" | null;
+  meeting_booked_with?: string | null;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;
@@ -683,6 +728,11 @@ export interface SalesReportSettings {
   nonprod_recipients: string[];
   last_scheduled_send_key?: string | null;
   last_scheduled_send_at?: string | null;
+}
+
+export interface SalesAnalyticsRosterSettings {
+  user_ids: string[];
+  default_emails: string[];
 }
 
 export interface DealStageSetting {

@@ -11,9 +11,157 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 //   - User: dark bubble right-aligned + timestamp inside
 // The markdown renderer is intentionally simple — we render bold / italic /
 // code / links and split double-newlines into paragraphs.
-export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
+// Field → emoji icon for the deal-update confirmation card.
+const DEAL_FIELD_ICONS: Record<string, string> = {
+  next_step: "📝",
+  next_step_due_at: "📅",
+  stage: "🔄",
+  value: "💰",
+  close_date_est: "📆",
+  description: "📄",
+  tags: "🏷️",
+};
+
+interface ProposedChange {
+  field: string;
+  label: string;
+  value: string;
+}
+
+function formatDue(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffH = (d.getTime() - now.getTime()) / 3600000;
+    if (diffH < 24) return `Today ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    if (diffH < 48) return `Tomorrow ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    return d.toLocaleDateString([], { day: "numeric", month: "short" });
+  } catch { return iso; }
+}
+
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+}
+
+// Extract a confirm_deal_update or confirm_task_create artifact that Claude
+// sometimes embeds directly in message.content as a JSON block rather than
+// (or in addition to) the message.artifacts array.
+//
+// Claude writes it as a single JSON object, either pretty-printed or
+// compact. We need greedy brace-balanced extraction because the object
+// contains nested arrays (proposed_changes), which means a non-greedy
+// regex stops at the wrong closing brace.
+function extractArtifact(content: string): {
+  artifact: any | null;
+  cleanText: string;
+} {
+  // Quick pre-check — skip the expensive scan if neither type is present.
+  if (
+    !content.includes('"confirm_deal_update"') &&
+    !content.includes('"confirm_task_create"')
+  ) {
+    return { artifact: null, cleanText: content };
+  }
+
+  // Walk the string to find the outermost { ... } that contains one of
+  // our known type strings. Handles nested braces/brackets correctly.
+  const start = content.indexOf("{");
+  if (start === -1) return { artifact: null, cleanText: content };
+
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < content.length; i++) {
+    if (content[i] === "{") depth++;
+    else if (content[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end === -1) return { artifact: null, cleanText: content };
+
+  const candidate = content.slice(start, end + 1);
+  try {
+    const artifact = JSON.parse(candidate);
+    if (
+      artifact?.type === "confirm_deal_update" ||
+      artifact?.type === "confirm_task_create"
+    ) {
+      // Also strip any ```json ... ``` code-fence wrapper that Claude emits
+      // around the JSON block so it doesn't leak into the displayed text.
+      let cleanText = (content.slice(0, start) + content.slice(end + 1)).trim();
+      cleanText = cleanText
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
+      return { artifact, cleanText };
+    }
+  } catch {
+    // Not valid JSON — fall through.
+  }
+  return { artifact: null, cleanText: content };
+}
+
+// Pretty-print a task due date: "Today, 18:00" / "Tomorrow, 09:00" /
+// "07 Jun 2026, 09:00". Falls back to the raw string if unparseable.
+function formatTaskDue(iso: string): string {
+  if (!iso) return "No due date";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (sameDay(d, now)) return `Today, ${time}`;
+  if (sameDay(d, tomorrow)) return `Tomorrow, ${time}`;
+  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  return `${date}, ${time}`;
+}
+
+export function ZippyMessageBubble({
+  message,
+  onQuickReply,
+}: {
+  message: ZippyMessage;
+  onQuickReply?: (text: string) => void;
+}) {
   const isUser = message.role === "user";
   const timestamp = formatClock(message.created_at);
+
+  // Split artifacts: file-style ones (have a url) render as link chips;
+  // confirm_deal_update / confirm_task_create render as interactive cards.
+  // Claude sometimes embeds these as JSON inside message.content instead of
+  // (or in addition to) message.artifacts — handle both sources.
+  const allArtifacts = (message.artifacts as any[] | null | undefined) ?? [];
+  const fileArtifacts = allArtifacts.filter((a) => a?.url);
+
+  const artifactFromArray = allArtifacts.find(
+    (a) => a?.type === "confirm_deal_update" || a?.type === "confirm_task_create",
+  );
+  const parsed = !isUser ? extractArtifact(message.content ?? "") : { artifact: null, cleanText: message.content ?? "" };
+  const inlineArtifact = parsed.artifact;
+
+  // Prefer the structured artifact from the array; fall back to inline parse.
+  const confirmArtifact =
+    (artifactFromArray?.type === "confirm_deal_update" ? artifactFromArray : null) ??
+    (inlineArtifact?.type === "confirm_deal_update" ? inlineArtifact : null);
+  const confirmTaskArtifact =
+    (artifactFromArray?.type === "confirm_task_create" ? artifactFromArray : null) ??
+    (inlineArtifact?.type === "confirm_task_create" ? inlineArtifact : null);
+
+  // Strip the raw JSON from what the user sees — only when it came from inline content.
+  const displayText = artifactFromArray ? (message.content ?? "") : parsed.cleanText;
+
+  // Success artifacts — rendered as summary cards after the tool completes.
+  const taskCreatedArtifact = allArtifacts.find((a) => a?.type === "task_created");
+  const dealUpdatedArtifact = allArtifacts.find((a) => a?.type === "deal_updated");
 
   if (isUser) {
     return (
@@ -22,7 +170,7 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
           className="max-w-[78%] rounded-2xl rounded-br-sm bg-stone-900 text-white shadow-sm"
           style={{ padding: "10px 14px", fontSize: 15, lineHeight: 1.55 }}
         >
-          <AssistantContent content={message.content} />
+          <AssistantContent content={displayText} />
           {timestamp && (
             <div
               className="text-right text-stone-300"
@@ -47,11 +195,11 @@ export function ZippyMessageBubble({ message }: { message: ZippyMessage }) {
         className="min-w-0 max-w-[88%] flex-1 rounded-2xl rounded-tl-sm border border-stone-200 bg-white text-stone-800 shadow-sm"
         style={{ padding: "14px 18px", fontSize: 15, lineHeight: 1.65 }}
       >
-        <AssistantContent content={message.content} />
+        <AssistantContent content={displayText} />
 
-        {message.artifacts && message.artifacts.length > 0 && (
+        {fileArtifacts.length > 0 && (
           <div className="mt-3 flex w-full min-w-0 flex-col gap-2 border-t border-stone-100 pt-3">
-            {message.artifacts.map((artifact) => (
+            {fileArtifacts.map((artifact) => (
               <a
                 key={artifact.url}
                 // Prefer the absolute Google Docs link when the doc has been

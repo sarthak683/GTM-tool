@@ -16,6 +16,7 @@ from app.models.activity import Activity  # noqa: F401
 from app.models.assignment_update import AssignmentUpdate  # noqa: F401
 from app.models.sourcing_batch import SourcingBatch  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.user_alias import UserAlias  # noqa: F401
 from app.models.outreach import OutreachSequence  # noqa: F401
 from app.models.signal import Signal  # noqa: F401
 from app.models.meeting import Meeting  # noqa: F401

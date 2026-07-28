@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
 
@@ -80,6 +81,9 @@ export default function AccountSourcingContactDetail() {
   const [editingPhone, setEditingPhone] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneSaving, setPhoneSaving] = useState(false);
+  const [editingPhones, setEditingPhones] = useState(false);
+  const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
+  const [phonesSaving, setPhonesSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -276,6 +280,27 @@ export default function AccountSourcingContactDetail() {
       setEditingPhone(false);
     } finally {
       setPhoneSaving(false);
+    }
+  };
+
+  const startEditingPhones = () => {
+    setPhonesDraft((contact?.additional_phones || []).map((p) => ({ number: p.number, label: p.label || "" })));
+    setEditingPhones(true);
+  };
+
+  const handleSaveAdditionalPhones = async () => {
+    if (!contact) return;
+    const cleaned = phonesDraft
+      .map((p) => ({ number: p.number.trim(), label: (p.label || "").trim() }))
+      .filter((p) => p.number)
+      .map((p) => (p.label ? { number: p.number, label: p.label } : { number: p.number }));
+    setPhonesSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { additional_phones: cleaned });
+      setContact(updated);
+      setEditingPhones(false);
+    } finally {
+      setPhonesSaving(false);
     }
   };
 
@@ -1153,6 +1178,78 @@ export default function AccountSourcingContactDetail() {
                     <Plus size={12} /> Add phone
                   </button>
                 )}
+              />
+              <KV
+                label="More Phones"
+                value={
+                  <div style={{ display: "grid", gap: 8, width: "100%" }}>
+                    {editingPhones ? (
+                      <>
+                        {phonesDraft.length === 0 ? (
+                          <div style={{ color: colors.faint, fontSize: 12.5 }}>No additional numbers yet. Add one below.</div>
+                        ) : (
+                          phonesDraft.map((row, idx) => (
+                            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <input
+                                value={row.number}
+                                onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, number: e.target.value } : p)))}
+                                placeholder="+1 555-123-4567"
+                                style={{ flex: "1 1 160px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                              />
+                              <input
+                                value={row.label || ""}
+                                onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, label: e.target.value } : p)))}
+                                placeholder="mobile / office"
+                                style={{ flex: "1 1 100px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                              />
+                              <button type="button" aria-label="Remove number" onClick={() => setPhonesDraft((prev) => prev.filter((_, i) => i !== idx))}
+                                style={{ height: 30, width: 30, flexShrink: 0, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <button type="button" onClick={() => setPhonesDraft((prev) => [...prev, { number: "", label: "" }])}
+                            style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <Plus size={12} /> Add number
+                          </button>
+                          <button type="button" disabled={phonesSaving} onClick={() => handleSaveAdditionalPhones()}
+                            style={{ height: 30, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            {phonesSaving ? "Saving…" : "Save"}
+                          </button>
+                          <button type="button" onClick={() => setEditingPhones(false)}
+                            style={{ height: 30, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    ) : (contact.additional_phones && contact.additional_phones.length > 0) ? (
+                      <>
+                        {contact.additional_phones.map((row, idx) => (
+                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <ContactActionButton
+                              icon={<Phone size={14} />}
+                              onClick={() => window.__aircallDial?.(row.number, fullName || undefined)}
+                              label={row.number}
+                              tone="green"
+                            />
+                            {row.label ? <span style={{ color: colors.faint, fontSize: 12 }}>{row.label}</span> : null}
+                          </div>
+                        ))}
+                        <button type="button" onClick={startEditingPhones}
+                          style={{ alignSelf: "flex-start", border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <PenLine size={12} /> Edit numbers
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={startEditingPhones}
+                        style={{ alignSelf: "flex-start", border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <Plus size={12} /> Add number
+                      </button>
+                    )}
+                  </div>
+                }
               />
               <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
               <KV

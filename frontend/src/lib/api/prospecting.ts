@@ -395,6 +395,8 @@ export const accountSourcingApi = {
     recommendedOutreachLane?: string[];
     assignedRepEmail?: string;
     ownerId?: string | string[];
+    aeId?: string | string[];
+    sdrId?: string | string[];
     journeyStage?: string[];
     prospectsMin?: number;
     prospectsMax?: number;
@@ -412,6 +414,14 @@ export const accountSourcingApi = {
     if (params?.ownerId) {
       const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
       if (ownerValue) search.set("owner_id", ownerValue);
+    }
+    if (params?.aeId) {
+      const aeValue = Array.isArray(params.aeId) ? params.aeId.join(",") : params.aeId;
+      if (aeValue) search.set("ae_id", aeValue);
+    }
+    if (params?.sdrId) {
+      const sdrValue = Array.isArray(params.sdrId) ? params.sdrId.join(",") : params.sdrId;
+      if (sdrValue) search.set("sdr_id", sdrValue);
     }
     if (params?.journeyStage?.length) search.set("journey_stage", params.journeyStage.join(","));
     if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));

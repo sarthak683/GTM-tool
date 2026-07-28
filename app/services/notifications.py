@@ -102,24 +102,19 @@ async def notify_records_added(
     detail: Optional[str] = None,
     dedup_key: Optional[str] = None,
 ) -> int:
-    """Fan an informational 'records added' alert to admins + the assigned owner.
+    """Send an informational 'records added' alert to the assigned owner only.
 
-    `kind` is "prospects" or "accounts". Recipients (all admins plus the owner)
-    are de-duplicated so overlap doesn't create double bell rows. When
+    `kind` is "prospects" or "accounts". This used to also fan out to every
+    admin, which meant every rep's upload pinged all admins — their bells filled
+    with other people's actions. Now only the owner of the new records is
+    notified (the actor already knows they performed the action). When
     `dedup_key` is given it's namespaced per-recipient so a re-run is idempotent.
     Returns the number of bell rows created.
     """
-    if count <= 0:
+    if count <= 0 or not owner_user_id:
         return 0
-    from app.models.user import User
 
-    recipient_ids: set[UUID] = set(
-        (await session.execute(select(User.id).where(User.role == "admin"))).scalars().all()
-    )
-    if owner_user_id:
-        recipient_ids.add(owner_user_id)
-    if not recipient_ids:
-        return 0
+    recipient_ids: set[UUID] = {owner_user_id}
 
     who = actor_name or "Someone"
     title = f"{count} {kind} added"

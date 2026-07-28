@@ -33,7 +33,7 @@ export default function AircallPhonePanel() {
   const [minimised, setMinimised] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [sdkUnavailable, setSdkUnavailable] = useState(false);
-  const [verticalOffset, setVerticalOffset] = useState(0);
+  const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [callState, setCallState] = useState<CallState>({
     active: false,
     duration: 0,
@@ -41,15 +41,21 @@ export default function AircallPhonePanel() {
   });
 
   const phoneRef = useRef<AircallPhone | null>(null);
+  const sdkReadyRef = useRef(false);   // tracks login state inside closures
+  const dialSentRef = useRef(false);   // prevents double dial_number sends
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dragStateRef = useRef<{ startY: number; startOffset: number } | null>(null);
+  const dragStateRef = useRef<{ startX: number; startY: number; startOffsetX: number; startOffsetY: number } | null>(null);
   const dragMovedRef = useRef(false);
   const suppressOpenClickRef = useRef(false);
 
-  const clampVerticalOffset = (nextOffset: number) => {
-    if (typeof window === "undefined") return 0;
+  const clampOffset = (x: number, y: number): { x: number; y: number } => {
+    if (typeof window === "undefined") return { x: 0, y: 0 };
     const maxUp = Math.max(window.innerHeight - 160, 0);
-    return Math.max(-maxUp, Math.min(0, nextOffset));
+    const maxLeft = Math.max(window.innerWidth - 80, 0);
+    return {
+      x: Math.max(-maxLeft, Math.min(maxLeft, x)),
+      y: Math.max(-maxUp, Math.min(0, y)),
+    };
   };
 
   // ── Init SDK once ──────────────────────────────────────────────────────────
@@ -58,13 +64,15 @@ export default function AircallPhonePanel() {
 
     try {
       const phone = new AircallPhone({
-        domToLoadWorkspace: "#aircall-workspace",
+        domToLoadWorkspace: "#aircall-iframe-container",
         onLogin: () => {
+          sdkReadyRef.current = true;
           setSdkReady(true);
           setSdkUnavailable(false);
           console.log("[Aircall] Agent logged in");
         },
         onLogout: () => {
+          sdkReadyRef.current = false;
           setSdkReady(false);
           console.log("[Aircall] Agent logged out");
         },
@@ -137,18 +145,40 @@ export default function AircallPhonePanel() {
   // ── Global dial trigger — called from any component ────────────────────────
   useEffect(() => {
     window.__aircallDial = (phoneNumber: string, contactName?: string) => {
+      // Reset the "already sent" guard for each new call target.
+      dialSentRef.current = false;
+
       setOpen(true);
       setMinimised(false);
       setCallState(prev => ({ ...prev, phoneNumber, contactName, status: "ringing" }));
 
-      // Attempt dial with retry — SDK iframe needs to be fully ready
+      // Attempt dial — only fires once per call (dialSentRef prevents double-sends
+      // caused by scheduled retries continuing after a successful send).
+      // Also gates on sdkReadyRef so we never send before the agent is logged in
+      // (which would let Aircall ring the prospect with no agent to bridge → 1 ring, drop).
       const attemptDial = (attemptsLeft: number) => {
+        // Another retry already succeeded — bail out.
+        if (dialSentRef.current) return;
+
         if (!phoneRef.current) return;
+
+        // SDK not ready yet — wait and retry rather than sending a doomed command.
+        if (!sdkReadyRef.current) {
+          if (attemptsLeft > 1) {
+            console.warn("[Aircall] SDK not ready yet, waiting before dial…");
+            setTimeout(() => attemptDial(attemptsLeft - 1), 800);
+          } else {
+            console.warn("[Aircall] dial_number skipped — agent not logged in. Panel is open for manual dial.");
+          }
+          return;
+        }
+
         phoneRef.current.send(
           "dial_number",
           { phone_number: phoneNumber },
           (success: boolean) => {
             if (success) {
+              dialSentRef.current = true; // stop all pending retries
               console.log("[Aircall] dial_number sent:", phoneNumber);
             } else if (attemptsLeft > 1) {
               console.warn("[Aircall] dial_number not ready, retrying…");
@@ -160,8 +190,9 @@ export default function AircallPhonePanel() {
         );
       };
 
-      // Wait 500ms for iframe to become interactive, then retry up to 3 times
-      setTimeout(() => attemptDial(3), 500);
+      // Wait 300ms for iframe to become interactive, then retry up to 8 times
+      // (max ~6s wait for slow workspace loads). sdkReadyRef gates the actual send.
+      setTimeout(() => attemptDial(8), 300);
     };
 
     window.__aircallOpen = () => {
@@ -183,22 +214,24 @@ export default function AircallPhonePanel() {
   }, []);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("crm.aircall.verticalOffset");
+    const saved = window.localStorage.getItem("crm.aircall.offset");
     if (saved) {
-      const parsed = Number(saved);
-      if (!Number.isNaN(parsed)) {
-        setVerticalOffset(clampVerticalOffset(parsed));
-      }
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number") {
+          setOffset(clampOffset(parsed.x, parsed.y));
+        }
+      } catch { /* ignore corrupt data */ }
     }
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("crm.aircall.verticalOffset", String(verticalOffset));
-  }, [verticalOffset]);
+    window.localStorage.setItem("crm.aircall.offset", JSON.stringify(offset));
+  }, [offset]);
 
   useEffect(() => {
     const handleResize = () => {
-      setVerticalOffset((current) => clampVerticalOffset(current));
+      setOffset((current) => clampOffset(current.x, current.y));
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
@@ -208,11 +241,12 @@ export default function AircallPhonePanel() {
     const handlePointerMove = (event: PointerEvent) => {
       const drag = dragStateRef.current;
       if (!drag) return;
+      const deltaX = event.clientX - drag.startX;
       const deltaY = event.clientY - drag.startY;
-      if (Math.abs(deltaY) > 3) {
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
         dragMovedRef.current = true;
       }
-      setVerticalOffset(clampVerticalOffset(drag.startOffset + deltaY));
+      setOffset(clampOffset(drag.startOffsetX + deltaX, drag.startOffsetY + deltaY));
     };
 
     const handlePointerUp = () => {
@@ -230,8 +264,8 @@ export default function AircallPhonePanel() {
     };
   }, []);
 
-  const beginDrag = (clientY: number) => {
-    dragStateRef.current = { startY: clientY, startOffset: verticalOffset };
+  const beginDrag = (clientX: number, clientY: number) => {
+    dragStateRef.current = { startX: clientX, startY: clientY, startOffsetX: offset.x, startOffsetY: offset.y };
     dragMovedRef.current = false;
   };
 
@@ -264,19 +298,8 @@ export default function AircallPhonePanel() {
 
   return (
     <>
-      {/* ── Aircall workspace div — ALWAYS in DOM (hidden offscreen when closed) ── */}
-      {/* The SDK needs this element to exist at init time to mount the iframe */}
-      <div
-        id="aircall-workspace"
-        style={{
-          position: "fixed",
-          bottom: -9999, left: -9999,
-          width: 0, height: 0,
-          overflow: "hidden",
-          // This div is just for SDK initialization. The actual iframe gets
-          // moved into view via the panel below once the SDK creates it.
-        }}
-      />
+      {/* #aircall-workspace removed — SDK now mounts directly into
+           #aircall-iframe-container inside the always-rendered panel. */}
 
       {/* ── Floating trigger button (visible when panel is closed) ── */}
       {!open && (
@@ -289,7 +312,7 @@ export default function AircallPhonePanel() {
             setOpen(true);
             setMinimised(false);
           }}
-          onPointerDown={(event) => beginDrag(event.clientY)}
+          onPointerDown={(event) => beginDrag(event.clientX, event.clientY)}
           style={{
             position: "fixed", bottom: panelBottom, right: 24, zIndex: 900,
             width: 194,
@@ -305,7 +328,7 @@ export default function AircallPhonePanel() {
             transition: "all 0.2s ease",
             textAlign: "left",
             backdropFilter: "blur(12px)",
-            transform: `translateY(${verticalOffset}px)`,
+            transform: `translate(${offset.x}px, ${offset.y}px)`,
             touchAction: "none",
           }}
           title="Open Aircall phone"
@@ -354,22 +377,22 @@ export default function AircallPhonePanel() {
         </button>
       )}
 
-      {/* ── Phone panel ── */}
-      {open && (
-        <div style={{
-          position: "fixed", bottom: panelBottom, right: 24, zIndex: 950,
-          width: minimised ? 244 : 392,
-          maxWidth: "calc(100vw - 36px)",
-          borderRadius: 24,
-          background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,251,255,0.98) 100%)",
-          border: "1px solid #d8e4ef",
-          boxShadow: "0 24px 54px rgba(14,38,66,0.14)",
-          overflow: "hidden",
-          transition: "width 0.2s ease, transform 0.2s ease",
-          display: "flex", flexDirection: "column",
-          backdropFilter: "blur(14px)",
-          transform: `translateY(${verticalOffset}px)`,
-        }}>
+      {/* ── Phone panel ── Always in DOM so the iframe never moves and Aircall
+           never re-initialises. CSS display:none hides it when closed. */}
+      <div style={{
+        position: "fixed", bottom: panelBottom, right: 24, zIndex: 950,
+        width: minimised ? 244 : 392,
+        maxWidth: "calc(100vw - 36px)",
+        borderRadius: 24,
+        background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,251,255,0.98) 100%)",
+        border: "1px solid #d8e4ef",
+        boxShadow: "0 24px 54px rgba(14,38,66,0.14)",
+        overflow: "hidden",
+        transition: "width 0.2s ease, transform 0.2s ease",
+        display: open ? "flex" : "none", flexDirection: "column",
+        backdropFilter: "blur(14px)",
+        transform: `translate(${offset.x}px, ${offset.y}px)`,
+      }}>
           {/* Header — z-index ensures it stays clickable above iframe */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -382,7 +405,7 @@ export default function AircallPhonePanel() {
             borderBottom: "1px solid #e3edf6",
           }}>
             <div
-              onPointerDown={(event) => beginDrag(event.clientY)}
+              onPointerDown={(event) => beginDrag(event.clientX, event.clientY)}
               style={{ display: "flex", alignItems: "center", gap: 10, cursor: "grab", flex: 1, minWidth: 0, touchAction: "none" }}
               title="Drag Aircall widget"
             >
@@ -435,40 +458,21 @@ export default function AircallPhonePanel() {
             </div>
           </div>
 
-          {/* Aircall iframe container — rendered inline, below the header */}
-          {!minimised && (
-            <div
-              ref={(el) => {
-                const initDiv = document.getElementById("aircall-workspace");
-                if (!initDiv) return;
-                if (el) {
-                  // Mount: move SDK iframe from holding div into the visible panel
-                  while (initDiv.firstChild) {
-                    el.appendChild(initDiv.firstChild);
-                  }
-                  // Store a reference so the cleanup below can find this container
-                  (el as any).__aircallContainer = true;
-                  (initDiv as any).__visibleContainer = el;
-                } else {
-                  // Unmount: return iframe children to holding div
-                  const container = (initDiv as any).__visibleContainer as HTMLElement | undefined;
-                  if (container) {
-                    while (container.firstChild) {
-                      initDiv.appendChild(container.firstChild);
-                    }
-                    delete (initDiv as any).__visibleContainer;
-                  }
-                }
-              }}
-              style={{
-                width: "100%",
-                height: 620,
-                position: "relative",
-                zIndex: 1,
-                background: "#ffffff",
-              }}
-            />
-          )}
+          {/* Aircall iframe container — SDK mounts directly here via
+               domToLoadWorkspace: "#aircall-iframe-container". The div is
+               always in the DOM so the iframe never moves and Aircall never
+               re-initialises. CSS display:none hides it when minimised. */}
+          <div
+            id="aircall-iframe-container"
+            style={{
+              width: "100%",
+              height: 620,
+              position: "relative",
+              zIndex: 1,
+              background: "#ffffff",
+              display: minimised ? "none" : "block",
+            }}
+          />
 
           {/* Post-call status bar */}
           {callState.status === "ended" && !minimised && (
@@ -487,7 +491,6 @@ export default function AircallPhonePanel() {
             </div>
           )}
         </div>
-      )}
 
       <style>{`
         @keyframes pulse {

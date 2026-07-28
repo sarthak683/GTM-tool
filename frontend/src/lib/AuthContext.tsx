@@ -8,9 +8,9 @@ export type RoleView = "admin" | "ae" | "sdr";
 // Superadmins can (a) preview the app as another ROLE, or (b) impersonate a
 // specific PERSON to see the CRM from their exact perspective (their pipeline,
 // their scoped meetings, their tasks). Person-impersonation is read-only and
-// enforced server-side. Gated to these two by email — distinct from the `admin`
+// enforced server-side. Gated to these emails — distinct from the `admin`
 // role, which several people hold. Kept in sync with backend SUPERADMIN_EMAILS.
-const SUPERADMIN_EMAILS = new Set(["sarthak@beacon.li", "rakesh@beacon.li"]);
+const SUPERADMIN_EMAILS = new Set(["sarthak@beacon.li", "rakesh@beacon.li", "annie@beacon.li"]);
 const VIEW_AS_KEY = "beacon_view_as_role";
 const TOKEN_KEY = "beacon_token";
 // While impersonating, the active token is the target user's; we stash the real

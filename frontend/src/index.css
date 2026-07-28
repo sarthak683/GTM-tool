@@ -622,14 +622,14 @@ body {
 }
 
 .crm-search {
-  width: min(320px, 34vw);
-  min-width: 220px;
-  height: 42px;
+  width: min(420px, 42vw);
+  min-width: 280px;
+  height: 46px;
   border-radius: 14px;
   border: 0;
   background: transparent;
-  padding: 0 16px 0 40px;
-  font-size: 14px;
+  padding: 0 16px 0 44px;
+  font-size: 15px;
   color: #263345;
   outline: none;
 }

@@ -638,6 +638,186 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["title", "markdown"],
         },
     },
+    {
+        "name": "lookup_prospect_phone",
+        "description": (
+            "Look up a prospect's phone number from the CRM database by name "
+            "and/or company. Returns the phone number, full name, and company "
+            "so the frontend can trigger an Aircall dial. Use when the user "
+            "says 'call [name]', 'dial [person]', 'connect with [prospect]', "
+            "'call [name] at [company]', or similar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prospect_name": {
+                    "type": "string",
+                    "description": "Full or partial name of the prospect.",
+                },
+                "company": {
+                    "type": "string",
+                    "description": "Company name to narrow the search. Optional.",
+                },
+            },
+            "required": ["prospect_name"],
+        },
+    },
+    {
+        "name": "find_deal",
+        "description": (
+            "Search for a deal by company name or deal name. Returns the deal's "
+            "current field values so Zippy can show a confirmation before updating. "
+            "Always call this before update_deal to confirm the deal exists and "
+            "show the user what will change."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Company name or deal name to search for.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "update_deal",
+        "description": (
+            "Update one or more fields on a deal after the user has confirmed. "
+            "NEVER call this without first calling find_deal AND receiving explicit "
+            "user confirmation (yes / looks good / confirmed). "
+            "Only pass fields the user explicitly asked to change. "
+            "Do NOT pass health — health is auto-calculated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deal_id": {
+                    "type": "string",
+                    "description": "UUID of the deal to update. Get this from find_deal.",
+                },
+                "next_step": {
+                    "type": "string",
+                    "description": "Updated next step text.",
+                },
+                "next_step_due_at": {
+                    "type": "string",
+                    "description": "Next step due date/time as ISO string e.g. '2026-06-08T00:00:00'.",
+                },
+                "stage": {
+                    "type": "string",
+                    "description": (
+                        "New deal stage. Must be one of: reprospect, demo_scheduled, "
+                        "demo_done, qualified_lead, poc_agreed, poc_wip, poc_done, "
+                        "commercial_negotiation, msa_review, workshop, closed_won, "
+                        "closed_lost, not_a_fit, cold, on_hold, nurture, churned."
+                    ),
+                },
+                "value": {
+                    "type": "number",
+                    "description": "Deal value / amount in USD.",
+                },
+                "close_date_est": {
+                    "type": "string",
+                    "description": "Estimated close date as YYYY-MM-DD.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Deal description / notes.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Replace deal tags with this list.",
+                },
+            },
+            "required": ["deal_id"],
+        },
+    },
+    {
+        "name": "explain_deal_health",
+        "description": (
+            "Explain why a deal has its current health score and what the AE "
+            "can do to improve it. Call this when the user asks about deal health, "
+            "why a deal is red/yellow, or how to improve health. "
+            "Health is auto-calculated — never set it directly."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deal_id": {
+                    "type": "string",
+                    "description": "UUID of the deal. Get from find_deal first.",
+                },
+            },
+            "required": ["deal_id"],
+        },
+    },
+    {
+        "name": "find_entity_for_task",
+        "description": (
+            "Search for a deal, contact, or company by name to get its ID "
+            "before creating a task linked to it. Always call this first "
+            "when the user mentions a company or person name in a task request."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Company, deal, or contact name to search for.",
+                },
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["deal", "contact", "company"],
+                    "description": "Which type to search. Default to 'deal' if unsure.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "create_task",
+        "description": (
+            "Create a manual task in the Tasks queue after the user has confirmed. "
+            "NEVER call this without first calling find_entity_for_task AND "
+            "receiving explicit user confirmation (yes / looks good / confirmed). "
+            "Only pass fields the user explicitly provided."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Task title — short, action-oriented.",
+                },
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["deal", "contact", "company"],
+                    "description": "Type of record this task is linked to.",
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "UUID of the deal/contact/company. Get from find_entity_for_task.",
+                },
+                "due_at": {
+                    "type": "string",
+                    "description": "Due date/time as ISO string e.g. '2026-06-04T18:00:00'.",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Task priority. Default: medium.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional context or notes for the task.",
+                },
+            },
+            "required": ["title", "entity_type", "entity_id"],
+        },
+    },
 ]
 
 
@@ -695,6 +875,18 @@ async def execute_tool(
             return await _execute_linkedin(args, user_id=user_id)
         if name == "generate_document":
             return await _execute_generic(args, user_id=user_id)
+        if name == "lookup_prospect_phone":
+            return await _execute_lookup_phone(args, session=session)
+        if name == "find_deal":
+            return await _execute_find_deal(args)
+        if name == "update_deal":
+            return await _execute_update_deal(args, user_id=user_id)
+        if name == "explain_deal_health":
+            return await _execute_explain_deal_health(args)
+        if name == "find_entity_for_task":
+            return await _execute_find_entity_for_task(args)
+        if name == "create_task":
+            return await _execute_create_task(args, user_id=user_id)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
         return ToolOutcome(
@@ -1262,6 +1454,571 @@ async def _execute_linkedin(
         "Use before→after format. Keep each option under 100 words."
     )
     return ToolOutcome(result_text=brief, artifacts=[])
+
+
+async def _execute_lookup_phone(
+    args: dict, *, session: AsyncSession
+) -> ToolOutcome:
+    """Resolve a prospect's phone number from the CRM and return it as an
+    ``aircall_dial`` artifact so the frontend can trigger the dial directly.
+
+    The Contact model has no ``company`` string column — it links to a
+    Company via ``company_id`` — so company narrowing joins the companies
+    table on ``Company.name``. No Aircall API call happens here; dialing is
+    frontend-only via ``window.__aircallDial``.
+    """
+    from sqlalchemy import or_
+    from sqlmodel import select as sm_select
+
+    from app.models.company import Company
+    from app.models.contact import Contact
+
+    prospect_name = (args.get("prospect_name") or "").strip()
+    company_filter = (args.get("company") or "").strip()
+
+    if not prospect_name:
+        return ToolOutcome(
+            result_text="Please provide a prospect name to look up.",
+            artifacts=[],
+        )
+
+    name_conditions = []
+    for part in prospect_name.split():
+        name_conditions.append(Contact.first_name.ilike(f"%{part}%"))
+        name_conditions.append(Contact.last_name.ilike(f"%{part}%"))
+
+    stmt = (
+        sm_select(Contact, Company)
+        .join(Company, Contact.company_id == Company.id, isouter=True)
+        .where(or_(*name_conditions))
+    )
+    if company_filter:
+        stmt = stmt.where(Company.name.ilike(f"%{company_filter}%"))
+    stmt = stmt.limit(5)
+
+    result = await session.execute(stmt)
+    rows = result.all()  # list of (Contact, Company | None)
+
+    if not rows:
+        return ToolOutcome(
+            result_text=(
+                f"No prospect found matching '{prospect_name}'"
+                + (f" at {company_filter}" if company_filter else "")
+                + ". Please check the name or search in Prospecting."
+            ),
+            artifacts=[],
+        )
+
+    if len(rows) > 1:
+        options = "\n".join(
+            f"- {c.first_name} {c.last_name}"
+            + (f" at {co.name}" if co else "")
+            + (f" ({c.phone})" if c.phone else " (no phone)")
+            for c, co in rows
+        )
+        return ToolOutcome(
+            result_text=(
+                f"Found {len(rows)} matching prospects. Which one?\n"
+                f"{options}\n\nReply with the full name to confirm."
+            ),
+            artifacts=[],
+        )
+
+    contact, company_obj = rows[0]
+    full_name = f"{contact.first_name} {contact.last_name}"
+    company_name = company_obj.name if company_obj else ""
+
+    if not contact.phone:
+        return ToolOutcome(
+            result_text=(
+                f"Found {full_name}"
+                + (f" at {company_name}" if company_name else "")
+                + " but they have no phone number on record. "
+                "Please add one in the Prospecting page first."
+            ),
+            artifacts=[],
+        )
+
+    return ToolOutcome(
+        result_text=(
+            f"📞 Initiating call to **{full_name}**"
+            + (f" at {company_name}" if company_name else "")
+            + f" — {contact.phone}"
+        ),
+        artifacts=[{
+            "type": "aircall_dial",
+            "phone": contact.phone,
+            "contact_name": full_name,
+            "company": company_name,
+        }],
+    )
+
+
+async def _execute_find_deal(args: dict) -> ToolOutcome:
+    """Read-only deal lookup — returns current field values + a deal_found
+    artifact so Zippy can build a confirmation before any write."""
+    from sqlalchemy import or_
+    from sqlmodel import select as sm_select
+
+    from app.database import AsyncSessionLocal as async_session
+    from app.models.company import Company
+    from app.models.deal import Deal
+
+    query = (args.get("query") or "").strip()
+    if not query:
+        return ToolOutcome(result_text="Please provide a deal or company name.", artifacts=[])
+
+    async with async_session() as session:
+        stmt = (
+            sm_select(Deal, Company)
+            .join(Company, Deal.company_id == Company.id, isouter=True)
+            .where(
+                or_(
+                    Company.name.ilike(f"%{query}%"),
+                    Deal.name.ilike(f"%{query}%"),
+                )
+            )
+            .limit(5)
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+
+    if not rows:
+        return ToolOutcome(
+            result_text=f"No deal found matching '{query}'. Check the company name and try again.",
+            artifacts=[],
+        )
+
+    if len(rows) > 1:
+        options = "\n".join(
+            f"- {d.name} | Stage: {d.stage} | Health: {d.health}" for d, c in rows
+        )
+        return ToolOutcome(
+            result_text=f"Found {len(rows)} matching deals:\n{options}\n\nWhich one?",
+            artifacts=[],
+        )
+
+    deal, company = rows[0]
+    return ToolOutcome(
+        result_text=(
+            f"Found deal: {deal.name}\n"
+            f"Stage: {deal.stage} | Health: {deal.health}\n"
+            f"Next Step: {deal.next_step or 'not set'}\n"
+            f"Next Step Due: {deal.next_step_due_at or 'not set'}\n"
+            f"Value: {deal.value or 'not set'}\n"
+            f"Close Date: {deal.close_date_est or 'not set'}\n"
+            f"Deal ID: {deal.id}"
+        ),
+        artifacts=[{
+            "type": "deal_found",
+            "deal_id": str(deal.id),
+            "deal_name": deal.name,
+            "company_name": company.name if company else "",
+            "stage": deal.stage,
+            "health": deal.health,
+            "next_step": deal.next_step or "",
+            "next_step_due_at": str(deal.next_step_due_at) if deal.next_step_due_at else "",
+            "value": str(deal.value) if deal.value else "",
+            "close_date_est": str(deal.close_date_est) if deal.close_date_est else "",
+        }],
+    )
+
+
+async def _execute_update_deal(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
+    """Write confirmed field changes to a deal. Health is intentionally NOT
+    touched here — it's auto-calculated elsewhere."""
+    import uuid
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    from sqlmodel import select as sm_select
+
+    from app.database import AsyncSessionLocal as async_session
+    from app.models.deal import DEAL_STAGES, Deal
+
+    deal_id = args.get("deal_id", "")
+    if not deal_id:
+        return ToolOutcome(result_text="deal_id is required.", artifacts=[])
+
+    changes: list[str] = []
+    async with async_session() as session:
+        result = await session.execute(
+            sm_select(Deal).where(Deal.id == uuid.UUID(deal_id))
+        )
+        deal = result.scalar_one_or_none()
+        if not deal:
+            return ToolOutcome(result_text=f"Deal {deal_id} not found.", artifacts=[])
+
+        if args.get("next_step") is not None:
+            deal.next_step = args["next_step"]
+            deal.next_step_updated_at = datetime.utcnow()
+            changes.append(f"Next Step → {args['next_step']}")
+
+        if args.get("next_step_due_at"):
+            deal.next_step_due_at = datetime.fromisoformat(args["next_step_due_at"])
+            changes.append(f"Next Step Due → {args['next_step_due_at']}")
+
+        if args.get("stage") in DEAL_STAGES:
+            deal.stage = args["stage"]
+            deal.stage_entered_at = datetime.utcnow()
+            changes.append(f"Stage → {args['stage']}")
+
+        if args.get("value") is not None:
+            deal.value = Decimal(str(args["value"]))
+            changes.append(f"Value → ${args['value']:,.0f}")
+
+        if args.get("close_date_est"):
+            deal.close_date_est = date.fromisoformat(args["close_date_est"])
+            changes.append(f"Close Date → {args['close_date_est']}")
+
+        if args.get("description") is not None:
+            deal.description = args["description"]
+            changes.append("Description updated")
+
+        if args.get("tags") is not None:
+            deal.tags = args["tags"]
+            changes.append(f"Tags → {', '.join(args['tags'])}")
+
+        if not changes:
+            return ToolOutcome(result_text="No fields were updated.", artifacts=[])
+
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+        await session.commit()
+
+    # Log a deal activity note so the change shows on the deal timeline.
+    # Non-fatal: the deal update already committed above, so a failure here
+    # must never surface as an error. Use a fresh session, not the deal's.
+    try:
+        from uuid import uuid4
+
+        from app.models.activity import Activity
+
+        changes_text = "\n".join(f"• {c}" for c in changes)
+        activity_content = f"Deal updated by Zippy:\n{changes_text}"
+
+        activity = Activity(
+            id=uuid4(),
+            deal_id=uuid.UUID(deal_id),
+            type="note",
+            source="zippy",
+            medium="other",
+            content=activity_content,
+            ai_summary=f"Zippy updated: {', '.join(changes)}",
+            created_by_id=user_id if user_id else None,
+            created_at=datetime.utcnow(),
+        )
+        async with async_session() as act_session:
+            act_session.add(activity)
+            await act_session.commit()
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to log activity for deal update: %s", exc
+        )
+
+    return ToolOutcome(
+        result_text=(
+            "✅ Deal updated successfully:\n" + "\n".join(f"  • {c}" for c in changes)
+        ),
+        artifacts=[{
+            "type": "deal_updated",
+            "deal_id": deal_id,
+            "deal_name": deal.name,
+            "changes": changes,
+            "deal_link": f"/pipeline?deal={deal_id}",
+        }],
+    )
+
+
+async def _execute_explain_deal_health(args: dict) -> ToolOutcome:
+    """Read-only health explainer — mirrors deal_health.compute_health's
+    dimension weights so the AE sees exactly where points come from."""
+    import uuid
+    from datetime import datetime
+
+    from sqlalchemy import desc
+    from sqlmodel import select as sm_select
+
+    from app.database import AsyncSessionLocal as async_session
+    from app.models.activity import Activity
+    from app.models.deal import Deal
+    from app.services.deal_health import compute_health
+
+    deal_id = args.get("deal_id", "")
+    if not deal_id:
+        return ToolOutcome(result_text="deal_id is required.", artifacts=[])
+
+    async with async_session() as session:
+        deal_result = await session.execute(
+            sm_select(Deal).where(Deal.id == uuid.UUID(deal_id))
+        )
+        deal = deal_result.scalar_one_or_none()
+        if not deal:
+            return ToolOutcome(result_text="Deal not found.", artifacts=[])
+
+        activities_result = await session.execute(
+            sm_select(Activity)
+            .where(Activity.deal_id == uuid.UUID(deal_id))
+            .order_by(desc(Activity.created_at))
+            .limit(1)
+        )
+        activities = list(activities_result.scalars().all())
+
+    score, health = compute_health(deal, activities)
+
+    days_since_activity = None
+    engagement_score = 0
+    if activities:
+        days_since_activity = (datetime.utcnow() - activities[0].created_at).days
+        if days_since_activity <= 3:
+            engagement_score = 40
+        elif days_since_activity <= 7:
+            engagement_score = 33
+        elif days_since_activity <= 14:
+            engagement_score = 22
+        elif days_since_activity <= 30:
+            engagement_score = 10
+
+    stakeholders = deal.stakeholder_count or 0
+    stakeholder_score = 30 if stakeholders >= 3 else (20 if stakeholders == 2 else (10 if stakeholders == 1 else 0))
+
+    days_in_stage = deal.days_in_stage or 0
+    if days_in_stage <= 7:
+        velocity_score = 30
+    elif days_in_stage <= 14:
+        velocity_score = 24
+    elif days_in_stage <= 30:
+        velocity_score = 14
+    elif days_in_stage <= 60:
+        velocity_score = 5
+    else:
+        velocity_score = 0
+
+    suggestions: list[str] = []
+    if engagement_score < 40:
+        suggestions.append(
+            "Log a call or email — last touch was "
+            f"{f'{days_since_activity} days ago' if days_since_activity is not None else 'never'}. "
+            "Logging activity within 3 days adds 40 engagement points."
+        )
+    if stakeholder_score < 30:
+        suggestions.append(
+            f"Link more contacts — {stakeholders} stakeholder(s) linked. "
+            "3+ gives full 30 stakeholder points."
+        )
+    if velocity_score < 30:
+        suggestions.append(
+            f"Deal has been in '{deal.stage}' for {days_in_stage} days. "
+            "Moving to the next stage resets the velocity clock."
+        )
+
+    return ToolOutcome(
+        result_text=(
+            f"Health for {deal.name}: {health.upper()} (score: {score}/100)\n\n"
+            "Breakdown:\n"
+            f"  • Engagement recency: {engagement_score}/40"
+            + (f" (last touch {days_since_activity}d ago)" if days_since_activity is not None else " (no activity logged)")
+            + f"\n  • Stakeholder coverage: {stakeholder_score}/30 ({stakeholders} contact(s) linked)\n"
+            f"  • Stage velocity: {velocity_score}/30 ({days_in_stage} days in '{deal.stage}')\n\n"
+            + (
+                "To improve health:\n" + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(suggestions))
+                if suggestions else "Health is strong across all dimensions."
+            )
+        ),
+        artifacts=[],
+    )
+
+
+async def _execute_find_entity_for_task(args: dict) -> ToolOutcome:
+    """Read-only lookup of a deal / contact / company to get its ID before
+    creating a task linked to it."""
+    from sqlalchemy import or_
+    from sqlmodel import select as sm_select
+
+    from app.database import AsyncSessionLocal as async_session
+    from app.models.company import Company
+    from app.models.contact import Contact
+    from app.models.deal import Deal
+
+    query = (args.get("query") or "").strip()
+    entity_type = args.get("entity_type", "deal")
+
+    if not query:
+        return ToolOutcome(result_text="Please provide a name to search for.", artifacts=[])
+
+    async with async_session() as session:
+        if entity_type == "deal":
+            stmt = (
+                sm_select(Deal, Company)
+                .join(Company, Deal.company_id == Company.id, isouter=True)
+                .where(
+                    or_(
+                        Deal.name.ilike(f"%{query}%"),
+                        Company.name.ilike(f"%{query}%"),
+                    )
+                )
+                .limit(5)
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+            if not rows:
+                return ToolOutcome(result_text=f"No deal found matching '{query}'.", artifacts=[])
+            if len(rows) > 1:
+                options = "\n".join(f"- {d.name} (Stage: {d.stage})" for d, c in rows)
+                return ToolOutcome(
+                    result_text=f"Found {len(rows)} deals:\n{options}\n\nWhich one?",
+                    artifacts=[],
+                )
+            deal, _company = rows[0]
+            return ToolOutcome(
+                result_text=f"Found deal: {deal.name} | Stage: {deal.stage} | ID: {deal.id}",
+                artifacts=[{
+                    "type": "entity_found",
+                    "entity_type": "deal",
+                    "entity_id": str(deal.id),
+                    "entity_name": deal.name,
+                }],
+            )
+
+        if entity_type == "company":
+            stmt = sm_select(Company).where(Company.name.ilike(f"%{query}%")).limit(5)
+            result = await session.execute(stmt)
+            companies = list(result.scalars().all())
+            if not companies:
+                return ToolOutcome(result_text=f"No company found matching '{query}'.", artifacts=[])
+            if len(companies) > 1:
+                options = "\n".join(f"- {c.name}" for c in companies)
+                return ToolOutcome(
+                    result_text=f"Found {len(companies)} companies:\n{options}\n\nWhich one?",
+                    artifacts=[],
+                )
+            c = companies[0]
+            return ToolOutcome(
+                result_text=f"Found company: {c.name} | ID: {c.id}",
+                artifacts=[{
+                    "type": "entity_found",
+                    "entity_type": "company",
+                    "entity_id": str(c.id),
+                    "entity_name": c.name,
+                }],
+            )
+
+        # contact
+        stmt = (
+            sm_select(Contact)
+            .where(
+                or_(
+                    Contact.first_name.ilike(f"%{query}%"),
+                    Contact.last_name.ilike(f"%{query}%"),
+                )
+            )
+            .limit(5)
+        )
+        result = await session.execute(stmt)
+        contacts = list(result.scalars().all())
+        if not contacts:
+            return ToolOutcome(result_text=f"No contact found matching '{query}'.", artifacts=[])
+        if len(contacts) > 1:
+            options = "\n".join(
+                f"- {c.first_name} {c.last_name} ({c.email or 'no email'})" for c in contacts
+            )
+            return ToolOutcome(
+                result_text=f"Found {len(contacts)} contacts:\n{options}\n\nWhich one?",
+                artifacts=[],
+            )
+        c = contacts[0]
+        return ToolOutcome(
+            result_text=f"Found contact: {c.first_name} {c.last_name} | ID: {c.id}",
+            artifacts=[{
+                "type": "entity_found",
+                "entity_type": "contact",
+                "entity_id": str(c.id),
+                "entity_name": f"{c.first_name} {c.last_name}",
+            }],
+        )
+
+
+async def _execute_create_task(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:
+    """Create a manual, AE-assigned task linked to a deal/contact/company.
+    Always task_type='manual' and task_track='manual'."""
+    import uuid
+    from datetime import datetime
+
+    from app.database import AsyncSessionLocal as async_session
+    from app.models.task import Task
+
+    title = (args.get("title") or "").strip()
+    entity_type = args.get("entity_type", "")
+    entity_id = args.get("entity_id", "")
+
+    if not title:
+        return ToolOutcome(result_text="Task title is required.", artifacts=[])
+    if entity_type not in ("deal", "contact", "company"):
+        return ToolOutcome(result_text="entity_type must be deal, contact, or company.", artifacts=[])
+    if not entity_id:
+        return ToolOutcome(result_text="entity_id is required.", artifacts=[])
+
+    due_at = None
+    if args.get("due_at"):
+        try:
+            due_at = datetime.fromisoformat(args["due_at"])
+        except ValueError:
+            pass
+
+    # Auto-calculate priority from due_at: within 24h→high, 24-48h→medium, beyond→low
+    if due_at:
+        hours_until_due = (due_at - datetime.utcnow()).total_seconds() / 3600
+        if hours_until_due <= 24:
+            priority = "high"
+        elif hours_until_due <= 48:
+            priority = "medium"
+        else:
+            priority = "low"
+    else:
+        priority = args.get("priority", "medium")
+        if priority not in ("low", "medium", "high"):
+            priority = "medium"
+
+    async with async_session() as session:
+        task = Task(
+            entity_type=entity_type,
+            entity_id=uuid.UUID(entity_id),
+            task_type="manual",
+            task_track="manual",
+            title=title,
+            description=args.get("description") or None,
+            status="open",
+            priority=priority,
+            due_at=due_at,
+            created_by_id=user_id,
+            assigned_to_id=user_id,
+            assigned_role="ae",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(task)
+        await session.commit()
+
+    due_label = due_at.strftime("%d %b %Y %H:%M") if due_at else "no due date"
+    return ToolOutcome(
+        result_text=(
+            f"✅ Task created: {title}\n"
+            f"Due {due_label} · Priority: {priority}\n"
+            f"Linked to: {entity_type} — open it in Pipeline to view."
+        ),
+        artifacts=[{
+            "type": "task_created",
+            "title": title,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "entity_name": args.get("entity_name", ""),
+            "due_at": args.get("due_at", ""),
+            "priority": priority,
+            "deal_link": f"/pipeline?deal={entity_id}" if entity_type == "deal" else "",
+        }],
+    )
 
 
 async def _execute_generic(args: dict, *, user_id: Optional[UUID] = None) -> ToolOutcome:

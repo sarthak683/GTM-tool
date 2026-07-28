@@ -40,6 +40,7 @@ class EmailMessage:
     from_name: str = ""
     to_addrs: list[str] = field(default_factory=list)
     cc_addrs: list[str] = field(default_factory=list)
+    bcc_addrs: list[str] = field(default_factory=list)
     body_text: str = ""      # Plain text body (truncated to 3000 chars)
     date: str = ""           # RFC 2822 date string
     thread_id: str = ""
@@ -195,6 +196,7 @@ class GmailInboxClient:
             from_raw = headers.get("from", "")
             to_raw = headers.get("to", "")
             cc_raw = headers.get("cc", "")
+            bcc_raw = headers.get("bcc", "")
             date_raw = headers.get("date", "")
 
             # Parse sender
@@ -213,6 +215,7 @@ class GmailInboxClient:
                 from_name=from_name,
                 to_addrs=_extract_addrs(to_raw),
                 cc_addrs=_extract_addrs(cc_raw),
+                bcc_addrs=_extract_addrs(bcc_raw),
                 body_text=body_text[:3000],  # Truncate for cost efficiency
                 date=date_raw,
                 thread_id=msg.get("threadId", ""),

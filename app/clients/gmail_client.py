@@ -37,9 +37,9 @@ GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 async def _get_gmail_token(user_id: Optional[str] = None) -> tuple[str, dict]:
     """Get a valid Gmail access token for the user.
 
-    Picks the most-recent active connection for ``user_id`` (or any active
-    connection if ``user_id`` is None). Raises if the user has no Gmail
-    connection at all — callers turn that into a tool error so the agent
+    Picks the rep's PRIMARY (earliest-connected) active mailbox for ``user_id``
+    (or any active connection if ``user_id`` is None). Raises if the user has no
+    Gmail connection at all — callers turn that into a tool error so the agent
     can ask the user to reconnect.
     """
     async with async_session() as session:
@@ -48,9 +48,16 @@ async def _get_gmail_token(user_id: Optional[str] = None) -> tuple[str, dict]:
         )
         if user_id:
             stmt = stmt.where(UserEmailConnection.user_id == user_id)
-        stmt = stmt.order_by(UserEmailConnection.connected_at.desc())
+        # Earliest-connected = the rep's PRIMARY mailbox. Ordering by newest
+        # would hand the agent whichever alternate sending domain they added
+        # most recently, so it would send as sipra@beaconli.com instead of
+        # sipra@beacon.li. Matches app/services/email_connections.py.
+        stmt = stmt.order_by(
+            UserEmailConnection.connected_at.asc().nullslast(),
+            UserEmailConnection.id.asc(),
+        )
         result = await session.execute(stmt.limit(1))
-        connection = result.scalar_one_or_none()
+        connection = result.scalars().first()
 
     if not connection:
         raise RuntimeError("No active Gmail connection found.")

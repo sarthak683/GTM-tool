@@ -1,14 +1,14 @@
 """Resource chunk embeddings for semantic RAG
 
-Revision ID: 012
-Revises: 011
+Revision ID: 094
+Revises: 093
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "012"
-down_revision = "011"
+revision = "094"
+down_revision = "093"
 branch_labels = None
 depends_on = None
 

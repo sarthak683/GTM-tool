@@ -15,6 +15,7 @@ Endpoints:
 """
 import csv
 import io
+import logging
 import re
 from datetime import datetime
 from uuid import UUID
@@ -33,7 +34,7 @@ from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.user import User
-from app.repositories.company import CompanyRepository
+from app.repositories.company import CompanyRepository, company_visibility_filter
 from app.repositories.contact import visible_contact_restriction
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
@@ -55,6 +56,7 @@ from app.services.data_reset import (
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
 from app.services.icp_scorer import score_company
+from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
 from app.services.recotap import (
     normalize_domain as recotap_domain,
@@ -62,9 +64,12 @@ from app.services.recotap import (
     push_crm_status as recotap_push_status,
     seed_mock_signals as recotap_seed,
     signals_by_domain as recotap_signals,
+    sync_crm_journey as recotap_crm_sync,
 )
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
+
+logger = logging.getLogger(__name__)
 
 
 class ManualCompanyCreate(BaseModel):
@@ -109,6 +114,20 @@ def _account_sourcing_visibility_filter():
             select(Deal.id).where(Deal.company_id == Company.id).exists(),
         ),
     )
+
+
+def _can_see_company(company: Company, user) -> bool:
+    """Python mirror of ``company_visibility_filter`` for single-object guards.
+
+    Admins see every company (including ``not_a_fit``); a non-admin only sees a
+    company they own (AE or SDR) that is not flagged ``not_a_fit``. Use on
+    single-company detail/update routes to 404 a company the caller can't see
+    (so existence isn't leaked).
+    """
+    if user.role == "admin":
+        return True
+    owns = company.assigned_to_id == user.id or company.sdr_id == user.id
+    return owns and company.account_status != "not_a_fit"
 
 
 async def _auto_create_angel_records(
@@ -619,26 +638,44 @@ async def _process_uploaded_rows(
     errors: list[dict[str, str]] = []
 
     all_users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()  # noqa: E712
-    _user_by_email: dict[str, User] = {u.email.lower(): u for u in all_users}
-    _user_by_name: dict[str, User] = {u.name.strip().lower(): u for u in all_users}
-    _user_by_first_name: dict[str, list[User]] = {}
+    _user_by_email: dict[str, User] = {u.email.strip().lower(): u for u in all_users if u.email}
+    # Full-name index: map each normalized full name to the matching users. A name
+    # is only trusted when it resolves to EXACTLY ONE active user — ambiguous or
+    # unknown names fall through to "unassigned" rather than risk a mis-match.
+    _users_by_full_name: dict[str, list[User]] = {}
     for user in all_users:
-        first = (user.name or "").strip().split(" ", 1)[0].lower()
-        if first:
-            _user_by_first_name.setdefault(first, []).append(user)
+        full = (user.name or "").strip().lower()
+        if full:
+            _users_by_full_name.setdefault(full, []).append(user)
 
     def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
+        """Resolve an uploaded AE/SDR cell to an active user.
+
+        Matching is strict to prevent the wrong rep being assigned from a CSV:
+          - exact, normalized email match wins;
+          - otherwise an exact, normalized FULL-name match, but only when it is
+            unambiguous (exactly one active user with that name);
+          - NO first-name / fuzzy matching. A first-name fallback previously let
+            a name fragment collide with an unrelated rep (e.g. the sheet said
+            one SDR but the account was assigned to a different same-first-name
+            user). When nothing resolves, leave the slot unassigned and log it.
+        """
         found: User | None = None
         if rep_email:
             found = _user_by_email.get(rep_email.strip().lower())
         if not found and rep_name:
-            normalized_name = rep_name.strip().lower()
-            found = _user_by_name.get(normalized_name)
-            if not found:
-                first_matches = _user_by_first_name.get(normalized_name) or []
-                if len(first_matches) == 1:
-                    found = first_matches[0]
+            matches = _users_by_full_name.get(rep_name.strip().lower()) or []
+            if len(matches) == 1:
+                found = matches[0]
         if not found:
+            if rep_email or rep_name:
+                logger.warning(
+                    "Sourcing import could not resolve owner cell to an active "
+                    "user; leaving unassigned (email=%r name=%r batch=%s)",
+                    rep_email,
+                    rep_name,
+                    batch_id,
+                )
             return None
         return {
             "id": str(found.id),
@@ -694,8 +731,16 @@ async def _process_uploaded_rows(
 
             if company:
                 already_in_batch = company.sourcing_batch_id == batch_id
+                # A re-upload whose sheet names a different SDR is a
+                # reassignment, so it must cascade + reset like the assignment
+                # endpoints do — this is the path bulk sheet handovers use.
+                previous_sdr_id = company.sdr_id
                 company = merge_company_from_upload(company, fields)
                 company.sourcing_batch_id = batch_id
+                if company.sdr_id != previous_sdr_id:
+                    await sync_company_sdr_assignment_to_contacts(
+                        session, company, previous_sdr_id
+                    )
                 append_company_activity_log(
                     company,
                     action="company_import_updated",
@@ -1128,6 +1173,7 @@ async def get_batch_companies(batch_id: UUID, _user: CurrentUser, session: DBSes
     result = await session.execute(
         select(Company)
         .where(Company.sourcing_batch_id == batch_id)
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
         .offset(page.skip)
         .limit(page.limit)
         .order_by(Company.created_at.desc())
@@ -1149,12 +1195,18 @@ async def list_sourced_companies(
     recommended_outreach_lane: str | None = Query(default=None),
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only."),
+    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only."),
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage."),
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
-    stmt = select(Company).where(_account_sourcing_visibility_filter())
+    stmt = (
+        select(Company)
+        .where(_account_sourcing_visibility_filter())
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+    )
     search_term = (q or "").strip()
     if search_term:
         like = f"%{search_term}%"
@@ -1208,6 +1260,32 @@ async def list_sourced_companies(
             owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
         if owner_clauses:
             stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+
+    if ae_id:
+        ae_uuids: list[UUID] = []
+        for raw in str(ae_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ae_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if ae_uuids:
+            stmt = stmt.where(Company.assigned_to_id.in_(ae_uuids))
+
+    if sdr_id:
+        sdr_uuids: list[UUID] = []
+        for raw in str(sdr_id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                sdr_uuids.append(UUID(raw))
+            except ValueError:
+                continue
+        if sdr_uuids:
+            stmt = stmt.where(Company.sdr_id.in_(sdr_uuids))
 
     # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
     # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
@@ -1282,7 +1360,11 @@ async def get_sourced_company_summary(
     assigned_rep_email: str | None = Query(default=None),
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
 ):
-    stmt = select(Company).where(_account_sourcing_visibility_filter())
+    stmt = (
+        select(Company)
+        .where(_account_sourcing_visibility_filter())
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+    )
     if assigned_rep_email:
         stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
     if owner_id:
@@ -1392,7 +1474,7 @@ async def get_sourced_company_summary(
 @router.post("/companies/manual", response_model=SourcingBatchRead, status_code=202)
 async def create_manual_company(
     payload: ManualCompanyCreate,
-    current_user: CurrentUser,
+    current_user: AdminUser,
     session: DBSession = None,
 ):
     name = _clean_company_name(payload.name or "")
@@ -1560,7 +1642,8 @@ async def create_manual_company(
 async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Get a single sourced company with full enrichment data (including cache)."""
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not _can_see_company(company, _user):
+        # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
     read = CompanyRead.model_validate(company)
     cache = dict(read.enrichment_cache or {})
@@ -1577,6 +1660,7 @@ async def refresh_recotap_signals(
     session: DBSession = None,
     seed: bool | None = None,
     overwrite: bool = False,
+    full: bool = False,
 ):
     """Pull live Recotap account signals into recotap_accounts.
 
@@ -1589,9 +1673,14 @@ async def refresh_recotap_signals(
 
     is_prod = settings.RECOTAP_ENVIRONMENT.strip().lower() == "prod"
     do_seed = (not is_prod) if seed is None else seed
-    pulled = await recotap_pull(session)
+    # Incremental by default (only changed accounts); ?full=true forces a complete
+    # re-pull (useful as a periodic safety net since lastSync omits deletions).
+    pulled = await recotap_pull(session, incremental=not full)
     seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
-    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed}
+    # Always derive journey stage from CRM deal progress LAST, so it wins over
+    # Recotap's intent stage for accounts with an active deal.
+    crm = await recotap_crm_sync(session)
+    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed, "crm_journey": crm}
 
 
 @router.get("/recotap/summary")
@@ -1635,10 +1724,17 @@ async def recotap_summary(_user: CurrentUser, session: DBSession = None):
 
 
 @router.post("/recotap/push")
-async def push_recotap_crm_status(_user: CurrentUser, session: DBSession = None, limit: int | None = None):
-    """Push Beacon CRM deal-stage status to Recotap as account tags
-    (Customer / POC / Negotiation / ...). `limit` caps the number pushed (test runs)."""
-    return await recotap_push_status(session, limit=limit)
+async def push_recotap_crm_status(
+    _user: CurrentUser,
+    session: DBSession = None,
+    limit: int | None = None,
+    dry_run: bool = False,
+):
+    """Push Beacon CRM deal-stage status to Recotap (a custom field when configured,
+    else the legacy 'CRM: ...' tag) via upsert. `limit` caps the number pushed
+    (test runs); `dry_run=true` returns the exact payloads it WOULD send WITHOUT
+    writing anything to Recotap."""
+    return await recotap_push_status(session, limit=limit, dry_run=dry_run)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)
@@ -1646,8 +1742,12 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     """Update sourced company workflow fields like owner, disposition, and rep feedback."""
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
+    if not _can_see_company(company, current_user):
+        raise HTTPException(status_code=404, detail="Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    previous_sdr_id = company.sdr_id
+    sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     changed_fields = {
         key: {"before": getattr(company, key, None), "after": value}
         for key, value in update_data.items()
@@ -1655,6 +1755,8 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     }
     for key, value in update_data.items():
         setattr(company, key, value)
+    if sdr_update_requested:
+        await sync_company_sdr_assignment_to_contacts(session, company, previous_sdr_id)
 
     if (
         "outreach_status" in update_data
@@ -1721,7 +1823,12 @@ async def export_sourced_companies(
     endpoint so the user can "download the filtered list" without the
     frontend having to enumerate every visible company id.
     """
-    stmt = select(Company).where(Company.sourcing_batch_id.isnot(None)).order_by(Company.created_at.desc())
+    stmt = (
+        select(Company)
+        .where(Company.sourcing_batch_id.isnot(None))
+        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+        .order_by(Company.created_at.desc())
+    )
     if assigned_rep:
         stmt = stmt.where(Company.assigned_rep == assigned_rep)
     if assigned_rep_email:
@@ -1953,10 +2060,11 @@ async def icp_research_company(company_id: UUID, _user: CurrentUser, session: DB
 async def get_company_contacts(company_id: UUID, session: DBSession, current_user: CurrentUser):
     """Get the contacts for a company, scoped to what the caller may see.
 
-    Visibility is identical to the prospects list: a non-admin sees only the
-    company's contacts they own (either slot) plus unassigned ones. Without this,
-    clicking a prospect's company name exposed every rep's contacts at that
-    account (the prospect-visibility leak).
+    A non-admin normally sees only the company's contacts they own (either slot)
+    plus unassigned ones — this prevents the cross-rep prospect-visibility leak.
+    The one exception: if the caller OWNS this account (its AE or SDR slot), they
+    see ALL of its prospects (owning the account means seeing everyone worked
+    there, even prospects a teammate is assigned at the prospect level).
     """
     company = await session.get(Company, company_id)
     if not company:
@@ -1968,7 +2076,22 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
         .order_by(Contact.created_at.desc())
     )
     restriction = await visible_contact_restriction(session, current_user)
-    if restriction is not None:
+    # Owning the account (its AE or SDR slot) grants visibility to ALL of that
+    # account's prospects — even ones a teammate is assigned at the prospect level.
+    # Without this, an account owner saw only prospects assigned directly to them
+    # (e.g. Dynamo Software's account SDR could see just 1 of 7 prospects, the rest
+    # being co-owned by the account AE).
+    #
+    # SDRs are EXCLUDED from this account-owner bypass: they are hard-restricted to
+    # their OWN prospects everywhere, so even on an account they own they see only
+    # prospects in their own slots — never an AE-held teammate's prospect.
+    is_sdr = (current_user.role or "").lower() == "sdr"
+    owns_account = (
+        not is_sdr
+        and current_user.id is not None
+        and current_user.id in {company.assigned_to_id, company.sdr_id}
+    )
+    if restriction is not None and not owns_account:
         stmt = stmt.where(restriction)
     result = await session.execute(stmt)
     all_contacts = result.scalars().all()

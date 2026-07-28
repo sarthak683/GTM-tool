@@ -608,24 +608,11 @@ async def _auto_link_attendees_to_deal(
             )
             contact = result.scalar_one_or_none()
 
-        # Create stub contact if totally unknown
-        if not contact and (email or name):
-            from datetime import datetime as _dt
-            parts = name.split(" ", 1) if name else []
-            first = parts[0] if parts else (email.split("@")[0].title() if email else "Unknown")
-            last = parts[1] if len(parts) > 1 else "Attendee"
-            contact = Contact(
-                first_name=first,
-                last_name=last,
-                email=email or None,
-                title=title or None,
-                company_id=company_id,
-                created_at=_dt.utcnow(),
-                updated_at=_dt.utcnow(),
-            )
-            session.add(contact)
-            await session.flush()
-
+        # Do NOT auto-create stub contacts for unknown attendees. That spawned
+        # low-value "<email-prefix> Attendee" rows on every account (note-takers,
+        # internal folks, one-off guests). We only LINK attendees who already
+        # exist in the CRM; real prospects are added via the Prospecting CSV
+        # upload and then match here by email.
         if not contact:
             continue
 

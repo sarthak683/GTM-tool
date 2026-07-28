@@ -18,6 +18,7 @@ from app.config import settings
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.user import User, UserRead, UserUpdate
+from app.models.user_alias import UserAlias
 from app.services.auth import (
     build_google_login_url,
     create_access_token,
@@ -33,7 +34,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
 
 # Emails that always get admin role regardless of signup order.
-SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li"}
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "maithili@beacon.li", "annie@beacon.li"}
+
+# Alternate domains whose users are auto-linked to their beacon.li primary account
+# by username match (e.g. sipra@beaconli.com → sipra@beacon.li).
+_ALIAS_DOMAINS = {"beaconli.com", "beaconli.co"}
+_PRIMARY_DOMAIN = "beacon.li"
 
 
 # ── Google OAuth flow ────────────────────────────────────────────────────────
@@ -77,9 +83,11 @@ async def google_callback(
     # nobody is locked out. When set (e.g. "beacon.li"), only emails on those
     # domains may sign in; everyone else is bounced to the login screen with a
     # machine-readable reason (no sensitive detail leaked).
+    # Note: _ALIAS_DOMAINS (beaconli.com, beaconli.co) are always allowed through
+    # because they map to existing beacon.li accounts.
     allowed_domains = settings.allowed_email_domains
-    if allowed_domains:
-        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+    email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+    if allowed_domains and email_domain not in _ALIAS_DOMAINS:
         if email_domain not in allowed_domains:
             logger.warning(
                 "Rejected sign-in for %s: domain %r not in allowlist",
@@ -96,6 +104,20 @@ async def google_callback(
             select(User).where(User.google_id == google_info["google_id"])
         )
     ).scalar_one_or_none()
+
+    # If not found by primary google_id, check the aliases table — this covers
+    # team members signing in with their alternate domain account (beaconli.com /
+    # beaconli.co) after the alias was already registered.
+    if user is None:
+        alias = (
+            await session.execute(
+                select(UserAlias).where(UserAlias.google_id == google_info["google_id"])
+            )
+        ).scalar_one_or_none()
+        if alias:
+            user = (await session.execute(select(User).where(User.id == alias.user_id))).scalar_one_or_none()
+            if user:
+                logger.info("Alias login: %s → primary user %s", email, user.email)
 
     if user is None:
         # Check if a placeholder account already exists for this email (e.g. seeded
@@ -120,7 +142,41 @@ async def google_callback(
             await session.commit()
             await session.refresh(existing_by_email)
             user = existing_by_email
-        else:
+
+        elif email_domain in _ALIAS_DOMAINS:
+            # First-time login from an alias domain (beaconli.com / beaconli.co).
+            # Try to find the matching beacon.li primary account by username so we
+            # can link the two rather than creating a duplicate profile.
+            username = email.split("@")[0].lower()
+            primary_email = f"{username}@{_PRIMARY_DOMAIN}"
+            primary_user = (
+                await session.execute(
+                    select(User).where(func.lower(User.email) == primary_email)
+                )
+            ).scalar_one_or_none()
+
+            if primary_user is not None:
+                # Register the alias so future logins skip this lookup.
+                alias_row = UserAlias(
+                    user_id=primary_user.id,
+                    google_id=google_info["google_id"],
+                    email=email,
+                )
+                session.add(alias_row)
+                await session.commit()
+                await session.refresh(primary_user)
+                user = primary_user
+                logger.info(
+                    "New alias registered: %s → primary user %s", email, primary_user.email
+                )
+            else:
+                logger.warning(
+                    "Alias login for %s: no matching %s account found — creating new user",
+                    email,
+                    primary_email,
+                )
+
+        if user is None:
             # Genuinely new user — superadmins always get admin; emails on the
             # ADMIN_BOOTSTRAP_EMAILS allowlist get admin; otherwise the legacy
             # "first user to sign in becomes admin" fallback applies; everyone
@@ -217,6 +273,23 @@ async def impersonate_user(payload: ImpersonateRequest, session: DBSession, curr
 
 
 # ── User management (admin) ─────────────────────────────────────────────────
+
+
+def _normalize_user_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _validate_seed_user(email: str, name: str, role: str) -> tuple[str, str, str]:
+    normalized_email = _normalize_user_email(email)
+    normalized_name = name.strip()
+    normalized_role = role.strip().lower()
+    if not normalized_email or "@" not in normalized_email:
+        raise ForbiddenError("A valid email address is required")
+    if not normalized_name:
+        raise ForbiddenError("Name is required")
+    if normalized_role not in ALLOWED_USER_ROLES:
+        raise ForbiddenError("Role must be one of: admin, ae, sdr")
+    return normalized_email, normalized_name, normalized_role
 
 
 @router.get("/users", response_model=List[UserRead])
@@ -332,6 +405,31 @@ class SeedUsersResponse(SQLModel):
     users: list[UserRead]
 
 
+@router.post("/users", response_model=UserRead)
+async def create_user(payload: SeedUserPayload, session: DBSession, current_user: CurrentUser):
+    """Create a placeholder CRM user before their first Google sign-in."""
+    await require_workspace_permission(session, current_user, "manage_team")
+    email, name, role = _validate_seed_user(payload.email, payload.name, payload.role)
+
+    existing = (
+        await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
+    ).scalar_one_or_none()
+    if existing:
+        raise ForbiddenError("A user with this email already exists")
+
+    user = User(
+        email=email,
+        name=name,
+        google_id=f"seed_{email}",
+        role=role,
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 @router.post("/users/seed", response_model=SeedUsersResponse)
 async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: AdminUser):
     """Bulk-create team members so they can be matched during imports (ClickUp, CSV, etc.)."""
@@ -340,7 +438,10 @@ async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: Admi
     all_users: list[User] = []
 
     for entry in payload.users:
-        email = entry.email.strip().lower()
+        try:
+            email, name, role = _validate_seed_user(entry.email, entry.name, entry.role)
+        except ForbiddenError:
+            continue
         existing = (
             await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
         ).scalar_one_or_none()
@@ -349,14 +450,11 @@ async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: Admi
             all_users.append(existing)
             continue
 
-        if entry.role not in ALLOWED_USER_ROLES:
-            continue
-
         user = User(
             email=email,
-            name=entry.name.strip(),
+            name=name,
             google_id=f"seed_{email}",
-            role=entry.role,
+            role=role,
             is_active=True,
         )
         session.add(user)

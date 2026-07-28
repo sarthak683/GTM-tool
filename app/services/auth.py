@@ -46,10 +46,10 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 # ── Superadmin + impersonation ────────────────────────────────────────────────
 
-# Distinct from the `admin` role (which several people hold). Only these two can
+# Distinct from the `admin` role (which several people hold). Only these can
 # impersonate a specific teammate to see the CRM from their exact perspective.
 # Kept in sync with SUPERADMIN_EMAILS in frontend/src/lib/AuthContext.tsx.
-SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li"}
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "annie@beacon.li"}
 
 
 def is_superadmin(user) -> bool:

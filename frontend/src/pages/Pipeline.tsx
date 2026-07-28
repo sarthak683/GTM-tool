@@ -23,15 +23,16 @@ type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
 const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
-  { id: "demo_scheduled", label: "4.DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
-  { id: "demo_done", label: "5.DEMO DONE", group: "active", color: "#1d4ed8" },
-  { id: "qualified_lead", label: "6.QUALIFIED LEAD", group: "active", color: "#6d5efc" },
-  { id: "poc_agreed", label: "7.POC AGREED", group: "active", color: "#0ea5e9" },
-  { id: "poc_wip", label: "8.POC WIP", group: "active", color: "#06b6d4" },
-  { id: "poc_done", label: "9.POC DONE", group: "active", color: "#14b8a6" },
-  { id: "commercial_negotiation", label: "10.COMMERCIAL NEGOTIATION", group: "active", color: "#f59e0b" },
-  { id: "msa_review", label: "11.WORKSHOP/MSA", group: "active", color: "#a855f7" },
-  { id: "closed_won", label: "12.CLOSED WON", group: "closed", color: "#22c55e" },
+  { id: "demo_scheduled", label: "DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
+  { id: "demo_done", label: "DEMO DONE", group: "active", color: "#1d4ed8" },
+  { id: "qualified_lead", label: "QUALIFIED LEAD", group: "active", color: "#6d5efc" },
+  { id: "poc_agreed", label: "POC AGREED", group: "active", color: "#0ea5e9" },
+  { id: "poc_wip", label: "POC WIP", group: "active", color: "#06b6d4" },
+  { id: "poc_done", label: "POC DONE", group: "active", color: "#14b8a6" },
+  { id: "commercial_negotiation", label: "COMMERCIAL NEGOTIATION", group: "active", color: "#f59e0b" },
+  { id: "msa_review", label: "WORKSHOP/MSA", group: "active", color: "#a855f7" },
+  { id: "closed_won", label: "CLOSED WON", group: "closed", color: "#22c55e" },
+  { id: "backlog", label: "BACKLOG", group: "closed", color: "#f97316" },
   { id: "churned", label: "CHURNED", group: "closed", color: "#ef4444" },
   { id: "not_a_fit", label: "NOT FIT", group: "closed", color: "#9ca3af" },
   { id: "cold", label: "COLD", group: "closed", color: "#94a3b8" },
@@ -53,7 +54,7 @@ const PROSPECT_STAGES: Array<StageMeta & { id: ProspectStageId }> = [
 const STAGE_COLOR: Record<string, string> = {
   reprospect: "#8b5cf6", demo_scheduled: "#6366f1", demo_done: "#8b5cf6", qualified_lead: "#2563eb",
   poc_agreed: "#0ea5e9", poc_wip: "#06b6d4", poc_done: "#14b8a6", commercial_negotiation: "#f59e0b",
-  msa_review: "#a855f7", workshop: "#f97316", closed_won: "#22c55e", closed_lost: "#94a3b8",
+  msa_review: "#a855f7", workshop: "#f97316", closed_won: "#22c55e", backlog: "#f97316", closed_lost: "#94a3b8",
   not_a_fit: "#9ca3af", on_hold: "#a78bfa", nurture: "#67e8f9", churned: "#ef4444",
   outreach: "#2563eb", in_progress: "#7c3aed", meeting_booked: "#0ea5e9", negative_response: "#ef4444", no_response: "#94a3b8",
 };
@@ -68,7 +69,7 @@ const SUMMARY_CARD_META: Array<{ key: SummaryCardKey; label: string; tone?: "def
 ];
 const DEFAULT_FUNNEL: FunnelConfig = {
   active: ["reprospect", "demo_scheduled", "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review"],
-  inactive: ["closed_won", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
+  inactive: ["closed_won", "backlog", "churned", "not_a_fit", "cold", "closed_lost", "on_hold", "nurture", "closed"],
   tofu: ["qualified_lead", "poc_agreed"],
   mofu: ["poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop"],
   bofu: ["closed_won"],
@@ -641,10 +642,10 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", geography: "", tags: "", source: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [validationErrors, setValidationErrors] = useState<{ name: boolean; source: boolean }>({ name: false, source: false });
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; close_date_est: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, close_date_est: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -668,12 +669,22 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const handleCreate = async () => {
     const nextValidationErrors = {
       name: !form.name.trim(),
+      company_id: !form.company_id,
       source: !form.source,
+      assigned_to_id: !form.assigned_to_id,
+      sdr_id: !form.sdr_id,
+      meeting_booked_with: !form.meeting_booked_with,
+      close_date_est: !form.close_date_est,
     };
     setValidationErrors(nextValidationErrors);
     const missingFields = [
       nextValidationErrors.name ? "Deal name" : null,
+      nextValidationErrors.company_id ? "Company" : null,
+      nextValidationErrors.assigned_to_id ? "Assigned AE" : null,
+      nextValidationErrors.sdr_id ? "Assigned SDR" : null,
       nextValidationErrors.source ? "Deal source" : null,
+      nextValidationErrors.meeting_booked_with ? "Meeting Booked with" : null,
+      nextValidationErrors.close_date_est ? "Meeting Booked Date" : null,
     ].filter(Boolean);
     if (missingFields.length) {
       setError(`Complete required fields: ${missingFields.join(", ")}.`);
@@ -691,9 +702,11 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         close_date_est: form.close_date_est || undefined,
         priority_tag: form.priority_tag || undefined,
         assigned_to_id: form.assigned_to_id || undefined,
+        sdr_id: form.sdr_id || undefined,
         geography: form.geography || undefined,
         source: form.source || undefined,
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+        meeting_booked_with: form.meeting_booked_with || undefined,
       } as Partial<Deal>);
       onCreated(deal);
       onClose();
@@ -736,10 +749,19 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
             <div ref={companyDropdownRef} style={{ position: "relative" }}>
               <div
                 onClick={() => setCompanyDropdownOpen((o) => !o)}
-                style={{ ...modalInputStyle, background: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+                style={{
+                  ...modalInputStyle,
+                  background: validationErrors.company_id ? "#fffbf5" : "#fff",
+                  border: validationErrors.company_id ? "1.5px solid #f59e0b" : modalInputStyle.border,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
               >
                 <span style={{ color: form.company_id ? "#1f2d3d" : "#94a3b8", fontSize: 14 }}>
-                  {form.company_id ? selectedCompanyName : "Select company"}
+                  {form.company_id ? selectedCompanyName : "Select company (required)"}
                 </span>
                 <ChevronDown size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />
               </div>
@@ -758,13 +780,6 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                     />
                   </div>
                   <div style={{ overflowY: "auto", maxHeight: 220 }}>
-                    <button
-                      type="button"
-                      onClick={() => { setForm((c) => ({ ...c, company_id: "" })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
-                      style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: !form.company_id ? "#f0f6ff" : "transparent", color: !form.company_id ? "#175089" : "#4d6178", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      No company
-                    </button>
                     {filteredCompanies.length === 0 && (
                       <div style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>No matches</div>
                     )}
@@ -772,7 +787,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                       <button
                         key={company.id}
                         type="button"
-                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); }}
+                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); setValidationErrors((c) => ({ ...c, company_id: false })); if (error) setError(""); }}
                         style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: form.company_id === company.id ? "#f0f6ff" : "transparent", color: form.company_id === company.id ? "#175089" : "#1f2d3d", cursor: "pointer", fontWeight: form.company_id === company.id ? 600 : 400 }}
                       >
                         {company.name}
@@ -794,18 +809,55 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <select style={{ ...modalInputStyle, background: "#fff" }} value={form.assigned_to_id} onChange={(event) => setForm((current) => ({ ...current, assigned_to_id: event.target.value }))}>
-                <option value="">Unassigned</option>
+              <select
+                style={{ ...modalInputStyle, background: validationErrors.assigned_to_id ? "#fffbf5" : "#fff", border: validationErrors.assigned_to_id ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.assigned_to_id ? "#1f2d3d" : validationErrors.assigned_to_id ? "#92400e" : undefined }}
+                value={form.assigned_to_id}
+                onChange={(event) => { setForm((current) => ({ ...current, assigned_to_id: event.target.value })); if (validationErrors.assigned_to_id && event.target.value) setValidationErrors((current) => ({ ...current, assigned_to_id: false })); }}
+              >
+                <option value="">Assigned AE *</option>
                 {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
+              <select
+                style={{ ...modalInputStyle, background: validationErrors.sdr_id ? "#fffbf5" : "#fff", border: validationErrors.sdr_id ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.sdr_id ? "#1f2d3d" : validationErrors.sdr_id ? "#92400e" : undefined }}
+                value={form.sdr_id}
+                onChange={(event) => { setForm((current) => ({ ...current, sdr_id: event.target.value })); if (validationErrors.sdr_id && event.target.value) setValidationErrors((current) => ({ ...current, sdr_id: false })); }}
+              >
+                <option value="">Assigned SDR *</option>
+                {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.geography} onChange={(event) => setForm((current) => ({ ...current, geography: event.target.value }))}>
-                <option value="">Unassigned</option>
+                <option value="">Geography</option>
                 {GEO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select
+                style={{ ...modalInputStyle, background: form.meeting_booked_with ? "#fff" : validationErrors.meeting_booked_with ? "#fffbf5" : "#fff", border: validationErrors.meeting_booked_with ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.meeting_booked_with ? "#1f2d3d" : validationErrors.meeting_booked_with ? "#92400e" : undefined }}
+                value={form.meeting_booked_with}
+                onChange={(event) => { setForm((current) => ({ ...current, meeting_booked_with: event.target.value })); if (validationErrors.meeting_booked_with && event.target.value) setValidationErrors((current) => ({ ...current, meeting_booked_with: false })); }}
+              >
+                <option value="">Meeting Booked with *</option>
+                <option value="Director">Director</option>
+                <option value="S. Director">S. Director</option>
+                <option value="AVP">AVP</option>
+                <option value="VP">VP</option>
+                <option value="SVP">SVP</option>
+                <option value="Head/Chief">Head / Chief</option>
               </select>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <input type="number" style={modalInputStyle} placeholder="Value" value={form.value} onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))} />
-              <input type="date" style={modalInputStyle} value={form.close_date_est} onChange={(event) => setForm((current) => ({ ...current, close_date_est: event.target.value }))} />
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
+                  Meeting Booked Date <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="date"
+                  style={{ ...modalInputStyle, border: validationErrors.close_date_est ? "1.5px solid #fbbf24" : modalInputStyle.border, background: validationErrors.close_date_est ? "#fffbf5" : "#fff" }}
+                  value={form.close_date_est}
+                  onChange={(event) => { setForm((current) => ({ ...current, close_date_est: event.target.value })); if (validationErrors.close_date_est && event.target.value) setValidationErrors((current) => ({ ...current, close_date_est: false })); }}
+                />
+              </div>
             </div>
             <input style={modalInputStyle} placeholder="Tags, comma separated" value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} />
             <div>
@@ -1644,7 +1696,7 @@ export default function Pipeline() {
       .map((stageId) => ({
         id: stageId,
         label: stageId.replace(/_/g, " ").toUpperCase(),
-        group: ["closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"].includes(stageId) ? "closed" as const : "active" as const,
+        group: ["closed_won", "backlog", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"].includes(stageId) ? "closed" as const : "active" as const,
         color: STAGE_COLOR[stageId] ?? "#94a3b8",
       }));
     return [...configured, ...extras];

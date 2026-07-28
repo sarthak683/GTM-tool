@@ -16,7 +16,7 @@ from app.models.meeting import to_naive_utc
 DEAL_STAGES = [
     "reprospect", "demo_scheduled", "demo_done", "qualified_lead",
     "poc_agreed", "poc_wip", "poc_done", "commercial_negotiation", "msa_review", "workshop",
-    "closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed",
+    "closed_won", "backlog", "churned", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "closed",
 ]
 
 PROSPECT_STAGES = [
@@ -107,6 +107,8 @@ class Deal(DealBase, table=True):
     # different priorities.
     priority_tag: Optional[str] = Field(default=None)
     commit_to_deal: bool = Field(default=False)
+    meeting_booked_with: Optional[str] = Field(default=None)
+    meeting_booked_from: Optional[str] = Field(default=None)
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_input_hash: Optional[str] = None
     ai_tasks_refresh_requested_at: Optional[datetime] = None
@@ -137,6 +139,8 @@ class DealCreate(SQLModel):
     health: str = "green"
     owner_id: Optional[str] = None
     email_cc_alias: Optional[str] = None
+    meeting_booked_with: Optional[str] = None
+    meeting_booked_from: Optional[str] = None
 
     @field_validator("next_step_due_at", mode="before")
     @classmethod
@@ -175,6 +179,8 @@ class DealRead(DealBase):
     seller_engagement_reason: Optional[str] = None
     client_engagement_reason: Optional[str] = None
     commit_to_deal: bool = False
+    meeting_booked_with: Optional[str] = None
+    meeting_booked_from: Optional[str] = None
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_refresh_requested_at: Optional[datetime] = None
     # Flag matrix — derived from qualification.meddpicc + meddpicc_details.
@@ -194,7 +200,8 @@ class DealUpdate(SQLModel):
     stage: Optional[str] = None
     priority: Optional[str] = None
     company_id: Optional[UUID] = None
-    assigned_to_id: Optional[UUID] = None
+    assigned_to_id: Optional[UUID] = None  # AE
+    sdr_id: Optional[UUID] = None          # SDR
     value: Optional[Decimal] = None
     close_date_est: Optional[date] = None
     health: Optional[str] = None
@@ -209,6 +216,8 @@ class DealUpdate(SQLModel):
     next_step_due_at: Optional[datetime] = None
     qualification_reason: Optional[str] = None
     priority_tag: Optional[str] = None
+    meeting_booked_with: Optional[str] = None
+    meeting_booked_from: Optional[str] = None
     days_in_stage: Optional[int] = None
     stage_entered_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None

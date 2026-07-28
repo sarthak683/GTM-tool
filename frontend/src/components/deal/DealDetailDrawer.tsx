@@ -1272,8 +1272,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               </div>
             </FieldRow>
 
-            {/* Assigned rep */}
-            <FieldRow label="Assigned" icon={<UserCircle2 size={13} />}>
+            {/* Assigned AE */}
+            <FieldRow label="Assigned AE" icon={<UserCircle2 size={13} />}>
               <select
                 value={deal.assigned_to_id ?? ""}
                 onChange={(e) => patchDeal({ assigned_to_id: e.target.value || null } as Partial<Deal>)}
@@ -1283,6 +1283,20 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </FieldRow>
+
+            {/* Assigned SDR — only visible for demo_scheduled, demo_done and qualified_lead */}
+            {(deal.stage === "demo_scheduled" || deal.stage === "demo_done" || deal.stage === "qualified_lead") && (
+              <FieldRow label="Assigned SDR" icon={<UserCircle2 size={13} />}>
+                <select
+                  value={deal.sdr_id ?? ""}
+                  onChange={(e) => patchDeal({ sdr_id: e.target.value || null } as Partial<Deal>)}
+                  style={{ ...fieldInputStyle }}
+                >
+                  <option value="">Unassigned</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </FieldRow>
+            )}
 
             {/* Amount */}
             <FieldRow label="Amount" icon={<span style={{ fontSize: 13, fontWeight: 700 }}>$</span>}>
@@ -1307,7 +1321,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             </FieldRow>
 
             {/* Close date */}
-            <FieldRow label="Close Date" icon={<CalendarDays size={13} />}>
+            <FieldRow label="Date of Meeting" icon={<CalendarDays size={13} />}>
               <input
                 type="date"
                 defaultValue={deal.close_date_est ?? ""}

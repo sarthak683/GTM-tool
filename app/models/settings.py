@@ -100,21 +100,22 @@ class WorkspaceSettings(SQLModel, table=True):
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"active":["reprospect","demo_scheduled","demo_done","qualified_lead","poc_agreed","poc_wip","poc_done","commercial_negotiation","msa_review"],"inactive":["closed_won","churned","not_a_fit","cold","closed_lost","on_hold","nurture","closed"],"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"],"visible_cards":["active","inactive","tofu","mofu","bofu","total"]}',
+            server_default='{"active":["reprospect","demo_scheduled","demo_done","qualified_lead","poc_agreed","poc_wip","poc_done","commercial_negotiation","msa_review"],"inactive":["closed_won","backlog","churned","not_a_fit","cold","closed_lost","on_hold","nurture","closed"],"tofu":["qualified_lead","poc_agreed"],"mofu":["poc_wip","poc_done","commercial_negotiation","msa_review","workshop"],"bofu":["closed_won"],"visible_cards":["active","inactive","tofu","mofu","bofu","total"]}',
         ),
     )
     deal_stage_settings: list[dict] = Field(
         default=[
             {"id": "reprospect", "label": "REPROSPECT", "group": "active", "color": "#8b5cf6"},
-            {"id": "demo_scheduled", "label": "4.DEMO SCHEDULED", "group": "active", "color": "#4f6ddf"},
-            {"id": "demo_done", "label": "5.DEMO DONE", "group": "active", "color": "#1d4ed8"},
-            {"id": "qualified_lead", "label": "6.QUALIFIED LEAD", "group": "active", "color": "#6d5efc"},
-            {"id": "poc_agreed", "label": "7.POC AGREED", "group": "active", "color": "#0ea5e9"},
-            {"id": "poc_wip", "label": "8.POC WIP", "group": "active", "color": "#06b6d4"},
-            {"id": "poc_done", "label": "9.POC DONE", "group": "active", "color": "#14b8a6"},
-            {"id": "commercial_negotiation", "label": "10.COMMERCIAL NEGOTIATION", "group": "active", "color": "#f59e0b"},
-            {"id": "msa_review", "label": "11.WORKSHOP/MSA", "group": "active", "color": "#a855f7"},
-            {"id": "closed_won", "label": "12.CLOSED WON", "group": "closed", "color": "#22c55e"},
+            {"id": "demo_scheduled", "label": "DEMO SCHEDULED", "group": "active", "color": "#4f6ddf"},
+            {"id": "demo_done", "label": "DEMO DONE", "group": "active", "color": "#1d4ed8"},
+            {"id": "qualified_lead", "label": "QUALIFIED LEAD", "group": "active", "color": "#6d5efc"},
+            {"id": "poc_agreed", "label": "POC AGREED", "group": "active", "color": "#0ea5e9"},
+            {"id": "poc_wip", "label": "POC WIP", "group": "active", "color": "#06b6d4"},
+            {"id": "poc_done", "label": "POC DONE", "group": "active", "color": "#14b8a6"},
+            {"id": "commercial_negotiation", "label": "COMMERCIAL NEGOTIATION", "group": "active", "color": "#f59e0b"},
+            {"id": "msa_review", "label": "WORKSHOP/MSA", "group": "active", "color": "#a855f7"},
+            {"id": "closed_won", "label": "CLOSED WON", "group": "closed", "color": "#22c55e"},
+            {"id": "backlog", "label": "BACKLOG", "group": "closed", "color": "#f97316"},
             {"id": "churned", "label": "CHURNED", "group": "closed", "color": "#ef4444"},
             {"id": "not_a_fit", "label": "NOT FIT", "group": "closed", "color": "#9ca3af"},
             {"id": "cold", "label": "COLD", "group": "closed", "color": "#94a3b8"},
@@ -229,6 +230,13 @@ class WorkspaceSettings(SQLModel, table=True):
     report_sender_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     report_sender_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # Zippy calendar — OAuth token for zippy@beacon.li calendar access
+    # Used by the daily AE meeting reminder task.
+    zippy_calendar_connected_email: Optional[str] = Field(default=None)
+    zippy_calendar_connected_at: Optional[datetime] = Field(default=None)
+    zippy_calendar_token_data: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    zippy_calendar_last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
     # Zippy agent — admin-editable override for the global system prompt.
     # NULL means "use the hardcoded default in zippy_agent.SYSTEM_PROMPT".
     zippy_system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
@@ -237,6 +245,11 @@ class WorkspaceSettings(SQLModel, table=True):
     # see ALL prospects, not just their own + unassigned. Admins always see all;
     # this widens specific people. NULL/[] = nobody extra.
     prospect_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
+    # Deal visibility grants: user_ids (strings) of non-admins allowed to see
+    # ALL deals (the entire team's pipeline), not just deals they own. Admins
+    # always see all; this widens specific people. NULL/[] = nobody extra.
+    deal_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -425,6 +438,16 @@ class ProspectVisibilityRead(SQLModel):
 
 
 class ProspectVisibilityUpdate(SQLModel):
+    user_ids: list[str] = []
+
+
+class SalesAnalyticsRosterRead(SQLModel):
+    """Active user ids explicitly included in Sales Analytics."""
+    user_ids: list[str] = []
+    default_emails: list[str] = []
+
+
+class SalesAnalyticsRosterUpdate(SQLModel):
     user_ids: list[str] = []
 
 

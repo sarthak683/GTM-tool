@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
@@ -170,13 +170,25 @@ def _steps_from_outreach(steps: list[OutreachStep], launched_at: Optional[dateti
     return normalized
 
 
-async def _load_activities(session: AsyncSession, contact_id: UUID) -> list[Activity]:
+async def _load_activities(
+    session: AsyncSession,
+    contact_id: UUID,
+    sdr_assigned_at: datetime | None = None,
+) -> list[Activity]:
+    """Activity rows driving step reconciliation.
+
+    Steps completed by a previous SDR are not the incoming rep's progress, so
+    anything older than the reassignment watermark is excluded (see
+    app/services/sdr_reassignment.py). Passing None keeps the full history.
+    """
     stmt = (
         select(Activity)
         .where(Activity.contact_id == contact_id)
         .order_by(Activity.created_at.asc())
         .limit(200)
     )
+    if sdr_assigned_at is not None:
+        stmt = stmt.where(Activity.created_at >= sdr_assigned_at)
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -681,7 +693,11 @@ async def build_sequence_lifecycle(
 
     # Drawer path: full Activity rows so embedded event payloads render the
     # complete body / envelope / recording, and resolve rep display names.
-    activities = await _load_activities(session, contact_id) if seq.launched_at else []
+    activities = (
+        await _load_activities(session, contact_id, contact.sdr_assigned_at)
+        if seq.launched_at
+        else []
+    )
     return await _assemble_lifecycle(
         session,
         contact,
@@ -818,7 +834,17 @@ async def build_sequence_lifecycle_summaries(
                 event_type,
                 rn,
             )
+            .join(Contact, Contact.id == Activity.contact_id)
             .where(Activity.contact_id.in_(launched_contact_ids))
+            # Mirror _load_activities: drop steps completed before the current
+            # SDR took the prospect over. WHERE applies before the window, so
+            # the 200-row cap still counts only rows the reconciler will see.
+            .where(
+                or_(
+                    Contact.sdr_assigned_at.is_(None),
+                    Activity.created_at >= Contact.sdr_assigned_at,
+                )
+            )
             .subquery()
         )
         act_rows = (
