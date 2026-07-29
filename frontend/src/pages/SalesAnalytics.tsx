@@ -54,7 +54,6 @@ import {
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type MeetingBucketDeal,
-  type MeetingBookedFromDealItem,
   type PipelineDealRow,
   type SalesRepActivityRow,
   type SalesRepWeeklyActivityRow,
@@ -196,6 +195,7 @@ function MilestoneDealsModal({
   const dateLabel = isClosedWon ? "Closed On" : "Reached On";
   const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
   const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
+  const showDateOfMeeting = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
 
   return (
     <div
@@ -239,8 +239,10 @@ function MilestoneDealsModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
-                  ["Deal", "Amount", "AE", "SDR"],
-                  deals.map((d) => [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
+                  showDateOfMeeting ? ["Deal", "Amount", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR"],
+                  deals.map((d) => showDateOfMeeting
+                    ? [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                    : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
                 style={exportBtnStyle}
               >
@@ -269,6 +271,7 @@ function MilestoneDealsModal({
                 <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
                 <th style={thSty}>AE</th>
                 <th style={thSty}>SDR</th>
+                {showDateOfMeeting && <th style={thSty}>Date of Meeting</th>}
               </tr>
             </thead>
             <tbody>
@@ -290,6 +293,11 @@ function MilestoneDealsModal({
                     <td style={{ ...tdSty, color: "#62748a" }}>
                       {d.assigned_sdr || "—"}
                     </td>
+                    {showDateOfMeeting && (
+                      <td style={{ ...tdSty, color: "#62748a" }}>
+                        {d.close_date_est || "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -301,7 +309,7 @@ function MilestoneDealsModal({
                   <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: accentColor }}>
                     {formatCurrency(total)}
                   </td>
-                  <td colSpan={2} style={tdSty} />
+                  <td colSpan={showDateOfMeeting ? 3 : 2} style={tdSty} />
                 </tr>
               </tfoot>
             )}
@@ -610,7 +618,7 @@ function MeetingBucketModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const showMeetingBookedWith = bucket === "direct_sql";
+  const showMeetingBookedWith = true;
 
   return (
     <div
@@ -721,130 +729,6 @@ function MeetingBucketModal({
   );
 }
 
-function MeetingBookedFromModal({
-  title,
-  channel,
-  deals,
-  loading,
-  onClose,
-}: {
-  title: string;
-  channel: "Email" | "LinkedIn" | "Call";
-  deals: MeetingBookedFromDealItem[];
-  loading: boolean;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const accentColor = channel === "LinkedIn" ? "#0a66c2" : channel === "Call" ? "#445fd0" : "#2f8d5d";
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 125,
-        background: "rgba(15, 26, 42, 0.55)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 24, backdropFilter: "blur(4px)",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(780px, 100%)", maxHeight: "86vh",
-          background: "#fff", borderRadius: 18, overflow: "hidden",
-          display: "flex", flexDirection: "column",
-          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
-        }}
-      >
-        {/* Header */}
-        <div style={{
-          padding: "18px 22px", borderBottom: "1px solid #ebeff5",
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-        }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: accentColor, textTransform: "uppercase" }}>Meetings Booked — {channel}</p>
-            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
-              border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1,
-              cursor: "pointer", display: "grid", placeItems: "center",
-            }}
-          >×</button>
-        </div>
-        {/* Sub-header */}
-        <div style={{ padding: "12px 22px", borderBottom: "1px solid #ebeff5", background: "#fafbfd", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#203244" }}>
-            {loading ? "Loading..." : `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
-          </span>
-          {!loading && deals.length > 0 && (
-            <button
-              type="button"
-              onClick={() => downloadCsv(
-                `meetings-booked-from-${channel.toLowerCase()}`,
-                ["Deal", "AE", "SDR", "Meeting Booked With", "Meeting Booked From"],
-                deals.map((d) => [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", d.meeting_booked_with ?? "", d.meeting_booked_from ?? ""]),
-              )}
-              style={exportBtnStyle}
-            >
-              <Download size={13} /> Export CSV
-            </button>
-          )}
-        </div>
-        {/* Body */}
-        <div style={{ overflowY: "auto", flex: 1 }}>
-          {loading ? (
-            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095" }}>
-              <LoaderCircle size={20} className="spin" />
-              <span style={{ fontSize: 12 }}>Loading deals...</span>
-            </div>
-          ) : deals.length === 0 ? (
-            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095", padding: 24, textAlign: "center" }}>
-              <strong style={{ color: "#203244" }}>No deals found.</strong>
-              <span>No meetings booked from {channel} for the selected rep and window.</span>
-            </div>
-          ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                  <th style={thSty}>Deal Name</th>
-                  <th style={thSty}>AE</th>
-                  <th style={thSty}>SDR</th>
-                  <th style={thSty}>Meeting Booked With</th>
-                  <th style={thSty}>Meeting Booked From</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deals.map((deal, idx) => (
-                  <tr key={`${deal.deal_id}-${idx}`} style={{ borderBottom: "1px solid #f0f3f8" }}>
-                    <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.deal_name || "—"}</span></td>
-                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.ae_name || "—"}</td>
-                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.sdr_name || "—"}</td>
-                    <td style={{ ...tdSty, color: "#7c3aed", fontWeight: 700 }}>{deal.meeting_booked_with || "—"}</td>
-                    <td style={{ ...tdSty, color: accentColor, fontWeight: 600 }}>{deal.meeting_booked_from || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // Rows fetched per drilldown page. The backend caps limit at 100; 50 keeps each
 // "Load more" request light while paging through large sets (e.g. 400 emails).
 const DRILLDOWN_PAGE_SIZE = 50;
@@ -925,7 +809,7 @@ function ActivityDrilldownModal({
                     fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
                   }}
                 >
-                  {filterConnected ? "Connected only ✓" : "Filter"}
+                  {filterConnected ? "Connected ✓" : "Connected"}
                 </button>
               )}
             </div>
@@ -1305,27 +1189,13 @@ function RepActivityTable({
   showAeDemos?: boolean;
   emptyLabel?: string;
 }) {
-  const inputTouches = (r: SalesRepActivityRow) =>
-    (r.manual_emails ?? 0) + (r.instantly_emails ?? 0) + (r.calls ?? 0) + (r.linkedin_reachouts ?? 0);
-
-  const sortedRows = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      // Primary: most demos (output), appropriate metric per role
-      const primaryA = showDemos ? a.demos_scheduled : showAeDemos ? (a.ae_demos_scheduled ?? 0) : (a.total ?? 0);
-      const primaryB = showDemos ? b.demos_scheduled : showAeDemos ? (b.ae_demos_scheduled ?? 0) : (b.total ?? 0);
-      if (primaryB !== primaryA) return primaryB - primaryA;
-      // Tiebreaker: fewest input touches (more efficient = higher rank)
-      return inputTouches(a) - inputTouches(b);
-    });
-  }, [rows, showDemos, showAeDemos]);
-
-  if (sortedRows.length === 0) {
+  if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>{emptyLabel}</p>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {sortedRows.map((row, index) => (
+      {rows.map((row, index) => (
         <div
           key={row.key}
           style={{
@@ -1468,7 +1338,8 @@ function StatPill({
   return (
     <button
       type="button"
-      onClick={onClick && numericValue > 0 ? onClick : undefined}
+      onClick={onClick}
+      disabled={!onClick || numericValue <= 0}
       title={isRate ? label : numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
       style={{
         display: "flex",
@@ -1593,26 +1464,22 @@ function RepWeeklyActivityFocus({
   rows,
   onOpenBucket,
   onOpenPipeline,
-  onOpenMeetingBookedFrom,
 }: {
   rows: SalesRepWeeklyActivityRow[];
   onOpenBucket?: (bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled", title: string, userId: string | null | undefined) => void;
   onOpenPipeline?: (userId: string | null | undefined, repName: string) => void;
-  onOpenMeetingBookedFrom?: (channel: "Email" | "LinkedIn" | "Call", userId: string | null | undefined) => void;
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-      // Primary: demos scheduled within the selected window (SDR: demos_scheduled, AE: ae_demos_scheduled)
-      // Both fields are already computed per window by the backend.
-      const windowDemos = (r: typeof a) =>
-        (r.totals.demos_scheduled ?? 0) + (r.totals.ae_demos_scheduled ?? 0);
-      const demosDelta = windowDemos(b) - windowDemos(a);
-      if (demosDelta !== 0) return demosDelta;
-      // Tiebreaker: fewest input touches (fewer = more efficient = ranked higher)
-      const inputTouches = (r: typeof a) =>
-        (r.totals.manual_emails ?? 0) + (r.totals.instantly_emails ?? 0) +
-        (r.totals.calls ?? 0) + (r.totals.linkedin_reachouts ?? 0);
-      return inputTouches(a) - inputTouches(b);
+      const outputMeetings = (r: typeof a) =>
+        (r.totals.meetings_next_1w ?? 0) + (r.totals.meetings_next_2w ?? 0) + (r.totals.meetings_beyond_2w ?? 0);
+      const meetingsDelta = outputMeetings(b) - outputMeetings(a);
+      if (meetingsDelta !== 0) return meetingsDelta;
+      const aTotal = a.totals.total ?? 0;
+      const bTotal = b.totals.total ?? 0;
+      const aRatio = aTotal > 0 ? outputMeetings(a) / aTotal : 0;
+      const bRatio = bTotal > 0 ? outputMeetings(b) / bTotal : 0;
+      return bRatio - aRatio;
     }),
     [rows],
   );
@@ -1695,12 +1562,6 @@ function RepWeeklyActivityFocus({
                   <>
                     <span>{emailReplyRate}% reply</span>
                     <span>{emailOpenRate}% open</span>
-                    <span
-                      style={{ cursor: "pointer", textDecoration: "underline", color: "#2f8d5d" }}
-                      onClick={(e) => { e.stopPropagation(); onOpenMeetingBookedFrom?.("Email", selectedRow.user_id); }}
-                    >
-                      {selectedRow.totals.email_meeting_booked ?? 0} meetings booked
-                    </span>
                   </>
                 }
               />
@@ -1712,12 +1573,7 @@ function RepWeeklyActivityFocus({
                 sub={
                   <>
                     <span>{callConnectionRate}% connected</span>
-                    <span
-                      style={{ cursor: "pointer", textDecoration: "underline", color: "#445fd0" }}
-                      onClick={(e) => { e.stopPropagation(); onOpenMeetingBookedFrom?.("Call", selectedRow.user_id); }}
-                    >
-                      {callMeetingBooked} meeting{callMeetingBooked !== 1 ? "s" : ""} booked
-                    </span>
+                    <span>{callMeetingBooked} meeting{callMeetingBooked !== 1 ? "s" : ""} booked</span>
                   </>
                 }
               />
@@ -1729,12 +1585,7 @@ function RepWeeklyActivityFocus({
                 sub={
                   <>
                     <span>{liAcceptedRate}% accepted</span>
-                    <span
-                      style={{ cursor: "pointer", textDecoration: "underline", color: "#0a66c2" }}
-                      onClick={(e) => { e.stopPropagation(); onOpenMeetingBookedFrom?.("LinkedIn", selectedRow.user_id); }}
-                    >
-                      {liMeetingBooked} meetings booked
-                    </span>
+                    <span>{liMeetingBookedRate}% meeting booked</span>
                   </>
                 }
               />
@@ -1745,7 +1596,7 @@ function RepWeeklyActivityFocus({
             <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Rep</p>
-                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by demos scheduled in the selected window. Ties broken by fewest input touches.</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by meetings scheduled (output). Ties broken by output-to-input ratio.</p>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {sortedRows.map((row, index) => {
@@ -1811,14 +1662,10 @@ function RepWeeklyActivityFocus({
             </div>
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="#edf2f8" />
-                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                    <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                  </XAxis>
-                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                    <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                  </YAxis>
+                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                   <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
                   <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                   {OUTREACH_MIX_KEYS.map((key) => {
@@ -1848,14 +1695,10 @@ function RepWeeklyActivityFocus({
               </div>
               <div style={{ width: "100%", height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barGap={6}>
+                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={6}>
                     <CartesianGrid vertical={false} stroke="#edf2f8" />
-                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                      <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                    </XAxis>
-                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                      <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                    </YAxis>
+                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                     <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
                     <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                     {CALL_QUALITY_KEYS.map((key) => {
@@ -2449,9 +2292,6 @@ export default function SalesAnalytics() {
   const [pipelineDealModal, setPipelineDealModal] = useState<{ userId: string | null | undefined; repName: string } | null>(null);
   const [pipelineDealDeals, setPipelineDealDeals] = useState<PipelineDealRow[]>([]);
   const [pipelineDealLoading, setPipelineDealLoading] = useState(false);
-  const [meetingBookedFromModal, setMeetingBookedFromModal] = useState<{ channel: "Email" | "LinkedIn" | "Call"; title: string; userId: string | null | undefined } | null>(null);
-  const [meetingBookedFromDeals, setMeetingBookedFromDeals] = useState<MeetingBookedFromDealItem[]>([]);
-  const [meetingBookedFromLoading, setMeetingBookedFromLoading] = useState(false);
 
   // When a custom date range is set, window buttons are ignored
   const usingCustomRange = !!(fromDate && toDate);
@@ -2604,21 +2444,6 @@ export default function SalesAnalytics() {
       .then((r) => setMeetingBucketDeals(r.deals))
       .catch(() => setMeetingBucketDeals([]))
       .finally(() => setMeetingBucketLoading(false));
-  };
-
-  const handleOpenMeetingBookedFrom = (
-    channel: "Email" | "LinkedIn" | "Call",
-    userId: string | null | undefined,
-  ) => {
-    const title = `${channel} Meetings Booked`;
-    setMeetingBookedFromModal({ channel, title, userId });
-    setMeetingBookedFromDeals([]);
-    setMeetingBookedFromLoading(true);
-    analyticsApi
-      .meetingBookedFromDeals(channel, userId, windowDays)
-      .then((r) => setMeetingBookedFromDeals(r))
-      .catch(() => setMeetingBookedFromDeals([]))
-      .finally(() => setMeetingBookedFromLoading(false));
   };
 
   // Fetch the next page and append, so reps can page through all rows (e.g. all
@@ -3160,7 +2985,7 @@ export default function SalesAnalytics() {
             title="Rep Activity"
             subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
           >
-            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} onOpenBucket={handleOpenMeetingBucket} onOpenPipeline={handleOpenPipelineDeals} onOpenMeetingBookedFrom={handleOpenMeetingBookedFrom} />
+            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} onOpenBucket={handleOpenMeetingBucket} onOpenPipeline={handleOpenPipelineDeals} />
           </SectionCard>
 
           {SHOW_DEAL_VELOCITY && <SectionCard
@@ -3311,15 +3136,6 @@ export default function SalesAnalytics() {
           deals={pipelineDealDeals}
           loading={pipelineDealLoading}
           onClose={() => setPipelineDealModal(null)}
-        />
-      )}
-      {meetingBookedFromModal && (
-        <MeetingBookedFromModal
-          title={meetingBookedFromModal.title}
-          channel={meetingBookedFromModal.channel}
-          deals={meetingBookedFromDeals}
-          loading={meetingBookedFromLoading}
-          onClose={() => setMeetingBookedFromModal(null)}
         />
       )}
     </div>
