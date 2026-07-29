@@ -1413,8 +1413,6 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 </span>
               </label>
             </FieldRow>
-<<<<<<< Updated upstream
-=======
             {/* Meeting Booked With */}
             <FieldRow label="Meeting Booked With" icon={<UserCircle2 size={13} />}>
               <select
@@ -1444,7 +1442,6 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <option value="Email">Email</option>
               </select>
             </FieldRow>
->>>>>>> Stashed changes
           </div>
           </div>
 

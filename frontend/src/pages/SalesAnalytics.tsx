@@ -1602,13 +1602,6 @@ function RepWeeklyActivityFocus({
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-<<<<<<< Updated upstream
-      const meetingsDelta = (b.totals.meetings ?? 0) - (a.totals.meetings ?? 0);
-      if (meetingsDelta !== 0) return meetingsDelta;
-      const aRatio = (a.totals.total ?? 0) > 0 ? (a.totals.meetings ?? 0) / (a.totals.total ?? 0) : 0;
-      const bRatio = (b.totals.total ?? 0) > 0 ? (b.totals.meetings ?? 0) / (b.totals.total ?? 0) : 0;
-      return bRatio - aRatio;
-=======
       // Primary: demos scheduled within the selected window (SDR: demos_scheduled, AE: ae_demos_scheduled)
       // Both fields are already computed per window by the backend.
       const windowDemos = (r: typeof a) =>
@@ -1620,7 +1613,6 @@ function RepWeeklyActivityFocus({
         (r.totals.manual_emails ?? 0) + (r.totals.instantly_emails ?? 0) +
         (r.totals.calls ?? 0) + (r.totals.linkedin_reachouts ?? 0);
       return inputTouches(a) - inputTouches(b);
->>>>>>> Stashed changes
     }),
     [rows],
   );
