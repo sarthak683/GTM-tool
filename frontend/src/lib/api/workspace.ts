@@ -403,6 +403,8 @@ export type SalesRepActivityRow = {
   total_mobile_numbers?: number;
   // Demo reschedules within the analytics window
   demos_rescheduled?: number;
+  // Email meetings booked
+  email_meeting_booked?: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -648,6 +650,25 @@ export const analyticsApi = {
     if (userId) params.set("user_id", userId);
     return request<PipelineDealRow[]>(`/api/v1/analytics/pipeline-deals?${params.toString()}`);
   },
+  meetingBookedFromDeals: (
+    channel: "Email" | "LinkedIn" | "Call",  // already supported on backend
+    userId?: string | null,
+    windowDays?: number,
+  ) => {
+    const params = new URLSearchParams({ channel });
+    if (userId) params.set("user_id", userId);
+    if (windowDays != null) params.set("window_days", String(windowDays));
+    return request<MeetingBookedFromDealItem[]>(`/api/v1/analytics/meeting-booked-from-deals?${params.toString()}`);
+  },
+};
+
+export type MeetingBookedFromDealItem = {
+  deal_id: string;
+  deal_name: string;
+  meeting_booked_with: string | null;
+  meeting_booked_from: string | null;
+  ae_name: string | null;
+  sdr_name: string | null;
 };
 
 // ── Global search ─────────────────────────────────────────────────────────────
