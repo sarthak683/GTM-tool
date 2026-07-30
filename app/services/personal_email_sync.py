@@ -177,8 +177,12 @@ def _is_internal_address(addr: str, internal_domain: str) -> bool:
 
 
 def _normalize_beacon_sender(addr: str) -> str:
-    """Normalize any Beacon sending-domain address to its @beacon.li canonical form.
-    e.g. sipra@beaconli.com → sipra@beacon.li.  Non-beacon addresses are returned as-is."""
+    """Return the primary-domain identity used only for user lookup.
+
+    Activity.email_from must retain the actual message sender. Normalizing that
+    stored value makes alternate-domain sends display as if they came from
+    @beacon.li and loses the evidence analytics needs to explain the source.
+    """
     if "@" not in addr:
         return addr
     local, domain = addr.rsplit("@", 1)
@@ -784,7 +788,7 @@ async def process_personal_emails(
             ai_summary=ai_summary,
             email_message_id=msg.message_id,
             email_subject=msg.subject,
-            email_from=_normalize_beacon_sender(msg.from_addr),
+            email_from=msg.from_addr,
             email_to=", ".join(msg.to_addrs),
             email_cc=", ".join(msg.cc_addrs),
             created_by_id=sync_user.id,
