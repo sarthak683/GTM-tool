@@ -43,6 +43,7 @@ def test_us_location_uses_state_zone_before_country_default():
     assert infer_timezone_from_location("St. Louis, Missouri, United States") == "America/Chicago"
     assert infer_timezone_from_location("Ogden, Utah, United States") == "America/Denver"
     assert infer_timezone_from_location("San Mateo, California, United States") == "America/Los_Angeles"
+    assert infer_timezone_from_location("Bloomington, IL, USA") == "America/Chicago"
 
 
 def test_ambiguous_multi_country_location_falls_back_to_phone():

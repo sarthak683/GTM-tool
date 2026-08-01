@@ -355,6 +355,28 @@ _LOCATION_COUNTRY_TO_ZONE: tuple[tuple[str, str], ...] = (
     ("germany", "Europe/Berlin"),
 )
 
+_US_STATE_CODE_TO_ZONE: dict[str, str] = {
+    **{code: "America/Los_Angeles" for code in ("CA", "NV", "OR", "WA")},
+    **{code: "America/Denver" for code in ("CO", "ID", "MT", "NM", "UT", "WY")},
+    "AZ": "America/Phoenix",
+    **{
+        code: "America/Chicago"
+        for code in (
+            "AL", "AR", "IA", "IL", "KS", "LA", "MN", "MO", "MS", "ND",
+            "NE", "OK", "SD", "TN", "TX", "WI",
+        )
+    },
+    **{
+        code: "America/New_York"
+        for code in (
+            "CT", "DE", "FL", "GA", "IN", "KY", "MA", "MD", "ME", "MI",
+            "NC", "NH", "NJ", "NY", "OH", "PA", "RI", "SC", "VA", "VT", "WV",
+        )
+    },
+    "AK": "America/Anchorage",
+    "HI": "Pacific/Honolulu",
+}
+
 
 def _normalize_phone(phone: Optional[str]) -> str:
     if not phone:
@@ -457,6 +479,11 @@ def infer_timezone_from_location(location: Optional[str]) -> Optional[str]:
     }
     if len(country_zones) > 1:
         return None
+
+    comma_parts = [part.strip().upper() for part in location.split(",")]
+    for part in comma_parts:
+        if part in _US_STATE_CODE_TO_ZONE:
+            return _US_STATE_CODE_TO_ZONE[part]
     return _infer_from_region_text(location)
 
 
