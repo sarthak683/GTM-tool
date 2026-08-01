@@ -1,4 +1,8 @@
-from app.services.timezone_infer import infer_timezone, infer_timezone_from_phone
+from app.services.timezone_infer import (
+    infer_timezone,
+    infer_timezone_from_location,
+    infer_timezone_from_phone,
+)
 
 
 def test_libphonenumber_resolves_us_area_code_correctly():
@@ -33,6 +37,20 @@ def test_explicit_prospect_location_wins_over_foreign_mobile_number():
         contact_location="London, England, United Kingdom",
         company_hq="Sydney, Australia",
     ) == "Europe/London"
+
+
+def test_us_location_uses_state_zone_before_country_default():
+    assert infer_timezone_from_location("St. Louis, Missouri, United States") == "America/Chicago"
+    assert infer_timezone_from_location("Ogden, Utah, United States") == "America/Denver"
+    assert infer_timezone_from_location("San Mateo, California, United States") == "America/Los_Angeles"
+
+
+def test_ambiguous_multi_country_location_falls_back_to_phone():
+    assert infer_timezone_from_location("Israel / France") is None
+    assert infer_timezone(
+        phone="+972 54-441-3282",
+        contact_location="Israel / France",
+    ) == "Asia/Jerusalem"
 
 
 def test_uk_mobile_uses_conservative_country_default():

@@ -214,12 +214,65 @@ _HQ_KEYWORD_TO_ZONE: tuple[tuple[str, str], ...] = (
     ("nashville",     "America/Chicago"),
     ("new york",      "America/New_York"),
     ("boston",        "America/New_York"),
-    ("washington",    "America/New_York"),
+    ("washington, dc","America/New_York"),
+    ("washington dc", "America/New_York"),
+    ("district of columbia", "America/New_York"),
     ("atlanta",       "America/New_York"),
     ("miami",         "America/New_York"),
     ("philadelphia",  "America/New_York"),
     ("pittsburgh",    "America/New_York"),
     ("orlando",       "America/New_York"),
+    # US states. City matches above win for states split across zones.
+    ("california",    "America/Los_Angeles"),
+    ("washington state", "America/Los_Angeles"),
+    ("washington",     "America/Los_Angeles"),
+    ("oregon",        "America/Los_Angeles"),
+    ("nevada",        "America/Los_Angeles"),
+    ("colorado",      "America/Denver"),
+    ("utah",          "America/Denver"),
+    ("new mexico",    "America/Denver"),
+    ("montana",       "America/Denver"),
+    ("wyoming",       "America/Denver"),
+    ("idaho",         "America/Denver"),
+    ("arizona",       "America/Phoenix"),
+    ("texas",         "America/Chicago"),
+    ("illinois",      "America/Chicago"),
+    ("wisconsin",     "America/Chicago"),
+    ("minnesota",     "America/Chicago"),
+    ("iowa",          "America/Chicago"),
+    ("missouri",      "America/Chicago"),
+    ("kansas",        "America/Chicago"),
+    ("nebraska",      "America/Chicago"),
+    ("oklahoma",      "America/Chicago"),
+    ("arkansas",      "America/Chicago"),
+    ("louisiana",     "America/Chicago"),
+    ("mississippi",   "America/Chicago"),
+    ("alabama",       "America/Chicago"),
+    ("tennessee",     "America/Chicago"),
+    ("north dakota",  "America/Chicago"),
+    ("south dakota",  "America/Chicago"),
+    ("maine",         "America/New_York"),
+    ("new hampshire", "America/New_York"),
+    ("vermont",       "America/New_York"),
+    ("massachusetts", "America/New_York"),
+    ("rhode island",  "America/New_York"),
+    ("connecticut",   "America/New_York"),
+    ("new jersey",    "America/New_York"),
+    ("pennsylvania",  "America/New_York"),
+    ("delaware",      "America/New_York"),
+    ("maryland",      "America/New_York"),
+    ("west virginia", "America/New_York"),
+    ("virginia",      "America/New_York"),
+    ("north carolina","America/New_York"),
+    ("south carolina","America/New_York"),
+    ("georgia",       "America/New_York"),
+    ("florida",       "America/New_York"),
+    ("ohio",          "America/New_York"),
+    ("michigan",      "America/New_York"),
+    ("indiana",       "America/New_York"),
+    ("kentucky",      "America/New_York"),
+    ("alaska",        "America/Anchorage"),
+    ("hawaii",        "Pacific/Honolulu"),
     # Canada
     ("toronto",       "America/Toronto"),
     ("vancouver",     "America/Vancouver"),
@@ -287,6 +340,19 @@ _HQ_KEYWORD_TO_ZONE: tuple[tuple[str, str], ...] = (
     ("brazil",        "America/Sao_Paulo"),
     ("united states", "America/New_York"),
     (" usa ",         "America/New_York"),
+)
+
+_LOCATION_COUNTRY_TO_ZONE: tuple[tuple[str, str], ...] = (
+    ("united states", "America/New_York"),
+    ("usa", "America/New_York"),
+    ("united kingdom", "Europe/London"),
+    ("uk", "Europe/London"),
+    ("france", "Europe/Paris"),
+    ("israel", "Asia/Jerusalem"),
+    ("australia", "Australia/Sydney"),
+    ("india", "Asia/Kolkata"),
+    ("canada", "America/Toronto"),
+    ("germany", "Europe/Berlin"),
 )
 
 
@@ -380,7 +446,18 @@ def infer_timezone_from_phone(phone: Optional[str]) -> Optional[str]:
 
 def infer_timezone_from_location(location: Optional[str]) -> Optional[str]:
     """Return a zone from an explicit prospect location string."""
-    return _infer_from_region_text(location or "")
+    if not location:
+        return None
+
+    normalized = f" {re.sub(r'[^a-z0-9]+', ' ', location.lower()).strip()} "
+    country_zones = {
+        zone
+        for country, zone in _LOCATION_COUNTRY_TO_ZONE
+        if f" {country} " in normalized
+    }
+    if len(country_zones) > 1:
+        return None
+    return _infer_from_region_text(location)
 
 
 def infer_timezone(
