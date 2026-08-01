@@ -1224,7 +1224,8 @@ def row_to_contact_fields(row: dict[str, str], company_fields: dict[str, Any]) -
         if not inferred_timezone:
             inferred_timezone = infer_timezone(
                 phone=phone,
-                company_hq=contact_location or company_fields.get("headquarters"),
+                contact_location=contact_location,
+                company_hq=company_fields.get("headquarters"),
                 company_region=company_fields.get("region"),
                 company_name=company_fields.get("name"),
             )

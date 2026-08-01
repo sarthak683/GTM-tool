@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Safely backfill and repair contact timezones from phone evidence.
+"""Safely backfill and repair contact timezones from prospect evidence.
 
 The default mode is a read-only dry-run. Missing values are filled only when
-the prospect's phone number produces a timezone. Existing values are repaired
+the prospect's location or phone produces a timezone. Existing values are repaired
 only with ``--repair-mismatches`` and only when all of these are true:
 
 * the phone is international and not NANP (+1), whose owners may relocate;
@@ -32,7 +32,10 @@ from sqlalchemy import or_, select
 from app.database import AsyncSessionLocal
 from app.models.contact import Contact
 from app.models.user import User
-from app.services.timezone_infer import infer_timezone_from_phone
+from app.services.timezone_infer import (
+    infer_timezone_from_location,
+    infer_timezone_from_phone,
+)
 
 
 _ALIASES = {
@@ -107,6 +110,33 @@ def _has_explicit_uploaded_timezone(contact: Contact) -> bool:
     return False
 
 
+def _prospect_location(contact: Contact) -> str | None:
+    data = contact.enrichment_data
+    if not isinstance(data, dict):
+        return None
+
+    workbook = data.get("workbook")
+    if isinstance(workbook, dict) and str(workbook.get("location") or "").strip():
+        return str(workbook["location"]).strip()
+
+    raw_row = data.get("raw_row")
+    if not isinstance(raw_row, dict):
+        return None
+
+    normalized = {
+        re.sub(r"[^a-z]", "", str(key).lower()): value
+        for key, value in raw_row.items()
+        if str(value or "").strip()
+    }
+    for key in ("contactlocation", "location"):
+        if key in normalized:
+            return str(normalized[key]).strip()
+
+    parts = [normalized.get(key) for key in ("city", "state", "country")]
+    joined = ", ".join(str(part).strip() for part in parts if part)
+    return joined or None
+
+
 def propose_timezone_change(
     contact: Contact,
     *,
@@ -114,9 +144,10 @@ def propose_timezone_change(
     repair_mismatches: bool = False,
     include_nanp_mismatches: bool = False,
 ) -> tuple[TimezoneChange | None, str | None]:
-    inferred = infer_timezone_from_phone(contact.phone)
+    location = _prospect_location(contact)
+    inferred = infer_timezone_from_location(location) or infer_timezone_from_phone(contact.phone)
     if not inferred:
-        return None, "no_phone_timezone"
+        return None, "no_location_or_phone_timezone"
 
     current = _canonical_timezone(contact.timezone)
     if current and _equivalent_calling_zone(current, inferred):

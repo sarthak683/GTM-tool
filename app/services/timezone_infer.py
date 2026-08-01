@@ -6,20 +6,19 @@ an IANA timezone string like "Europe/London" or None when we can't make a
 confident call.
 
 Strategy, in priority order:
-  1. Phone country code (most reliable — it's literally "where this person
-     picks up the phone"):
+  1. Explicit prospect location from the source data.
+  2. Phone country code:
        +44 → Europe/London
        +91 → Asia/Kolkata
        +61 → Australia/Sydney
        ... full map below
-  2. NANP phone (+1) area code lookup — splits US/Canada into the 4 US
+  3. NANP phone (+1) area code lookup — splits US/Canada into the 4 US
      mainland zones plus Hawaii, Alaska, Atlantic, and Eastern Canadian
      zones. Area-code range source: NANPA, 2025 snapshot.
-  3. Company headquarters / region string, when phone is missing or the
-     country is one of the ambiguous multi-zone ones (US / CA / RU / AU /
-     BR) and the phone didn't disambiguate.
-  4. Country-level default — pick the biggest-city zone. Defensible for
-     99% of reps ("they're calling Russia, assume Moscow").
+  4. Company headquarters / region string when no prospect-level signal is
+     available.
+  5. Country-level phone defaults for ambiguous multi-zone ranges when the
+     number cannot be narrowed further.
 
 Returns None if we have nothing usable. Callers should treat None as
 "leave the column null; the rep will fill it manually if needed".
@@ -65,6 +64,7 @@ _COUNTRY_CODE_TO_ZONE: dict[str, str] = {
     "+381": "Europe/Belgrade",
     "+385": "Europe/Zagreb",
     "+386": "Europe/Ljubljana",
+    "+216": "Africa/Tunis",
     "+30":  "Europe/Athens",
     "+90":  "Europe/Istanbul",
     # Middle East
@@ -106,6 +106,7 @@ _COUNTRY_CODE_TO_ZONE: dict[str, str] = {
     "+598": "America/Montevideo",
     "+505": "America/Managua",
     "+506": "America/Costa_Rica",
+    "+503": "America/El_Salvador",
     "+230": "Indian/Mauritius",
 }
 
@@ -345,6 +346,14 @@ def infer_timezone_from_phone(phone: Optional[str]) -> Optional[str]:
     if not digits.startswith("+"):
         return None
 
+    # Store the country's own canonical zone for single-zone calling codes.
+    # libphonenumber sometimes returns an offset-equivalent representative
+    # locality (for example America/Chicago for Nicaragua), which is useful
+    # for call timing but misleading in prospect data and filters.
+    code = _match_country_code(digits)
+    if code and code not in _MULTI_ZONE_COUNTRIES:
+        return _COUNTRY_CODE_TO_ZONE[code]
+
     try:
         parsed = phonenumbers.parse(digits, None)
         if phonenumbers.is_possible_number(parsed):
@@ -358,9 +367,6 @@ def infer_timezone_from_phone(phone: Optional[str]) -> Optional[str]:
     except phonenumbers.NumberParseException:
         pass
 
-    code = _match_country_code(digits)
-    if code and code not in _MULTI_ZONE_COUNTRIES:
-        return _COUNTRY_CODE_TO_ZONE[code]
     if code == "+1":
         return _infer_from_nanp(digits)
     if code == "+61":
@@ -372,9 +378,15 @@ def infer_timezone_from_phone(phone: Optional[str]) -> Optional[str]:
     return None
 
 
+def infer_timezone_from_location(location: Optional[str]) -> Optional[str]:
+    """Return a zone from an explicit prospect location string."""
+    return _infer_from_region_text(location or "")
+
+
 def infer_timezone(
     *,
     phone: Optional[str],
+    contact_location: Optional[str] = None,
     company_hq: Optional[str] = None,
     company_region: Optional[str] = None,
     company_name: Optional[str] = None,
@@ -382,11 +394,16 @@ def infer_timezone(
     """Return an IANA timezone string, or None if we can't make a call.
 
     Priority:
-      1. Phone metadata → exact area/country timezone when available
-      2. Ambiguous mobile ranges → conservative country default
-      3. No usable phone → contact/company region text fallback
-      4. None (caller should leave the DB column null)
+      1. Explicit prospect location
+      2. Phone metadata → exact area/country timezone when available
+      3. Ambiguous mobile ranges → conservative country default
+      4. No usable phone → company region text fallback
+      5. None (caller should leave the DB column null)
     """
+    location_zone = infer_timezone_from_location(contact_location)
+    if location_zone:
+        return location_zone
+
     # Phone country/area code is per-prospect evidence. It must win over a
     # global company's headquarters; that fallback previously mislabeled
     # Australian and European employees as US prospects.
@@ -394,7 +411,7 @@ def infer_timezone(
     if phone_zone:
         return phone_zone
 
-    # Region/HQ fallback when no per-prospect phone zone is available.
+    # Company fallback when no per-prospect evidence is available.
     for text in (company_hq, company_region, company_name):
         zone = _infer_from_region_text(text or "")
         if zone:

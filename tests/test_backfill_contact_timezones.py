@@ -73,3 +73,41 @@ def test_existing_australia_zone_is_preserved_for_mobile_number():
 
     assert change is None
     assert skipped == "australia_zone_already_specific"
+
+
+def test_existing_timezone_matching_prospect_location_is_preserved():
+    change, skipped = propose_timezone_change(
+        _contact(
+            phone="+61 452 379 341",
+            timezone="Europe/London",
+            enrichment_data={
+                "raw_row": {"Location": "London, England, United Kingdom"},
+                "workbook": {"location": "London, England, United Kingdom"},
+            },
+        ),
+        repair_mismatches=True,
+    )
+
+    assert change is None
+    assert skipped == "already_equivalent"
+
+
+def test_prospect_location_can_repair_company_timezone():
+    change, skipped = propose_timezone_change(
+        _contact(
+            phone="+61 420 988 009",
+            timezone="America/Chicago",
+            enrichment_data={
+                "raw_row": {
+                    "city": "Sydney",
+                    "state": "New South Wales",
+                    "country": "Australia",
+                }
+            },
+        ),
+        repair_mismatches=True,
+    )
+
+    assert skipped is None
+    assert change is not None
+    assert change.after == "Australia/Sydney"

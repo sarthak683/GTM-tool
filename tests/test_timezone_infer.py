@@ -8,6 +8,11 @@ def test_libphonenumber_resolves_us_area_code_correctly():
 def test_phone_country_codes_cover_eastern_europe():
     assert infer_timezone_from_phone("+40 726 299 914") == "Europe/Bucharest"
     assert infer_timezone_from_phone("+359 88 974 9044") == "Europe/Sofia"
+    assert infer_timezone_from_phone("+371 22 076 104") == "Europe/Riga"
+
+
+def test_single_zone_country_uses_its_own_locality_name():
+    assert infer_timezone_from_phone("+505 8396 1560") == "America/Managua"
 
 
 def test_libphonenumber_aliases_are_normalized_for_existing_filters():
@@ -20,6 +25,14 @@ def test_multizone_phone_country_wins_over_us_company_headquarters():
         company_hq="San Francisco, USA",
         company_region="US",
     ) == "Australia/Sydney"
+
+
+def test_explicit_prospect_location_wins_over_foreign_mobile_number():
+    assert infer_timezone(
+        phone="+61 452 379 341",
+        contact_location="London, England, United Kingdom",
+        company_hq="Sydney, Australia",
+    ) == "Europe/London"
 
 
 def test_uk_mobile_uses_conservative_country_default():
