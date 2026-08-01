@@ -32,52 +32,13 @@ from app.services.timeline import build_contact_timeline
 from app.services.permissions import can_view_all_prospects, require_workspace_permission
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
+from app.services.contact_access import (
+    authorize_contact_edit,
+    get_visible_contact,
+    get_visible_contact_ids,
+)
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
-
-
-async def _authorize_contact_edit(contact, user, session) -> None:
-    """Ownership gate for editing a prospect (SDR/AE model).
-
-    Admins edit anything. A rep may edit a prospect they own (AE via
-    assigned_to_id, SDR via sdr_id). If the slot for the rep's role is empty,
-    editing CLAIMS it to them (auto-claim) and proceeds. A rep who owns a DEAL on
-    the prospect's company may also edit it (the AE running a demo/POC works that
-    account's prospects, even when the company/contacts sit with the sourcing
-    SDR) — this mirrors the read-side ``contact_visibility_filter`` deal clause so
-    "can see but can't act" can't happen. Otherwise the prospect is owned by
-    someone else and the rep can only view it -> 403.
-    """
-    role = (user.role or "").lower()
-    if role == "admin":
-        return
-    if contact.assigned_to_id == user.id or contact.sdr_id == user.id:
-        return
-    if role == "sdr":
-        if contact.sdr_id is None:
-            contact.sdr_id = user.id
-            return
-    elif contact.assigned_to_id is None:
-        contact.assigned_to_id = user.id
-        return
-    # Deal owner on this prospect's company may edit (no auto-claim — the SDR/AE
-    # of record stay intact). Lockstep with contact_visibility_filter().
-    if contact.company_id is not None:
-        from app.models.deal import Deal
-
-        owns_deal = (
-            await session.execute(
-                select(Deal.id)
-                .where(Deal.company_id == contact.company_id, Deal.assigned_to_id == user.id)
-                .limit(1)
-            )
-        ).first()
-        if owns_deal:
-            return
-    raise HTTPException(
-        status_code=403,
-        detail="You can only edit prospects assigned to you. Claim an unassigned one, or ask an admin to reassign this prospect.",
-    )
 
 
 def _can_delete_contact(contact, user) -> bool:
@@ -478,17 +439,17 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
 
 @router.get("/{contact_id}", response_model=ContactRead)
 async def get_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
-    contact = await ContactRepository(session).get_or_raise(contact_id)
+    contact = await get_visible_contact(session, _user, contact_id)
     return await to_contact_read(session, contact)
 
 
 @router.put("/{contact_id}", response_model=ContactRead)
 async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
-    contact = await repo.get_or_raise(contact_id)
+    contact = await get_visible_contact(session, _user, contact_id)
     # Reps may only edit prospects they own (or own a deal on the company);
     # editing an unassigned one claims it.
-    await _authorize_contact_edit(contact, _user, session)
+    await authorize_contact_edit(session, _user, contact)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
@@ -578,9 +539,11 @@ async def bulk_delete_selected_contacts(
     requested = len(set(ids))
     skipped_not_owned = 0
     if (_user.role or "").lower() != "admin":
-        # Reps can only bulk-delete prospects they own or that are unassigned.
+        # Start from the same visibility scope as the Prospecting list, then
+        # apply the stricter delete ownership rule.
+        visible_ids = await get_visible_contact_ids(session, _user, ids)
         rows = (
-            await session.execute(select(Contact).where(Contact.id.in_(ids)))
+            await session.execute(select(Contact).where(Contact.id.in_(visible_ids)))
         ).scalars().all()
         allowed = [c.id for c in rows if _can_delete_contact(c, _user)]
         skipped_not_owned = requested - len(allowed)
@@ -592,7 +555,7 @@ async def bulk_delete_selected_contacts(
 @router.delete("/{contact_id}", status_code=204)
 async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
-    contact = await repo.get_or_raise(contact_id)
+    contact = await get_visible_contact(session, _user, contact_id)
     if not _can_delete_contact(contact, _user):
         raise HTTPException(
             status_code=403,
@@ -609,7 +572,7 @@ async def get_contact_timeline(
     limit: int = Query(default=100, ge=1, le=500),
 ):
     """Unified chronological timeline: activities + meetings, newest first."""
-    await ContactRepository(session).get_or_raise(contact_id)
+    await get_visible_contact(session, _user, contact_id)
     return {"items": await build_contact_timeline(session, contact_id, limit=limit)}
 
 
@@ -622,6 +585,7 @@ async def get_sequence_lifecycle(
     bounced email, paused campaign). Drives the lifecycle drawer."""
     from app.services.sequence_lifecycle import build_sequence_lifecycle
 
+    await get_visible_contact(session, _user, contact_id)
     payload = await build_sequence_lifecycle(session, contact_id)
     if payload.get("error"):
         raise NotFoundError(payload["error"])
@@ -645,9 +609,8 @@ async def post_sequence_lifecycle_summaries(
         build_sequence_lifecycle_summaries,
     )
 
-    summaries = await build_sequence_lifecycle_summaries(
-        session, payload.contact_ids[:200]
-    )
+    visible_ids = await get_visible_contact_ids(session, _user, payload.contact_ids[:200])
+    summaries = await build_sequence_lifecycle_summaries(session, visible_ids)
     # Return with string keys since JSON can't carry UUID keys
     return {"summaries": {str(k): v for k, v in summaries.items()}}
 
@@ -661,6 +624,7 @@ async def get_precall_brief(contact_id: UUID, session: DBSession, _user: Current
     """
     from app.services.precall_brief import build_precall_brief
 
+    await get_visible_contact(session, _user, contact_id)
     brief = await build_precall_brief(session, contact_id)
     if brief.get("error"):
         raise NotFoundError(brief["error"])
@@ -670,7 +634,8 @@ async def get_precall_brief(contact_id: UUID, session: DBSession, _user: Current
 @router.post("/{contact_id}/enrich")
 async def enrich_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
-    contact = await repo.get_or_raise(contact_id)
+    contact = await get_visible_contact(session, _user, contact_id)
+    await authorize_contact_edit(session, _user, contact)
 
     from app.clients.hunter import HunterClient
     hunter = HunterClient()
@@ -1154,6 +1119,7 @@ async def import_contacts_csv(
 async def get_contact_brief(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Generate AI stakeholder brief (Playwright + GPT-4o, 5-20s). Not cached."""
     from app.services.contact_intelligence import generate_contact_brief
+    await get_visible_contact(session, _user, contact_id)
     result = await generate_contact_brief(contact_id, session)
     if "error" in result:
         raise NotFoundError(result["error"])

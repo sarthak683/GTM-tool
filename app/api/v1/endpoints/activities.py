@@ -27,6 +27,7 @@ from app.services.tasks import (
     refresh_system_tasks_for_entity,
     should_queue_deal_task_refresh,
 )
+from app.services.contact_access import get_actionable_contact, get_visible_contact
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ async def list_activities(
     if deal_id:
         filters.append(Activity.deal_id == deal_id)
     if contact_id:
+        await get_visible_contact(session, current_user, contact_id)
         filters.append(Activity.contact_id == contact_id)
     if company_id:
         # Activities linked via deals belonging to this company,
@@ -238,8 +240,12 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
     # Stamp the creator so manual call / LinkedIn / note activities have rep
     # attribution, without requiring the frontend to send it.
     data = payload.model_dump()
-    if not data.get("created_by_id"):
-        data["created_by_id"] = current_user.id
+    if data.get("contact_id"):
+        await get_actionable_contact(session, current_user, data["contact_id"])
+    # API-created activities always belong to the authenticated actor. Accepting
+    # a client-supplied creator caused manual touches and call counts to be
+    # attributed to the wrong rep.
+    data["created_by_id"] = current_user.id
     if not data.get("source"):
         data["source"] = "manual"
     activity = await ActivityRepository(session).create(data)
@@ -272,20 +278,32 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
 
 @router.get("/{activity_id}", response_model=ActivityRead)
 async def get_activity(activity_id: UUID, session: DBSession, _user: CurrentUser):
-    return await ActivityRepository(session).get_or_raise(activity_id)
+    activity = await ActivityRepository(session).get_or_raise(activity_id)
+    if activity.contact_id:
+        await get_visible_contact(session, _user, activity.contact_id)
+    return activity
 
 
 @router.put("/{activity_id}", response_model=ActivityRead)
 async def update_activity(activity_id: UUID, payload: ActivityUpdate, session: DBSession, _user: CurrentUser):
     repo = ActivityRepository(session)
     activity = await repo.get_or_raise(activity_id)
-    return await repo.update(activity, payload.model_dump(exclude_unset=True))
+    if activity.contact_id:
+        await get_visible_contact(session, _user, activity.contact_id)
+    if _user.role != "admin" and activity.created_by_id != _user.id:
+        raise ForbiddenError("Only the activity's creator or an admin can edit it")
+    update_data = payload.model_dump(exclude_unset=True)
+    if update_data.get("contact_id"):
+        await get_actionable_contact(session, _user, update_data["contact_id"])
+    return await repo.update(activity, update_data)
 
 
 @router.delete("/{activity_id}", status_code=204)
 async def delete_activity(activity_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ActivityRepository(session)
     activity = await repo.get_or_raise(activity_id)
+    if activity.contact_id:
+        await get_visible_contact(session, _user, activity.contact_id)
     # Deleting another rep's logged activity silently skews call counts and
     # leaderboards — restrict to the creator (or admin). System-generated
     # rows (no creator) stay admin-only.

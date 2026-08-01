@@ -174,7 +174,7 @@ export const contactsApi = {
     request<void>("/api/v1/contacts/bulk", { method: "DELETE" }),
   // Delete a SPECIFIC set of prospects (not all). Any signed-in user.
   bulkDeleteByIds: (ids: string[]) =>
-    request<{ deleted: number; requested: number }>("/api/v1/contacts/bulk-delete", {
+    request<{ deleted: number; requested: number; skipped_not_owned: number }>("/api/v1/contacts/bulk-delete", {
       method: "POST",
       body: JSON.stringify({ ids }),
     }),

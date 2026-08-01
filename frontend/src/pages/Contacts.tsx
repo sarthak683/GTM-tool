@@ -121,25 +121,15 @@ const CALL_ATTEMPTS_BUCKET_OPTIONS: { value: string; label: string }[] = [
   { value: "4plus", label: "4+ calls" },
 ];
 
-// Default follow-up datetime, expressed in the *user's local timezone*
-// formatted for <input type="datetime-local">. Anchored to "tomorrow at
-// 10:00 AM PST" — a fixed instant in time — so a PST rep sees "10:00 AM"
-// and an IST rep sees the equivalent local time (e.g. "11:30 PM"). Using
-// a fixed -8 offset (PST, not PDT) is deliberate: it's predictable, and
-// the input is user-editable so a stale DST offset only costs one click
-// to correct in March/November.
+// Default follow-up datetime for <input type="datetime-local">. The field has
+// no timezone component, so use tomorrow at 10:00 in the rep's browser timezone
+// and let Date.toISOString() convert that chosen wall-clock time on save.
 function defaultFollowupLocalString(): string {
-  const now = new Date();
-  const targetUtc = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + 1,
-    18, // 10:00 AM PST == 18:00 UTC
-    0,
-    0,
-  ));
+  const target = new Date();
+  target.setDate(target.getDate() + 1);
+  target.setHours(10, 0, 0, 0);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${targetUtc.getFullYear()}-${pad(targetUtc.getMonth() + 1)}-${pad(targetUtc.getDate())}T${pad(targetUtc.getHours())}:${pad(targetUtc.getMinutes())}`;
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
 }
 
 const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: boolean }> = [
@@ -158,87 +148,82 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
 type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
 const DEFAULT_CONTACT_TABLE_COLUMNS: ContactTableColumnKey[] = CONTACT_TABLE_COLUMNS.map((column) => column.key);
 
-const TIMEZONE_OPTIONS = [
-  "IST",
-  "PST",
-  "MST",
-  "CST",
-  "EST",
-  "GMT",
-  "CET",
-  "EET",
-  "GST",
-  "SGT",
-  "JST",
-  "AEST",
+const TIMEZONE_GROUPS = [
+  { value: "America/New_York", code: "ET", label: "Eastern US / Canada", aliases: ["EST"], zones: ["America/New_York", "America/Toronto"] },
+  { value: "America/Chicago", code: "CT", label: "Central US / Canada / Mexico", aliases: ["CST"], zones: ["America/Chicago", "America/Winnipeg", "America/Mexico_City", "America/Costa_Rica", "America/Managua", "America/El_Salvador"] },
+  { value: "America/Denver", code: "MT", label: "Mountain US / Canada", aliases: ["MST"], zones: ["America/Denver", "America/Phoenix", "America/Edmonton"] },
+  { value: "America/Los_Angeles", code: "PT", label: "Pacific US / Canada", aliases: ["PST"], zones: ["America/Los_Angeles", "America/Vancouver"] },
+  { value: "America/Halifax", code: "AT", label: "Atlantic Canada", aliases: ["AST-CA"], zones: ["America/Halifax"] },
+  { value: "America/Anchorage", code: "AKT", label: "Alaska", aliases: ["AKST"], zones: ["America/Anchorage"] },
+  { value: "Pacific/Honolulu", code: "HT", label: "Hawaii", aliases: ["HST"], zones: ["Pacific/Honolulu"] },
+  { value: "America/Sao_Paulo", code: "BRT", label: "Brazil", aliases: [], zones: ["America/Sao_Paulo"] },
+  { value: "America/Argentina/Buenos_Aires", code: "ART", label: "Argentina", aliases: [], zones: ["America/Argentina/Buenos_Aires"] },
+  { value: "America/Bogota", code: "COT", label: "Colombia", aliases: [], zones: ["America/Bogota"] },
+  { value: "Europe/London", code: "UK", label: "UK / Ireland / Portugal", aliases: ["GMT"], zones: ["Europe/London", "Europe/Dublin", "Europe/Lisbon"] },
+  { value: "Atlantic/Reykjavik", code: "GMT", label: "Iceland", aliases: [], zones: ["Atlantic/Reykjavik"] },
+  { value: "Europe/Berlin", code: "CET", label: "Central Europe", aliases: ["CET"], zones: ["Europe/Berlin", "Europe/Paris", "Europe/Amsterdam", "Europe/Madrid", "Europe/Rome", "Europe/Budapest", "Europe/Belgrade", "Europe/Zagreb", "Europe/Ljubljana", "Europe/Stockholm", "Europe/Warsaw", "Europe/Oslo", "Europe/Brussels", "Europe/Copenhagen", "Europe/Zurich", "Europe/Prague", "Europe/Vienna", "Africa/Tunis"] },
+  { value: "Europe/Athens", code: "EET", label: "Eastern Europe", aliases: ["EET"], zones: ["Europe/Athens", "Europe/Bucharest", "Europe/Sofia", "Europe/Helsinki", "Europe/Vilnius", "Europe/Riga", "Asia/Beirut", "Africa/Cairo"] },
+  { value: "Europe/Moscow", code: "MSK", label: "Moscow", aliases: [], zones: ["Europe/Moscow"] },
+  { value: "Europe/Istanbul", code: "TRT", label: "Turkey", aliases: [], zones: ["Europe/Istanbul"] },
+  { value: "Africa/Johannesburg", code: "SAST", label: "South Africa", aliases: [], zones: ["Africa/Johannesburg"] },
+  { value: "Africa/Lagos", code: "WAT", label: "West Africa", aliases: [], zones: ["Africa/Lagos"] },
+  { value: "Asia/Kolkata", code: "IST", label: "India / Sri Lanka", aliases: ["IST"], zones: ["Asia/Kolkata", "Asia/Calcutta", "Asia/Colombo"] },
+  { value: "Asia/Jerusalem", code: "IL", label: "Israel", aliases: ["IDT"], zones: ["Asia/Jerusalem"] },
+  { value: "Asia/Dubai", code: "GST", label: "UAE / Oman", aliases: ["GST"], zones: ["Asia/Dubai", "Asia/Muscat"] },
+  { value: "Asia/Riyadh", code: "KSA", label: "Saudi Arabia", aliases: ["AST-SA"], zones: ["Asia/Riyadh"] },
+  { value: "Asia/Tehran", code: "IRST", label: "Iran", aliases: [], zones: ["Asia/Tehran"] },
+  { value: "Asia/Karachi", code: "PKT", label: "Pakistan", aliases: [], zones: ["Asia/Karachi"] },
+  { value: "Asia/Bangkok", code: "ICT", label: "Thailand", aliases: [], zones: ["Asia/Bangkok"] },
+  { value: "Asia/Jakarta", code: "WIB", label: "Western Indonesia", aliases: [], zones: ["Asia/Jakarta"] },
+  { value: "Asia/Singapore", code: "UTC+8", label: "Singapore / China / Hong Kong / Malaysia / Philippines", aliases: ["SGT"], zones: ["Asia/Singapore", "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Kuala_Lumpur", "Asia/Kuching", "Asia/Manila"] },
+  { value: "Asia/Seoul", code: "KST", label: "South Korea", aliases: [], zones: ["Asia/Seoul"] },
+  { value: "Asia/Tokyo", code: "JST", label: "Japan", aliases: ["JST"], zones: ["Asia/Tokyo"] },
+  { value: "Indian/Mauritius", code: "MUT", label: "Mauritius", aliases: [], zones: ["Indian/Mauritius"] },
+  { value: "Australia/Sydney", code: "AU East", label: "Eastern Australia", aliases: ["AEST"], zones: ["Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane"] },
+  { value: "Pacific/Auckland", code: "NZ", label: "New Zealand", aliases: ["NZST"], zones: ["Pacific/Auckland"] },
 ] as const;
 
-const TIMEZONE_LABELS: Record<string, string> = {
-  "Asia/Kolkata": "IST",
-  "Asia/Calcutta": "IST",
-  "America/Los_Angeles": "PST",
-  "America/Vancouver": "PST",
-  "America/Denver": "MST",
-  "America/Phoenix": "MST",
-  "America/Chicago": "CST",
-  "America/New_York": "EST",
-  "America/Toronto": "EST",
-  "Europe/London": "GMT",
-  "Europe/Dublin": "GMT",
-  "Europe/Berlin": "CET",
-  "Europe/Paris": "CET",
-  "Europe/Amsterdam": "CET",
-  "Europe/Madrid": "CET",
-  "Europe/Rome": "CET",
-  "Europe/Athens": "EET",
-  "Europe/Bucharest": "EET",
-  "Europe/Sofia": "EET",
-  "Europe/Helsinki": "EET",
-  "Europe/Vilnius": "EET",
-  "Europe/Riga": "EET",
-  "Europe/Budapest": "CET",
-  "Europe/Belgrade": "CET",
-  "Europe/Zagreb": "CET",
-  "Europe/Ljubljana": "CET",
-  "Europe/Stockholm": "CET",
-  "Europe/Warsaw": "CET",
-  "Europe/Oslo": "CET",
-  "Europe/Brussels": "CET",
-  "Europe/Copenhagen": "CET",
-  "Europe/Zurich": "CET",
-  "Europe/Prague": "CET",
-  "Europe/Vienna": "CET",
-  "Atlantic/Reykjavik": "GMT",
-  "America/Managua": "CST",
-  "America/Costa_Rica": "CST",
-  "Asia/Dubai": "GST",
-  "Asia/Muscat": "GST",
-  "Asia/Singapore": "SGT",
-  "Asia/Manila": "SGT",
-  "Asia/Kuala_Lumpur": "SGT",
-  "Asia/Kuching": "SGT",
-  "Asia/Colombo": "IST",
-  "Asia/Beirut": "EET",
-  "Asia/Tokyo": "JST",
-  "Australia/Sydney": "AEST",
-};
+const TIMEZONE_OPTIONS = TIMEZONE_GROUPS.map(({ value, code, label }) => ({
+  value,
+  label: `${code} - ${label}`,
+}));
+
+function timezoneGroup(value?: string | null) {
+  if (!value) return undefined;
+  return TIMEZONE_GROUPS.find((group) =>
+    group.value === value ||
+    group.zones.some((zone) => zone === value) ||
+    group.aliases.some((alias) => alias === value)
+  );
+}
+
+function canonicalTimezone(value?: string | null): string {
+  if (!value) return "";
+  // Preserve an already-valid IANA zone. Replacing Phoenix with Denver,
+  // Mexico City with Chicago, or Brisbane with Sydney changes the local time
+  // during parts of the year because those regions follow different DST rules.
+  if (value.includes("/")) return value;
+  return timezoneGroup(value)?.value ?? value;
+}
 
 function formatTimezoneLabel(value?: string | null): string {
   if (!value) return "";
-  return TIMEZONE_LABELS[value] ?? value.replace(/^.*\//, "").replace(/_/g, " ").toUpperCase();
+  return timezoneGroup(value)?.code ?? value.replace(/^.*\//, "").replace(/_/g, " ").toUpperCase();
 }
 
 // Expand short labels (e.g. "IST") into the matching IANA names
 // (e.g. "Asia/Kolkata", "Asia/Calcutta") plus the label itself, so the
 // backend's case-insensitive IN check matches contacts however their
 // timezone happens to be stored.
-function expandTimezoneFilter(labels: string[]): string[] {
+function expandTimezoneFilter(values: string[]): string[] {
   const set = new Set<string>();
-  for (const label of labels) {
-    set.add(label);
-    for (const [iana, mapped] of Object.entries(TIMEZONE_LABELS)) {
-      if (mapped === label) set.add(iana);
-    }
+  for (const value of values) {
+    set.add(value);
+    const group = timezoneGroup(value);
+    if (!group) continue;
+    set.add(group.value);
+    group.zones.forEach((zone) => set.add(zone));
+    group.aliases.forEach((alias) => set.add(alias));
   }
   return Array.from(set);
 }
@@ -458,7 +443,7 @@ export default function Contacts() {
   // Client-side filter wired to the engagement KPI tiles. Clicking a tile
   // narrows the already-loaded prospect page to the matching population —
   // the same scope the tiles count. null = show everyone.
-  const [cardFilter, setCardFilter] = useState<"calls_today" | "emails" | "linkedin" | "meetings" | null>(null);
+  const [cardFilter, setCardFilter] = useState<"emails" | "linkedin" | "meetings" | null>(null);
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() =>
     // SDRs only ever see their own prospects — force "mine" on load regardless
     // of any persisted ?owner= param.
@@ -472,10 +457,12 @@ export default function Contacts() {
   // scope_any_match=true so a single user_id matches contacts they own as
   // either AE or SDR.
   const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
-  // Timezone filter — values are short labels (IST, PST, etc.). When sent to
-  // the backend they're expanded to include matching IANA names from
-  // TIMEZONE_LABELS so a contact stored as "Asia/Kolkata" matches "IST".
-  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tz")));
+  // Timezone filter values are canonical IANA zones. Legacy short labels in
+  // saved URLs are normalized on load, while API requests expand each calling
+  // region to every compatible canonical zone and historic abbreviation.
+  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() =>
+    parseSearchParamList(initParams.get("tz")).map(canonicalTimezone)
+  );
   // Company filter — optional narrowing to a single company's prospects.
   // Backend's contacts list already accepts `company_id`; this just wires a
   // dropdown to it. Value is a single company UUID (or "" for all).
@@ -683,7 +670,7 @@ export default function Contacts() {
   };
 
   const saveTimezone = async (contact: Contact, nextTimezone: string) => {
-    const normalized = nextTimezone.trim();
+    const normalized = canonicalTimezone(nextTimezone.trim());
     setSavingTimezoneId(contact.id);
     try {
       // Send null (not undefined) to actually clear — undefined is dropped by
@@ -1053,7 +1040,7 @@ export default function Contacts() {
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   useEffect(() => {
-    if (contacts.length === 0 || selectedContactIds.size === 0) return;
+    if (selectedContactIds.size === 0) return;
     const visibleIds = new Set(contacts.map((contact) => contact.id));
     setSelectedContactIds((current) => {
       const next = new Set([...current].filter((id) => visibleIds.has(id)));
@@ -1304,10 +1291,15 @@ export default function Contacts() {
     if (!window.confirm(warning)) return;
     setDeletingContacts(true);
     try {
+      let deleted = 0;
+      let skipped = 0;
       if (n === 1) {
         await contactsApi.delete(targets[0]);
+        deleted = 1;
       } else {
-        await contactsApi.bulkDeleteByIds(targets);
+        const result = await contactsApi.bulkDeleteByIds(targets);
+        deleted = result.deleted;
+        skipped = result.skipped_not_owned ?? Math.max(0, result.requested - result.deleted);
       }
       setSelectedContactIds((current) => {
         if (current.size === 0) return current;
@@ -1316,7 +1308,14 @@ export default function Contacts() {
         return next;
       });
       setOpenActionsId(null);
-      toast.success(`Deleted ${n} prospect${n === 1 ? "" : "s"}.`, "Prospects deleted");
+      if (deleted > 0) {
+        toast.success(
+          `Deleted ${deleted} prospect${deleted === 1 ? "" : "s"}${skipped ? `; ${skipped} skipped because you do not own them` : ""}.`,
+          "Prospects deleted",
+        );
+      } else {
+        toast.warning("No prospects were deleted because you do not own the selected records.", "Nothing deleted");
+      }
       await loadContacts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete prospects.", "Delete failed");
@@ -1806,8 +1805,8 @@ export default function Contacts() {
     }
   };
 
-  // Bulk follow-up: open the dialog pre-seeded with the same "tomorrow at
-  // 10:00 AM PST" default the single call-follow-up uses.
+  // Bulk follow-up: open the dialog pre-seeded with tomorrow at 10:00 in the
+  // rep's browser timezone, matching the single call-follow-up flow.
   const openBulkFollowup = () => {
     if (selectedContactIds.size === 0) return;
     setBulkFollowupAt(defaultFollowupLocalString());
@@ -1818,8 +1817,8 @@ export default function Contacts() {
   // Create one Reminder per selected prospect. The datetime-local value is
   // naive (rep's local time); `new Date(...)` interprets an unsuffixed string
   // as local, then we send ISO/UTC — mirrors the single-reminder create at
-  // saveCallDisposition. Each reminder is per-contact, so it surfaces on that
-  // prospect's detail page automatically (no backend change needed).
+  // saveCallDisposition. The backend persists every contact timestamp and
+  // reminder in one transaction so a batch cannot be left half-saved.
   const submitBulkFollowup = async () => {
     if (selectedContactIds.size === 0 || !bulkFollowupAt) return;
     const due = new Date(bulkFollowupAt);
@@ -1830,29 +1829,10 @@ export default function Contacts() {
     const dueIso = due.toISOString();
     const note = bulkFollowupNote.trim() || "Follow-up";
     const ids = Array.from(selectedContactIds);
-    // Map contact id → company id from the loaded list so each reminder carries
-    // its company (same field the single-reminder path sets).
-    const companyById = new Map(contacts.map((c) => [c.id, c.company_id]));
     setBulkFollowupSaving(true);
     try {
-      await Promise.all(
-        ids.flatMap((id) => [
-          // next_followup_at is the mechanism reps actually SEE (follow-up badge
-          // on the prospect) and get REMINDED by (fires the "Follow-up due" bell
-          // alert via prospect_reminders). Set it on every selected prospect.
-          contactsApi.update(id, { next_followup_at: dueIso } as Partial<Contact>),
-          // Also keep the Reminder record (carries the note) — mirrors the
-          // single-reminder disposition path.
-          remindersApi.create({
-            contact_id: id,
-            company_id: companyById.get(id) || undefined,
-            note,
-            due_at: dueIso,
-            assigned_to_id: user?.id,
-          }),
-        ])
-      );
-      toast.success(`Follow-up set for ${ids.length} prospect${ids.length === 1 ? "" : "s"}.`, "Follow-up scheduled");
+      const result = await remindersApi.createBulk({ contact_ids: ids, note, due_at: dueIso });
+      toast.success(`Follow-up set for ${result.created} prospect${result.created === 1 ? "" : "s"}.`, "Follow-up scheduled");
       setBulkFollowupOpen(false);
       setSelectedContactIds(new Set());
     } catch (e) {
@@ -1874,15 +1854,9 @@ export default function Contacts() {
   };
 
   const emailsOpenedCount = contacts.filter((c) => (c.email_open_count ?? 0) > 0).length;
-  // Predicate per KPI tile — kept in sync with each tile's own count so the
-  // number on the card matches the rows shown when it's clicked.
-  const _today = new Date();
+  // These KPI filters are calculated from the currently loaded prospects.
+  // Calls today is a separate activity total, so that tile is display-only.
   const cardPredicates = {
-    calls_today: (c: Contact) => {
-      if (!c.call_last_at) return false;
-      const d = new Date(c.call_last_at);
-      return d.getFullYear() === _today.getFullYear() && d.getMonth() === _today.getMonth() && d.getDate() === _today.getDate();
-    },
     emails: (c: Contact) => (c.email_open_count ?? 0) > 0,
     linkedin: (c: Contact) => !!c.linkedin_status && c.linkedin_status !== "none",
     meetings: (c: Contact) => c.sequence_status === "meeting_booked",
@@ -2023,18 +1997,20 @@ export default function Contacts() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
             {([
               { label: "Total prospects", value: contactsTotal, icon: Users, color: "#1d4ed8", sub: contactsTotal > 0 ? "Active pipeline" : "No prospects yet", filterKey: null },
-              { label: "Calls today", value: myCallsTodayCount, icon: PhoneCall, color: "#0891b2", sub: myCallsTodayCount > 0 ? "Logged today" : "No calls yet", filterKey: "calls_today" },
+              { label: "Calls today", value: myCallsTodayCount, icon: PhoneCall, color: "#0891b2", sub: myCallsTodayCount > 0 ? "Logged today" : "No calls yet", filterKey: undefined },
               { label: "Emails opened", value: emailsOpenedCount, icon: Mail, color: "#16a34a", sub: emailsOpenedCount > 0 ? "Engaged readers" : "Awaiting opens", filterKey: "emails" },
               { label: "LinkedIn touches", value: linkedinActiveCount, icon: Link2, color: "#7c3aed", sub: linkedinActiveCount > 0 ? "Active threads" : "No threads yet", filterKey: "linkedin" },
               { label: "Meetings booked", value: meetingsBookedCount, icon: Clock, color: "#d97706", sub: meetingsBookedCount > 0 ? "Pipeline added" : "None yet", filterKey: "meetings" },
             ] as const).map(({ label, value, icon: Icon, color, sub, filterKey }) => {
-              // Total-prospects tile resets the filter; the four engagement tiles
-              // toggle their own client-side filter on the loaded page.
+              // Total prospects resets filtering. Calls is display-only because
+              // its value is an activity total, while row filters use contacts.
               const isResetCard = filterKey === null;
-              const isInteractive = isResetCard ? cardFilter !== null : value > 0;
-              const isActive = !isResetCard && cardFilter === filterKey;
+              const isFilterCard = filterKey !== undefined && !isResetCard;
+              const isInteractive = isResetCard ? cardFilter !== null : isFilterCard && value > 0;
+              const isActive = isFilterCard && cardFilter === filterKey;
               const activate = () => {
                 if (isResetCard) { setCardFilter(null); return; }
+                if (!isFilterCard) return;
                 setCardFilter((prev) => (prev === filterKey ? null : filterKey));
               };
               return (
@@ -2549,7 +2525,7 @@ export default function Contacts() {
                         const callLabel = c.call_disposition ? formatCallDisposition(c.call_disposition) : c.call_status && c.call_status !== "none" ? formatCallDisposition(c.call_status) : "Not called yet";
                         return (
                           <div key={c.id} className="prospect-mobile-card">
-                            <div style={{ padding: 14, display: "grid", gap: 12 }}>
+                            <div style={{ padding: 14, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, minWidth: 0, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
                               <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
                                 {canSelectProspects && (
                                   <input
@@ -2600,14 +2576,14 @@ export default function Contacts() {
                                 </div>
                               </div>
 
-                              <div style={{ border: "1px solid #e5eef7", background: "#f8fbff", borderRadius: 14, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                              <div style={{ border: "1px solid #e5eef7", background: "#f8fbff", borderRadius: 14, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ fontSize: 10.5, color: "#71839a", fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Phone</div>
                                   <div style={{ marginTop: 2, color: c.phone ? "#102a43" : "#96a7ba", fontSize: 15, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {phoneLabel}
                                   </div>
                                 </div>
-                                <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
+                                <span style={{ flexShrink: 1, maxWidth: "52%", overflow: "hidden", textOverflow: "ellipsis", fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
                                   {callLabel}
                                 </span>
                               </div>
@@ -3003,7 +2979,7 @@ export default function Contacts() {
                     label="Timezone"
                     values={timezoneFilter}
                     onChange={setTimezoneFilter}
-                    options={TIMEZONE_OPTIONS.map((tz) => ({ value: tz, label: tz }))}
+                    options={TIMEZONE_OPTIONS}
                     allLabel="All timezones"
                     minWidth={170}
                   />
@@ -3595,6 +3571,7 @@ export default function Contacts() {
                               case "timezone": {
                                 const isEditing = editingTimezoneId === c.id;
                                 const currentLabel = formatTimezoneLabel(c.timezone);
+                                const currentValue = canonicalTimezone(c.timezone);
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
                                     {isEditing ? (
@@ -3607,7 +3584,7 @@ export default function Contacts() {
                                           void saveTimezone(c, e.target.value);
                                         }}
                                         onBlur={() => {
-                                          if (editingTimezoneId === c.id && timezoneDraft === (c.timezone ?? "")) {
+                                          if (editingTimezoneId === c.id && timezoneDraft === currentValue) {
                                             setEditingTimezoneId(null);
                                             setTimezoneDraft("");
                                           }
@@ -3625,11 +3602,11 @@ export default function Contacts() {
                                         }}
                                       >
                                         <option value="">Unassigned</option>
-                                        {c.timezone && !TIMEZONE_OPTIONS.includes(c.timezone as typeof TIMEZONE_OPTIONS[number]) && !Object.values(TIMEZONE_LABELS).includes(c.timezone) && (
+                                        {c.timezone && !TIMEZONE_OPTIONS.some((tz) => tz.value === currentValue) && (
                                           <option value={c.timezone}>{currentLabel}</option>
                                         )}
                                         {TIMEZONE_OPTIONS.map((tz) => (
-                                          <option key={tz} value={tz}>{tz}</option>
+                                          <option key={tz.value} value={tz.value}>{tz.label}</option>
                                         ))}
                                       </select>
                                     ) : (
@@ -3637,7 +3614,7 @@ export default function Contacts() {
                                         type="button"
                                         onClick={() => {
                                           setEditingTimezoneId(c.id);
-                                          setTimezoneDraft(currentLabel || "");
+                                          setTimezoneDraft(currentValue);
                                         }}
                                         style={{
                                           display: "inline-flex",
@@ -4455,7 +4432,7 @@ export default function Contacts() {
         ];
         const dispoLabel = (v: string) => CALL_DISPOSITION_OPTIONS.find((o) => o.value === v)?.label ?? v;
         const localTime = callContact.timezone
-          ? (() => { try { return new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: callContact.timezone }); } catch { return null; } })()
+          ? (() => { try { return new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: canonicalTimezone(callContact.timezone) }); } catch { return null; } })()
           : null;
         const noteChips = ["Send follow-up email", "Booked meeting", "Asked to call back later", "Not the right person", "Voicemail left, no callback yet"];
 
@@ -4560,7 +4537,7 @@ export default function Contacts() {
                         )}
                         {callContact.timezone && (
                           <span title={`Local time: ${localTime ?? "—"}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "#f5f3ff", color: "#6d28d9", border: "1px solid #ddd6fe" }}>
-                            <Clock size={10} /> {callContact.timezone}{localTime ? ` · ${localTime}` : ""}
+                            <Clock size={10} /> {formatTimezoneLabel(callContact.timezone)}{localTime ? ` · ${localTime}` : ""}
                           </span>
                         )}
                         {callContact.persona_type && (() => {
