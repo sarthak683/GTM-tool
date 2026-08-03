@@ -642,10 +642,10 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; close_date_est: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, close_date_est: false });
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -674,6 +674,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       assigned_to_id: !form.assigned_to_id,
       sdr_id: !form.sdr_id,
       meeting_booked_with: !form.meeting_booked_with,
+      meeting_booked_from: !form.meeting_booked_from,
       close_date_est: !form.close_date_est,
     };
     setValidationErrors(nextValidationErrors);
@@ -684,6 +685,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       nextValidationErrors.sdr_id ? "Assigned SDR" : null,
       nextValidationErrors.source ? "Deal source" : null,
       nextValidationErrors.meeting_booked_with ? "Meeting Booked with" : null,
+      nextValidationErrors.meeting_booked_from ? "Meeting Booked from" : null,
       nextValidationErrors.close_date_est ? "Meeting Booked Date" : null,
     ].filter(Boolean);
     if (missingFields.length) {
@@ -707,6 +709,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         source: form.source || undefined,
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
         meeting_booked_with: form.meeting_booked_with || undefined,
+        meeting_booked_from: form.meeting_booked_from || undefined,
       } as Partial<Deal>);
       onCreated(deal);
       onClose();
@@ -844,6 +847,19 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                 <option value="SVP">SVP</option>
                 <option value="Head/Chief">Head / Chief</option>
               </select>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <select
+                style={{ ...modalInputStyle, background: form.meeting_booked_from ? "#fff" : validationErrors.meeting_booked_from ? "#fffbf5" : "#fff", border: validationErrors.meeting_booked_from ? "1.5px solid #fbbf24" : modalInputStyle.border, color: form.meeting_booked_from ? "#1f2d3d" : validationErrors.meeting_booked_from ? "#92400e" : undefined }}
+                value={form.meeting_booked_from}
+                onChange={(event) => { setForm((current) => ({ ...current, meeting_booked_from: event.target.value })); if (validationErrors.meeting_booked_from && event.target.value) setValidationErrors((current) => ({ ...current, meeting_booked_from: false })); }}
+              >
+                <option value="">Meeting Booked from *</option>
+                <option value="Call">Call</option>
+                <option value="LinkedIn">LinkedIn</option>
+                <option value="Email">Email</option>
+              </select>
+              <div />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <input type="number" style={modalInputStyle} placeholder="Value" value={form.value} onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))} />

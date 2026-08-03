@@ -630,8 +630,18 @@ def _zippy_in_cc_or_bcc(row) -> bool:
 
 
 def _email_from_domain(row) -> str:
-    from_addr = str(getattr(row, "email_from", None) or "").strip().lower()
+    from_addr = _reported_email_from(row).strip().lower()
     return from_addr.split("@", 1)[1] if "@" in from_addr else ""
+
+
+def _reported_email_from(row) -> str:
+    """Actual sender address, including for rows stored before raw preservation."""
+    metadata = getattr(row, "event_metadata", None)
+    if isinstance(metadata, dict):
+        raw_from = str(metadata.get("raw_email_from") or "").strip()
+        if raw_from:
+            return raw_from
+    return str(getattr(row, "email_from", None) or "").strip()
 
 
 def _is_instantly_email(row) -> bool:
@@ -706,14 +716,14 @@ def _normalized_email_subject(value: str | None) -> str:
 
 
 def _manual_email_dedupe_key(row, rep_key: str) -> tuple | None:
-    """Same manual thread, same recipient, same UTC day should count once.
+    """Fallback dedupe for legacy manual rows without a message id.
 
-    Gmail can sync repeated manual-send rows with different timestamps and even
-    different message ids for the same rep/person/day/thread. Message-id dedupe
-    catches exact row duplication; this catches the remaining same-thread
-    repetition without touching Instantly sends or different-subject manual mail.
+    Distinct Gmail message ids are distinct sends, even when recipient, subject,
+    and day match. Collapsing those rows hides legitimate same-thread follow-ups.
     """
     if _email_out_bucket(row) != "manual":
+        return None
+    if str(getattr(row, "email_message_id", None) or "").strip():
         return None
     created_at = getattr(row, "created_at", None)
     if not created_at:
@@ -790,7 +800,7 @@ def _activity_rep_id(
     if rep_id_by_local is not None and (medium == "email" or kind == "email"):
         email_kind = _email_event_kind(row)
         if email_kind == "send":
-            full_from = str(row.email_from or "").strip().lower()
+            full_from = _reported_email_from(row).lower()
             local = _beacon_sender_local(full_from)
             if local:
                 # Try full-address first (handles aliases with different local-parts),
@@ -808,7 +818,7 @@ def _activity_rep_id(
             # Instantly reply_received events store the rep's beaconli.com
             # address in email_from (the account that received the reply),
             # not in email_to. Try full address first, then local-part fallback.
-            full_from = str(row.email_from or "").strip().lower()
+            full_from = _reported_email_from(row).lower()
             flocal = _beacon_sender_local(full_from)
             if flocal:
                 return rep_id_by_local.get(full_from) or rep_id_by_local.get(flocal)
@@ -1400,7 +1410,7 @@ async def sales_activity_drilldown(
                 direction = "inbound"
             elif is_email:
                 # outbound iff it came from one of OUR sending identities.
-                direction = "outbound" if _beacon_sender_local(activity.email_from) else "inbound"
+                direction = "outbound" if _beacon_sender_local(_reported_email_from(activity)) else "inbound"
             company_id = contact_company_ids.get(activity.contact_id) or deal_company_ids.get(activity.deal_id)
             activity_type = str(activity.type or activity.medium or "activity").strip().lower() or "activity"
             source = activity.source
@@ -1417,7 +1427,7 @@ async def sales_activity_drilldown(
                     source_label=source_label,
                     subject=activity.email_subject,
                     direction=direction,
-                    from_email=activity.email_from,
+                    from_email=_reported_email_from(activity) or None,
                     to_email=activity.email_to,
                     email_body=activity.content,
                     call_outcome=activity.call_outcome,

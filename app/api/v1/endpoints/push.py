@@ -28,8 +28,8 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.core.dependencies import CurrentUser, DBSession
-from app.models.contact import Contact
 from app.models.push_subscription import PushSubscription, PushSubscriptionRead
+from app.services.contact_access import get_actionable_contact
 from app.services.push import send_to_user, vapid_configured
 
 router = APIRouter(prefix="/push", tags=["push"])
@@ -153,9 +153,7 @@ async def ring_mobile(
     sidebar opens regardless of push delivery. We just count successes so
     the UI can show a small "Rang 1 device" toast.
     """
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = await get_actionable_contact(session, current_user, contact_id)
 
     contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or contact.email or "Prospect"
     phone = (contact.phone or "").strip()

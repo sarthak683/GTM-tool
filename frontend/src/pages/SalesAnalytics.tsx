@@ -195,6 +195,7 @@ function MilestoneDealsModal({
   const dateLabel = isClosedWon ? "Closed On" : "Reached On";
   const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
   const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
+  const showDateOfMeeting = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
 
   return (
     <div
@@ -238,8 +239,10 @@ function MilestoneDealsModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
-                  ["Deal", "Amount", "AE", "SDR"],
-                  deals.map((d) => [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
+                  showDateOfMeeting ? ["Deal", "Amount", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR"],
+                  deals.map((d) => showDateOfMeeting
+                    ? [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                    : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
                 style={exportBtnStyle}
               >
@@ -268,6 +271,7 @@ function MilestoneDealsModal({
                 <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
                 <th style={thSty}>AE</th>
                 <th style={thSty}>SDR</th>
+                {showDateOfMeeting && <th style={thSty}>Date of Meeting</th>}
               </tr>
             </thead>
             <tbody>
@@ -289,6 +293,11 @@ function MilestoneDealsModal({
                     <td style={{ ...tdSty, color: "#62748a" }}>
                       {d.assigned_sdr || "—"}
                     </td>
+                    {showDateOfMeeting && (
+                      <td style={{ ...tdSty, color: "#62748a" }}>
+                        {d.close_date_est || "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -300,7 +309,7 @@ function MilestoneDealsModal({
                   <td style={{ ...tdSty, textAlign: "right", fontWeight: 800, color: accentColor }}>
                     {formatCurrency(total)}
                   </td>
-                  <td colSpan={2} style={tdSty} />
+                  <td colSpan={showDateOfMeeting ? 3 : 2} style={tdSty} />
                 </tr>
               </tfoot>
             )}
@@ -609,7 +618,7 @@ function MeetingBucketModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const showMeetingBookedWith = bucket === "direct_sql";
+  const showMeetingBookedWith = true;
 
   return (
     <div
@@ -800,7 +809,7 @@ function ActivityDrilldownModal({
                     fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
                   }}
                 >
-                  {filterConnected ? "Connected only ✓" : "Filter"}
+                  {filterConnected ? "Connected ✓" : "Connected"}
                 </button>
               )}
             </div>
@@ -1203,9 +1212,6 @@ function RepActivityTable({
               <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#223446", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
               <p style={{ margin: "4px 0 0", fontSize: 12, color: "#708195" }}>{row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline</p>
             </div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 999, background: "#f5f7fb", color: "#5a697e", fontSize: 11, fontWeight: 800 }}>
-              Rank #{index + 1}
-            </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
             <StatPill
@@ -1462,10 +1468,14 @@ function RepWeeklyActivityFocus({
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-      const meetingsDelta = (b.totals.meetings ?? 0) - (a.totals.meetings ?? 0);
+      const outputMeetings = (r: typeof a) =>
+        (r.totals.meetings_next_1w ?? 0) + (r.totals.meetings_next_2w ?? 0) + (r.totals.meetings_beyond_2w ?? 0);
+      const meetingsDelta = outputMeetings(b) - outputMeetings(a);
       if (meetingsDelta !== 0) return meetingsDelta;
-      const aRatio = (a.totals.total ?? 0) > 0 ? (a.totals.meetings ?? 0) / (a.totals.total ?? 0) : 0;
-      const bRatio = (b.totals.total ?? 0) > 0 ? (b.totals.meetings ?? 0) / (b.totals.total ?? 0) : 0;
+      const aTotal = a.totals.total ?? 0;
+      const bTotal = b.totals.total ?? 0;
+      const aRatio = aTotal > 0 ? outputMeetings(a) / aTotal : 0;
+      const bRatio = bTotal > 0 ? outputMeetings(b) / bTotal : 0;
       return bRatio - aRatio;
     }),
     [rows],
@@ -1484,7 +1494,6 @@ function RepWeeklyActivityFocus({
 
   const selectedIndex = Math.max(sortedRows.findIndex((row) => row.key === selectedRepKey), 0);
   const selectedRow = sortedRows[selectedIndex] ?? sortedRows[0];
-  const selectedRank = selectedIndex + 1;
   const weeklyChartData = selectedRow.weeks.map((week) => ({
     label: week.label,
     shortLabel: week.label.replace("Week of ", ""),
@@ -1522,10 +1531,6 @@ function RepWeeklyActivityFocus({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: selectedRank === 1 ? "#fff5df" : "#f2f5fb", color: selectedRank === 1 ? "#b66a10" : "#5e7288", border: selectedRank === 1 ? "1px solid #ffd8a8" : "1px solid #e2eaf3", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                <Trophy size={14} />
-                {selectedRank === 1 ? "Top rep in window" : `Rank #${selectedRank}`}
-              </span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#eef4ff", color: "#3856c8", border: "1px solid #d7e2fb", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
                 <BarChart3 size={14} />
                 Focus mode
@@ -1586,7 +1591,7 @@ function RepWeeklyActivityFocus({
                 <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by meetings scheduled (output). Ties broken by output-to-input ratio.</p>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {sortedRows.map((row, index) => {
+                {sortedRows.map((row) => {
                   const selected = row.key === selectedRow.key;
                   return (
                     <button
@@ -1608,9 +1613,6 @@ function RepWeeklyActivityFocus({
                         boxShadow: selected ? "0 8px 18px rgba(66, 98, 197, 0.12)" : "none",
                       }}
                     >
-                      <span style={{ display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: 999, background: selected ? "#dfe9ff" : "#f2f5fa", color: selected ? "#2948b9" : "#6f8095", fontSize: 11, fontWeight: 800 }}>
-                        {index + 1}
-                      </span>
                       <span style={{ display: "grid", textAlign: "left" }}>
                         <span style={{ lineHeight: 1.2 }}>{row.rep_name}</span>
                         <span style={{ fontSize: 11, fontWeight: 600, color: selected ? "#5e75c8" : "#75879a" }}>{row.totals.total} touches</span>
@@ -1649,14 +1651,10 @@ function RepWeeklyActivityFocus({
             </div>
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="#edf2f8" />
-                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                    <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                  </XAxis>
-                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                    <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                  </YAxis>
+                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                   <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
                   <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                   {OUTREACH_MIX_KEYS.map((key) => {
@@ -1686,14 +1684,10 @@ function RepWeeklyActivityFocus({
               </div>
               <div style={{ width: "100%", height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barGap={6}>
+                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={6}>
                     <CartesianGrid vertical={false} stroke="#edf2f8" />
-                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false}>
-                      <Label value="Week" position="insideBottom" offset={-8} style={{ fill: "#7d8ea3", fontSize: 11 }} />
-                    </XAxis>
-                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={34}>
-                      <Label value="Activity" angle={-90} position="insideLeft" style={{ textAnchor: "middle", fill: "#7d8ea3", fontSize: 11 }} />
-                    </YAxis>
+                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                     <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
                     <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
                     {CALL_QUALITY_KEYS.map((key) => {

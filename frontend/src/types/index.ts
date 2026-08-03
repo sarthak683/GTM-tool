@@ -251,6 +251,7 @@ export interface Deal {
   qualification_reason?: string;
   priority_tag?: "P0" | "P1" | "P2" | null;
   meeting_booked_with?: string | null;
+  meeting_booked_from?: string | null;
   days_in_stage: number;
   stage_entered_at?: string;
   last_activity_at?: string;

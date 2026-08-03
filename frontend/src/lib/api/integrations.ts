@@ -54,6 +54,11 @@ export const remindersApi = {
   },
   create: (data: { contact_id: string; company_id?: string; note: string; due_at: string; assigned_to_id?: string }) =>
     request<import("../../types").Reminder>("/api/v1/reminders/", { method: "POST", body: JSON.stringify(data) }),
+  createBulk: (data: { contact_ids: string[]; note: string; due_at: string }) =>
+    request<{ created: number; requested: number }>("/api/v1/reminders/bulk", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   update: (id: string, data: Partial<import("../../types").Reminder>) =>
     request<import("../../types").Reminder>(`/api/v1/reminders/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) =>

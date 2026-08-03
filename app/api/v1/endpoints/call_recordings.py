@@ -30,6 +30,7 @@ from sqlmodel import select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.models.call_recording import CALL_RECORDING_STATUSES, CallRecording, CallRecordingRead
+from app.services.contact_access import get_actionable_contact, get_visible_contact
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,25 @@ router = APIRouter(prefix="/calls/recordings", tags=["call-recordings"])
 # ~7 MB; cap at 50 MB which covers ~6 hours and still bounds the blast
 # radius if a browser misbehaves.
 _MAX_AUDIO_BYTES = 50 * 1024 * 1024
+
+
+async def _get_recording_for_user(
+    session,
+    user,
+    recording_id: UUID,
+    *,
+    edit: bool = False,
+) -> CallRecording:
+    recording = (
+        await session.execute(select(CallRecording).where(CallRecording.id == recording_id))
+    ).scalar_one_or_none()
+    if not recording:
+        raise HTTPException(404, "Recording not found.")
+    if recording.contact_id:
+        await get_visible_contact(session, user, recording.contact_id)
+    if edit and user.role != "admin" and recording.created_by_id != user.id:
+        raise HTTPException(404, "Recording not found.")
+    return recording
 
 
 @router.post("/", response_model=CallRecordingRead, status_code=201)
@@ -63,6 +83,8 @@ async def upload_call_recording(
     # passes deal_id (contact optional); the prospect drawer passes contact_id.
     if contact_id is None and deal_id is None:
         raise HTTPException(400, "A recording must be linked to a contact or a deal.")
+    if contact_id is not None:
+        await get_actionable_contact(session, user, contact_id)
 
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -157,6 +179,8 @@ async def list_call_recordings(
     transcripts for context."""
     if contact_id is None and deal_id is None:
         raise HTTPException(400, "Provide contact_id or deal_id.")
+    if contact_id is not None:
+        await get_visible_contact(session, _user, contact_id)
     stmt = select(CallRecording).where(CallRecording.deleted_at.is_(None))
     if contact_id is not None:
         stmt = stmt.where(CallRecording.contact_id == contact_id)
@@ -174,12 +198,7 @@ async def get_call_recording(
     _user: CurrentUser,
 ):
     """Poll a recording's transcription status."""
-    result = await session.execute(
-        select(CallRecording).where(CallRecording.id == recording_id)
-    )
-    recording = result.scalar_one_or_none()
-    if not recording:
-        raise HTTPException(404, "Recording not found.")
+    recording = await _get_recording_for_user(session, _user, recording_id)
     return recording
 
 
@@ -200,11 +219,7 @@ async def update_call_recording(
     """Rep-side corrections. Common case: Whisper misheard a name or
     product term — rep edits the transcript and saves. We do NOT re-run
     the AI classifier here; the rep is the source of truth at this point."""
-    recording = (await session.execute(
-        select(CallRecording).where(CallRecording.id == recording_id)
-    )).scalar_one_or_none()
-    if not recording:
-        raise HTTPException(404, "Recording not found.")
+    recording = await _get_recording_for_user(session, _user, recording_id, edit=True)
 
     if payload.transcript is not None:
         recording.transcript = payload.transcript
@@ -227,11 +242,7 @@ async def delete_call_recording(
 ):
     """Soft-delete a recording: it disappears from the lists but the row is
     retained for audit, stamped with who deleted it and when."""
-    recording = (await session.execute(
-        select(CallRecording).where(CallRecording.id == recording_id)
-    )).scalar_one_or_none()
-    if not recording:
-        raise HTTPException(404, "Recording not found.")
+    recording = await _get_recording_for_user(session, user, recording_id, edit=True)
     if recording.deleted_at is None:
         now = datetime.utcnow()
         recording.deleted_at = now
@@ -250,11 +261,7 @@ async def retry_call_recording(
     """Re-queue a failed transcription. Only works if the audio is still
     in Redis (30-min TTL from upload). After that, the rep has to
     re-record — the audio is genuinely gone by design."""
-    recording = (await session.execute(
-        select(CallRecording).where(CallRecording.id == recording_id)
-    )).scalar_one_or_none()
-    if not recording:
-        raise HTTPException(404, "Recording not found.")
+    recording = await _get_recording_for_user(session, _user, recording_id, edit=True)
     if recording.status != "failed":
         raise HTTPException(
             409,

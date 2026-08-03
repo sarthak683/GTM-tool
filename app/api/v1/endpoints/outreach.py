@@ -23,6 +23,12 @@ from app.models.outreach import (
 )
 from app.repositories.outreach import OutreachRepository
 from app.services.outreach_generator import generate_sequence
+from app.services.contact_access import (
+    authorize_contact_edit,
+    get_actionable_contact,
+    get_visible_contact,
+    get_visible_contact_ids,
+)
 from app.services.sdr_reassignment import (
     instantly_counts_since_assignment,
     open_timestamp_within_assignment,
@@ -31,6 +37,25 @@ from app.services.sdr_reassignment import (
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 logger = logging.getLogger(__name__)
+
+
+async def _get_sequence_for_user(session, user, sequence_id: UUID, *, edit: bool = False):
+    seq = await session.get(OutreachSequence, sequence_id)
+    if not seq:
+        raise NotFoundError("Sequence not found")
+    if edit:
+        await get_actionable_contact(session, user, seq.contact_id)
+    else:
+        await get_visible_contact(session, user, seq.contact_id)
+    return seq
+
+
+async def _get_step_for_user(session, user, step_id: UUID, *, edit: bool = False):
+    step = await session.get(OutreachStep, step_id)
+    if not step:
+        raise NotFoundError("Step not found")
+    seq = await _get_sequence_for_user(session, user, step.sequence_id, edit=edit)
+    return step, seq
 
 
 @router.get("/instantly/campaigns")
@@ -85,11 +110,17 @@ async def bulk_add_to_instantly_campaign(
     if not (campaign_id or "").strip():
         raise ValidationError("Pick a campaign to start.")
 
+    unique_ids = list(dict.fromkeys(ids))
+    visible_ids = await get_visible_contact_ids(session, _user, unique_ids)
+    if len(visible_ids) != len(unique_ids):
+        raise NotFoundError("One or more selected prospects were not found.")
     contacts = (
-        await session.execute(select(Contact).where(Contact.id.in_(list(set(ids)))))
+        await session.execute(select(Contact).where(Contact.id.in_(visible_ids)))
     ).scalars().all()
     if not contacts:
         raise NotFoundError("No matching prospects found.")
+    for contact in contacts:
+        await authorize_contact_edit(session, _user, contact)
 
     # Batch-fetch company names for the lead payloads (contacts may span companies).
     company_ids = list({c.company_id for c in contacts if c.company_id})
@@ -180,6 +211,7 @@ def _sequence_started(seq: OutreachSequence) -> bool:
 @router.post("/generate/{contact_id}", response_model=OutreachSequenceRead)
 async def generate_contact_sequence(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Generate a multi-step email cadence + LinkedIn message for a contact."""
+    await get_actionable_contact(session, _user, contact_id)
     seq = await generate_sequence(contact_id, session)
     if not seq:
         raise NotFoundError("Contact not found")
@@ -199,8 +231,12 @@ async def generate_bulk_sequences(
         query = query.where(Contact.persona == persona_filter)
 
     contacts = (await session.execute(query)).scalars().all()
+    visible_ids = set(await get_visible_contact_ids(session, _user, [c.id for c in contacts]))
+    contacts = [contact for contact in contacts if contact.id in visible_ids]
     if not contacts:
         raise NotFoundError("No contacts found for this company")
+    for contact in contacts:
+        await authorize_contact_edit(session, _user, contact)
 
     repo = OutreachRepository(session)
     generated, skipped, failed = [], [], []
@@ -235,6 +271,7 @@ async def generate_bulk_sequences(
 
 @router.get("/sequences/{contact_id}", response_model=OutreachSequenceRead)
 async def get_contact_sequence(contact_id: UUID, session: DBSession, _user: CurrentUser):
+    await get_visible_contact(session, _user, contact_id)
     seq = await OutreachRepository(session).get_by_contact(contact_id)
     if not seq:
         raise NotFoundError(
@@ -246,13 +283,14 @@ async def get_contact_sequence(contact_id: UUID, session: DBSession, _user: Curr
 @router.get("/contacts/{contact_id}/sequence", response_model=Optional[OutreachSequenceRead])
 async def get_contact_sequence_optional(contact_id: UUID, session: DBSession, _user: CurrentUser):
     """Return the contact's sequence when present without logging a 404 in the browser."""
+    await get_visible_contact(session, _user, contact_id)
     return await OutreachRepository(session).get_by_contact(contact_id)
 
 
 @router.patch("/sequences/{sequence_id}", response_model=OutreachSequenceRead)
 async def update_sequence(sequence_id: UUID, updates: dict, session: DBSession, _user: CurrentUser):
     repo = OutreachRepository(session)
-    seq = await repo.get_or_raise(sequence_id)
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
 
     clean = {k: v for k, v in updates.items() if k in _ALLOWED_SEQUENCE_FIELDS}
     if not clean:
@@ -271,6 +309,10 @@ async def get_company_sequences(company_id: UUID, session: DBSession, _user: Cur
             .where(OutreachSequence.company_id == company_id)
         )
     ).all()
+    visible_ids = set(
+        await get_visible_contact_ids(session, _user, [contact.id for _seq, contact in rows])
+    )
+    rows = [(seq, contact) for seq, contact in rows if contact.id in visible_ids]
 
     return [
         {
@@ -296,9 +338,7 @@ async def get_company_sequences(company_id: UUID, session: DBSession, _user: Cur
 @router.get("/sequences/{sequence_id}/steps", response_model=list[OutreachStepRead])
 async def get_steps(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Get all steps for a sequence, ordered by step_number."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id)
 
     result = await session.execute(
         select(OutreachStep)
@@ -311,9 +351,7 @@ async def get_steps(sequence_id: UUID, session: DBSession, _user: CurrentUser):
 @router.post("/sequences/{sequence_id}/steps", response_model=OutreachStepRead)
 async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSession, _user: CurrentUser):
     """Add a new step to a sequence (before it's launched to Instantly)."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
     if _sequence_started(seq):
         raise ValidationError("Cannot change sequence timing after sequencing has started")
 
@@ -336,11 +374,7 @@ async def add_step(sequence_id: UUID, step_in: OutreachStepCreate, session: DBSe
 @router.patch("/steps/{step_id}", response_model=OutreachStepRead)
 async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSession, _user: CurrentUser):
     """Edit a step's content, delay, or variants."""
-    step = await session.get(OutreachStep, step_id)
-    if not step:
-        raise NotFoundError("Step not found")
-
-    seq = await session.get(OutreachSequence, step.sequence_id)
+    step, seq = await _get_step_for_user(session, _user, step_id, edit=True)
     if seq and _sequence_started(seq):
         raise ValidationError("Cannot change sequence timing after sequencing has started")
 
@@ -363,11 +397,7 @@ async def update_step(step_id: UUID, updates: OutreachStepUpdate, session: DBSes
 @router.delete("/steps/{step_id}")
 async def delete_step(step_id: UUID, session: DBSession, _user: CurrentUser):
     """Remove a step from a sequence (before launch only)."""
-    step = await session.get(OutreachStep, step_id)
-    if not step:
-        raise NotFoundError("Step not found")
-
-    seq = await session.get(OutreachSequence, step.sequence_id)
+    step, seq = await _get_step_for_user(session, _user, step_id, edit=True)
     if seq and _sequence_started(seq):
         raise ValidationError("Cannot change sequence timing after sequencing has started")
 
@@ -401,9 +431,7 @@ async def launch_sequence(
     campaign_name: optional override; defaults to "Contact Name — Company"
     """
     # ── Load sequence ──────────────────────────────────────────────────────────
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
 
     if _sequence_started(seq):
         raise ValidationError(
@@ -585,8 +613,14 @@ async def launch_company_campaign(
         .order_by(OutreachSequence.created_at)
     )
     rows = seq_result.all()
+    visible_ids = set(
+        await get_visible_contact_ids(session, _user, [contact.id for _seq, contact in rows])
+    )
+    rows = [(seq, contact) for seq, contact in rows if contact.id in visible_ids]
     if not rows:
         raise ValidationError("No unlaunched sequences with valid email contacts found for this company")
+    for _seq, contact in rows:
+        await authorize_contact_edit(session, _user, contact)
 
     # Use the first sequence's steps as the campaign template
     template_seq = rows[0][0]
@@ -640,9 +674,7 @@ async def launch_company_campaign(
         logger.warning("Campaign activation failed (non-fatal): %s", e)
 
     # ── Add all contacts as leads ─────────────────────────────────────────────
-    now = datetime.utcnow()
     lead_payloads = []
-    results = []
     for seq, contact in rows:
         lead_payloads.append({
             "email": contact.email,
@@ -652,9 +684,15 @@ async def launch_company_campaign(
             "job_title": contact.title or "",
             "linkedin_url": contact.linkedin_url or "",
         })
-        # Touch CRM records even before the bulk API call —
-        # if the bulk call fails we'd rather have over-optimistic status
-        # than lose the records to a transient 5xx from Instantly.
+
+    try:
+        await client.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
+    except InstantlyError as e:
+        raise ValidationError(f"Instantly lead enrollment failed: {e.detail}")
+
+    now = datetime.utcnow()
+    results = []
+    for seq, contact in rows:
         seq.instantly_campaign_id = campaign_id
         seq.instantly_campaign_status = "active"
         seq.status = "launched"
@@ -666,18 +704,7 @@ async def launch_company_campaign(
         contact.sequence_status = "queued_instantly"
         contact.updated_at = now
         session.add(contact)
-
-    try:
-        await client.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
-        results = [
-            {"contact_id": str(contact.id), "email": contact.email, "status": "pushed"}
-            for _seq, contact in rows
-        ]
-    except InstantlyError as e:
-        results = [
-            {"contact_id": str(contact.id), "email": contact.email, "status": "failed", "error": str(e.detail)[:200]}
-            for _seq, contact in rows
-        ]
+        results.append({"contact_id": str(contact.id), "email": contact.email, "status": "pushed"})
 
     # ── Register webhooks ─────────────────────────────────────────────────────
     if settings.INSTANTLY_WEBHOOK_URL:
@@ -729,12 +756,19 @@ async def launch_contacts_campaign(
     if not contact_ids:
         raise ValidationError("contact_ids is required")
 
+    unique_contact_ids = list(dict.fromkeys(contact_ids))
+    visible_ids = await get_visible_contact_ids(session, _user, unique_contact_ids)
+    if len(visible_ids) != len(unique_contact_ids):
+        raise NotFoundError("One or more selected prospects were not found.")
+
     contacts_result = await session.execute(
-        select(Contact).where(Contact.id.in_(contact_ids))
+        select(Contact).where(Contact.id.in_(visible_ids))
     )
     contacts = list(contacts_result.scalars().all())
     if not contacts:
         raise ValidationError("No contacts found for the provided ids")
+    for contact in contacts:
+        await authorize_contact_edit(session, _user, contact)
 
     contacts_with_email = [c for c in contacts if c.email]
     if not contacts_with_email:
@@ -771,9 +805,7 @@ async def launch_contacts_campaign(
     # ── Pick the campaign template ─────────────────────────────────────────────
     template_seq: Optional[OutreachSequence] = None
     if template_sequence_id:
-        template_seq = await session.get(OutreachSequence, template_sequence_id)
-        if not template_seq:
-            raise ValidationError("template_sequence_id not found")
+        template_seq = await _get_sequence_for_user(session, _user, template_sequence_id)
     else:
         template_seq = pairs[0][0]
 
@@ -819,10 +851,9 @@ async def launch_contacts_campaign(
         import logging
         logging.getLogger(__name__).warning("Campaign activation failed (non-fatal): %s", e)
 
-    # ── Push leads + update CRM ───────────────────────────────────────────────
-    now = datetime.utcnow()
+    # ── Push leads, then update CRM only after enrollment succeeds ────────────
     lead_payloads = []
-    for seq, contact in pairs:
+    for _seq, contact in pairs:
         lead_payloads.append({
             "email": contact.email,
             "first_name": contact.first_name or "",
@@ -831,6 +862,15 @@ async def launch_contacts_campaign(
             "job_title": contact.title or "",
             "linkedin_url": contact.linkedin_url or "",
         })
+
+    try:
+        await client.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
+    except InstantlyError as e:
+        raise ValidationError(f"Instantly lead enrollment failed: {e.detail}")
+
+    now = datetime.utcnow()
+    results: list[dict] = []
+    for seq, contact in pairs:
         seq.instantly_campaign_id = campaign_id
         seq.instantly_campaign_status = "active"
         seq.status = "launched"
@@ -842,19 +882,7 @@ async def launch_contacts_campaign(
         contact.sequence_status = "queued_instantly"
         contact.updated_at = now
         session.add(contact)
-
-    results: list[dict] = []
-    try:
-        await client.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
-        results = [
-            {"contact_id": str(c.id), "email": c.email, "status": "pushed"}
-            for _seq, c in pairs
-        ]
-    except InstantlyError as e:
-        results = [
-            {"contact_id": str(c.id), "email": c.email, "status": "failed", "error": str(e.detail)[:200]}
-            for _seq, c in pairs
-        ]
+        results.append({"contact_id": str(contact.id), "email": contact.email, "status": "pushed"})
 
     if settings.INSTANTLY_WEBHOOK_URL:
         try:
@@ -885,9 +913,7 @@ async def launch_contacts_campaign(
 @router.get("/launch-status/{sequence_id}")
 async def get_launch_status(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Fetch live campaign stats from Instantly for a launched sequence."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id)
 
     if not seq.instantly_campaign_id:
         return {"status": "not_launched"}
@@ -908,9 +934,7 @@ async def get_launch_status(sequence_id: UUID, session: DBSession, _user: Curren
 @router.post("/pause/{sequence_id}")
 async def pause_sequence(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Pause an active Instantly campaign."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
     if not seq.instantly_campaign_id:
         raise ValidationError("Sequence is not linked to an Instantly campaign")
 
@@ -931,9 +955,7 @@ async def pause_sequence(sequence_id: UUID, session: DBSession, _user: CurrentUs
 @router.post("/resume/{sequence_id}")
 async def resume_sequence(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Resume a paused Instantly campaign."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
     if not seq.instantly_campaign_id:
         raise ValidationError("Sequence is not linked to an Instantly campaign")
 
@@ -956,9 +978,7 @@ async def resume_sequence(sequence_id: UUID, session: DBSession, _user: CurrentU
 @router.get("/replies/{sequence_id}")
 async def get_replies(sequence_id: UUID, session: DBSession, _user: CurrentUser):
     """Fetch reply emails from Instantly Unibox for a launched sequence."""
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id)
 
     if not seq.instantly_campaign_id:
         return {"replies": []}
@@ -993,9 +1013,7 @@ async def sync_campaign_from_instantly(
     Syncs: lead status, interest status, open/click counts, and campaign analytics.
     Creates Activity records for milestones not yet captured via webhooks.
     """
-    seq = await session.get(OutreachSequence, sequence_id)
-    if not seq:
-        raise NotFoundError("Sequence not found")
+    seq = await _get_sequence_for_user(session, _user, sequence_id, edit=True)
 
     if not seq.instantly_campaign_id:
         raise ValidationError(

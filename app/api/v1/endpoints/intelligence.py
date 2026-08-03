@@ -2,15 +2,15 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.config import settings
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError
 from app.models.activity import Activity
-from app.models.contact import Contact
 from app.models.outreach import OutreachSequence, OutreachStep
+from app.services.contact_access import get_actionable_contact
 from app.services.pre_meeting import generate_account_brief
 
 try:  # EmailStr needs the optional `email-validator` package; degrade gracefully.
@@ -24,7 +24,7 @@ router = APIRouter(tags=["intelligence"])
 class OutreachSendPayload(BaseModel):
     """Validated body for sending one outreach touch."""
 
-    email_number: int
+    email_number: int = Field(ge=1, le=3)
     to_email: EmailStr
 
 
@@ -61,7 +61,7 @@ async def send_outreach_email(
     if not seq:
         raise NotFoundError("Sequence not found")
 
-    contact = await session.get(Contact, seq.contact_id)
+    contact = await get_actionable_contact(session, current_user, seq.contact_id)
     email_number = payload.email_number
     to_email = (str(payload.to_email) or "").strip()
 
@@ -73,6 +73,11 @@ async def send_outreach_email(
                 status_code=400,
                 detail="No email address provided and contact has no email on file",
             )
+    if contact.email and to_email.casefold() != contact.email.strip().casefold():
+        raise HTTPException(
+            status_code=400,
+            detail="Recipient must match the prospect's saved email address",
+        )
 
     # Prefer OutreachStep records for the body/subject; fall back to legacy fields
     step_rows = (
@@ -111,6 +116,7 @@ async def send_outreach_email(
     # Create Activity so this email appears in timelines and analytics
     activity = Activity(
         contact_id=contact.id if contact else None,
+        created_by_id=current_user.id,
         deal_id=None,
         type="email",
         source="manual",

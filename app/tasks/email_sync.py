@@ -132,8 +132,7 @@ async def _record_zippy_tagged_email(session, msg, *, contact_id) -> bool:
             content=msg.body_text[:2000] if msg.body_text else None,
             email_message_id=msg.message_id,
             email_subject=msg.subject,
-            # Normalized so sipra@beaconli.com is credited to Sipra.
-            email_from=sender,
+            email_from=msg.from_addr,
             email_to=", ".join(msg.to_addrs),
             email_cc=", ".join(msg.cc_addrs),
             email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
@@ -527,7 +526,7 @@ async def _async_sync() -> dict:
                         ai_summary=ai_summary,
                         email_message_id=msg.message_id,
                         email_subject=msg.subject,
-                        email_from=_normalize_beacon_sender(msg.from_addr),
+                        email_from=msg.from_addr,
                         email_to=", ".join(msg.to_addrs),
                         email_cc=", ".join(msg.cc_addrs),
                         email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,

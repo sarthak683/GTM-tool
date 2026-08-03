@@ -55,6 +55,12 @@ from app.services.data_reset import (
     reset_workspace_data,
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
+from app.services.contact_access import (
+    authorize_contact_edit,
+    get_actionable_contact,
+    get_visible_contact,
+    get_visible_contact_ids,
+)
 from app.services.icp_scorer import score_company
 from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
@@ -2106,9 +2112,7 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
 
 @router.get("/contacts/{contact_id}", response_model=ContactRead)
 async def get_company_contact(contact_id: UUID, _user: CurrentUser, session: DBSession = None):
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = await get_visible_contact(session, _user, contact_id)
     company_name = None
     if contact.company_id:
         company = await session.get(Company, contact.company_id)
@@ -2119,9 +2123,7 @@ async def get_company_contact(contact_id: UUID, _user: CurrentUser, session: DBS
 
 @router.put("/contacts/{contact_id}", response_model=ContactRead)
 async def update_company_contact(contact_id: UUID, payload: ContactUpdate, _user: CurrentUser, session: DBSession = None):
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = await get_actionable_contact(session, _user, contact_id)
 
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -2185,9 +2187,7 @@ async def add_company_note(company_id: UUID, payload: NoteCreate, session: DBSes
 @router.post("/contacts/{contact_id}/notes")
 async def add_contact_note(contact_id: UUID, payload: NoteCreate, session: DBSession, current_user: CurrentUser):
     """Append a manual note to a contact stored in the enrichment_data JSON field."""
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = await get_actionable_contact(session, current_user, contact_id)
     body = (payload.body or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="Note body cannot be empty")
@@ -2217,9 +2217,7 @@ async def add_contact_note(contact_id: UUID, payload: NoteCreate, session: DBSes
 @router.post("/contacts/{contact_id}/re-enrich")
 async def re_enrich_contact(contact_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Re-enrich a single contact via Apollo + AI persona classification."""
-    contact = await session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    await get_actionable_contact(session, _user, contact_id)
     try:
         from app.tasks.enrichment import re_enrich_contact_task
 
@@ -2245,7 +2243,7 @@ async def push_to_instantly(
 ):
     """Push company contacts to an Instantly email campaign."""
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
 
     # Get contacts with emails
@@ -2254,6 +2252,12 @@ async def push_to_instantly(
         .where(Contact.company_id == company_id, Contact.email.isnot(None))
     )
     contacts = result.scalars().all()
+    visible_ids = set(
+        await get_visible_contact_ids(session, _user, [contact.id for contact in contacts])
+    )
+    contacts = [contact for contact in contacts if contact.id in visible_ids]
+    for contact in contacts:
+        await authorize_contact_edit(session, _user, contact)
 
     if not contacts:
         raise HTTPException(status_code=400, detail="No contacts with emails found for this company")
@@ -2273,7 +2277,6 @@ async def push_to_instantly(
         except Exception:
             pass  # non-fatal
 
-    results = []
     lead_payloads = []
     for contact in contacts:
         lead_payloads.append({
@@ -2284,17 +2287,19 @@ async def push_to_instantly(
             "job_title": contact.title or "",
             "linkedin_url": contact.linkedin_url or "",
         })
+
+    # Bulk add leads to Instantly (up to 1000 per call)
+    try:
+        await instantly.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="Failed to enroll contacts in Instantly") from e
+
+    results = [{"status": "pushed"} for _ in lead_payloads]
+    for contact in contacts:
         contact.instantly_status = "pushed"
         contact.sequence_status = "queued_instantly"
         contact.instantly_campaign_id = campaign_id
         session.add(contact)
-
-    # Bulk add leads to Instantly (up to 1000 per call)
-    try:
-        r = await instantly.add_leads_bulk(campaign_id=campaign_id, leads=lead_payloads)
-        results = [{"status": "pushed"} for _ in lead_payloads]
-    except Exception as e:
-        results = [{"status": "error", "error": str(e)} for _ in lead_payloads]
 
     company.instantly_campaign_id = campaign_id
     session.add(company)

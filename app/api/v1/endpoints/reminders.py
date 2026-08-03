@@ -4,8 +4,9 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import SQLModel
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
@@ -14,6 +15,7 @@ from app.models.contact import Contact
 from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
 from app.models.user import User
 from app.repositories.contact import contact_visibility_filter
+from app.services.contact_access import get_actionable_contact, get_visible_contact
 from app.services.permissions import can_view_all_prospects
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
@@ -55,23 +57,17 @@ async def list_reminders(
 ):
     """List reminders with optional filters.
 
-    Each reminder hydrates the linked contact's name, so a non-admin must only
-    see reminders that are theirs (assigned to them, no contact, or about a
-    contact they may view) — otherwise the list leaked every rep's prospect names.
+    Each reminder hydrates the linked contact's name, so non-admins only see
+    reminders for prospects in their current Prospecting scope.
     """
     stmt = select(Reminder)
     if not await can_view_all_prospects(session, current_user):
         visible_contact_ids = select(Contact.id).where(
             contact_visibility_filter(current_user.id, current_user.role)
         )
-        stmt = stmt.where(
-            or_(
-                Reminder.assigned_to_id == current_user.id,
-                Reminder.contact_id.is_(None),
-                Reminder.contact_id.in_(visible_contact_ids),
-            )
-        )
+        stmt = stmt.where(Reminder.contact_id.in_(visible_contact_ids))
     if contact_id:
+        await get_visible_contact(session, current_user, contact_id)
         stmt = stmt.where(Reminder.contact_id == contact_id)
     if company_id:
         stmt = stmt.where(Reminder.company_id == company_id)
@@ -86,14 +82,13 @@ async def list_reminders(
 
 @router.post("/", response_model=ReminderRead, status_code=201)
 async def create_reminder(payload: ReminderCreate, session: DBSession, _user: CurrentUser):
-    contact = await session.get(Contact, payload.contact_id)
-    if not contact:
-        raise NotFoundError(f"Contact {payload.contact_id} not found")
+    contact = await get_actionable_contact(session, _user, payload.contact_id)
 
     reminder = Reminder(
         contact_id=payload.contact_id,
-        company_id=payload.company_id or contact.company_id,
-        assigned_to_id=payload.assigned_to_id,
+        company_id=contact.company_id,
+        created_by_id=_user.id,
+        assigned_to_id=payload.assigned_to_id if _user.role == "admin" else _user.id,
         note=payload.note,
         due_at=_normalize_utc_naive(payload.due_at),
     )
@@ -103,10 +98,63 @@ async def create_reminder(payload: ReminderCreate, session: DBSession, _user: Cu
     return await _to_read(session, reminder)
 
 
+class BulkReminderCreate(SQLModel):
+    contact_ids: list[UUID]
+    note: str
+    due_at: datetime
+
+
+@router.post("/bulk")
+async def create_bulk_reminders(
+    payload: BulkReminderCreate,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    """Set contact follow-up timestamps and reminders in one transaction."""
+    contact_ids = list(dict.fromkeys(payload.contact_ids))
+    if not contact_ids:
+        raise ValidationError("Select at least one prospect.")
+    if len(contact_ids) > 2000:
+        raise ValidationError("Too many prospects in one request (max 2000).")
+    note = payload.note.strip()
+    if not note:
+        raise ValidationError("Reminder note is required.")
+    due_at = _normalize_utc_naive(payload.due_at)
+    if due_at is None:
+        raise ValidationError("Reminder due date is required.")
+
+    contacts = []
+    for contact_id in contact_ids:
+        contacts.append(await get_actionable_contact(session, current_user, contact_id))
+
+    for contact in contacts:
+        contact.next_followup_at = due_at
+        contact.updated_at = datetime.utcnow()
+        session.add(contact)
+        session.add(
+            Reminder(
+                contact_id=contact.id,
+                company_id=contact.company_id,
+                created_by_id=current_user.id,
+                assigned_to_id=current_user.id,
+                note=note,
+                due_at=due_at,
+            )
+        )
+    await session.commit()
+    return {"created": len(contacts), "requested": len(contact_ids)}
+
+
 @router.patch("/{reminder_id}", response_model=ReminderRead)
 async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: DBSession, _user: CurrentUser):
     reminder = await session.get(Reminder, reminder_id)
     if not reminder:
+        raise NotFoundError(f"Reminder {reminder_id} not found")
+    await get_visible_contact(session, _user, reminder.contact_id)
+    if _user.role != "admin" and _user.id not in {
+        reminder.created_by_id,
+        reminder.assigned_to_id,
+    }:
         raise NotFoundError(f"Reminder {reminder_id} not found")
 
     data = payload.model_dump(exclude_unset=True)
@@ -133,6 +181,12 @@ async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: D
 async def delete_reminder(reminder_id: UUID, session: DBSession, _user: CurrentUser):
     reminder = await session.get(Reminder, reminder_id)
     if not reminder:
+        raise NotFoundError(f"Reminder {reminder_id} not found")
+    await get_visible_contact(session, _user, reminder.contact_id)
+    if _user.role != "admin" and _user.id not in {
+        reminder.created_by_id,
+        reminder.assigned_to_id,
+    }:
         raise NotFoundError(f"Reminder {reminder_id} not found")
     await session.delete(reminder)
     await session.commit()

@@ -6,20 +6,19 @@ an IANA timezone string like "Europe/London" or None when we can't make a
 confident call.
 
 Strategy, in priority order:
-  1. Phone country code (most reliable — it's literally "where this person
-     picks up the phone"):
+  1. Explicit prospect location from the source data.
+  2. Phone country code:
        +44 → Europe/London
        +91 → Asia/Kolkata
        +61 → Australia/Sydney
        ... full map below
-  2. NANP phone (+1) area code lookup — splits US/Canada into the 4 US
+  3. NANP phone (+1) area code lookup — splits US/Canada into the 4 US
      mainland zones plus Hawaii, Alaska, Atlantic, and Eastern Canadian
      zones. Area-code range source: NANPA, 2025 snapshot.
-  3. Company headquarters / region string, when phone is missing or the
-     country is one of the ambiguous multi-zone ones (US / CA / RU / AU /
-     BR) and the phone didn't disambiguate.
-  4. Country-level default — pick the biggest-city zone. Defensible for
-     99% of reps ("they're calling Russia, assume Moscow").
+  4. Company headquarters / region string when no prospect-level signal is
+     available.
+  5. Country-level phone defaults for ambiguous multi-zone ranges when the
+     number cannot be narrowed further.
 
 Returns None if we have nothing usable. Callers should treat None as
 "leave the column null; the rep will fill it manually if needed".
@@ -28,6 +27,9 @@ from __future__ import annotations
 
 import re
 from typing import Optional
+
+import phonenumbers
+from phonenumbers import timezone as phone_timezone
 
 
 # ── Country code → IANA zone (single-zone countries) ────────────────────
@@ -53,6 +55,16 @@ _COUNTRY_CODE_TO_ZONE: dict[str, str] = {
     "+353": "Europe/Dublin",
     "+358": "Europe/Helsinki",
     "+420": "Europe/Prague",
+    "+40":  "Europe/Bucharest",
+    "+359": "Europe/Sofia",
+    "+36":  "Europe/Budapest",
+    "+354": "Atlantic/Reykjavik",
+    "+370": "Europe/Vilnius",
+    "+371": "Europe/Riga",
+    "+381": "Europe/Belgrade",
+    "+385": "Europe/Zagreb",
+    "+386": "Europe/Ljubljana",
+    "+216": "Africa/Tunis",
     "+30":  "Europe/Athens",
     "+90":  "Europe/Istanbul",
     # Middle East
@@ -68,6 +80,11 @@ _COUNTRY_CODE_TO_ZONE: dict[str, str] = {
     "+65":  "Asia/Singapore",
     "+66":  "Asia/Bangkok",
     "+84":  "Asia/Ho_Chi_Minh",
+    "+60":  "Asia/Kuala_Lumpur",
+    "+94":  "Asia/Colombo",
+    "+961": "Asia/Beirut",
+    "+968": "Asia/Muscat",
+    "+98":  "Asia/Tehran",
     # East Asia
     "+81":  "Asia/Tokyo",
     "+82":  "Asia/Seoul",
@@ -87,10 +104,20 @@ _COUNTRY_CODE_TO_ZONE: dict[str, str] = {
     "+57":  "America/Bogota",
     "+58":  "America/Caracas",
     "+598": "America/Montevideo",
+    "+505": "America/Managua",
+    "+506": "America/Costa_Rica",
+    "+503": "America/El_Salvador",
+    "+230": "Indian/Mauritius",
 }
 
 # Countries we don't pick a default for without a region clue.
 _MULTI_ZONE_COUNTRIES = {"+1", "+7", "+55", "+61"}
+
+_PREFERRED_IANA_ZONE = {
+    # libphonenumber still emits this backward-compatible alias. Keep stored
+    # data consistent with the rest of the CRM and the frontend filter map.
+    "Asia/Calcutta": "Asia/Kolkata",
+}
 
 # ── NANP (+1) area code → US/Canada zone ────────────────────────────────
 # Comprehensive enough to cover the top 95% of US/Canada area codes. When
@@ -187,12 +214,65 @@ _HQ_KEYWORD_TO_ZONE: tuple[tuple[str, str], ...] = (
     ("nashville",     "America/Chicago"),
     ("new york",      "America/New_York"),
     ("boston",        "America/New_York"),
-    ("washington",    "America/New_York"),
+    ("washington, dc","America/New_York"),
+    ("washington dc", "America/New_York"),
+    ("district of columbia", "America/New_York"),
     ("atlanta",       "America/New_York"),
     ("miami",         "America/New_York"),
     ("philadelphia",  "America/New_York"),
     ("pittsburgh",    "America/New_York"),
     ("orlando",       "America/New_York"),
+    # US states. City matches above win for states split across zones.
+    ("california",    "America/Los_Angeles"),
+    ("washington state", "America/Los_Angeles"),
+    ("washington",     "America/Los_Angeles"),
+    ("oregon",        "America/Los_Angeles"),
+    ("nevada",        "America/Los_Angeles"),
+    ("colorado",      "America/Denver"),
+    ("utah",          "America/Denver"),
+    ("new mexico",    "America/Denver"),
+    ("montana",       "America/Denver"),
+    ("wyoming",       "America/Denver"),
+    ("idaho",         "America/Denver"),
+    ("arizona",       "America/Phoenix"),
+    ("texas",         "America/Chicago"),
+    ("illinois",      "America/Chicago"),
+    ("wisconsin",     "America/Chicago"),
+    ("minnesota",     "America/Chicago"),
+    ("iowa",          "America/Chicago"),
+    ("missouri",      "America/Chicago"),
+    ("kansas",        "America/Chicago"),
+    ("nebraska",      "America/Chicago"),
+    ("oklahoma",      "America/Chicago"),
+    ("arkansas",      "America/Chicago"),
+    ("louisiana",     "America/Chicago"),
+    ("mississippi",   "America/Chicago"),
+    ("alabama",       "America/Chicago"),
+    ("tennessee",     "America/Chicago"),
+    ("north dakota",  "America/Chicago"),
+    ("south dakota",  "America/Chicago"),
+    ("maine",         "America/New_York"),
+    ("new hampshire", "America/New_York"),
+    ("vermont",       "America/New_York"),
+    ("massachusetts", "America/New_York"),
+    ("rhode island",  "America/New_York"),
+    ("connecticut",   "America/New_York"),
+    ("new jersey",    "America/New_York"),
+    ("pennsylvania",  "America/New_York"),
+    ("delaware",      "America/New_York"),
+    ("maryland",      "America/New_York"),
+    ("west virginia", "America/New_York"),
+    ("virginia",      "America/New_York"),
+    ("north carolina","America/New_York"),
+    ("south carolina","America/New_York"),
+    ("georgia",       "America/New_York"),
+    ("florida",       "America/New_York"),
+    ("ohio",          "America/New_York"),
+    ("michigan",      "America/New_York"),
+    ("indiana",       "America/New_York"),
+    ("kentucky",      "America/New_York"),
+    ("alaska",        "America/Anchorage"),
+    ("hawaii",        "Pacific/Honolulu"),
     # Canada
     ("toronto",       "America/Toronto"),
     ("vancouver",     "America/Vancouver"),
@@ -262,6 +342,41 @@ _HQ_KEYWORD_TO_ZONE: tuple[tuple[str, str], ...] = (
     (" usa ",         "America/New_York"),
 )
 
+_LOCATION_COUNTRY_TO_ZONE: tuple[tuple[str, str], ...] = (
+    ("united states", "America/New_York"),
+    ("usa", "America/New_York"),
+    ("united kingdom", "Europe/London"),
+    ("uk", "Europe/London"),
+    ("france", "Europe/Paris"),
+    ("israel", "Asia/Jerusalem"),
+    ("australia", "Australia/Sydney"),
+    ("india", "Asia/Kolkata"),
+    ("canada", "America/Toronto"),
+    ("germany", "Europe/Berlin"),
+)
+
+_US_STATE_CODE_TO_ZONE: dict[str, str] = {
+    **{code: "America/Los_Angeles" for code in ("CA", "NV", "OR", "WA")},
+    **{code: "America/Denver" for code in ("CO", "ID", "MT", "NM", "UT", "WY")},
+    "AZ": "America/Phoenix",
+    **{
+        code: "America/Chicago"
+        for code in (
+            "AL", "AR", "IA", "IL", "KS", "LA", "MN", "MO", "MS", "ND",
+            "NE", "OK", "SD", "TN", "TX", "WI",
+        )
+    },
+    **{
+        code: "America/New_York"
+        for code in (
+            "CT", "DE", "FL", "GA", "IN", "KY", "MA", "MD", "ME", "MI",
+            "NC", "NH", "NJ", "NY", "OH", "PA", "RI", "SC", "VA", "VT", "WV",
+        )
+    },
+    "AK": "America/Anchorage",
+    "HI": "Pacific/Honolulu",
+}
+
 
 def _normalize_phone(phone: Optional[str]) -> str:
     if not phone:
@@ -307,9 +422,75 @@ def _infer_from_region_text(text: str) -> Optional[str]:
     return None
 
 
+def infer_timezone_from_phone(phone: Optional[str]) -> Optional[str]:
+    """Return the strongest phone-derived IANA timezone, if available.
+
+    libphonenumber handles NANP area codes and country metadata more reliably
+    than a hand-maintained table. Mobile ranges can legitimately map to
+    several zones (for example UK Crown dependencies or all of Australia), so
+    those fall back to the conservative country defaults below.
+    """
+    digits = _normalize_phone(phone)
+    if not digits.startswith("+"):
+        return None
+
+    # Store the country's own canonical zone for single-zone calling codes.
+    # libphonenumber sometimes returns an offset-equivalent representative
+    # locality (for example America/Chicago for Nicaragua), which is useful
+    # for call timing but misleading in prospect data and filters.
+    code = _match_country_code(digits)
+    if code and code not in _MULTI_ZONE_COUNTRIES:
+        return _COUNTRY_CODE_TO_ZONE[code]
+
+    try:
+        parsed = phonenumbers.parse(digits, None)
+        if phonenumbers.is_possible_number(parsed):
+            zones = tuple(
+                _PREFERRED_IANA_ZONE.get(zone, zone)
+                for zone in phone_timezone.time_zones_for_number(parsed)
+                if zone and zone != "Etc/Unknown"
+            )
+            if len(zones) == 1:
+                return zones[0]
+    except phonenumbers.NumberParseException:
+        pass
+
+    if code == "+1":
+        return _infer_from_nanp(digits)
+    if code == "+61":
+        return "Australia/Sydney"
+    if code == "+55":
+        return "America/Sao_Paulo"
+    if code == "+7":
+        return "Europe/Moscow"
+    return None
+
+
+def infer_timezone_from_location(location: Optional[str]) -> Optional[str]:
+    """Return a zone from an explicit prospect location string."""
+    if not location:
+        return None
+
+    normalized = f" {re.sub(r'[^a-z0-9]+', ' ', location.lower()).strip()} "
+    country_zones = {
+        zone
+        for country, zone in _LOCATION_COUNTRY_TO_ZONE
+        if f" {country} " in normalized
+    }
+    if len(country_zones) > 1:
+        return None
+
+    comma_parts = [part.strip().upper() for part in location.split(",")]
+    for part in comma_parts:
+        if part in _US_STATE_CODE_TO_ZONE:
+            return _US_STATE_CODE_TO_ZONE[part]
+    return _infer_from_region_text(location)
+
+
 def infer_timezone(
     *,
     phone: Optional[str],
+    contact_location: Optional[str] = None,
     company_hq: Optional[str] = None,
     company_region: Optional[str] = None,
     company_name: Optional[str] = None,
@@ -317,36 +498,27 @@ def infer_timezone(
     """Return an IANA timezone string, or None if we can't make a call.
 
     Priority:
-      1. Phone country code (single-zone countries) → direct lookup
-      2. +1 phone → NANP area code → US/Canada zone
-      3. Ambiguous multi-zone country with region text → region lookup
-      4. No phone but region text available → region lookup
+      1. Explicit prospect location
+      2. Phone metadata → exact area/country timezone when available
+      3. Ambiguous mobile ranges → conservative country default
+      4. No usable phone → company region text fallback
       5. None (caller should leave the DB column null)
     """
-    digits = _normalize_phone(phone)
+    location_zone = infer_timezone_from_location(contact_location)
+    if location_zone:
+        return location_zone
 
-    # ── 1 & 2: phone-based ────────────────────────────────────────────
-    code = _match_country_code(digits)
-    if code and code not in _MULTI_ZONE_COUNTRIES:
-        return _COUNTRY_CODE_TO_ZONE[code]
-    if code == "+1":
-        return _infer_from_nanp(digits)
-    # Multi-zone like +7 (Russia), +55 (Brazil), +61 (Australia): try region
-    # fallback before giving up.
+    # Phone country/area code is per-prospect evidence. It must win over a
+    # global company's headquarters; that fallback previously mislabeled
+    # Australian and European employees as US prospects.
+    phone_zone = infer_timezone_from_phone(phone)
+    if phone_zone:
+        return phone_zone
 
-    # ── 3 & 4: region/HQ-based ────────────────────────────────────────
+    # Company fallback when no per-prospect evidence is available.
     for text in (company_hq, company_region, company_name):
         zone = _infer_from_region_text(text or "")
         if zone:
             return zone
-
-    # Country-code-but-multi-zone without a region clue: pick the primary
-    # city so we give the rep *something* rather than None.
-    if code == "+61":
-        return "Australia/Sydney"
-    if code == "+55":
-        return "America/Sao_Paulo"
-    if code == "+7":
-        return "Europe/Moscow"
 
     return None
