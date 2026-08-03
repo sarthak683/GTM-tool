@@ -3122,9 +3122,11 @@ async def sales_dashboard(
     if rep_user_ids:
         direct_sql_rows = (await session.execute(
             select(Deal.id, Deal.assigned_to_id, Deal.sdr_id)
+            .join(Meeting, Meeting.deal_id == Deal.id)
             .where(
                 Deal.stage == "demo_scheduled",
                 Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
+                Meeting.scheduled_at.is_not(None),
                 or_(
                     Deal.assigned_to_id.in_(list(rep_user_ids)),
                     Deal.sdr_id.in_(list(rep_user_ids)),

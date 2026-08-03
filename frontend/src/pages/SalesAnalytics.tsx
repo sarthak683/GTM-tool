@@ -1612,15 +1612,11 @@ function RepWeeklyActivityFocus({
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
-      const outputMeetings = (r: typeof a) =>
-        (r.totals.meetings_next_1w ?? 0) + (r.totals.meetings_next_2w ?? 0) + (r.totals.meetings_beyond_2w ?? 0);
-      const meetingsDelta = outputMeetings(b) - outputMeetings(a);
-      if (meetingsDelta !== 0) return meetingsDelta;
-      const aTotal = a.totals.total ?? 0;
-      const bTotal = b.totals.total ?? 0;
-      const aRatio = aTotal > 0 ? outputMeetings(a) / aTotal : 0;
-      const bRatio = bTotal > 0 ? outputMeetings(b) / bTotal : 0;
-      return bRatio - aRatio;
+      const demosDelta = (b.totals.demos_scheduled ?? 0) - (a.totals.demos_scheduled ?? 0);
+      if (demosDelta !== 0) return demosDelta;
+      const aInput = (a.totals.manual_emails ?? 0) + (a.totals.instantly_emails ?? 0) + (a.totals.calls ?? 0) + (a.totals.linkedin_reachouts ?? 0);
+      const bInput = (b.totals.manual_emails ?? 0) + (b.totals.instantly_emails ?? 0) + (b.totals.calls ?? 0) + (b.totals.linkedin_reachouts ?? 0);
+      return aInput - bInput;
     }),
     [rows],
   );
@@ -1755,7 +1751,7 @@ function RepWeeklyActivityFocus({
             <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Rep</p>
-                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by meetings scheduled (output). Ties broken by output-to-input ratio.</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by demos scheduled. Ties broken by fewest input touches.</p>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {sortedRows.map((row) => {
