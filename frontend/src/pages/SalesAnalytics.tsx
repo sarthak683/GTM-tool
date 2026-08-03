@@ -54,6 +54,7 @@ import {
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type MeetingBucketDeal,
+  type MeetingBookedFromDealItem,
   type PipelineDealRow,
   type SalesRepActivityRow,
   type SalesRepWeeklyActivityRow,
@@ -729,6 +730,137 @@ function MeetingBucketModal({
   );
 }
 
+function MeetingBookedFromModal({
+  title,
+  channel,
+  deals,
+  loading,
+  error,
+  onClose,
+}: {
+  title: string;
+  channel: "Email" | "LinkedIn" | "Call";
+  deals: MeetingBookedFromDealItem[];
+  loading: boolean;
+  error: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const accentColor = channel === "LinkedIn" ? "#0a66c2" : channel === "Call" ? "#445fd0" : "#2f8d5d";
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 125,
+        background: "rgba(15, 26, 42, 0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: "min(780px, 100%)", maxHeight: "86vh",
+          background: "#fff", borderRadius: 18, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 40px 80px rgba(10, 22, 40, 0.25)",
+        }}
+      >
+        <div style={{
+          padding: "18px 22px", borderBottom: "1px solid #ebeff5",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: accentColor, textTransform: "uppercase" }}>Meetings Booked - {channel}</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>{title}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              width: 36, height: 36, borderRadius: 10, background: "#f4f6fa",
+              border: "1px solid #e0e6ef", color: "#5d6f84", cursor: "pointer",
+              display: "grid", placeItems: "center",
+            }}
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div style={{ padding: "12px 22px", borderBottom: "1px solid #ebeff5", background: "#fafbfd", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: error ? "#b45454" : "#203244" }}>
+            {loading ? "Loading..." : error || `${deals.length} deal${deals.length === 1 ? "" : "s"}`}
+          </span>
+          {!loading && !error && deals.length > 0 && (
+            <button
+              type="button"
+              onClick={() => downloadCsv(
+                `meetings-booked-from-${channel.toLowerCase()}`,
+                ["Deal", "AE", "SDR", "Meeting Booked With", "Meeting Booked From"],
+                deals.map((deal) => [deal.deal_name, deal.ae_name ?? "", deal.sdr_name ?? "", deal.meeting_booked_with ?? "", deal.meeting_booked_from ?? ""]),
+              )}
+              style={exportBtnStyle}
+            >
+              <Download size={13} /> Export CSV
+            </button>
+          )}
+        </div>
+        <div style={{ overflow: "auto", flex: 1 }}>
+          {loading ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095" }}>
+              <LoaderCircle size={20} className="spin" />
+              <span style={{ fontSize: 12 }}>Loading deals...</span>
+            </div>
+          ) : error ? (
+            <div style={{ display: "grid", placeItems: "center", minHeight: 180, color: "#b45454", padding: 24, textAlign: "center" }}>
+              <strong>Could not load meeting details.</strong>
+            </div>
+          ) : deals.length === 0 ? (
+            <div style={{ display: "grid", placeItems: "center", gap: 8, minHeight: 180, color: "#6f8095", padding: 24, textAlign: "center" }}>
+              <strong style={{ color: "#203244" }}>No deals found.</strong>
+              <span>No meetings booked from {channel} for the selected rep and window.</span>
+            </div>
+          ) : (
+            <table style={{ width: "100%", minWidth: 620, borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                  <th style={thSty}>Deal Name</th>
+                  <th style={thSty}>AE</th>
+                  <th style={thSty}>SDR</th>
+                  <th style={thSty}>Meeting Booked With</th>
+                  <th style={thSty}>Meeting Booked From</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deals.map((deal) => (
+                  <tr key={deal.deal_id} style={{ borderBottom: "1px solid #f0f3f8" }}>
+                    <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.deal_name || "-"}</span></td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.ae_name || "-"}</td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.sdr_name || "-"}</td>
+                    <td style={{ ...tdSty, color: "#7c3aed", fontWeight: 700 }}>{deal.meeting_booked_with || "-"}</td>
+                    <td style={{ ...tdSty, color: accentColor, fontWeight: 600 }}>{deal.meeting_booked_from || channel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Rows fetched per drilldown page. The backend caps limit at 100; 50 keeps each
 // "Load more" request light while paging through large sets (e.g. 400 emails).
 const DRILLDOWN_PAGE_SIZE = 50;
@@ -1332,25 +1464,9 @@ function StatPill({
   // Rate pills pass a string like "45%": display-only, always full opacity.
   const isRate = typeof value === "string";
   const numericValue = isRate ? 1 : Number(value || 0);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick || numericValue <= 0}
-      title={isRate ? label : numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        alignItems: "center",
-        padding: "10px 8px",
-        borderRadius: 12,
-        background: tone,
-        border: "1px solid transparent",
-        cursor: onClick && numericValue > 0 ? "pointer" : "default",
-        opacity: numericValue > 0 ? 1 : 0.72,
-      }}
-    >
+  const isClickable = Boolean(onClick && numericValue > 0);
+  const content = (
+    <>
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: 0, textAlign: "center", lineHeight: 1.2 }}>{label}</span>
       {sub ? (
@@ -1370,6 +1486,32 @@ function StatPill({
           {sub}
         </span>
       ) : null}
+    </>
+  );
+  const style = {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 4,
+    alignItems: "center",
+    padding: "10px 8px",
+    borderRadius: 12,
+    background: tone,
+    border: "1px solid transparent",
+    cursor: isClickable ? "pointer" : "default",
+    opacity: numericValue > 0 ? 1 : 0.72,
+  };
+
+  if (!onClick) return <div style={style}>{content}</div>;
+
+  return (
+    <button
+      type="button"
+      onClick={isClickable ? onClick : undefined}
+      disabled={!isClickable}
+      title={isRate ? label : numericValue > 0 ? `View ${label.toLowerCase()} source rows` : `No ${label.toLowerCase()} in this window`}
+      style={style}
+    >
+      {content}
     </button>
   );
 }
@@ -1461,10 +1603,12 @@ function RepWeeklyActivityFocus({
   rows,
   onOpenBucket,
   onOpenPipeline,
+  onOpenMeetingBookedFrom,
 }: {
   rows: SalesRepWeeklyActivityRow[];
   onOpenBucket?: (bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled", title: string, userId: string | null | undefined) => void;
   onOpenPipeline?: (userId: string | null | undefined, repName: string) => void;
+  onOpenMeetingBookedFrom?: (channel: "Email" | "LinkedIn" | "Call", userId: string | null | undefined) => void;
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
@@ -1514,6 +1658,27 @@ function RepWeeklyActivityFocus({
   const liAcceptedRate = liTotal > 0 ? Math.round((liAccepted / liTotal) * 100) : 0;
   const liMeetingBookedRate = liTotal > 0 ? Math.round((liMeetingBooked / liTotal) * 100) : 0;
   const callMeetingBooked = selectedRow.totals.call_meeting_booked ?? 0;
+  const emailMeetingBooked = selectedRow.totals.email_meeting_booked ?? 0;
+
+  const meetingBookedButton = (channel: "Email" | "LinkedIn" | "Call", count: number, color: string) => (
+    <button
+      type="button"
+      onClick={() => onOpenMeetingBookedFrom?.(channel, selectedRow.user_id)}
+      disabled={!onOpenMeetingBookedFrom}
+      style={{
+        padding: 0,
+        border: 0,
+        background: "transparent",
+        color,
+        font: "inherit",
+        fontWeight: 800,
+        textDecoration: "underline",
+        cursor: onOpenMeetingBookedFrom ? "pointer" : "default",
+      }}
+    >
+      {count} meeting{count === 1 ? "" : "s"} booked
+    </button>
+  );
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -1554,6 +1719,7 @@ function RepWeeklyActivityFocus({
                   <>
                     <span>{emailReplyRate}% reply</span>
                     <span>{emailOpenRate}% open</span>
+                    {meetingBookedButton("Email", emailMeetingBooked, "#2f8d5d")}
                   </>
                 }
               />
@@ -1565,7 +1731,7 @@ function RepWeeklyActivityFocus({
                 sub={
                   <>
                     <span>{callConnectionRate}% connected</span>
-                    <span>{callMeetingBooked} meeting{callMeetingBooked !== 1 ? "s" : ""} booked</span>
+                    {meetingBookedButton("Call", callMeetingBooked, "#445fd0")}
                   </>
                 }
               />
@@ -1577,7 +1743,8 @@ function RepWeeklyActivityFocus({
                 sub={
                   <>
                     <span>{liAcceptedRate}% accepted</span>
-                    <span>{liMeetingBookedRate}% meeting booked</span>
+                    <span>{liMeetingBookedRate}% conversion</span>
+                    {meetingBookedButton("LinkedIn", liMeetingBooked, "#0a66c2")}
                   </>
                 }
               />
@@ -2281,6 +2448,10 @@ export default function SalesAnalytics() {
   const [pipelineDealModal, setPipelineDealModal] = useState<{ userId: string | null | undefined; repName: string } | null>(null);
   const [pipelineDealDeals, setPipelineDealDeals] = useState<PipelineDealRow[]>([]);
   const [pipelineDealLoading, setPipelineDealLoading] = useState(false);
+  const [meetingBookedFromModal, setMeetingBookedFromModal] = useState<{ channel: "Email" | "LinkedIn" | "Call"; title: string; userId: string | null | undefined } | null>(null);
+  const [meetingBookedFromDeals, setMeetingBookedFromDeals] = useState<MeetingBookedFromDealItem[]>([]);
+  const [meetingBookedFromLoading, setMeetingBookedFromLoading] = useState(false);
+  const [meetingBookedFromError, setMeetingBookedFromError] = useState("");
 
   // When a custom date range is set, window buttons are ignored
   const usingCustomRange = !!(fromDate && toDate);
@@ -2433,6 +2604,21 @@ export default function SalesAnalytics() {
       .then((r) => setMeetingBucketDeals(r.deals))
       .catch(() => setMeetingBucketDeals([]))
       .finally(() => setMeetingBucketLoading(false));
+  };
+
+  const handleOpenMeetingBookedFrom = (
+    channel: "Email" | "LinkedIn" | "Call",
+    userId: string | null | undefined,
+  ) => {
+    setMeetingBookedFromModal({ channel, title: `${channel} Meetings Booked`, userId });
+    setMeetingBookedFromDeals([]);
+    setMeetingBookedFromError("");
+    setMeetingBookedFromLoading(true);
+    analyticsApi
+      .meetingBookedFromDeals(channel, userId, windowDays)
+      .then(setMeetingBookedFromDeals)
+      .catch((requestError: Error) => setMeetingBookedFromError(requestError.message || "Failed to load meeting details"))
+      .finally(() => setMeetingBookedFromLoading(false));
   };
 
   // Fetch the next page and append, so reps can page through all rows (e.g. all
@@ -2974,7 +3160,12 @@ export default function SalesAnalytics() {
             title="Rep Activity"
             subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
           >
-            <RepWeeklyActivityFocus rows={visibleRepWeeklyActivity} onOpenBucket={handleOpenMeetingBucket} onOpenPipeline={handleOpenPipelineDeals} />
+            <RepWeeklyActivityFocus
+              rows={visibleRepWeeklyActivity}
+              onOpenBucket={handleOpenMeetingBucket}
+              onOpenPipeline={handleOpenPipelineDeals}
+              onOpenMeetingBookedFrom={handleOpenMeetingBookedFrom}
+            />
           </SectionCard>
 
           {SHOW_DEAL_VELOCITY && <SectionCard
@@ -3125,6 +3316,16 @@ export default function SalesAnalytics() {
           deals={pipelineDealDeals}
           loading={pipelineDealLoading}
           onClose={() => setPipelineDealModal(null)}
+        />
+      )}
+      {meetingBookedFromModal && (
+        <MeetingBookedFromModal
+          title={meetingBookedFromModal.title}
+          channel={meetingBookedFromModal.channel}
+          deals={meetingBookedFromDeals}
+          loading={meetingBookedFromLoading}
+          error={meetingBookedFromError}
+          onClose={() => setMeetingBookedFromModal(null)}
         />
       )}
     </div>

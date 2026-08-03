@@ -1429,6 +1429,19 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <option value="IC">IC</option>
               </select>
             </FieldRow>
+            {/* Meeting Booked From */}
+            <FieldRow label="Meeting Booked From" icon={<Send size={13} />}>
+              <select
+                value={deal.meeting_booked_from ?? ""}
+                onChange={(e) => patchDeal({ meeting_booked_from: e.target.value || null } as Partial<Deal>)}
+                style={{ ...fieldInputStyle }}
+              >
+                <option value="">Select channel</option>
+                <option value="Email">Email</option>
+                <option value="Call">Call</option>
+                <option value="LinkedIn">LinkedIn</option>
+              </select>
+            </FieldRow>
           </div>
           </div>
 
