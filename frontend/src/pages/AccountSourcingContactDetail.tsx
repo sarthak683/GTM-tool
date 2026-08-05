@@ -7,7 +7,7 @@ import {
   Building2,
   CheckCircle2,
   ExternalLink,
-  Globe,
+  Linkedin,
   Loader2,
   Mail,
   PenLine,
@@ -81,6 +81,9 @@ export default function AccountSourcingContactDetail() {
   const [editingPhone, setEditingPhone] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneSaving, setPhoneSaving] = useState(false);
+  const [editingLinkedIn, setEditingLinkedIn] = useState(false);
+  const [linkedInInput, setLinkedInInput] = useState("");
+  const [linkedInSaving, setLinkedInSaving] = useState(false);
   const [editingPhones, setEditingPhones] = useState(false);
   const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
   const [phonesSaving, setPhonesSaving] = useState(false);
@@ -281,6 +284,42 @@ export default function AccountSourcingContactDetail() {
     } finally {
       setPhoneSaving(false);
     }
+  };
+
+  const handleSaveLinkedIn = async () => {
+    if (!contact) return;
+    const raw = linkedInInput.trim();
+    let normalized: string | null = null;
+
+    if (raw) {
+      const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      try {
+        const url = new URL(candidate);
+        const hostname = url.hostname.toLowerCase();
+        if (!(["http:", "https:"].includes(url.protocol)) || (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))) {
+          window.alert("Enter a valid LinkedIn URL.");
+          return;
+        }
+        normalized = url.toString();
+      } catch {
+        window.alert("Enter a valid LinkedIn URL.");
+        return;
+      }
+    }
+
+    setLinkedInSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { linkedin_url: normalized });
+      setContact(updated);
+      setEditingLinkedIn(false);
+    } finally {
+      setLinkedInSaving(false);
+    }
+  };
+
+  const cancelLinkedInEdit = () => {
+    setEditingLinkedIn(false);
+    setLinkedInInput(contact?.linkedin_url || "");
   };
 
   const startEditingPhones = () => {
@@ -650,7 +689,11 @@ export default function AccountSourcingContactDetail() {
                         </button>
                       </span>
                     )}
-                    {contact.linkedin_url ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" /></span> : null}
+                    {contact.linkedin_url ? (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
+                        <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" />
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="prospect-detail-secondary-action"
@@ -1251,7 +1294,48 @@ export default function AccountSourcingContactDetail() {
                   </div>
                 }
               />
-              <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
+              <KV
+                label="LinkedIn"
+                value={editingLinkedIn ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", width: "100%" }}>
+                    <input
+                      autoFocus
+                      type="url"
+                      value={linkedInInput}
+                      onChange={(event) => setLinkedInInput(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") void handleSaveLinkedIn(); if (event.key === "Escape") cancelLinkedInEdit(); }}
+                      placeholder="linkedin.com/in/profile"
+                      aria-label="LinkedIn URL"
+                      style={{ flex: "1 1 210px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                    />
+                    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 30, padding: "0 10px" }}>
+                      {linkedInSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 30, padding: "0 10px" }}>Cancel</button>
+                  </div>
+                ) : contact.linkedin_url ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" />
+                    <button
+                      type="button"
+                      aria-label="Edit LinkedIn URL"
+                      title="Edit LinkedIn URL"
+                      onClick={() => { setLinkedInInput(contact.linkedin_url || ""); setEditingLinkedIn(true); }}
+                      style={{ height: 28, width: 28, borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                    >
+                      <PenLine size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setLinkedInInput(""); setEditingLinkedIn(true); }}
+                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Plus size={12} /> Add LinkedIn URL
+                  </button>
+                )}
+              />
               <KV
                 label="Assigned AE"
                 value={

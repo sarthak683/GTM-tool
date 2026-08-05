@@ -124,7 +124,7 @@ export interface Contact {
   additional_phones?: { number: string; label?: string }[];
   title?: string;
   seniority?: string;
-  linkedin_url?: string;
+  linkedin_url?: string | null;
   persona?: string;
   enriched_at?: string;
   enrichment_data?: Record<string, unknown>;
