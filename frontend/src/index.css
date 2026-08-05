@@ -1317,6 +1317,18 @@ body {
   justify-content: flex-start;
 }
 
+.report-settings-grid-three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.report-settings-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .crm-table {
   width: 100%;
   border-collapse: collapse;
@@ -2219,6 +2231,11 @@ textarea:focus {
   .crm-panel {
     padding: 12px;
     border-radius: 14px;
+  }
+
+  .report-settings-grid-three,
+  .report-settings-grid-two {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .crm-button {

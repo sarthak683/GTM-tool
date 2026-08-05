@@ -150,14 +150,16 @@ def normalize_sales_report_settings(value: dict | None, defaults: dict | None = 
                 cleaned.append(email)
         return cleaned or fallback
 
+    default_send_days = list(base.get("send_days") or DEFAULT_SALES_REPORT_SETTINGS["send_days"])
     send_days = [
         str(day or "").strip().lower()[:3]
-        for day in (merged.get("send_days") if isinstance(merged.get("send_days"), list) else DEFAULT_SALES_REPORT_SETTINGS["send_days"])
+        for day in (merged.get("send_days") if isinstance(merged.get("send_days"), list) else default_send_days)
     ]
-    send_days = [day for day in send_days if day in DAY_KEYS] or DEFAULT_SALES_REPORT_SETTINGS["send_days"]
-    weekly_report_day = str(merged.get("weekly_report_day") or "fri").strip().lower()[:3]
+    send_days = [day for day in send_days if day in DAY_KEYS] or default_send_days
+    default_weekly_day = str(base.get("weekly_report_day") or DEFAULT_SALES_REPORT_SETTINGS["weekly_report_day"])
+    weekly_report_day = str(merged.get("weekly_report_day") or default_weekly_day).strip().lower()[:3]
     if weekly_report_day not in DAY_KEYS:
-        weekly_report_day = "fri"
+        weekly_report_day = default_weekly_day
 
     return {
         "enabled": bool(merged.get("enabled")),

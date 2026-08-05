@@ -65,6 +65,61 @@ const PRE_MEETING_TIMEZONES = [
   "Australia/Sydney",
 ];
 
+const REPORT_DAYS = [
+  { key: "mon", label: "Mon" },
+  { key: "tue", label: "Tue" },
+  { key: "wed", label: "Wed" },
+  { key: "thu", label: "Thu" },
+  { key: "fri", label: "Fri" },
+  { key: "sat", label: "Sat" },
+  { key: "sun", label: "Sun" },
+];
+
+function ReportDaySelector({
+  selectedDays,
+  disabled,
+  onToggle,
+}: {
+  selectedDays: string[];
+  disabled: boolean;
+  onToggle: (day: string) => void;
+}) {
+  return (
+    <fieldset style={{ display: "grid", gap: 10, border: 0, padding: 0, margin: 0 }}>
+      <legend style={{ fontSize: 13, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Send days</legend>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))", gap: 8 }}>
+        {REPORT_DAYS.map(({ key, label }) => {
+          const checked = selectedDays.includes(key);
+          return (
+            <label
+              key={key}
+              style={{
+                minHeight: 42,
+                border: `1px solid ${checked ? "#b8d96a" : "#dfe4ef"}`,
+                borderRadius: 8,
+                background: checked ? "#f3fadf" : "#fff",
+                color: checked ? "#476c12" : "#65718a",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 7,
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: disabled ? "default" : "pointer",
+                opacity: disabled ? 0.65 : 1,
+              }}
+            >
+              <input type="checkbox" checked={checked} disabled={disabled} onChange={() => onToggle(key)} />
+              {label}
+            </label>
+          );
+        })}
+      </div>
+      <span className="crm-muted" style={{ fontSize: 12 }}>Monday through Saturday are on by default. Sunday is off.</span>
+    </fieldset>
+  );
+}
+
 function formatTimestamp(epoch?: number | null) {
   if (!epoch) return "Never";
   return new Date(epoch * 1000).toLocaleString();
@@ -129,6 +184,8 @@ export default function SettingsPage() {
   const [savingSalesAnalyticsRoster, setSavingSalesAnalyticsRoster] = useState(false);
   const [salesReportSettings, setSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingSalesReportSettings, setSavingSalesReportSettings] = useState(false);
+  const [indiaSalesReportSettings, setIndiaSalesReportSettings] = useState<SalesReportSettings | null>(null);
+  const [savingIndiaSalesReportSettings, setSavingIndiaSalesReportSettings] = useState(false);
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
   // Zippy global system prompt (admin only)
   const [zippyPrompt, setZippyPrompt] = useState<string>("");
@@ -183,10 +240,11 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, reportSenderData, salesReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
+      const [gmailData, reportSenderData, salesReportData, indiaSalesReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         getCachedGmailSync(),
         settingsApi.getReportSender().catch(() => null),
         settingsApi.getSalesReportSettings().catch(() => null),
+        settingsApi.getIndiaSalesReportSettings().catch(() => null),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
@@ -204,6 +262,7 @@ export default function SettingsPage() {
         setReportSenderEmail(reportSenderData.sender_email || "sarthak@beacon.li");
       }
       if (salesReportData) setSalesReportSettings(salesReportData);
+      if (indiaSalesReportData) setIndiaSalesReportSettings(indiaSalesReportData);
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
@@ -1000,6 +1059,15 @@ export default function SettingsPage() {
     setSalesReportSettings({ ...salesReportSettings, send_days: ordered });
   };
 
+  const toggleIndiaSalesReportDay = (day: string) => {
+    if (!indiaSalesReportSettings) return;
+    const current = new Set(indiaSalesReportSettings.send_days);
+    if (current.has(day)) current.delete(day);
+    else current.add(day);
+    const ordered = REPORT_DAYS.map(({ key }) => key).filter((item) => current.has(item));
+    setIndiaSalesReportSettings({ ...indiaSalesReportSettings, send_days: ordered });
+  };
+
   const handleSaveSalesReportSettings = async () => {
     if (!salesReportSettings) return;
     setSavingSalesReportSettings(true);
@@ -1028,6 +1096,25 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to send test report");
     } finally {
       setSendingSalesReportTest(false);
+    }
+  };
+
+  const handleSaveIndiaSalesReportSettings = async () => {
+    if (!indiaSalesReportSettings) return;
+    setSavingIndiaSalesReportSettings(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateIndiaSalesReportSettings({
+        enabled: indiaSalesReportSettings.enabled,
+        send_days: indiaSalesReportSettings.send_days,
+      });
+      setIndiaSalesReportSettings(updated);
+      setMessage("India pod report schedule saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save India pod report schedule");
+    } finally {
+      setSavingIndiaSalesReportSettings(false);
     }
   };
 
@@ -2016,11 +2103,12 @@ export default function SettingsPage() {
               </div>
               <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Daily sales report settings</h3>
               <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-                Control when the US pod call report is sent, which business-day cutoff it uses, and who receives production versus staging/test emails.
+                Control which days the US and India pod reports are sent. Sunday is disabled by default for both schedules.
               </p>
             </div>
 
             <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <h4 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>US pod report</h4>
               <div style={{ border: "1px solid #d8e7f8", borderRadius: 14, padding: 16, background: "#f7fbff", color: "#34516d", fontSize: 13, lineHeight: 1.7 }}>
                 The normal setup is <strong>7:00 AM Asia/Kolkata</strong> with a <strong>6:00 AM Asia/Kolkata</strong> cutoff. That means the report is sent after the US team's working day ends. In staging, scheduled and test sends are restricted to the non-production allowlist below, so production recipients do not get test emails.
               </div>
@@ -2038,7 +2126,7 @@ export default function SettingsPage() {
                 />
               </label>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+              <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send timezone</span>
                   <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
@@ -2056,7 +2144,7 @@ export default function SettingsPage() {
                 </label>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+              <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Business-day cutoff timezone</span>
                   <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
@@ -2074,22 +2162,13 @@ export default function SettingsPage() {
                 </label>
               </div>
 
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send days</div>
-                <div className="crm-muted" style={{ fontSize: 12 }}>Days when the scheduler is allowed to send. Keep Saturday/Sunday off unless the team explicitly works weekends.</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => {
-                    const active = Boolean(salesReportSettings?.send_days.includes(day));
-                    return (
-                      <button key={day} type="button" className={`crm-button ${active ? "primary" : "soft"}`} onClick={() => toggleSalesReportDay(day)} disabled={!isAdmin || !salesReportSettings} style={{ textTransform: "uppercase" }}>
-                        {day}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <ReportDaySelector
+                selectedDays={salesReportSettings?.send_days ?? ["mon", "tue", "wed", "thu", "fri", "sat"]}
+                disabled={!isAdmin || !salesReportSettings}
+                onToggle={toggleSalesReportDay}
+              />
 
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+              <div className="report-settings-grid-two">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Weekly report day</span>
                   <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }}>
@@ -2142,6 +2221,44 @@ export default function SettingsPage() {
               ) : (
                 <p className="crm-muted" style={{ fontSize: 13 }}>Only admins can change report settings.</p>
               )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+                <div>
+                  <h4 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>India pod report</h4>
+                  <p className="crm-muted" style={{ fontSize: 13, margin: "6px 0 0" }}>Configure the India pod daily report schedule independently.</p>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: "#182042" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(indiaSalesReportSettings?.enabled)}
+                    disabled={!isAdmin || !indiaSalesReportSettings}
+                    onChange={(event) => indiaSalesReportSettings && setIndiaSalesReportSettings({ ...indiaSalesReportSettings, enabled: event.target.checked })}
+                  />
+                  Scheduled reports enabled
+                </label>
+              </div>
+
+              <ReportDaySelector
+                selectedDays={indiaSalesReportSettings?.send_days ?? ["mon", "tue", "wed", "thu", "fri", "sat"]}
+                disabled={!isAdmin || !indiaSalesReportSettings}
+                onToggle={toggleIndiaSalesReportDay}
+              />
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    className="crm-button primary"
+                    type="button"
+                    onClick={handleSaveIndiaSalesReportSettings}
+                    disabled={savingIndiaSalesReportSettings || !indiaSalesReportSettings}
+                  >
+                    {savingIndiaSalesReportSettings ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
+                    Save India schedule
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : activeTab === "sync-schedule" ? (

@@ -78,7 +78,7 @@ from app.services.gmail_oauth import (
 )
 from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
 from app.services.permissions import normalize_role_permissions
-from app.services.us_pod_call_report import normalize_sales_report_settings
+from app.services.us_pod_call_report import INDIA_DEFAULT_SALES_REPORT_SETTINGS, normalize_sales_report_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -902,9 +902,47 @@ def _normalized_sync_schedule(value: dict | None) -> SyncScheduleSettingsRead:
     return SyncScheduleSettingsRead(**merged)
 
 
-def _sales_report_settings_from_sync(value: dict | None) -> SalesReportSettingsRead:
-    raw = value.get("sales_report") if isinstance(value, dict) else None
-    return SalesReportSettingsRead(**normalize_sales_report_settings(raw if isinstance(raw, dict) else None))
+def _sales_report_settings_from_sync(
+    value: dict | None,
+    *,
+    key: str = "sales_report",
+    defaults: dict | None = None,
+) -> SalesReportSettingsRead:
+    raw = value.get(key) if isinstance(value, dict) else None
+    return SalesReportSettingsRead(
+        **normalize_sales_report_settings(raw if isinstance(raw, dict) else None, defaults=defaults)
+    )
+
+
+async def _update_sales_report_settings_block(
+    body: SalesReportSettingsUpdate,
+    session: DBSession,
+    *,
+    key: str,
+    defaults: dict | None = None,
+) -> SalesReportSettingsRead:
+    row = await _get_or_create(session)
+    sync_settings = dict(row.sync_schedule_settings or {})
+    raw = sync_settings.get(key)
+    current = normalize_sales_report_settings(raw if isinstance(raw, dict) else None, defaults=defaults)
+    updates = body.model_dump(exclude_unset=True)
+    schedule_keys = {"send_timezone", "send_hour", "send_minute", "send_days", "weekly_report_day"}
+    if schedule_keys.intersection(updates):
+        for history_key in (
+            "last_scheduled_send_key",
+            "last_scheduled_send_at",
+            "last_scheduled_daily_send_key",
+            "last_scheduled_weekly_send_key",
+        ):
+            current[history_key] = None
+    current.update(updates)
+    normalized = normalize_sales_report_settings(current, defaults=defaults)
+    sync_settings[key] = normalized
+    row.sync_schedule_settings = sync_settings
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return SalesReportSettingsRead(**normalized)
 
 
 @router.get("/sync-schedule", response_model=SyncScheduleSettingsRead)
@@ -940,23 +978,27 @@ async def get_sales_report_settings(session: DBSession, _user: CurrentUser):
 
 @router.patch("/sales-report", response_model=SalesReportSettingsRead)
 async def update_sales_report_settings(body: SalesReportSettingsUpdate, session: DBSession, _admin: AdminUser):
+    return await _update_sales_report_settings_block(body, session, key="sales_report")
+
+
+@router.get("/sales-report/india", response_model=SalesReportSettingsRead)
+async def get_india_sales_report_settings(session: DBSession, _user: CurrentUser):
     row = await _get_or_create(session)
-    sync_settings = dict(row.sync_schedule_settings or {})
-    current = normalize_sales_report_settings(sync_settings.get("sales_report") if isinstance(sync_settings.get("sales_report"), dict) else None)
-    updates = body.model_dump(exclude_unset=True)
-    # Preserve send history unless explicitly changing the schedule identity.
-    schedule_keys = {"send_timezone", "send_hour", "send_minute", "send_days", "weekly_report_day"}
-    if schedule_keys.intersection(updates):
-        current["last_scheduled_send_key"] = None
-        current["last_scheduled_send_at"] = None
-    current.update(updates)
-    normalized = normalize_sales_report_settings(current)
-    sync_settings["sales_report"] = normalized
-    row.sync_schedule_settings = sync_settings
-    session.add(row)
-    await session.commit()
-    await session.refresh(row)
-    return SalesReportSettingsRead(**normalized)
+    return _sales_report_settings_from_sync(
+        row.sync_schedule_settings,
+        key="india_sales_report",
+        defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS,
+    )
+
+
+@router.patch("/sales-report/india", response_model=SalesReportSettingsRead)
+async def update_india_sales_report_settings(body: SalesReportSettingsUpdate, session: DBSession, _admin: AdminUser):
+    return await _update_sales_report_settings_block(
+        body,
+        session,
+        key="india_sales_report",
+        defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS,
+    )
 
 
 @router.post("/sync-schedule/tldv-now", response_model=dict)

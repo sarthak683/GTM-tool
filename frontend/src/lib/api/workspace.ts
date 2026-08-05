@@ -1066,6 +1066,13 @@ export const settingsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  getIndiaSalesReportSettings: () =>
+    request<SalesReportSettings>("/api/v1/settings/sales-report/india"),
+  updateIndiaSalesReportSettings: (data: Partial<SalesReportSettings>) =>
+    request<SalesReportSettings>("/api/v1/settings/sales-report/india", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   sendSalesReportTest: () =>
     request<{ report_date: string; report_type: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/us-pod-call-report/send", {
       method: "POST",
