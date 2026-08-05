@@ -38,6 +38,8 @@ PROTECTED_ENDPOINTS = [
     # Other confirmed-protected list/detail endpoints (all take CurrentUser).
     ("GET", "/api/v1/companies/", True),
     ("GET", "/api/v1/deals/", True),
+    # Sales Analytics incentive surface (SDR SQL leaderboard) — CurrentUser-gated.
+    ("GET", "/api/v1/performance/incentives", True),
     # Real outreach launch route is POST /api/v1/outreach/launch/{sequence_id}
     # (CurrentUser-gated). The body is intentionally omitted: auth is checked
     # before request-body validation, so this still returns 401, not 422.

@@ -118,9 +118,9 @@ export interface Contact {
   company_name?: string; // populated via SQL JOIN — no second API call needed
   first_name: string;
   last_name: string;
-  email?: string;
+  email?: string | null;
   email_verified: boolean;
-  phone?: string;
+  phone?: string | null;
   additional_phones?: { number: string; label?: string }[];
   title?: string;
   seniority?: string;

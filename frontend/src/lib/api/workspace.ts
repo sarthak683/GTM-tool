@@ -225,6 +225,30 @@ export const performanceApi = {
     if (params.period) qs.set("period", params.period);
     return request<LeaderboardResponse>(`/api/v1/performance/leaderboards?${qs.toString()}`);
   },
+  getIncentives: (params: { anchor?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.anchor) qs.set("anchor", params.anchor);
+    const tail = qs.toString();
+    return request<IncentiveResponse>(`/api/v1/performance/incentives${tail ? `?${tail}` : ""}`);
+  },
+};
+
+export type IncentiveRow = {
+  sdr_id: string;
+  sdr_name: string;
+  direct_sql: number;
+  converted: number;
+  sql_total: number;
+  target: number;
+  attainment?: number | null;
+};
+
+export type IncentiveResponse = {
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  target: number;
+  rows: IncentiveRow[];
 };
 
 export type RedAlertDeal = {

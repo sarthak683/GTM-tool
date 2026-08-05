@@ -174,16 +174,31 @@ const exportBtnStyle: React.CSSProperties = {
   borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer",
 };
 
+type MeetingBucketKey = "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled";
+
+export interface MeetingBucketCard {
+  key: MeetingBucketKey;
+  label: string;
+  sub: string;
+  tone: string;
+  text: string;
+  value: number;
+}
+
 function MilestoneDealsModal({
   label,
   deals,
   onClose,
   accentColor,
+  buckets,
+  onOpenBucket,
 }: {
   label: string;
   deals: MilestoneDealRow[];
   onClose: () => void;
   accentColor: string;
+  buckets?: MeetingBucketCard[];
+  onOpenBucket?: (bucket: MeetingBucketKey, title: string) => void;
 }) {
   // Close on Escape
   useEffect(() => {
@@ -197,6 +212,7 @@ function MilestoneDealsModal({
   const total = deals.reduce((sum, d) => sum + (d.deal_value ?? 0), 0);
   const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
   const showDateOfMeeting = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
+  const hideAmount = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
 
   return (
     <div
@@ -229,7 +245,7 @@ function MilestoneDealsModal({
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: accentColor, textTransform: "uppercase" }}>{label}</p>
             <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
               {deals.length} deal{deals.length === 1 ? "" : "s"}
-              {withAmount > 0 && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>
+              {!hideAmount && withAmount > 0 && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>
                 · {formatCurrency(total)} total
               </span>}
             </h3>
@@ -240,9 +256,13 @@ function MilestoneDealsModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
-                  showDateOfMeeting ? ["Deal", "Amount", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR"],
+                  showDateOfMeeting
+                    ? (hideAmount ? ["Deal", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR", "Date of Meeting"])
+                    : ["Deal", "Amount", "AE", "SDR"],
                   deals.map((d) => showDateOfMeeting
-                    ? [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                    ? (hideAmount
+                      ? [d.deal_name || "", d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                      : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""])
                     : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
                 style={exportBtnStyle}
@@ -269,7 +289,7 @@ function MilestoneDealsModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 <th style={thSty}>Deal</th>
-                <th style={{ ...thSty, textAlign: "right" }}>Amount</th>
+                {!hideAmount && <th style={{ ...thSty, textAlign: "right" }}>Amount</th>}
                 <th style={thSty}>AE</th>
                 <th style={thSty}>SDR</th>
                 {showDateOfMeeting && <th style={thSty}>Date of Meeting</th>}
@@ -285,9 +305,11 @@ function MilestoneDealsModal({
                         {d.deal_name || "—"}
                       </span>
                     </td>
-                    <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: amt > 0 ? accentColor : "#aab4c2", whiteSpace: "nowrap" }}>
-                      {amt > 0 ? formatCurrency(amt) : "—"}
-                    </td>
+                    {!hideAmount && (
+                      <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: amt > 0 ? accentColor : "#aab4c2", whiteSpace: "nowrap" }}>
+                        {amt > 0 ? formatCurrency(amt) : "—"}
+                      </td>
+                    )}
                     <td style={{ ...tdSty, color: "#62748a" }}>
                       {d.assigned_ae || "—"}
                     </td>
@@ -303,7 +325,7 @@ function MilestoneDealsModal({
                 );
               })}
             </tbody>
-            {total > 0 && (
+            {!hideAmount && total > 0 && (
               <tfoot>
                 <tr style={{ background: "#fafbfd" }}>
                   <td style={{ ...tdSty, fontWeight: 800, color: "#1d2b3a" }}>Total</td>
@@ -315,6 +337,26 @@ function MilestoneDealsModal({
               </tfoot>
             )}
           </table>
+          {buckets && buckets.length > 0 && (
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — All Reps</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                {buckets.map((b) => (
+                  <StatPill
+                    key={b.key}
+                    label={b.label}
+                    value={b.value}
+                    tone={b.tone}
+                    text={b.text}
+                    sub={<span>{b.sub}</span>}
+                    onClick={onOpenBucket ? () => onOpenBucket(b.key, b.label) : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1130,6 +1172,8 @@ function MetricCard({
   icon: Icon,
   deals,
   trend,
+  buckets,
+  onOpenBucket,
 }: {
   label: string;
   value: string;
@@ -1138,6 +1182,8 @@ function MetricCard({
   icon: LucideIcon;
   deals?: MilestoneDealRow[];
   trend?: { curr: number; prev: number };
+  buckets?: MeetingBucketCard[];
+  onOpenBucket?: (bucket: MeetingBucketKey, title: string) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const palette = {
@@ -1200,6 +1246,8 @@ function MetricCard({
           deals={deals}
           onClose={() => setModalOpen(false)}
           accentColor={palette.icon}
+          buckets={buckets}
+          onOpenBucket={onOpenBucket}
         />
       )}
     </>
@@ -2643,6 +2691,26 @@ export default function SalesAnalytics() {
       .finally(() => setActivityDrilldownLoadingMore(false));
   };
 
+  const overallMeetingBucketCards = useMemo<Array<{
+    key: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled";
+    label: string;
+    sub: string;
+    tone: string;
+    text: string;
+    value: number;
+  }>>(() => {
+    const rows = data?.rep_activity ?? [];
+    const sum = (field: keyof SalesRepActivityRow) => rows.reduce((acc, row) => acc + Number((row[field] as number | undefined) ?? 0), 0);
+
+    return [
+      { key: "next_1w", label: "Next 1 Week", sub: "scheduled", tone: "#fff8ec", text: "#c07a1a", value: sum("meetings_next_1w") },
+      { key: "next_2w", label: "Next 1–2 Weeks", sub: "scheduled", tone: "#edf4ff", text: "#3856c8", value: sum("meetings_next_2w") },
+      { key: "beyond_2w", label: ">2 Weeks", sub: "scheduled", tone: "#eefbf2", text: "#1e8a5e", value: sum("meetings_beyond_2w") },
+      { key: "direct_sql", label: "Direct SQL", sub: "VP / SVP / Chief", tone: "#f3eaff", text: "#7c3aed", value: sum("direct_sql") },
+      { key: "demo_rescheduled", label: "Demo Rescheduled", sub: "date changed", tone: "#fff2f2", text: "#c0392b", value: sum("demos_rescheduled") },
+    ];
+  }, [data?.rep_activity]);
+
   const metricCards: Array<{
     label: string;
     value: string;
@@ -3118,7 +3186,12 @@ export default function SalesAnalytics() {
           <h2 style={{ margin: "0 0 16px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Overall Performance</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 18 }}>
             {metricCards.map((card) => (
-              <MetricCard key={card.label} {...card} />
+              <MetricCard
+                key={card.label}
+                {...card}
+                buckets={card.label === "Demo Scheduled" ? overallMeetingBucketCards : undefined}
+                onOpenBucket={card.label === "Demo Scheduled" ? (bucket, title) => handleOpenMeetingBucket(bucket, title, undefined) : undefined}
+              />
             ))}
           </div>
 

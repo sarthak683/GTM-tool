@@ -10,11 +10,11 @@ small, deterministic date helper. We assert that
     i.e. ``to_date`` + 1 day; default window is ``window_days`` back from now).
 """
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.analytics import _resolve_analytics_window
+from app.api.v1.endpoints.analytics import _resolve_analytics_window, _rolling_period_starts
 
 
 class ResolveAnalyticsWindowTests(unittest.TestCase):
@@ -45,6 +45,21 @@ class ResolveAnalyticsWindowTests(unittest.TestCase):
         self.assertGreaterEqual(end, before)
         self.assertLessEqual(end, after)
         self.assertAlmostEqual((end - start).total_seconds(), 7 * 86400, delta=5)
+
+    def test_rolling_period_starts_returns_daily_buckets_for_1_week_window(self) -> None:
+        start = datetime(2026, 1, 1, 10, 30)
+        end = datetime(2026, 1, 8, 9, 0)
+        periods = _rolling_period_starts(start, end, daily=True, bucket_end_date=date(2026, 1, 8))
+        self.assertEqual([period.isoformat() for period in periods], [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-05",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+        ])
 
 
 if __name__ == "__main__":

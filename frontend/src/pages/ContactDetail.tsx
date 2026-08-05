@@ -215,7 +215,7 @@ export default function ContactDetail() {
                   style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "#4d6178" }}
                   title="Log a LinkedIn touch on this contact"
                 >
-                  <Linkedin size={13} />Log touch
+                  <Linkedin size={13} />Log LinkedIn
                 </button>
                 <span className="inline-flex items-center gap-2">
                   <span className="font-semibold">Time zone:</span>

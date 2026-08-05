@@ -3660,6 +3660,22 @@ export default function Contacts() {
                                           recently — so a rep sees touch history
                                           without opening the drawer. */}
                                       <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "stretch", gap: 3 }}>
+                                        <span
+                                          title={c.phone || "No phone number saved"}
+                                          style={{
+                                            maxWidth: 140,
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                            fontSize: 10.5,
+                                            fontWeight: 700,
+                                            lineHeight: 1.15,
+                                            textAlign: "center",
+                                            color: c.phone ? "#4a6580" : "#9fb0c0",
+                                          }}
+                                        >
+                                          {c.phone || "No phone saved"}
+                                        </span>
                                         <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
                                           <Phone size={13} /> Call
                                         </button>

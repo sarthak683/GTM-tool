@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Globe,
+  Link2,
   Loader2,
   Mail,
   PenLine,
@@ -25,6 +26,8 @@ import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AssignDropdown from "../components/AssignDropdown";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import ProvenanceBar from "../components/ProvenanceBar";
+import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import { useToast } from "../lib/ToastContext";
 import {
   getProspectTrackingScore,
   getProspectTrackingStage,
@@ -60,6 +63,7 @@ import {
 export default function AccountSourcingContactDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const toast = useToast();
   const [contact, setContact] = useState<Contact | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,6 +88,10 @@ export default function AccountSourcingContactDetail() {
   const [editingPhones, setEditingPhones] = useState(false);
   const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
   const [phonesSaving, setPhonesSaving] = useState(false);
+  const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
+  const [editingLinkedinUrl, setEditingLinkedinUrl] = useState(false);
+  const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
+  const [linkedinUrlSaving, setLinkedinUrlSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -257,12 +265,34 @@ export default function AccountSourcingContactDetail() {
     }
   };
 
+  const handleOpenLinkedinLogger = () => {
+    if (!contact) return;
+    if (!contact.linkedin_url) return;
+    setLinkedinDialogOpen(true);
+  };
+
+  const handleSaveLinkedinUrl = async () => {
+    if (!contact) return;
+    const trimmed = linkedinUrlInput.trim();
+    setLinkedinUrlSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { linkedin_url: trimmed || undefined } as Partial<Contact>);
+      setContact(updated);
+      setEditingLinkedinUrl(false);
+      toast.success("LinkedIn URL saved.", "LinkedIn URL");
+    } catch {
+      toast.error("Failed to save LinkedIn URL.", "Error");
+    } finally {
+      setLinkedinUrlSaving(false);
+    }
+  };
+
   const handleSaveEmail = async () => {
     if (!contact) return;
     const trimmed = emailInput.trim();
     setEmailSaving(true);
     try {
-      const updated = await contactsApi.update(contact.id, { email: trimmed || undefined });
+      const updated = await contactsApi.update(contact.id, { email: trimmed || null });
       setContact(updated);
       setEditingEmail(false);
     } finally {
@@ -275,7 +305,7 @@ export default function AccountSourcingContactDetail() {
     const trimmed = phoneInput.trim();
     setPhoneSaving(true);
     try {
-      const updated = await contactsApi.update(contact.id, { phone: trimmed || undefined });
+      const updated = await contactsApi.update(contact.id, { phone: trimmed || null });
       setContact(updated);
       setEditingPhone(false);
     } finally {
@@ -650,7 +680,6 @@ export default function AccountSourcingContactDetail() {
                         </button>
                       </span>
                     )}
-                    {contact.linkedin_url ? <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}><ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" /></span> : null}
                     <button
                       type="button"
                       className="prospect-detail-secondary-action"
@@ -659,6 +688,17 @@ export default function AccountSourcingContactDetail() {
                     >
                       <CheckCircle2 size={14} />
                       Tasks
+                    </button>
+                    <button
+                      type="button"
+                      className="prospect-detail-secondary-action"
+                      onClick={handleOpenLinkedinLogger}
+                      disabled={!contact.linkedin_url}
+                      title={contact.linkedin_url ? "Log a LinkedIn touch" : "Add a LinkedIn URL first to log a LinkedIn touch"}
+                      style={{ border: `1px solid ${contact.linkedin_url ? "#ddd6fe" : "#e2e8f0"}`, background: contact.linkedin_url ? "#f5f3ff" : "#f6f8fb", color: contact.linkedin_url ? "#6d28d9" : "#9aa8b7", borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: contact.linkedin_url ? "pointer" : "default", opacity: contact.linkedin_url ? 1 : 0.85 }}
+                    >
+                      <Link2 size={14} />
+                      Log LinkedIn
                     </button>
                   </div>
                   <div className="prospect-detail-mobile-card" style={{ display: "none" }}>
@@ -1251,7 +1291,37 @@ export default function AccountSourcingContactDetail() {
                   </div>
                 }
               />
-              <KV label="LinkedIn" value={contact.linkedin_url ? <ContactActionButton icon={<Globe size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" /> : undefined} />
+              <KV
+                label="LinkedIn"
+                value={contact.linkedin_url ? (
+                  <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#0a66c2", fontWeight: 700, fontSize: 13, textDecoration: "none", wordBreak: "break-all" }}>
+                    <ExternalLink size={14} /> {contact.linkedin_url}
+                  </a>
+                ) : editingLinkedinUrl ? (
+                  <span style={{ display: "grid", gap: 8 }}>
+                    <input
+                      autoFocus
+                      value={linkedinUrlInput}
+                      onChange={(e) => setLinkedinUrlInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") void handleSaveLinkedinUrl(); if (e.key === "Escape") { setEditingLinkedinUrl(false); setLinkedinUrlInput(""); } }}
+                      placeholder="https://linkedin.com/in/..."
+                      style={{ width: "100%", boxSizing: "border-box", height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none" }}
+                    />
+                    <span style={{ display: "flex", gap: 8 }}>
+                      <button type="button" disabled={linkedinUrlSaving} onClick={() => void handleSaveLinkedinUrl()} style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: linkedinUrlSaving ? "default" : "pointer" }}>
+                        {linkedinUrlSaving ? "Saving…" : "Save"}
+                      </button>
+                      <button type="button" onClick={() => { setEditingLinkedinUrl(false); setLinkedinUrlInput(""); }} style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        Cancel
+                      </button>
+                    </span>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => { setLinkedinUrlInput(""); setEditingLinkedinUrl(true); }} style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                    <Plus size={13} /> Add URL
+                  </button>
+                )}
+              />
               <KV
                 label="Assigned AE"
                 value={
@@ -1347,6 +1417,20 @@ export default function AccountSourcingContactDetail() {
         entityLabel={fullName || "this prospect"}
         onChanged={() => {
           void load();
+        }}
+      />
+      <LogLinkedInDialog
+        contactId={contact.id}
+        contactName={fullName || "Prospect"}
+        linkedinUrl={contact.linkedin_url}
+        sequenceStatus={contact.sequence_status}
+        initialStatus={contact.linkedin_status}
+        open={linkedinDialogOpen}
+        onClose={() => setLinkedinDialogOpen(false)}
+        onLogged={() => {
+          setLinkedinDialogOpen(false);
+          void load();
+          toast.success(`LinkedIn touch logged for ${contact.first_name || "the prospect"}.`, "LinkedIn logged");
         }}
       />
       </div>

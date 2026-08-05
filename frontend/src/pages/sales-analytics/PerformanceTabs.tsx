@@ -61,6 +61,7 @@ import {
   type ScorecardBlock,
   type ScorecardMetric,
   type ScorecardResponse,
+  type IncentiveResponse,
 } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
@@ -2238,6 +2239,98 @@ export function OutreachAnalysisTab() {
   );
 }
 
+// ── Incentive tab ──────────────────────────────────────────────────────────
+
+function IncentiveTab() {
+  const [data, setData] = useState<IncentiveResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    performanceApi
+      .getIncentives({})
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const target = data?.target ?? 0;
+  const totalSql = data?.rows.reduce((sum, r) => sum + r.sql_total, 0) ?? 0;
+  const hitting = data?.rows.filter((r) => (r.attainment ?? 0) >= 1).length ?? 0;
+
+  return (
+    <div style={{ display: "grid", gap: 18 }}>
+      <Panel
+        title="SDR Incentive — SQL Target"
+        subtitle={`${data?.period_label ?? "…"} · target ${target}`}
+        action={
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Pill tone="blue"><Trophy size={12} /> {data?.period_label}</Pill>
+            <Pill tone="green"><CheckCircle2 size={12} /> {hitting}/{data?.rows.length ?? 0} on target</Pill>
+            <Pill tone="amber"><Medal size={12} /> {totalSql} total SQL</Pill>
+          </div>
+        }
+      >
+        {loading && <Loading />}
+        {error && <ErrorBanner message={error} />}
+        {data && data.rows.length === 0 && (
+          <div style={{ padding: 24, border: `1px dashed ${PALETTE.hairline}`, borderRadius: 14, background: "#fafcff", textAlign: "center", color: PALETTE.muted, fontSize: 13 }}>
+            No SDRs found yet. Add users with the SDR role to see the incentive board.
+          </div>
+        )}
+        {data && data.rows.length > 0 && (
+          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+            <div style={{ display: "grid", gap: 10, minWidth: 760 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
+                <span>Rep</span>
+                <span style={{ textAlign: "right" }}>Direct SQL</span>
+                <span style={{ textAlign: "right" }}>Converted</span>
+                <span style={{ textAlign: "right" }}>Total SQL</span>
+                <span>Progress vs target</span>
+                <span style={{ textAlign: "right" }}>Attainment</span>
+              </div>
+              {data.rows.map((row) => {
+                const attainment = row.attainment ?? 0;
+                const pct = target > 0 ? Math.min((row.sql_total / target) * 100, 100) : 0;
+                const rag = attainment >= 1 ? "green" : attainment >= 0.7 ? "amber" : "red";
+                const tint = RAG_TINT[rag];
+                return (
+                  <div
+                    key={row.sdr_id}
+                    style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, border: `1px solid ${PALETTE.hairline}`, background: "#fff" }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: PALETTE.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.sdr_name}</div>
+                      <div style={{ fontSize: 11, color: PALETTE.subtle, marginTop: 2 }}>{row.sql_total >= target ? "Target hit" : `${target - row.sql_total} to go`}</div>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.direct_sql}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.converted}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: PALETTE.text, textAlign: "right" }}>{row.sql_total}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ flex: 1, height: 10, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: tint.dot }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: PALETTE.muted, width: 34, textAlign: "right" }}>{Math.round(pct)}%</span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, background: tint.bg, border: `1px solid ${tint.border}`, color: tint.text, fontSize: 11, fontWeight: 800 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: 999, background: tint.dot }} />
+                        {Math.round(attainment * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 // Visibility flags — set to false to hide a tab, true to show
 const SHOW_TAB_SCORECARD   = false;
 const SHOW_TAB_FUNNEL      = false;
@@ -2251,6 +2344,7 @@ const _ALL_PERFORMANCE_TABS = [
   { key: "forecast",           label: "Forecast",          icon: TrendingUp,    show: SHOW_TAB_FORECAST },
   { key: "targets",            label: "Targets",           icon: Gauge,         show: SHOW_TAB_TARGETS },
   { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3,     show: true },
+  { key: "incentive",          label: "Incentive",         icon: Trophy,        show: true },
 ] as const;
 
 export const PERFORMANCE_TABS = _ALL_PERFORMANCE_TABS.filter((t) => t.show) as unknown as typeof _ALL_PERFORMANCE_TABS;
@@ -2271,5 +2365,7 @@ export function PerformanceTabContent({ tab, reps }: { tab: PerformanceTabKey; r
       return <TargetsTab />;
     case "outreach-analysis":
       return <OutreachAnalysisTab />;
+    case "incentive":
+      return <IncentiveTab />;
   }
 }

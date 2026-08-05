@@ -540,6 +540,16 @@ def _week_label(week_start: date) -> str:
     return f"{week_start.strftime('%b')} {week_start.day}"
 
 
+def _period_key(period_start: date) -> str:
+    return period_start.isoformat()
+
+
+def _period_label(period_start: date, daily: bool) -> str:
+    if daily:
+        return period_start.strftime("%b %d")
+    return _week_label(period_start)
+
+
 def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
     first_week = _start_of_week(start)
     last_week = _start_of_week(end)
@@ -549,6 +559,18 @@ def _rolling_week_starts(start: datetime, end: datetime) -> list[date]:
         weeks.append(cursor)
         cursor += timedelta(days=7)
     return weeks
+
+
+def _rolling_period_starts(start: datetime, end: datetime, *, daily: bool, bucket_end_date: date | None = None) -> list[date]:
+    if daily:
+        end_date = bucket_end_date or end.date()
+        cursor = start.date()
+        periods: list[date] = []
+        while cursor <= end_date:
+            periods.append(cursor)
+            cursor += timedelta(days=1)
+        return periods
+    return _rolling_week_starts(start, end)
 
 
 def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
@@ -929,6 +951,26 @@ async def _build_meeting_stage_gate(session, stage_settings):
         return True
 
     return gate
+
+
+def _activity_row_is_early_funnel(
+    row,
+    *,
+    deal_stage_by_id: dict[UUID, str],
+    contact_company: dict[UUID, UUID | None],
+    company_stages: dict[UUID, set[str]],
+    early_funnel_stage_ids: set[str],
+) -> bool:
+    if row.deal_id is not None:
+        stage = deal_stage_by_id.get(row.deal_id)
+        return stage in early_funnel_stage_ids if stage is not None else True
+    if row.contact_id is not None:
+        company_id = contact_company.get(row.contact_id)
+        if company_id is not None:
+            stages = company_stages.get(company_id)
+            if stages:
+                return any(stage in early_funnel_stage_ids for stage in stages)
+    return True
 
 
 def _normalize_geography_key(value: str | None) -> str:
@@ -1581,7 +1623,7 @@ async def sales_activity_drilldown(
             if sched_deal_ids_dd:
                 for dr in (
                     await session.execute(
-                        select(Deal.id, Deal.name, Deal.company_id).where(Deal.id.in_(sched_deal_ids_dd))
+                        select(Deal.id, Deal.name, Deal.company_id, Deal.sdr_id).where(Deal.id.in_(sched_deal_ids_dd))
                     )
                 ).all():
                     sched_deal_rows_dd[dr.id] = dr
@@ -1611,7 +1653,8 @@ async def sales_activity_drilldown(
                 cid = dr.company_id
                 if not cid:
                     continue
-                if sched_comp_sdr_dd.get(cid) != rep_id:
+                sdr_id_dd = dr.sdr_id or sched_comp_sdr_dd.get(cid)
+                if sdr_id_dd != rep_id:
                     continue
                 if filter_geographies:
                     region_key = _normalize_geography_key(sched_comp_region_dd.get(cid))
@@ -1992,6 +2035,7 @@ async def sales_dashboard(
     contact_stmt = select(
         Contact.id,
         Contact.assigned_to_id,
+        Contact.company_id,
         Contact.created_at,
         Contact.outreach_lane,
         Contact.sequence_status,
@@ -2006,13 +2050,33 @@ async def sales_dashboard(
         contact_rows = [row for row in contact_rows if _normalize_geography_key(row.company_region) in filter_geographies]
     allowed_contact_ids = {row.id for row in contact_rows}
     contact_owner = {row.id: row.assigned_to_id for row in contact_rows}
+    contact_company = {row.id: row.company_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
+    # Derive deal/company stage state for call exclusion once an account has
+    # moved beyond the demo_done stage.
+    deal_stage_by_id = {row.id: str(row.stage or "").strip().lower() for row in deal_rows}
+    company_stages: dict[UUID, set[str]] = {}
+    for row in deal_rows:
+        if row.company_id is not None:
+            company_stages.setdefault(row.company_id, set()).add(str(row.stage or "").strip().lower())
+
+    stage_order = [stage["id"] for stage in stage_settings if stage.get("group") != "closed"]
+    if "demo_done" in stage_order:
+        early_funnel_stage_ids = set(stage_order[: stage_order.index("demo_done") + 1])
+    else:
+        early_funnel_stage_ids = {"reprospect", "demo_scheduled", "demo_done"}
+
     # Bound the weekly-activity chart to at most ~1 year of buckets. Totals are
     # still computed over the full window (activities older than this still count
     # toward the leaderboard); only the per-week breakdown is capped so "All time"
     # doesn't generate thousands of weekly buckets per rep.
-    week_window_start = max(window_start, window_end - timedelta(weeks=52))
-    week_starts = _rolling_week_starts(week_window_start, window_end)
+    use_daily_activity_buckets = window_days == 7
+    bucket_end_date = (window_end - timedelta(days=1)).date() if to_date else window_end.date()
+    if use_daily_activity_buckets:
+        period_starts = _rolling_period_starts(window_start, window_end, daily=True, bucket_end_date=bucket_end_date)
+    else:
+        week_window_start = max(window_start, window_end - timedelta(weeks=52))
+        period_starts = _rolling_week_starts(week_window_start, window_end)
     user_rows = (await session.execute(select(User.id, User.name, User.email, User.role, User.is_active))).all()
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
@@ -2277,11 +2341,11 @@ async def sales_dashboard(
             "active_deals": owner_bucket["deal_count"],
             "pipeline_amount": round(float(owner_bucket["amount"]), 2),
             "weeks": {
-                _week_key(week_start): {
-                    "week_key": _week_key(week_start),
-                    "label": _week_label(week_start),
-                    "week_start": week_start.isoformat(),
-                    "week_end": (week_start + timedelta(days=6)).isoformat(),
+                _period_key(period_start): {
+                    "week_key": _period_key(period_start),
+                    "label": _period_label(period_start, use_daily_activity_buckets),
+                    "week_start": period_start.isoformat(),
+                    "week_end": (period_start + timedelta(days=0 if use_daily_activity_buckets else 6)).isoformat(),
                     "emails": 0,
                     "manual_emails": 0,
                     "instantly_emails": 0,
@@ -2292,7 +2356,7 @@ async def sales_dashboard(
                     "meetings": 0,
                     "total": 0,
                 }
-                for week_start in week_starts
+                for period_start in period_starts
             },
         }
 
@@ -2349,11 +2413,11 @@ async def sales_dashboard(
                 "active_deals": int(activity_bucket["active_deals"]),
                 "pipeline_amount": float(activity_bucket["pipeline_amount"]),
                 "weeks": {
-                    _week_key(week_start): {
-                        "week_key": _week_key(week_start),
-                        "label": _week_label(week_start),
-                        "week_start": week_start.isoformat(),
-                        "week_end": (week_start + timedelta(days=6)).isoformat(),
+                    _period_key(period_start): {
+                        "week_key": _period_key(period_start),
+                        "label": _period_label(period_start, use_daily_activity_buckets),
+                        "week_start": period_start.isoformat(),
+                        "week_end": (period_start + timedelta(days=0 if use_daily_activity_buckets else 6)).isoformat(),
                         "emails": 0,
                         "manual_emails": 0,
                         "instantly_emails": 0,
@@ -2364,27 +2428,40 @@ async def sales_dashboard(
                         "meetings": 0,
                         "total": 0,
                     }
-                    for week_start in week_starts
+                    for period_start in period_starts
                 },
             },
         )
-        week_key = _week_key(_start_of_week(row.created_at))
-        week_counts = weekly_bucket["weeks"].get(week_key)
+        if use_daily_activity_buckets:
+            period_start = row.created_at.date()
+            period_key = _period_key(period_start)
+        else:
+            period_start = _start_of_week(row.created_at)
+            period_key = _week_key(period_start)
+        period_counts = weekly_bucket["weeks"].get(period_key)
         medium = str(row.medium or "").strip().lower()
         kind = str(row.type or "").strip().lower()
         outcome = str(row.call_outcome or "").strip().lower()
         if medium == "call" or kind == "call":
+            if not _activity_row_is_early_funnel(
+                row,
+                deal_stage_by_id=deal_stage_by_id,
+                contact_company=contact_company,
+                company_stages=company_stages,
+                early_funnel_stage_ids=early_funnel_stage_ids,
+            ):
+                continue
             activity_bucket["calls"] += 1
-            if week_counts is not None:
-                week_counts["calls"] += 1
+            if period_counts is not None:
+                period_counts["calls"] += 1
             if outcome in {"connected", "callback", "answered"}:
                 activity_bucket["connected_calls"] += 1
-                if week_counts is not None:
-                    week_counts["connected_calls"] += 1
+                if period_counts is not None:
+                    period_counts["connected_calls"] += 1
             if outcome in {"connected", "answered"}:
                 activity_bucket["live_calls"] += 1
-                if week_counts is not None:
-                    week_counts["live_calls"] += 1
+                if period_counts is not None:
+                    period_counts["live_calls"] += 1
             # Breakdown: first call vs 2nd+ per contact
             contact_id_str = str(row.contact_id or "").strip()
             if contact_id_str:
@@ -2439,9 +2516,9 @@ async def sales_dashboard(
                         rep_manual_seen.add(manual_key)
                     activity_bucket["emails"] += 1
                     activity_bucket[f"{email_bucket}_emails"] = int(activity_bucket.get(f"{email_bucket}_emails", 0)) + 1
-                    if week_counts is not None:
-                        week_counts["emails"] += 1
-                        week_counts[f"{email_bucket}_emails"] = int(week_counts.get(f"{email_bucket}_emails", 0)) + 1
+                    if period_counts is not None:
+                        period_counts["emails"] += 1
+                        period_counts[f"{email_bucket}_emails"] = int(period_counts.get(f"{email_bucket}_emails", 0)) + 1
                     # Breakdown: first email and 3+ emails per contact
                     contact_id_str = str(row.contact_id or "").strip()
                     if contact_id_str:
@@ -2459,8 +2536,8 @@ async def sales_dashboard(
                         activity_bucket["email_first_attempt"] = activity_bucket.get("email_first_attempt", 0) + 1
         elif medium == "linkedin" or kind == "linkedin":
             activity_bucket["linkedin_reachouts"] += 1
-            if week_counts is not None:
-                week_counts["linkedin_reachouts"] += 1
+            if period_counts is not None:
+                period_counts["linkedin_reachouts"] += 1
             # Parse outcome from Activity.content (set by the frontend log-touch modal)
             li_content = str(row.content or "").strip().lower()
             if "meeting booked via linkedin" in li_content:
@@ -2485,11 +2562,11 @@ async def sales_dashboard(
             + activity_bucket["emails"]
             + activity_bucket["linkedin_reachouts"]
         )
-        if week_counts is not None:
-            week_counts["total"] = (
-                week_counts["calls"]
-                + week_counts["emails"]
-                + week_counts["linkedin_reachouts"]
+        if period_counts is not None:
+            period_counts["total"] = (
+                period_counts["calls"]
+                + period_counts["emails"]
+                + period_counts["linkedin_reachouts"]
             )
 
     def bump_meeting(row_rep_id: UUID | None, meeting_timestamp: datetime) -> None:
@@ -2525,11 +2602,11 @@ async def sales_dashboard(
                 "active_deals": int(meeting_bucket["active_deals"]),
                 "pipeline_amount": float(meeting_bucket["pipeline_amount"]),
                 "weeks": {
-                    _week_key(week_start): {
-                        "week_key": _week_key(week_start),
-                        "label": _week_label(week_start),
-                        "week_start": week_start.isoformat(),
-                        "week_end": (week_start + timedelta(days=6)).isoformat(),
+                    _period_key(period_start): {
+                        "week_key": _period_key(period_start),
+                        "label": _period_label(period_start, use_daily_activity_buckets),
+                        "week_start": period_start.isoformat(),
+                        "week_end": (period_start + timedelta(days=0 if use_daily_activity_buckets else 6)).isoformat(),
                         "emails": 0,
                         "manual_emails": 0,
                         "instantly_emails": 0,
@@ -2540,11 +2617,16 @@ async def sales_dashboard(
                         "meetings": 0,
                         "total": 0,
                     }
-                    for week_start in week_starts
+                    for period_start in period_starts
                 },
             },
         )
-        week_counts = weekly_bucket["weeks"].get(_week_key(_start_of_week(meeting_timestamp)))
+        if use_daily_activity_buckets:
+            period_start = meeting_timestamp.date()
+            period_key = _period_key(period_start)
+        else:
+            period_key = _week_key(_start_of_week(meeting_timestamp))
+        period_counts = weekly_bucket["weeks"].get(period_key)
         meeting_bucket["meetings"] += 1
         # Meetings do not add to the touch total (see activity bump). A meeting
         # bump leaves `total` unchanged — it only increments the meetings metric.
@@ -2553,12 +2635,12 @@ async def sales_dashboard(
             + meeting_bucket["emails"]
             + meeting_bucket["linkedin_reachouts"]
         )
-        if week_counts is not None:
-            week_counts["meetings"] += 1
-            week_counts["total"] = (
-                week_counts["calls"]
-                + week_counts["emails"]
-                + week_counts["linkedin_reachouts"]
+        if period_counts is not None:
+            period_counts["meetings"] += 1
+            period_counts["total"] = (
+                period_counts["calls"]
+                + period_counts["emails"]
+                + period_counts["linkedin_reachouts"]
             )
 
     # tl;dv and Google Calendar both ingest the same real-world meeting from
