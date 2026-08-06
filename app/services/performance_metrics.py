@@ -124,6 +124,36 @@ def _deal_rep_filter(rep_id: Optional[UUID]):
     return Deal.assigned_to_id == rep_id
 
 
+def _distinct_call_day_key():
+    return func.concat(
+        func.coalesce(cast(Activity.created_by_id, String), ""),
+        ":",
+        func.coalesce(cast(Activity.contact_id, String), ""),
+        ":",
+        cast(func.date(Activity.created_at), String),
+    )
+
+
+def _connected_call_filter():
+    outcome = func.lower(func.coalesce(Activity.call_outcome, ""))
+    content = func.lower(func.trim(func.coalesce(Activity.content, "")))
+    connected_prefixes = (
+        "demo scheduled/booked",
+        "interested/follow-up required",
+        "meeting confirmed",
+        "gatekeeper (connected to admin, not lead)",
+        "connected - not interested",
+        "do not contact/dnc",
+        "contact poor fit",
+        "redirected to other icp",
+        "call back later/rescheduled",
+    )
+    return or_(
+        outcome.in_(("connected", "answered", "completed", "success")),
+        *[content.like(f"{prefix}%") for prefix in connected_prefixes],
+    )
+
+
 # ── Activity metrics ─────────────────────────────────────────────────────────
 
 
@@ -134,20 +164,7 @@ async def calls_made(
     Dial count logged against any deal or contact, deduped by
     rep + contact + day (per the dictionary).
     """
-    day_expr = func.date(Activity.created_at)
-    stmt = select(
-        func.count(
-            distinct(
-                func.concat(
-                    func.coalesce(cast(Activity.created_by_id, String), ""),
-                    ":",
-                    func.coalesce(cast(Activity.contact_id, String), ""),
-                    ":",
-                    cast(day_expr, String),
-                )
-            )
-        )
-    ).where(
+    stmt = select(func.count(distinct(_distinct_call_day_key()))).where(
         Activity.type == "call",
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
@@ -159,10 +176,10 @@ async def calls_made(
 async def calls_connected(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
-    """Calls with a connected duration ≥ 0 seconds AND outcome=answered."""
-    stmt = select(func.count(Activity.id)).where(
+    """Connected rep/contact/day call groups, matching ``calls_made`` units."""
+    stmt = select(func.count(distinct(_distinct_call_day_key()))).where(
         Activity.type == "call",
-        Activity.call_outcome == "answered",
+        _connected_call_filter(),
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),

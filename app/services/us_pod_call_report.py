@@ -13,6 +13,7 @@ from sqlmodel import select
 
 from app.clients.gmail_sender import send_gmail_email
 from app.config import settings
+from app.core.pods import get_pod
 from app.models.activity import Activity
 from app.models.call_recording import CallRecording
 from app.models.company import Company
@@ -31,13 +32,7 @@ LOOKBACK_DAYS = 7
 DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 WEEKDAY_TO_KEY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
-US_POD_REPS = [
-    {"name": "Awinja", "email": "awinja@beacon.li", "aliases": ["awinja"]},
-    {"name": "Jacob", "email": "jacob@beacon.li", "aliases": ["jacob"]},
-    {"name": "Pravalika Jamalpur", "email": "pravalika@beacon.li", "aliases": ["pravalika"]},
-    {"name": "Mahesh Pothula", "email": "mahesh@beacon.li", "aliases": ["mahesh"]},
-    {"name": "Pulkit Anand", "email": "pulkit@beacon.li", "aliases": ["pulkit"]},
-]
+US_POD_REPS = get_pod("us")["reps"]
 
 US_POD_REPORT_RECIPIENTS = [
     "awinja@beacon.li",
@@ -56,13 +51,7 @@ US_POD_REPORT_RECIPIENTS = [
 # India pod — same {name, email, aliases} roster shape as US, sourced from the
 # shared pod registry. The same call-report machinery is reused, just pointed at
 # this roster + its own config block (`india_sales_report`) and schedule.
-INDIA_POD_REPS = [
-    {"name": "Dyuthith Din", "email": "dyuthith@beacon.li", "aliases": ["dyuthith"]},
-    {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
-    {"name": "Bhavya Mukkera", "email": "bhavya@beacon.li", "aliases": ["bhavya"]},
-    {"name": "Sandeep Sinha", "email": "sandeep@beacon.li", "aliases": ["sandeep"]},
-    {"name": "Sipra Sonali Palta", "email": "sipra@beacon.li", "aliases": ["sipra"]},
-]
+INDIA_POD_REPS = get_pod("india")["reps"]
 
 INDIA_POD_REPORT_RECIPIENTS = [
     "annie@beacon.li",
@@ -79,7 +68,8 @@ INDIA_POD_REPORT_RECIPIENTS = [
 
 # India pod works an IST daytime (it doesn't call US prospects overnight like the
 # US pod), so its "day" is a normal IST calendar day: reset at IST midnight, send
-# the recap the next morning IST. Distinct from the US pod's 7:30 AM IST cutoff.
+# the recap the next morning IST. The US pod uses its independently configured
+# cross-timezone business-day cutoff.
 INDIA_DEFAULT_SALES_REPORT_SETTINGS = {
     "enabled": False,  # seeded on; flip on after first verification
     "recipients": INDIA_POD_REPORT_RECIPIENTS,
@@ -268,8 +258,18 @@ class ResolvedRep:
 
 
 def default_report_date(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> date:
+    return _report_date_for_cutoff(_latest_completed_report_cutoff(now, report_settings), report_settings)
+
+
+def _report_date_for_cutoff(
+    cutoff_end: datetime,
+    report_settings: dict[str, Any] | None = None,
+) -> date:
     label_tz = _report_zone(report_settings, "report_label_timezone", REPORT_TIMEZONE)
-    return _latest_completed_report_cutoff(now, report_settings).astimezone(label_tz).date()
+    # Label the business day that just ended. At a midnight cutoff, using the
+    # exact cutoff instant would label the following day and disconnect the
+    # report date from its activity window.
+    return (cutoff_end - timedelta(microseconds=1)).astimezone(label_tz).date()
 
 
 def _latest_completed_report_cutoff(now: datetime | None = None, report_settings: dict[str, Any] | None = None) -> datetime:
@@ -318,11 +318,21 @@ def _utc_bounds_for_report_day(day: date, report_settings: dict[str, Any] | None
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
     cutoff_minute = _cutoff_minute(report_settings)
-    local_end = datetime.combine(
-        day + timedelta(days=1),
-        time(cutoff_hour, cutoff_minute),
-        tzinfo=cutoff_tz,
-    )
+    local_end = None
+    # The displayed report date can differ from the cutoff timezone's date
+    # (US reports cut off in IST but are labelled in Chicago). Find the cutoff
+    # whose completed business day maps to the requested label date.
+    for day_offset in range(-2, 3):
+        candidate = datetime.combine(
+            day + timedelta(days=day_offset),
+            time(cutoff_hour, cutoff_minute),
+            tzinfo=cutoff_tz,
+        )
+        if _report_date_for_cutoff(candidate, report_settings) == day:
+            local_end = candidate
+            break
+    if local_end is None:  # pragma: no cover - valid IANA zones always resolve
+        raise ValueError(f"Could not resolve report-day bounds for {day.isoformat()}")
     local_start = local_end - timedelta(days=1)
     return (
         local_start.astimezone(timezone.utc).replace(tzinfo=None),
@@ -337,7 +347,6 @@ def _activity_report_date(activity: Activity, report_settings: dict[str, Any] | 
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
     cutoff_minute = _cutoff_minute(report_settings)
-    label_tz = _report_zone(report_settings, "report_label_timezone", REPORT_TIMEZONE)
     local_created_at = created_at.astimezone(cutoff_tz)
     report_period_start = local_created_at.date()
     if local_created_at.time() < time(cutoff_hour, cutoff_minute):
@@ -347,7 +356,7 @@ def _activity_report_date(activity: Activity, report_settings: dict[str, Any] | 
         time(cutoff_hour, cutoff_minute),
         tzinfo=cutoff_tz,
     )
-    return report_cutoff_end.astimezone(label_tz).date()
+    return _report_date_for_cutoff(report_cutoff_end, report_settings)
 
 
 def _normalize(value: str | None) -> str:
@@ -583,12 +592,14 @@ def _activity_rep_id(
     source = _normalize(activity.source)
     medium = _normalize(activity.medium)
     kind = _normalize(activity.type)
-    if (
-        activity.created_by_id in rep_ids
-        and source == "manual"
-        and (medium in {"call", "linkedin"} or kind in {"call", "linkedin"})
-    ):
-        return activity.created_by_id
+    is_manual_rep_touch = source == "manual" and (
+        medium in {"call", "linkedin"} or kind in {"call", "linkedin"}
+    )
+    if is_manual_rep_touch and activity.created_by_id is not None:
+        # An explicit manual logger is authoritative. If that user is outside
+        # this report's roster, exclude the touch instead of crediting its
+        # current deal/contact owner.
+        return activity.created_by_id if activity.created_by_id in rep_ids else None
 
     if activity.created_by_id in rep_ids:
         return activity.created_by_id
@@ -601,6 +612,9 @@ def _activity_rep_id(
         for rep_name, rep_id in rep_ids_by_aircall_name.items():
             if rep_name and (rep_name in aircall_name or aircall_name in rep_name):
                 return rep_id
+        # A named Aircall agent outside this roster is still an identified
+        # caller, so ownership must not replace that caller's identity.
+        return None
 
     if activity.deal_id and deal_owner.get(activity.deal_id) in rep_ids:
         return deal_owner.get(activity.deal_id)
@@ -881,7 +895,8 @@ async def _build_us_pod_call_report_for_period(
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
         "timezone": (
-            f"{config['cutoff_timezone']} cutoff at {int(config['cutoff_hour']):02d}:00; "
+            f"{config['cutoff_timezone']} cutoff at "
+            f"{int(config['cutoff_hour']):02d}:{int(config['cutoff_minute']):02d}; "
             f"report day labeled in {config['report_label_timezone']}"
         ),
         "lookback_days": LOOKBACK_DAYS,

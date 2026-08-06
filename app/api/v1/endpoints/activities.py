@@ -42,7 +42,7 @@ REPORT_CUTOFF_HOUR = 6
 def _pod_report_config_key(email: str | None) -> tuple[str, dict]:
     """Pick the report-config block for the viewer's pod so the live counter uses
     the same cutoff the rep's daily report uses. India pod -> india_sales_report
-    (IST-midnight day); everyone else -> US sales_report (7:30 AM IST cutoff)."""
+    (IST-midnight day); everyone else -> the configured US sales_report cutoff."""
     from app.core.pods import pod_rep_emails
     from app.services.us_pod_call_report import (
         DEFAULT_SALES_REPORT_SETTINGS,
@@ -175,8 +175,8 @@ async def list_activities(
 async def my_calls_today(session: DBSession, current_user: CurrentUser):
     # Use the SAME cutoff the rep's daily call report uses, so the live tile and
     # the report always agree on where "today" starts. Previously this endpoint
-    # hardcoded a 6:00 AM IST cutoff while the US report config was 7:30 AM IST,
-    # so the tile reset ~1.5h early and looked like calls were "lost" (Mahesh,
+    # hardcoded a 6:00 AM IST cutoff while the US report used a later configured
+    # cutoff, so the tile reset early and looked like calls were "lost" (Mahesh,
     # 2026-06-13). Now both read the configured cutoff_hour/minute/timezone.
     from app.services.us_pod_call_report import (
         load_sales_report_settings,
