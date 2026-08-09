@@ -19,6 +19,8 @@ POD_DEFINITIONS: dict[str, dict[str, Any]] = {
         "key": "us",
         "label": "US Pod",
         "reps": [
+            {"name": "Awinja", "email": "awinja@beacon.li", "aliases": ["awinja"]},
+            {"name": "Jacob", "email": "jacob@beacon.li", "aliases": ["jacob"]},
             {"name": "Pravalika Jamalpur", "email": "pravalika@beacon.li", "aliases": ["pravalika"]},
             {"name": "Mahesh Pothula", "email": "mahesh@beacon.li", "aliases": ["mahesh"]},
             {"name": "Pulkit Anand", "email": "pulkit@beacon.li", "aliases": ["pulkit"]},

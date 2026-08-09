@@ -953,6 +953,54 @@ async def _build_meeting_stage_gate(session, stage_settings):
     return gate
 
 
+def _ae_demo_funnel_deal_conditions(rep_id: UUID | None = None) -> list:
+    """Scope of the AE demo funnel: every deal the AE OWNS, whoever sourced it.
+
+    It deliberately does NOT constrain `sdr_id`. Requiring `sdr_id ==
+    assigned_to_id` (self-sourced) hid an AE's demos on SDR-sourced deals, which
+    is most of an AE's work — Pravalika ran 4 demos in a week and her row showed
+    1 (2026-08-07). The SDR leaderboard credits `deal.sdr_id` for the very same
+    transition, and that is intended: the SDR sourced it, the AE ran it.
+
+    Shared by the dashboard aggregate and the drilldown so the pill and the list
+    it opens can never disagree.
+    """
+    conditions = [Deal.assigned_to_id.isnot(None)]
+    if rep_id is not None:
+        conditions.append(Deal.assigned_to_id == rep_id)
+    return conditions
+
+
+def _advanced_stage_ids(stage_settings) -> set[str]:
+    """Stages that mean an account has genuinely progressed PAST the demo.
+
+    Only these suppress a rep's prospecting touches. Derived as a blocklist, not
+    an allowlist, because `stage_order` strips every `group == "closed"` stage
+    before slicing — so an allowlist silently lumps `cold`, `nurture`, `backlog`,
+    `not_a_fit` and `closed_lost` in with "moved beyond demo_done". Dialing a
+    cold account is re-prospecting, which is exactly the work this metric exists
+    to measure (Mahesh, 2026-08-06: 116 of 317 calls in a week vanished this way,
+    113 of them on `cold`/`backlog`/`nurture` accounts).
+
+    A blocklist also fails open: an unknown or newly added stage id counts
+    instead of disappearing without a trace.
+    """
+    ordered = [s["id"] for s in stage_settings if s.get("group") != "closed"]
+    if "demo_done" in ordered:
+        advanced = set(ordered[ordered.index("demo_done") + 1 :])
+    else:
+        advanced = {
+            "qualified_lead",
+            "poc_agreed",
+            "poc_wip",
+            "poc_done",
+            "commercial_negotiation",
+            "msa_review",
+        }
+    advanced.add("closed_won")  # already a customer, not a prospecting target
+    return advanced
+
+
 def _activity_row_is_early_funnel(
     row,
     *,
@@ -960,16 +1008,21 @@ def _activity_row_is_early_funnel(
     contact_company: dict[UUID, UUID | None],
     company_stages: dict[UUID, set[str]],
     early_funnel_stage_ids: set[str],
+    advanced_stage_ids: set[str],
 ) -> bool:
     if row.deal_id is not None:
         stage = deal_stage_by_id.get(row.deal_id)
-        return stage in early_funnel_stage_ids if stage is not None else True
+        # Unknown deal → keep rather than silently drop.
+        return stage not in advanced_stage_ids if stage is not None else True
     if row.contact_id is not None:
         company_id = contact_company.get(row.contact_id)
         if company_id is not None:
             stages = company_stages.get(company_id)
-            if stages:
-                return any(stage in early_funnel_stage_ids for stage in stages)
+            # Drop only when the whole account has moved past the demo with
+            # nothing early still in flight. A company holding both a poc_wip
+            # and a fresh reprospect deal is still being prospected.
+            if stages and (stages & advanced_stage_ids) and not (stages & early_funnel_stage_ids):
+                return False
     return True
 
 
@@ -1849,7 +1902,8 @@ async def sales_activity_drilldown(
                 )
 
     # ── AE demo funnel drilldowns ────────────────────────────────────────────────
-    # Only deals where assigned_to_id == sdr_id, attributed to the AE.
+    # Every deal this AE owns, whoever sourced it. Must stay in lockstep with the
+    # dashboard's `_bump_ae_demo` scope or the pill and the list it opens disagree.
     if metric in {"ae_demos_scheduled", "ae_demos_done", "ae_demos_converted"} and rep_id:
         stage_map = {
             "ae_demos_scheduled": "demo_scheduled",
@@ -1857,12 +1911,10 @@ async def sales_activity_drilldown(
             "ae_demos_converted": "qualified_lead",
         }
         target_stage = stage_map[metric]
-        # Self-sourced deals for this AE
         ae_self_rows = (
             await session.execute(
                 select(Deal.id, Deal.name, Deal.company_id).where(
-                    Deal.assigned_to_id == rep_id,
-                    Deal.sdr_id == rep_id,
+                    *_ae_demo_funnel_deal_conditions(rep_id)
                 )
             )
         ).all()
@@ -2053,10 +2105,21 @@ async def sales_dashboard(
     contact_company = {row.id: row.company_id for row in contact_rows}
     deal_owner = {row.id: row.assigned_to_id for row in deal_rows}
     # Derive deal/company stage state for call exclusion once an account has
-    # moved beyond the demo_done stage.
-    deal_stage_by_id = {row.id: str(row.stage or "").strip().lower() for row in deal_rows}
+    # moved beyond the demo_done stage. Built from an UNFILTERED deal scan (like
+    # _build_meeting_stage_gate does) — reading `deal_rows` here made the maps
+    # rep/geo-scoped, so the same rep's call count changed depending on which
+    # dashboard filter was applied.
+    stage_scan_rows = (await session.execute(select(Deal.id, Deal.stage, Deal.company_id))).all()
+    # Same reason: the contact→company hop must not be rep/geo-scoped either, or
+    # a rep's call on someone else's contact resolves to no company and skips
+    # the gate entirely.
+    contact_company_all: dict[UUID, UUID | None] = {
+        row.id: row.company_id
+        for row in (await session.execute(select(Contact.id, Contact.company_id))).all()
+    }
+    deal_stage_by_id = {row.id: str(row.stage or "").strip().lower() for row in stage_scan_rows}
     company_stages: dict[UUID, set[str]] = {}
-    for row in deal_rows:
+    for row in stage_scan_rows:
         if row.company_id is not None:
             company_stages.setdefault(row.company_id, set()).add(str(row.stage or "").strip().lower())
 
@@ -2065,6 +2128,7 @@ async def sales_dashboard(
         early_funnel_stage_ids = set(stage_order[: stage_order.index("demo_done") + 1])
     else:
         early_funnel_stage_ids = {"reprospect", "demo_scheduled", "demo_done"}
+    advanced_stage_ids = _advanced_stage_ids(stage_settings)
 
     # Bound the weekly-activity chart to at most ~1 year of buckets. Totals are
     # still computed over the full window (activities older than this still count
@@ -2446,9 +2510,10 @@ async def sales_dashboard(
             if not _activity_row_is_early_funnel(
                 row,
                 deal_stage_by_id=deal_stage_by_id,
-                contact_company=contact_company,
+                contact_company=contact_company_all,
                 company_stages=company_stages,
                 early_funnel_stage_ids=early_funnel_stage_ids,
+                advanced_stage_ids=advanced_stage_ids,
             ):
                 continue
             activity_bucket["calls"] += 1
@@ -3001,20 +3066,25 @@ async def sales_dashboard(
             )
             bucket["demos_converted"] = int(bucket.get("demos_converted", 0)) + 1
 
-    # ── AE Demo Funnel: only deals where sdr_id == assigned_to_id ───────────────
-    # Fetch all three stages in one deal query to avoid repeated round-trips.
+    # ── AE Demo Funnel: every deal the AE OWNS, whoever sourced it ──────────────
+    # This used to require `sdr_id == assigned_to_id` (self-sourced only), which
+    # hid an AE's demos on SDR-sourced deals — i.e. most of their work. Pravalika
+    # ran 4 demos in a week and her row showed 1 (2026-08-07: Ordway Labs and
+    # Command Alkon, sourced by Mahesh and Jacob).
+    #
+    # The SDR leaderboard still credits `deal.sdr_id` for the same transition, and
+    # that is deliberate, not double counting: the two tables measure two
+    # different jobs — the SDR sourced it, the AE ran it.
     ae_funnel_deal_rows = (
         await session.execute(
             select(Deal.id, Deal.assigned_to_id, Deal.sdr_id, Deal.company_id).where(
-                Deal.assigned_to_id.isnot(None),
-                Deal.sdr_id.isnot(None),
-                Deal.assigned_to_id == Deal.sdr_id,
+                *_ae_demo_funnel_deal_conditions()
             )
         )
     ).all()
-    # Map deal_id → assigned_to_id for quick lookup; only self-sourced deals.
+    # Map deal_id → owning AE. `_bump_ae_demo` skips any deal missing from here,
+    # so the stage-history queries below need no deal-id IN() clause.
     ae_deal_ae: dict[UUID, UUID] = {r.id: r.assigned_to_id for r in ae_funnel_deal_rows}
-    ae_self_sourced_ids: set[UUID] = set(ae_deal_ae.keys())
 
     def _bump_ae_demo(deal_id: UUID, field: str) -> None:
         ae_id = ae_deal_ae.get(deal_id)
@@ -3044,7 +3114,6 @@ async def sales_dashboard(
                 func.lower(DealStageHistory.to_stage) == "demo_scheduled",
                 DealStageHistory.changed_at >= window_start,
                 DealStageHistory.changed_at <= window_end,
-                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
             )
         )
     ).all()
@@ -3061,7 +3130,6 @@ async def sales_dashboard(
                 func.lower(DealStageHistory.to_stage) == "demo_done",
                 DealStageHistory.changed_at >= window_start,
                 DealStageHistory.changed_at <= window_end,
-                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
             )
         )
     ).all()
@@ -3078,7 +3146,6 @@ async def sales_dashboard(
                 func.lower(DealStageHistory.to_stage) == "qualified_lead",
                 DealStageHistory.changed_at >= window_start,
                 DealStageHistory.changed_at <= window_end,
-                DealStageHistory.deal_id.in_(ae_self_sourced_ids),
             )
         )
     ).all()

@@ -6,12 +6,11 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
-  ExternalLink,
-  Globe,
   Link2,
   Loader2,
   Mail,
   PenLine,
+  Linkedin,
   Phone,
   Plus,
   RefreshCw,
@@ -94,9 +93,6 @@ export default function AccountSourcingContactDetail() {
   const [phonesSaving, setPhonesSaving] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
   const [callDrawerOpen, setCallDrawerOpen] = useState(false);
-  const [editingLinkedinUrl, setEditingLinkedinUrl] = useState(false);
-  const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
-  const [linkedinUrlSaving, setLinkedinUrlSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
 
   // Manual prospect status. Clicking the active status clears it. Optimistic
@@ -302,22 +298,6 @@ export default function AccountSourcingContactDetail() {
     if (!contact) return;
     if (!contact.linkedin_url) return;
     setLinkedinDialogOpen(true);
-  };
-
-  const handleSaveLinkedinUrl = async () => {
-    if (!contact) return;
-    const trimmed = linkedinUrlInput.trim();
-    setLinkedinUrlSaving(true);
-    try {
-      const updated = await contactsApi.update(contact.id, { linkedin_url: trimmed || undefined } as Partial<Contact>);
-      setContact(updated);
-      setEditingLinkedinUrl(false);
-      toast.success("LinkedIn URL saved.", "LinkedIn URL");
-    } catch {
-      toast.error("Failed to save LinkedIn URL.", "Error");
-    } finally {
-      setLinkedinUrlSaving(false);
-    }
   };
 
   const handleSaveEmail = async () => {
@@ -697,6 +677,11 @@ export default function AccountSourcingContactDetail() {
                         </button>
                       </span>
                     )}
+                    {contact.linkedin_url ? (
+                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
+                        <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" />
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="prospect-detail-secondary-action"
@@ -1310,32 +1295,43 @@ export default function AccountSourcingContactDetail() {
               />
               <KV
                 label="LinkedIn"
-                value={contact.linkedin_url ? (
-                  <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#0a66c2", fontWeight: 700, fontSize: 13, textDecoration: "none", wordBreak: "break-all" }}>
-                    <ExternalLink size={14} /> {contact.linkedin_url}
-                  </a>
-                ) : editingLinkedinUrl ? (
-                  <span style={{ display: "grid", gap: 8 }}>
-                    <input
-                      autoFocus
-                      value={linkedinUrlInput}
-                      onChange={(e) => setLinkedinUrlInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") void handleSaveLinkedinUrl(); if (e.key === "Escape") { setEditingLinkedinUrl(false); setLinkedinUrlInput(""); } }}
-                      placeholder="https://linkedin.com/in/..."
-                      style={{ width: "100%", boxSizing: "border-box", height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none" }}
-                    />
-                    <span style={{ display: "flex", gap: 8 }}>
-                      <button type="button" disabled={linkedinUrlSaving} onClick={() => void handleSaveLinkedinUrl()} style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: linkedinUrlSaving ? "default" : "pointer" }}>
-                        {linkedinUrlSaving ? "Saving…" : "Save"}
-                      </button>
-                      <button type="button" onClick={() => { setEditingLinkedinUrl(false); setLinkedinUrlInput(""); }} style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                        Cancel
-                      </button>
-                    </span>
-                  </span>
-                ) : (
-                  <button type="button" onClick={() => { setLinkedinUrlInput(""); setEditingLinkedinUrl(true); }} style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
-                    <Plus size={13} /> Add URL
+value={editingLinkedIn ? (
+  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", width: "100%" }}>
+    <input
+      autoFocus
+      type="url"
+      value={linkedInInput}
+      onChange={(event) => setLinkedInInput(event.target.value)}
+      onKeyDown={(event) => { if (event.key === "Enter") void handleSaveLinkedIn(); if (event.key === "Escape") cancelLinkedInEdit(); }}
+      placeholder="linkedin.com/in/profile"
+      aria-label="LinkedIn URL"
+      style={{ flex: "1 1 210px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+    />
+    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 30, padding: "0 10px" }}>
+      {linkedInSaving ? "Saving..." : "Save"}
+    </button>
+    <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 30, padding: "0 10px" }}>Cancel</button>
+  </div>
+) : contact.linkedin_url ? (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" />
+    <button
+      type="button"
+      aria-label="Edit LinkedIn URL"
+      title="Edit LinkedIn URL"
+      onClick={() => { setLinkedInInput(contact.linkedin_url || ""); setEditingLinkedIn(true); }}
+      style={{ height: 28, width: 28, borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+    >
+      <PenLine size={12} />
+    </button>
+  </span>
+) : (
+  <button
+    type="button"
+    onClick={() => { setLinkedInInput(""); setEditingLinkedIn(true); }}
+    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+  >
+    <Plus size={12} /> Add LinkedIn URL
                   </button>
                 )}
               />
