@@ -2,9 +2,26 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import field_validator
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+# Manual per-prospect sourcing status (the account-level counterpart is
+# ACCOUNT_STATUS_VALUES on companies). Canonical snake_case values stored in the
+# DB; human labels + display order live in frontend/src/lib/contactStatus.ts.
+# Keep the two in lockstep.
+CONTACT_STATUS_VALUES = {
+    "cold",
+    "in_progress",
+    "meeting_booked",
+    "meeting_done",
+    "in_pipeline",
+    "not_the_right_prospect",
+    "dnd",
+    "reach_out_later",
+    "not_interested",
+}
 
 
 class ContactBase(SQLModel):
@@ -42,6 +59,10 @@ class Contact(ContactBase, table=True):
     sdr_assigned_at: Optional[datetime] = None
     outreach_lane: Optional[str] = Field(default=None, index=True)
     sequence_status: Optional[str] = Field(default=None, index=True)
+    # Manual per-prospect sourcing status (see CONTACT_STATUS_VALUES). Distinct
+    # from sequence_status, which call/LinkedIn automation drives. Set by reps on
+    # the prospect detail page.
+    account_status: Optional[str] = Field(default=None, index=True)
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -96,6 +117,7 @@ class ContactRead(ContactBase):
     sdr_assigned_at: Optional[datetime] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
+    account_status: Optional[str] = None
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -153,6 +175,7 @@ class ContactUpdate(SQLModel):
     sdr_name: Optional[str] = None
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
+    account_status: Optional[str] = None
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -171,3 +194,18 @@ class ContactUpdate(SQLModel):
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
     next_followup_at: Optional[datetime] = None
+
+    @field_validator("account_status", mode="before")
+    @classmethod
+    def _validate_account_status(cls, value):
+        """Accept a canonical status, blank (→ clear), or reject anything else."""
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized not in CONTACT_STATUS_VALUES:
+            raise ValueError(
+                f"account_status must be one of {sorted(CONTACT_STATUS_VALUES)} or empty"
+            )
+        return normalized

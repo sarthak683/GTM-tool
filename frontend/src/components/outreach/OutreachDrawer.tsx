@@ -12,6 +12,8 @@ interface Props {
   contact: Contact | null;
   onClose: () => void;
   mode?: "drawer" | "inline";
+  /** When provided, the phone button invokes this instead of dialing Aircall directly. */
+  onCallContact?: (contact: Contact) => void;
 }
 
 // Soft cap on cadence length. 6 was the original default for a 3-email +
@@ -132,7 +134,7 @@ const palette = {
 
 const DEFAULT_SENDING_ACCOUNT = "";
 
-function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
+function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Props) {
   const isOpen = !!contact;
   const isInline = mode === "inline";
 
@@ -321,6 +323,10 @@ function OutreachDrawer({ contact, onClose, mode = "drawer" }: Props) {
 
   const handleCallContact = () => {
     if (!contact?.phone) return;
+    if (onCallContact) {
+      onCallContact(contact);
+      return;
+    }
     window.__aircallDial?.(contact.phone, `${contact.first_name} ${contact.last_name}`);
   };
 

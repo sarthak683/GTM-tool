@@ -11,6 +11,7 @@ import {
   Clock,
   ExternalLink,
   Globe,
+  Link2,
   Loader2,
   Mail,
   MessageSquare,
@@ -35,13 +36,17 @@ import { useToast } from "../lib/ToastContext";
 import { ACCOUNT_STATUS_OPTIONS } from "../lib/accountStatus";
 import {
   getProspectTrackingScore,
-  getProspectTrackingStage,
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import type { Company, Contact, DealStageSetting, RecotapSignals } from "../types";
 import { formatDate, formatDomain, getAccountPrioritySnapshot, gmailComposeUrl } from "../lib/utils";
 import AssignDropdown from "../components/AssignDropdown";
+import ContactStatusBar from "../components/ContactStatusBar";
+import type { ContactStatusValue } from "../lib/contactStatus";
+import { saveContactAccountStatus, shouldSyncContactStatusToAccount } from "../lib/contactStatusSync";
+import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
@@ -135,9 +140,24 @@ function RecotapSignalsPanel({ rtp }: { rtp?: RecotapSignals | null }) {
   );
 }
 
-function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () => void }) {
-  const [re, setRe] = useState(false);
+function ContactItem({
+  contact,
+  companyId,
+  companyAccountStatus,
+  onStatusUpdated,
+  onChanged,
+}: {
+  contact: Contact;
+  companyId?: string | null;
+  companyAccountStatus?: string | null;
+  onStatusUpdated: (contactId: string, status: string | null, syncedAccountStatus?: string | null) => void;
+  onChanged?: () => void;
+}) {
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [callDrawerOpen, setCallDrawerOpen] = useState(false);
+  const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
   const navigate = useNavigate();
+  const toast = useToast();
   const openProspect = () => navigate(`/account-sourcing/contacts/${contact.id}`);
 
   const persona = canonicalPersona(contact.persona, contact.persona_type);
@@ -146,6 +166,27 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
   const enrichData = (contact.enrichment_data || {}) as Record<string, unknown>;
   const emailConfidence = typeof enrichData.confidence === "number" ? enrichData.confidence : null;
   const trackingTone = getProspectTrackingTone(contact);
+
+  const handleStatusChange = async (value: ContactStatusValue) => {
+    if (statusSaving) return;
+    const next = contact.account_status === value ? null : value;
+    const previous = contact.account_status ?? null;
+    const syncAccount = shouldSyncContactStatusToAccount(next);
+    setStatusSaving(true);
+    onStatusUpdated(contact.id, next, syncAccount ? next : undefined);
+    try {
+      await saveContactAccountStatus(contact.id, companyId, next);
+    } catch {
+      onStatusUpdated(
+        contact.id,
+        previous,
+        syncAccount ? (companyAccountStatus ?? null) : undefined,
+      );
+      toast.error("Could not update status. Please try again.", "Update failed");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
 
   return (
     <div
@@ -183,36 +224,13 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
               </span>
             )}
           </div>
-          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span
-              style={{
-                background: trackingTone.background,
-                color: trackingTone.color,
-                borderRadius: 999,
-                border: `1px solid ${trackingTone.border}`,
-                fontSize: 11,
-                padding: "4px 8px",
-                fontWeight: 800,
-              }}
-            >
-              {getProspectTrackingStage(contact)}
-            </span>
-            {contact.outreach_lane ? (
-              <span style={{ background: "#f3fbe3", color: colors.primary, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
-                {contact.outreach_lane.replace(/_/g, " ")}
-              </span>
-            ) : null}
-            {contact.sequence_status ? (
-              <span style={{ background: "#f3eaff", color: colors.violet, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
-                {contact.sequence_status.replace(/_/g, " ")}
-              </span>
-            ) : null}
-            {contact.assigned_rep_email ? (
-              <span style={{ background: "#f7f9fc", color: colors.sub, borderRadius: 999, fontSize: 11, padding: "4px 8px", fontWeight: 700 }}>
-                {contact.assigned_rep_email}
-              </span>
-            ) : null}
-          </div>
+          <ContactStatusBar
+            value={contact.account_status}
+            saving={statusSaving}
+            compact
+            stopPropagation
+            onChange={handleStatusChange}
+          />
           <div
             style={{
               marginTop: 10,
@@ -254,24 +272,33 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
             </span>
           ) : null}
 
-          <div style={{ display: "inline-flex", gap: 10 }}>
+          <div style={{ display: "inline-flex", gap: 8 }}>
             {contact.email ? (
               <a
                 href={gmailComposeUrl(contact.email)}
                 target="_blank"
                 rel="noreferrer"
                 title={`Email ${contact.email} in Gmail`}
+                style={{ border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none" }}
               >
                 <Mail size={14} />
               </a>
             ) : null}
-            {contact.linkedin_url ? <a href={contact.linkedin_url} target="_blank" rel="noreferrer"><span><Globe size={14} /></span></a> : null}
+            <button
+              type="button"
+              onClick={() => setLinkedinDialogOpen(true)}
+              disabled={!contact.linkedin_url}
+              title={contact.linkedin_url ? "Log a LinkedIn touch" : "Add a LinkedIn URL first to log a LinkedIn touch"}
+              style={{ border: `1px solid ${contact.linkedin_url ? "#ddd6fe" : "#e2e8f0"}`, background: contact.linkedin_url ? "#f5f3ff" : "#f6f8fb", color: contact.linkedin_url ? "#6d28d9" : "#9aa8b7", borderRadius: 10, padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: contact.linkedin_url ? "pointer" : "default", opacity: contact.linkedin_url ? 1 : 0.85 }}
+            >
+              <Link2 size={14} /> Log LinkedIn
+            </button>
             {contact.phone ? (
               <button
                 type="button"
-                onClick={() => window.__aircallDial?.(contact.phone!, `${contact.first_name} ${contact.last_name}`)}
-                style={{ background: "none", border: "none", padding: 0, color: "inherit", cursor: "pointer" }}
-                title={`Call ${contact.phone} in Aircall`}
+                onClick={() => setCallDrawerOpen(true)}
+                style={{ border: "1px solid #dcfce7", background: "#f0fdf4", color: "#15803d", borderRadius: 10, padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                title={`Log a call for ${contact.first_name} ${contact.last_name}`}
               >
                 <Phone size={14} />
               </button>
@@ -279,54 +306,40 @@ function ContactItem({ contact, onChanged }: { contact: Contact; onChanged: () =
           </div>
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at)}</div>
-          <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
-            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700 }}>AE</div>
-            <AssignDropdown
-              entityType="contact"
-              entityId={contact.id}
-              currentAssignedId={contact.assigned_to_id}
-              currentAssignedName={contact.assigned_to_name || contact.assigned_rep_email}
-              onAssigned={() => onChanged()}
-              compact
-              role="ae"
-              label="Assign AE"
-            />
-            <div style={{ color: colors.faint, fontSize: 11, fontWeight: 700 }}>SDR</div>
-            <AssignDropdown
-              entityType="contact"
-              entityId={contact.id}
-              currentAssignedId={contact.sdr_id}
-              currentAssignedName={contact.sdr_name}
-              onAssigned={() => onChanged()}
-              compact
-              role="sdr"
-              label="Assign SDR"
-            />
-          </div>
-          <div style={{ display: "inline-flex", gap: 8 }}>
-            <Link
-              to={`/account-sourcing/contacts/${contact.id}`}
-              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.primary, borderRadius: 10, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
-              title="Open full prospect card"
-            >
-              <ExternalLink size={12} /> Open prospect
-            </Link>
-            <button
-              onClick={async () => {
-                setRe(true);
-                try {
-                  await accountSourcingApi.reEnrichContact(contact.id);
-                  onChanged();
-                } finally {
-                  setTimeout(() => setRe(false), 2500);
-                }
-              }}
-              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              {re ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Re-enrich
-            </button>
-          </div>
+          <Link
+            to={`/account-sourcing/contacts/${contact.id}`}
+            style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.primary, borderRadius: 10, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+            title="Open full prospect card"
+          >
+            <ExternalLink size={12} /> Open prospect
+          </Link>
         </div>
+      </div>
+      <div onClick={(e) => e.stopPropagation()}>
+        <LogLinkedInDialog
+          contactId={contact.id}
+          contactName={`${contact.first_name} ${contact.last_name}`}
+          linkedinUrl={contact.linkedin_url}
+          sequenceStatus={contact.sequence_status}
+          initialStatus={contact.linkedin_status}
+          open={linkedinDialogOpen}
+          onClose={() => setLinkedinDialogOpen(false)}
+          onLogged={() => {
+            setLinkedinDialogOpen(false);
+            onChanged?.();
+            toast.success(`LinkedIn touch logged for ${contact.first_name || "the prospect"}.`, "LinkedIn logged");
+          }}
+        />
+        {callDrawerOpen ? (
+          <CallDispositionDrawer
+            contact={contact}
+            onClose={() => setCallDrawerOpen(false)}
+            onSaved={() => {
+              setCallDrawerOpen(false);
+              onChanged?.();
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1061,6 +1074,18 @@ export default function AccountSourcingCompanyDetail() {
   useEffect(() => {
     setSummaryDraft(company?.outbound_summary ?? "");
   }, [company?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleContactStatusUpdated = useCallback(
+    (contactId: string, status: string | null, syncedAccountStatus?: string | null) => {
+      setContacts((prev) =>
+        prev.map((c) => (c.id === contactId ? { ...c, account_status: status ?? undefined } : c)),
+      );
+      if (syncedAccountStatus !== undefined) {
+        setCompany((prev) => (prev ? { ...prev, account_status: syncedAccountStatus ?? undefined } : prev));
+      }
+    },
+    [],
+  );
 
   if (loading) {
     return (
@@ -2206,7 +2231,13 @@ export default function AccountSourcingCompanyDetail() {
                           aria-label={`Select ${c.first_name} ${c.last_name}`}
                         />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <ContactItem contact={c} onChanged={load} />
+                          <ContactItem
+                            contact={c}
+                            companyId={company?.id}
+                            companyAccountStatus={company?.account_status}
+                            onStatusUpdated={handleContactStatusUpdated}
+                            onChanged={load}
+                          />
                         </div>
                       </div>
                     ))}

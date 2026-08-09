@@ -139,6 +139,7 @@ export interface Contact {
   sdr_assigned_at?: string | null;
   outreach_lane?: string;
   sequence_status?: string;
+  account_status?: string;
   instantly_status?: string;
   instantly_campaign_id?: string;
   warm_intro_strength?: number;

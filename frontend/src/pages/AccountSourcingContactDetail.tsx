@@ -9,7 +9,6 @@ import {
   ExternalLink,
   Globe,
   Link2,
-  Linkedin,
   Loader2,
   Mail,
   PenLine,
@@ -28,6 +27,7 @@ import AssignDropdown from "../components/AssignDropdown";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import ProvenanceBar from "../components/ProvenanceBar";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import { useToast } from "../lib/ToastContext";
 import {
   getProspectTrackingScore,
@@ -35,6 +35,9 @@ import {
   getProspectTrackingSummary,
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
+import ContactStatusBar from "../components/ContactStatusBar";
+import type { ContactStatusValue } from "../lib/contactStatus";
+import { saveContactAccountStatus, shouldSyncContactStatusToAccount } from "../lib/contactStatusSync";
 import { avatarColor, formatDate, formatDomain, getAccountPrioritySnapshot, getInitials, gmailComposeUrl, isPlaceholderDomain } from "../lib/utils";
 import type { Activity, Company, Contact, Deal } from "../types";
 import { MessageSquare } from "lucide-react";
@@ -86,16 +89,42 @@ export default function AccountSourcingContactDetail() {
   const [editingPhone, setEditingPhone] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneSaving, setPhoneSaving] = useState(false);
-  const [editingLinkedIn, setEditingLinkedIn] = useState(false);
-  const [linkedInInput, setLinkedInInput] = useState("");
-  const [linkedInSaving, setLinkedInSaving] = useState(false);
   const [editingPhones, setEditingPhones] = useState(false);
   const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
   const [phonesSaving, setPhonesSaving] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
+  const [callDrawerOpen, setCallDrawerOpen] = useState(false);
   const [editingLinkedinUrl, setEditingLinkedinUrl] = useState(false);
   const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
   const [linkedinUrlSaving, setLinkedinUrlSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  // Manual prospect status. Clicking the active status clears it. Optimistic
+  // update with rollback so the segmented control feels instant.
+  const handleStatusChange = async (value: ContactStatusValue) => {
+    if (!contact || statusSaving) return;
+    const next = contact.account_status === value ? null : value;
+    const previous = contact.account_status ?? null;
+    const previousCompanyStatus = company?.account_status ?? null;
+    setStatusSaving(true);
+    setContact((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
+    if (shouldSyncContactStatusToAccount(next)) {
+      setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
+    }
+    try {
+      await saveContactAccountStatus(contact.id, contact.company_id, next);
+    } catch {
+      setContact((prev) => (prev ? { ...prev, account_status: previous ?? undefined } : prev));
+      if (shouldSyncContactStatusToAccount(next)) {
+        setCompany((prev) =>
+          prev ? { ...prev, account_status: previousCompanyStatus ?? undefined } : prev,
+        );
+      }
+      toast.error("Could not update status. Please try again.", "Update failed");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -317,42 +346,6 @@ export default function AccountSourcingContactDetail() {
     }
   };
 
-  const handleSaveLinkedIn = async () => {
-    if (!contact) return;
-    const raw = linkedInInput.trim();
-    let normalized: string | null = null;
-
-    if (raw) {
-      const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-      try {
-        const url = new URL(candidate);
-        const hostname = url.hostname.toLowerCase();
-        if (!(["http:", "https:"].includes(url.protocol)) || (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))) {
-          window.alert("Enter a valid LinkedIn URL.");
-          return;
-        }
-        normalized = url.toString();
-      } catch {
-        window.alert("Enter a valid LinkedIn URL.");
-        return;
-      }
-    }
-
-    setLinkedInSaving(true);
-    try {
-      const updated = await contactsApi.update(contact.id, { linkedin_url: normalized });
-      setContact(updated);
-      setEditingLinkedIn(false);
-    } finally {
-      setLinkedInSaving(false);
-    }
-  };
-
-  const cancelLinkedInEdit = () => {
-    setEditingLinkedIn(false);
-    setLinkedInInput(contact?.linkedin_url || "");
-  };
-
   const startEditingPhones = () => {
     setPhonesDraft((contact?.additional_phones || []).map((p) => ({ number: p.number, label: p.label || "" })));
     setEditingPhones(true);
@@ -549,27 +542,11 @@ export default function AccountSourcingContactDetail() {
                       updatedAt={contact.updated_at}
                     />
                   </div>
-                  <div className="prospect-detail-chips" style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Chip label={prettify(contact.outreach_lane || company?.recommended_outreach_lane)} tone={toneForLane(contact.outreach_lane || company?.recommended_outreach_lane)} />
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                        borderRadius: 999,
-                        padding: "6px 10px",
-                        background: trackingTone.background,
-                        color: trackingTone.color,
-                        border: `1px solid ${trackingTone.border}`,
-                        fontSize: 12,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {getProspectTrackingStage(contact)}
-                    </span>
-                    <Chip label={contact.email ? "Email ready" : "Missing email"} tone={contact.email ? "green" : "warm"} />
-                    <Chip label={contact.warm_intro_strength ? `Warm path ${contact.warm_intro_strength}/5` : Object.keys(displayWarmPath).length > 0 ? "Account warm path" : "Direct motion"} tone={Object.keys(displayWarmPath).length > 0 ? "warm" : "neutral"} />
-                  </div>
+                  <ContactStatusBar
+                    value={contact.account_status}
+                    saving={statusSaving}
+                    onChange={handleStatusChange}
+                  />
                   <div
                     className="prospect-detail-progress"
                     style={{
@@ -703,7 +680,7 @@ export default function AccountSourcingContactDetail() {
                       <span className="prospect-detail-call-button" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <ContactActionButton
                           icon={<Phone size={14} />}
-                          onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                          onClick={() => setCallDrawerOpen(true)}
                           label={`Call ${contact.phone}`}
                           tone="green"
                         />
@@ -720,14 +697,6 @@ export default function AccountSourcingContactDetail() {
                         </button>
                       </span>
                     )}
-<<<<<<< HEAD
-=======
-                    {contact.linkedin_url ? (
-                      <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
-                        <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="LinkedIn" tone="primary" />
-                      </span>
-                    ) : null}
->>>>>>> 863da2e90f34005c31642cdb8b8ce5696719206e
                     <button
                       type="button"
                       className="prospect-detail-secondary-action"
@@ -805,7 +774,7 @@ export default function AccountSourcingContactDetail() {
                           </div>
                         ) : contact.phone ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
-                            <button type="button" onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                            <button type="button" onClick={() => setCallDrawerOpen(true)}
                               style={{ color: colors.green, fontSize: 14, fontWeight: 800, flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
                               {contact.phone}
                             </button>
@@ -955,7 +924,7 @@ export default function AccountSourcingContactDetail() {
               >
                 Launch, edit, and configure prospect-specific outreach directly here. Advanced settings lets you override timing for this prospect only before the sequence starts.
               </div>
-              <OutreachDrawer contact={contact} onClose={() => {}} mode="inline" />
+              <OutreachDrawer contact={contact} onClose={() => {}} mode="inline" onCallContact={() => setCallDrawerOpen(true)} />
               </Section>
             </div>
 
@@ -1251,7 +1220,7 @@ export default function AccountSourcingContactDetail() {
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                     <ContactActionButton
                       icon={<Phone size={14} />}
-                      onClick={() => window.__aircallDial?.(contact.phone!, fullName || undefined)}
+                      onClick={() => setCallDrawerOpen(true)}
                       label={contact.phone}
                       tone="green"
                     />
@@ -1341,7 +1310,6 @@ export default function AccountSourcingContactDetail() {
               />
               <KV
                 label="LinkedIn"
-<<<<<<< HEAD
                 value={contact.linkedin_url ? (
                   <a href={contact.linkedin_url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#0a66c2", fontWeight: 700, fontSize: 13, textDecoration: "none", wordBreak: "break-all" }}>
                     <ExternalLink size={14} /> {contact.linkedin_url}
@@ -1368,45 +1336,6 @@ export default function AccountSourcingContactDetail() {
                 ) : (
                   <button type="button" onClick={() => { setLinkedinUrlInput(""); setEditingLinkedinUrl(true); }} style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
                     <Plus size={13} /> Add URL
-=======
-                value={editingLinkedIn ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", width: "100%" }}>
-                    <input
-                      autoFocus
-                      type="url"
-                      value={linkedInInput}
-                      onChange={(event) => setLinkedInInput(event.target.value)}
-                      onKeyDown={(event) => { if (event.key === "Enter") void handleSaveLinkedIn(); if (event.key === "Escape") cancelLinkedInEdit(); }}
-                      placeholder="linkedin.com/in/profile"
-                      aria-label="LinkedIn URL"
-                      style={{ flex: "1 1 210px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
-                    />
-                    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 30, padding: "0 10px" }}>
-                      {linkedInSaving ? "Saving..." : "Save"}
-                    </button>
-                    <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 30, padding: "0 10px" }}>Cancel</button>
-                  </div>
-                ) : contact.linkedin_url ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <ContactActionButton icon={<Linkedin size={14} />} href={contact.linkedin_url} label="View profile" tone="primary" />
-                    <button
-                      type="button"
-                      aria-label="Edit LinkedIn URL"
-                      title="Edit LinkedIn URL"
-                      onClick={() => { setLinkedInInput(contact.linkedin_url || ""); setEditingLinkedIn(true); }}
-                      style={{ height: 28, width: 28, borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-                    >
-                      <PenLine size={12} />
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => { setLinkedInInput(""); setEditingLinkedIn(true); }}
-                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-                  >
-                    <Plus size={12} /> Add LinkedIn URL
->>>>>>> 863da2e90f34005c31642cdb8b8ce5696719206e
                   </button>
                 )}
               />
@@ -1521,6 +1450,16 @@ export default function AccountSourcingContactDetail() {
           toast.success(`LinkedIn touch logged for ${contact.first_name || "the prospect"}.`, "LinkedIn logged");
         }}
       />
+      {callDrawerOpen ? (
+        <CallDispositionDrawer
+          contact={contact}
+          onClose={() => setCallDrawerOpen(false)}
+          onSaved={() => {
+            setCallDrawerOpen(false);
+            void load();
+          }}
+        />
+      ) : null}
       </div>
     </>
   );
