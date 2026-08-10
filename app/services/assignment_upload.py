@@ -298,7 +298,9 @@ async def apply_assignment_plan(
     now = datetime.utcnow()
     ae_changed = 0
     sdr_changed = 0
-    contacts_touched = 0
+    # A set, not a counter: when a row moves BOTH the AE and the SDR, the two
+    # cascades walk the same contacts and a running total double-counts them.
+    touched_contact_ids: set[UUID] = set()
 
     for entry in planned:
         if not entry.applies or entry.company_id is None:
@@ -332,7 +334,7 @@ async def apply_assignment_plan(
                     contact.assigned_rep_email = company.assigned_rep_email
                     contact.updated_at = now
                     session.add(contact)
-                    contacts_touched += 1
+                    touched_contact_ids.add(contact.id)
                 ae_changed += 1
                 row_ae_changed = True
 
@@ -346,10 +348,17 @@ async def apply_assignment_plan(
                 # Carries the reassignment watermark that resets outreach
                 # counters. Reused rather than reimplemented so an uploaded
                 # reassignment resets exactly what a clicked one resets.
+                #
+                # It returns every contact on the account, including the ones it
+                # deliberately skipped (a per-contact SDR override). Re-apply its
+                # own skip rule here so the reported figure is contacts actually
+                # moved, not contacts looked at.
                 touched = await sync_company_sdr_assignment_to_contacts(
                     session, company, previous_sdr_id
                 )
-                contacts_touched += len(touched)
+                for contact in touched:
+                    if contact.sdr_id == company.sdr_id:
+                        touched_contact_ids.add(contact.id)
                 sdr_changed += 1
                 row_sdr_changed = True
 
@@ -374,7 +383,7 @@ async def apply_assignment_plan(
     return {
         "ae_changed": ae_changed,
         "sdr_changed": sdr_changed,
-        "contacts_touched": contacts_touched,
+        "contacts_touched": len(touched_contact_ids),
     }
 
 
