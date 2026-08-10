@@ -2,6 +2,7 @@ import type {
   AngelInvestor,
   AngelMapping,
   AssignmentUpdate,
+  AssignmentUploadResult,
   ClickUpCrmSettings,
   Company,
   Contact,
@@ -886,6 +887,16 @@ export const assignmentsApi = {
       method: "PATCH",
       body: JSON.stringify({ ids, user_id: userId, role }),
     }),
+  // The SAME file is posted for the preview and the apply, so the server always
+  // re-derives the plan instead of trusting one sent back by the browser.
+  bulkAssignUpload: (file: File, dryRun: boolean) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<AssignmentUploadResult>(
+      `/api/v1/assignments/bulk-upload?dry_run=${dryRun ? "true" : "false"}`,
+      { method: "POST", body: form },
+    );
+  },
 };
 
 export const executionTrackerApi = {

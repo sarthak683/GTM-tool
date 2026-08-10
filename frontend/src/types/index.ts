@@ -887,3 +887,49 @@ export interface Battlecard {
   created_at: string;
   updated_at: string;
 }
+
+// Bulk account reassignment from an uploaded CSV/XLSX.
+// `status` mirrors the backend's RowStatus: "ok" is the only one that writes.
+export type AssignmentUploadRowStatus =
+  | "ok"
+  | "no_change"
+  | "not_found"
+  | "ambiguous"
+  | "unknown_rep"
+  | "no_identifier";
+
+export interface AssignmentUploadRow {
+  row_number: number;
+  identifier: string;
+  status: AssignmentUploadRowStatus;
+  message: string;
+  company_id: string | null;
+  company_name: string | null;
+  company_domain: string | null;
+  current_ae: string | null;
+  current_sdr: string | null;
+  new_ae: string | null;
+  new_sdr: string | null;
+  ae_changes: boolean;
+  sdr_changes: boolean;
+}
+
+export interface AssignmentUploadResult {
+  dry_run: boolean;
+  filename: string;
+  summary: {
+    total: number;
+    will_change: number;
+    no_change: number;
+    not_found: number;
+    ambiguous: number;
+    unknown_rep: number;
+    no_identifier: number;
+  };
+  rows: AssignmentUploadRow[];
+  applied: {
+    ae_changed: number;
+    sdr_changed: number;
+    contacts_touched: number;
+  } | null;
+}

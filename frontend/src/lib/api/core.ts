@@ -48,9 +48,32 @@ function getAuthHeaders(): Record<string, string> {
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
+/** FastAPI returns `detail` as a string, or as an array of validation objects
+ *  on 422. Stringifying the array yields "[object Object]" in the UI, so pull
+ *  out the messages instead. */
+function readErrorDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => (typeof d === "string" ? d : (d as { msg?: string })?.msg))
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  return fallback;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  // A multipart body must keep the browser-generated Content-Type, which
+  // carries the boundary. Forcing application/json here made the server see no
+  // file at all ("Field required"), which is why every upload call site until
+  // now hand-rolled its own fetch instead of using this helper.
+  const isMultipart = options?.body instanceof FormData;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...options?.headers },
+    headers: {
+      ...(isMultipart ? {} : { "Content-Type": "application/json" }),
+      ...getAuthHeaders(),
+      ...options?.headers,
+    },
     ...options,
   });
   if (res.status === 401) {
@@ -60,7 +83,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? "Request failed");
+    throw new Error(readErrorDetail(err?.detail, res.statusText || "Request failed"));
   }
   if (res.status === 204) return undefined as T;
   const payload = await res.json();

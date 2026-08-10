@@ -10,16 +10,22 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import select
 
-from app.core.dependencies import CurrentUser, DBSession
+from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
 from app.services.account_sourcing import append_company_activity_log
+from app.services.account_sourcing_tabular import parse_tabular_file
+from app.services.assignment_upload import (
+    apply_assignment_plan,
+    plan_assignment_upload,
+    summarize,
+)
 from app.services.sdr_reassignment import (
     reset_contact_outreach_progress,
     sync_company_sdr_assignment_to_contacts,
@@ -414,3 +420,93 @@ async def bulk_assign_contacts(
 
     await session.commit()
     return {"updated": updated, "skipped": skipped, "user_id": str(body.user_id) if body.user_id else None, "role": role_key}
+
+
+# ── Bulk reassignment from an uploaded file ──────────────────────────────────
+
+
+class AssignmentUploadRow(BaseModel):
+    row_number: int
+    identifier: str
+    status: str
+    message: str = ""
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    company_domain: Optional[str] = None
+    current_ae: Optional[str] = None
+    current_sdr: Optional[str] = None
+    new_ae: Optional[str] = None
+    new_sdr: Optional[str] = None
+    ae_changes: bool = False
+    sdr_changes: bool = False
+
+
+class AssignmentUploadResult(BaseModel):
+    dry_run: bool
+    filename: str
+    summary: dict
+    rows: List[AssignmentUploadRow]
+    applied: Optional[dict] = None
+
+
+def _serialize_planned(entry) -> AssignmentUploadRow:
+    return AssignmentUploadRow(
+        row_number=entry.row_number,
+        identifier=entry.identifier,
+        status=entry.status,
+        message=entry.message,
+        company_id=str(entry.company_id) if entry.company_id else None,
+        company_name=entry.company_name,
+        company_domain=entry.company_domain,
+        current_ae=entry.current_ae,
+        current_sdr=entry.current_sdr,
+        new_ae=entry.new_ae,
+        new_sdr=entry.new_sdr,
+        ae_changes=entry.ae_moves,
+        sdr_changes=entry.sdr_moves,
+    )
+
+
+@router.post("/bulk-upload", response_model=AssignmentUploadResult)
+async def bulk_assign_from_upload(
+    admin: AdminUser,
+    session: DBSession,
+    file: UploadFile = File(...),
+    dry_run: bool = Query(True, description="Preview only. Set false to write."),
+):
+    """Reassign many accounts' AE/SDR from a CSV/XLSX.
+
+    Admin-only, mirroring the row-selection bulk endpoints. The SAME file is
+    posted twice — once to preview, once to apply — so the applied plan is
+    always re-derived server-side and never taken from the client.
+
+    Column headers are flexible (account/company/name, domain/website, ae,
+    ae_email, sdr, sdr_email). A blank AE/SDR cell leaves that slot untouched;
+    clearing an owner requires the literal word "unassign".
+    """
+    lower_name = (file.filename or "").lower()
+    if not (lower_name.endswith(".csv") or lower_name.endswith(".xlsx")):
+        raise ValidationError("File must be a .csv or .xlsx")
+
+    content = await file.read()
+    rows = parse_tabular_file(file.filename or "upload.csv", content)
+    if not rows:
+        raise ValidationError(
+            "No rows found. The file needs a header row plus an account name or domain column."
+        )
+
+    planned = await plan_assignment_upload(session, rows)
+    summary = summarize(planned)
+
+    applied = None
+    if not dry_run:
+        applied = await apply_assignment_plan(session, planned, actor=admin)
+        await session.commit()
+
+    return AssignmentUploadResult(
+        dry_run=dry_run,
+        filename=file.filename or "upload.csv",
+        summary=summary,
+        rows=[_serialize_planned(e) for e in planned],
+        applied=applied,
+    )

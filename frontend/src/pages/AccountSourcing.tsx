@@ -31,6 +31,7 @@ import { getCachedUsers } from "../lib/cachedFetch";
 import { getAccountPrioritySnapshot } from "../lib/utils";
 import type { AccountSourcingSummary, Company, SourcingBatch, User } from "../types";
 import AssignDropdown from "../components/AssignDropdown";
+import BulkReassignUpload from "../components/BulkReassignUpload";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import {
   cardStyle,
@@ -1434,6 +1435,10 @@ export default function AccountSourcing() {
 
         {isAdmin && activeTab === "accounts" ? (
           <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
+        ) : null}
+
+        {isAdmin && activeTab === "accounts" ? (
+          <BulkReassignUpload onApplied={() => load()} />
         ) : null}
 
         {latestVisibleBatch ? (
