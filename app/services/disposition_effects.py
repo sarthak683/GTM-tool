@@ -361,6 +361,20 @@ async def apply_call_disposition_effects(
     if await _maybe_suggest_deal_from_disposition(session, contact, disposition):
         changes["deal_suggestion"] = "created"
 
+    # Meeting booked on the phone → reflect it on the parent account's status.
+    # Server-side source of truth so the deal-page call logger (which records
+    # the disposition in event_metadata and never PATCHes the contact) still
+    # advances the account. Forward-only; a parked account may be revived by a
+    # booked meeting.
+    if disposition in _MEETING_BOOKED_DISPOSITIONS and contact.company_id:
+        from app.services.account_status import bump_company_account_status
+
+        new_status = await bump_company_account_status(
+            session, contact.company_id, "meeting_booked"
+        )
+        if new_status:
+            changes["account_status"] = f"{contact.account_status} -> {new_status}"
+
     if refresh_tasks:
         # Delayed import to avoid a circular dependency with app.services.tasks
         from app.services.tasks import refresh_system_tasks_for_entity
@@ -402,6 +416,19 @@ async def apply_linkedin_status_effects(
             changes["instantly"] = "paused"
             contact.instantly_status = "paused"
             session.add(contact)
+
+    # A meeting booked over LinkedIn should advance the parent account's status
+    # just like the call path does (LogLinkedInDialog writes the activity + the
+    # contact, and the activity hook bumps the account to in_progress, but the
+    # booked-meeting itself only lives in the effects function).
+    if linkedin_status == "meeting_booked" and contact.company_id:
+        from app.services.account_status import bump_company_account_status
+
+        new_status = await bump_company_account_status(
+            session, contact.company_id, "meeting_booked"
+        )
+        if new_status:
+            changes["account_status"] = f"{contact.account_status} -> {new_status}"
 
     if refresh_tasks:
         from app.services.tasks import refresh_system_tasks_for_entity

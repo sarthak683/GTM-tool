@@ -29,6 +29,7 @@ const AccountSourcingContactDetail = lazy(() => import("./pages/AccountSourcingC
 const TeamManagement = lazy(() => import("./pages/TeamManagement"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const TasksPage = lazy(() => import("./pages/Tasks"));
+const DataRoomPage = lazy(() => import("./pages/DataRoom"));
 const Dial = lazy(() => import("./pages/Dial"));
 
 function PageSkeleton() {
@@ -128,6 +129,7 @@ export default function App() {
                 <Route path="sales-analytics" element={<SalesAnalytics />} />
                 <Route path="sales-analytics/:tab" element={<SalesAnalytics />} />
                 <Route path="tasks" element={<TasksPage />} />
+                <Route path="data-room" element={<DataRoomPage />} />
                 <Route path="team" element={<TeamManagement />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

@@ -245,6 +245,8 @@ export interface Deal {
   department?: string;
   geography?: string;
   source?: string;
+  is_marketing_lead?: boolean;
+  marketing_source?: string | null;
   description?: string;
   next_step?: string;
   next_step_updated_at?: string;
@@ -884,6 +886,19 @@ export interface Battlecard {
   competitor?: string;
   tags?: string;
   is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DataRoomCategory = "documentation" | "decks" | "videos" | "demo_recordings";
+
+export interface DataRoomItem {
+  id: string;
+  category: DataRoomCategory;
+  title: string;
+  embed_url: string;
+  thumbnail_url?: string | null;
+  created_by_id?: string | null;
   created_at: string;
   updated_at: string;
 }

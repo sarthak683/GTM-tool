@@ -229,6 +229,15 @@ async def _backfill_synced_sent_event(
     ):
         contact.instantly_status = "pushed"
         session.add(contact)
+    # A campaign send to a prospect is engagement — advance the parent account
+    # to in_progress (forward-only; best-effort).
+    if contact.company_id:
+        try:
+            from app.services.account_status import bump_company_account_status
+
+            await bump_company_account_status(session, contact.company_id, "in_progress")
+        except Exception:
+            logger.exception("instantly email_sent: account_status bump failed for contact %s", contact.id)
     return 1
 
 
@@ -313,6 +322,15 @@ async def _backfill_synced_email_events(
         )
         session.add(activity)
         created += 1
+        # Any campaign touch (open/click/reply/re-send) is engagement — advance
+        # the parent account to in_progress (forward-only; best-effort).
+        if contact.company_id:
+            try:
+                from app.services.account_status import bump_company_account_status
+
+                await bump_company_account_status(session, contact.company_id, "in_progress")
+            except Exception:
+                logger.exception("instantly backfill: account_status bump failed for contact %s", contact.id)
 
     return created
 

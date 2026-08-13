@@ -156,6 +156,7 @@ function ContactItem({
   const [statusSaving, setStatusSaving] = useState(false);
   const [callDrawerOpen, setCallDrawerOpen] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
+  const [tasksModalOpen, setTasksModalOpen] = useState(false);
   const navigate = useNavigate();
   const toast = useToast();
   const openProspect = () => navigate(`/account-sourcing/contacts/${contact.id}`);
@@ -303,6 +304,14 @@ function ContactItem({
                 <Phone size={14} />
               </button>
             ) : null}
+            <button
+              type="button"
+              onClick={() => setTasksModalOpen(true)}
+              title={`View or add tasks for ${contact.first_name} ${contact.last_name}`}
+              style={{ border: "1px solid #cfe89a", background: "#f3fbe3", color: colors.primary, borderRadius: 10, padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              <CheckCircle2 size={14} /> Tasks
+            </button>
           </div>
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at)}</div>
@@ -340,6 +349,14 @@ function ContactItem({
             }}
           />
         ) : null}
+        <TaskCenterModal
+          isOpen={tasksModalOpen}
+          onClose={() => setTasksModalOpen(false)}
+          entityType="contact"
+          entityId={contact.id}
+          entityLabel={`${contact.first_name} ${contact.last_name}`.trim() || "this stakeholder"}
+          onChanged={onChanged}
+        />
       </div>
     </div>
   );

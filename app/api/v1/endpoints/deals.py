@@ -181,6 +181,16 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
             await reconcile_deal_stakeholders(session, deal, create_from_signals=False)
         except Exception:
             logger.exception("deal create: stakeholder link failed for %s", deal.id)
+        # A live deal on the account means the account is in the pipeline —
+        # reflect that on the account status (forward-only; no-op if the account
+        # is already past this stage or manually parked).
+        try:
+            from app.services.account_status import bump_company_account_status
+            await bump_company_account_status(
+                session, deal.company_id, "in_pipeline"
+            )
+        except Exception:
+            logger.exception("deal create: account_status bump failed for %s", deal.company_id)
     await session.commit()
 
     return await DealRepository(session).get_with_joins(deal.id) or deal

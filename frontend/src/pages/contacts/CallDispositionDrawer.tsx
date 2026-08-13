@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Building2, Phone, Clock, Mail, Link2, X, Mic, CheckCircle2, Loader2, ArrowRight } from "lucide-react";
 import type { Activity, Contact } from "../../types";
-import { contactsApi, activitiesApi, remindersApi, pushApi } from "../../lib/api";
+import { contactsApi, activitiesApi, remindersApi, pushApi, accountSourcingApi } from "../../lib/api";
 import type { PreCallBrief } from "../../lib/api";
 import { avatarColor, getInitials, gmailComposeUrl } from "../../lib/utils";
 import { useToast } from "../../lib/ToastContext";
 import {
   CALL_DISPOSITION_OPTIONS,
+  deriveAccountStatusFromCallDisposition,
   deriveSequenceStatusFromCallDisposition,
   formatCallDisposition,
 } from "../../lib/prospectWorkflow";
+import { shouldSyncContactStatusToAccount } from "../../lib/contactStatusSync";
 import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } from "./CallRecordingPanel";
 import { PreCallIntelPanel } from "./PreCallIntelPanel";
 import LogLinkedInDialog from "../../components/LogLinkedInDialog";
+import TaskCenterModal from "../../components/tasks/TaskCenterModal";
 
 const FOLLOWUP_DISPOSITIONS = new Set<string>([
   "interested_follow_up_required",
@@ -88,6 +91,7 @@ export default function CallDispositionDrawer({
   const [precallBrief, setPrecallBrief] = useState<PreCallBrief | null>(null);
   const [precallLoading, setPrecallLoading] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
+  const [tasksModalOpen, setTasksModalOpen] = useState(false);
   const aircallEnabled = typeof window !== "undefined" && localStorage.getItem("crm.aircall.enabled") === "true";
 
   const clearDialTimer = () => {
@@ -167,6 +171,7 @@ export default function CallDispositionDrawer({
     setSavingDisposition(true);
     try {
       const derivedSeqStatus = deriveSequenceStatusFromCallDisposition(callDisposition, contact.sequence_status);
+      const derivedAccountStatus = deriveAccountStatusFromCallDisposition(callDisposition, contact.account_status);
       const nowIso = new Date().toISOString();
       const needsFollowup = FOLLOWUP_DISPOSITIONS.has(callDisposition);
       const followupLocal = needsFollowup ? (followupAt || defaultFollowupLocalString()) : "";
@@ -191,7 +196,18 @@ export default function CallDispositionDrawer({
         ...(derivedSeqStatus && derivedSeqStatus !== contact.sequence_status
           ? { sequence_status: derivedSeqStatus }
           : {}),
+        ...(derivedAccountStatus && derivedAccountStatus !== contact.account_status
+          ? { account_status: derivedAccountStatus }
+          : {}),
       });
+
+      if (contact.company_id && derivedAccountStatus && shouldSyncContactStatusToAccount(derivedAccountStatus)) {
+        try {
+          await accountSourcingApi.updateCompany(contact.company_id, { account_status: derivedAccountStatus });
+        } catch {
+          // company status sync is best-effort
+        }
+      }
 
       const dispositionLabel = formatCallDisposition(callDisposition);
       const contactLabel = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
@@ -443,6 +459,14 @@ export default function CallDispositionDrawer({
                   <Phone size={12} /> {contact.phone}
                 </span>
               )}
+              <button
+                type="button"
+                onClick={() => setTasksModalOpen(true)}
+                title={`View or add tasks for ${contact.first_name} ${contact.last_name}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a", cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                <CheckCircle2 size={12} /> Task
+              </button>
               {contact.email && (
                 <a
                   href={gmailComposeUrl(contact.email)}
@@ -963,6 +987,14 @@ export default function CallDispositionDrawer({
             setLinkedinDialogOpen(false);
             toast.success(`LinkedIn touch logged for ${contact.first_name || "the prospect"}.`, "LinkedIn logged");
           }}
+        />
+        <TaskCenterModal
+          isOpen={tasksModalOpen}
+          onClose={() => setTasksModalOpen(false)}
+          entityType="contact"
+          entityId={contact.id}
+          entityLabel={`${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim() || "this stakeholder"}
+          onChanged={onSaved}
         />
         <style>{`
           @keyframes callpulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }

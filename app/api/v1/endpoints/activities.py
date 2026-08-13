@@ -250,6 +250,29 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
         data["source"] = "manual"
     activity = await ActivityRepository(session).create(data)
 
+    # Any manual touch on a prospect (LinkedIn / email / WhatsApp / call /
+    # note) is engagement: surface it on the parent account by advancing its
+    # account_status to "in_progress" (forward-only; no-op on downgrades or
+    # parked accounts). The deal/company status bump is best-effort.
+    if activity.contact_id:
+        try:
+            from app.models.contact import Contact
+            from app.services.account_status import bump_company_account_status
+
+            contact = await session.get(Contact, activity.contact_id)
+            if contact and contact.company_id:
+                await bump_company_account_status(
+                    session, contact.company_id, "in_progress"
+                )
+        except Exception:
+            logger.exception(
+                "activity create: account_status bump failed for contact %s",
+                activity.contact_id,
+            )
+        # ActivityRepository.create committed above; get_session does NOT
+        # auto-commit, so persist the account-status change explicitly.
+        await session.commit()
+
     # The deal-page call logger records the disposition in event_metadata rather
     # than PATCHing the contact's call_disposition field, so booking a demo there
     # used to be a backend no-op — no status advance, no "meeting booked" bell

@@ -91,6 +91,9 @@ export default function AccountSourcingContactDetail() {
   const [editingPhones, setEditingPhones] = useState(false);
   const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
   const [phonesSaving, setPhonesSaving] = useState(false);
+  const [editingLinkedIn, setEditingLinkedIn] = useState(false);
+  const [linkedInInput, setLinkedInInput] = useState("");
+  const [linkedInSaving, setLinkedInSaving] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
   const [callDrawerOpen, setCallDrawerOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
@@ -324,6 +327,42 @@ export default function AccountSourcingContactDetail() {
     } finally {
       setPhoneSaving(false);
     }
+  };
+
+  const handleSaveLinkedIn = async () => {
+    if (!contact) return;
+    const raw = linkedInInput.trim();
+    let normalized: string | null = null;
+
+    if (raw) {
+      const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      try {
+        const url = new URL(candidate);
+        const hostname = url.hostname.toLowerCase();
+        if (!(["http:", "https:"].includes(url.protocol)) || (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))) {
+          window.alert("Enter a valid LinkedIn URL.");
+          return;
+        }
+        normalized = url.toString();
+      } catch {
+        window.alert("Enter a valid LinkedIn URL.");
+        return;
+      }
+    }
+
+    setLinkedInSaving(true);
+    try {
+      const updated = await contactsApi.update(contact.id, { linkedin_url: normalized });
+      setContact(updated);
+      setEditingLinkedIn(false);
+    } finally {
+      setLinkedInSaving(false);
+    }
+  };
+
+  const cancelLinkedInEdit = () => {
+    setEditingLinkedIn(false);
+    setLinkedInInput(contact?.linkedin_url || "");
   };
 
   const startEditingPhones = () => {

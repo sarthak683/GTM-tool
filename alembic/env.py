@@ -23,6 +23,7 @@ from app.models.meeting import Meeting  # noqa: F401
 from app.models.battlecard import Battlecard  # noqa: F401
 from app.models.custom_demo import CustomDemo  # noqa: F401
 from app.models.sales_resource import SalesResource  # noqa: F401
+from app.models.data_room_item import DataRoomItem  # noqa: F401
 from app.models.company_stage_milestone import CompanyStageMilestone  # noqa: F401
 from app.models.angel import AngelInvestor, AngelMapping  # noqa: F401
 from app.models.task import Task, TaskComment  # noqa: F401

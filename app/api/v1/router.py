@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     contacts,
     crm_imports,
     custom_demo,
+    data_room,
     deals,
     drive,
     execution_tracker,
@@ -76,6 +77,7 @@ router.include_router(meetings.router)
 router.include_router(battlecards.router)
 router.include_router(webhooks.router)
 router.include_router(custom_demo.router)
+router.include_router(data_room.router)
 router.include_router(sales_resources.router)
 router.include_router(sales_reports.router)
 router.include_router(account_sourcing.router)

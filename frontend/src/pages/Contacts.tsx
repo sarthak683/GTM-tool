@@ -18,10 +18,12 @@ import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/
 import {
   CALL_DISPOSITION_OPTIONS,
   LINKEDIN_STATUS_OPTIONS,
+  deriveAccountStatusFromCallDisposition,
   deriveSequenceStatusFromCallDisposition,
   deriveSequenceStatusFromLinkedinStatus,
   formatCallDisposition,
 } from "../lib/prospectWorkflow";
+import { shouldSyncContactStatusToAccount } from "../lib/contactStatusSync";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
@@ -1495,6 +1497,10 @@ export default function Contacts() {
         callDisposition,
         callContact.sequence_status,
       );
+      const derivedAccountStatus = deriveAccountStatusFromCallDisposition(
+        callDisposition,
+        callContact.account_status,
+      );
       const nowIso = new Date().toISOString();
       // When a follow-up disposition is paired with a datetime, persist it on
       // the contact so the prospect-row progress bar can render the date next
@@ -1524,7 +1530,18 @@ export default function Contacts() {
         ...(derivedSeqStatus && derivedSeqStatus !== callContact.sequence_status
           ? { sequence_status: derivedSeqStatus }
           : {}),
+        ...(derivedAccountStatus && derivedAccountStatus !== callContact.account_status
+          ? { account_status: derivedAccountStatus }
+          : {}),
       });
+
+      if (callContact.company_id && derivedAccountStatus && shouldSyncContactStatusToAccount(derivedAccountStatus)) {
+        try {
+          await accountSourcingApi.updateCompany(callContact.company_id, { account_status: derivedAccountStatus });
+        } catch {
+          // company status sync is best-effort
+        }
+      }
 
       // Count/log the manual call only after the rep commits the disposition.
       const dispositionLabel = formatCallDisposition(callDisposition);
@@ -4585,15 +4602,23 @@ export default function Contacts() {
                         <Mail size={12} /> Email
                       </a>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setTaskContact(callContact)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#eef6ff", color: "#2563eb", border: "1px solid #cfe0ff", cursor: "pointer" }}
+                      title="Create a follow-up task"
+                    >
+                      <Plus size={12} /> Task
+                    </button>
                     {callContact.linkedin_url && (
-                      <a
-                        href={callContact.linkedin_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#0a66c2", border: "1px solid #dce8f4", textDecoration: "none" }}
+                      <button
+                        type="button"
+                        onClick={() => setLinkedinContact(callContact)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f5f3ff", color: "#6d28d9", border: "1px solid #ddd6fe", cursor: "pointer" }}
+                        title="Log a LinkedIn touch"
                       >
-                        <Link2 size={12} /> LinkedIn
-                      </a>
+                        <Link2 size={12} /> Log LinkedIn
+                      </button>
                     )}
                   </div>
                 </div>

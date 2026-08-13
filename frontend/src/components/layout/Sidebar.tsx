@@ -7,6 +7,7 @@ import {
   UserSearch,
   Building2,
   ListChecks,
+  Database,
   Settings,
   Users,
   PanelLeftClose,
@@ -35,6 +36,7 @@ const NAV_GROUPS = [
       { to: "/sales-analytics", label: "Sales Analytics", description: "See pipeline quality, activity, and forecast health.", icon: ChartColumnBig },
       { to: "/meetings", label: "Meetings", description: "Prep upcoming calls, review past meetings, and generate account intel.", icon: CalendarDays },
       { to: "/tasks", label: "Tasks", description: "Work your queue of manual follow-ups across deals, prospects, and accounts.", icon: ListChecks },
+      { to: "/data-room", label: "Data Room", description: "Open the shared HTML data room.", icon: Database },
     ],
   },
 ];

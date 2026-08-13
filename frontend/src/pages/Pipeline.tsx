@@ -7,6 +7,7 @@ import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
+import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 
@@ -642,10 +643,10 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false });
+  const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -667,6 +668,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
   const selectedCompanyName = companies.find((c) => c.id === form.company_id)?.name ?? "";
 
   const handleCreate = async () => {
+    const needsMarketingCustom = form.is_marketing_lead && (form.marketing_source === "other" || form.marketing_source === "events");
     const nextValidationErrors = {
       name: !form.name.trim(),
       company_id: !form.company_id,
@@ -676,6 +678,8 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       meeting_booked_with: !form.meeting_booked_with,
       meeting_booked_from: !form.meeting_booked_from,
       close_date_est: !form.close_date_est,
+      marketing_source: form.is_marketing_lead && !form.marketing_source,
+      marketing_custom: needsMarketingCustom && !form.marketing_custom.trim(),
     };
     setValidationErrors(nextValidationErrors);
     const missingFields = [
@@ -687,6 +691,8 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
       nextValidationErrors.meeting_booked_with ? "Meeting Booked with" : null,
       nextValidationErrors.meeting_booked_from ? "Meeting Booked from" : null,
       nextValidationErrors.close_date_est ? "Meeting Booked Date" : null,
+      nextValidationErrors.marketing_source ? "Marketing source" : null,
+      nextValidationErrors.marketing_custom ? "Marketing source custom value" : null,
     ].filter(Boolean);
     if (missingFields.length) {
       setError(`Complete required fields: ${missingFields.join(", ")}.`);
@@ -710,6 +716,8 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
         meeting_booked_with: form.meeting_booked_with || undefined,
         meeting_booked_from: form.meeting_booked_from || undefined,
+        is_marketing_lead: form.is_marketing_lead,
+        marketing_source: form.is_marketing_lead ? serializeMarketingSource(form.marketing_source, form.marketing_custom) : undefined,
       } as Partial<Deal>);
       onCreated(deal);
       onClose();
@@ -898,9 +906,53 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                 <option value="referral">Referral</option>
                 <option value="partner">Partner</option>
                 <option value="event">Event</option>
-                <option value="cold_call">Cold Call</option>
-                <option value="linkedin">LinkedIn</option>
               </select>
+            </div>
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.is_marketing_lead}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setForm((current) => ({ ...current, is_marketing_lead: checked }));
+                    if (error) setError("");
+                    if (checked && validationErrors.marketing_source) setValidationErrors((current) => ({ ...current, marketing_source: false }));
+                  }}
+                />
+                Marketing lead
+              </label>
+              {form.is_marketing_lead && (
+                <>
+                  <select
+                    style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_source ? "#fff" : "#fffbf5", border: validationErrors.marketing_source || !form.marketing_source ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_source ? "#1f2d3d" : "#92400e" }}
+                    value={form.marketing_source}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setForm((current) => ({ ...current, marketing_source: next, marketing_custom: "" }));
+                      if (validationErrors.marketing_source && next) setValidationErrors((current) => ({ ...current, marketing_source: false }));
+                      if (next !== "other" && next !== "events" && validationErrors.marketing_custom) setValidationErrors((current) => ({ ...current, marketing_custom: false }));
+                    }}
+                  >
+                    <option value="">Select marketing source (required)</option>
+                    {MARKETING_LEAD_SOURCES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                  {(form.marketing_source === "other" || form.marketing_source === "events") && (
+                    <input
+                      style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_custom.trim() ? "#fff" : "#fffbf5", border: validationErrors.marketing_custom || !form.marketing_custom.trim() ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_custom.trim() ? "#1f2d3d" : "#92400e" }}
+                      placeholder={form.marketing_source === "other" ? "Describe the other source (required)" : "Describe the event (required)"}
+                      value={form.marketing_custom}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setForm((current) => ({ ...current, marketing_custom: next }));
+                        if (validationErrors.marketing_custom && next.trim()) setValidationErrors((current) => ({ ...current, marketing_custom: false }));
+                      }}
+                    />
+                  )}
+                </>
+              )}
             </div>
           </div>
 
@@ -2126,6 +2178,7 @@ export default function Pipeline() {
   const dealExportRows = (items: Deal[], stage: StageMeta): CsvRow[] => items.map((deal) => {
     const company = deal.company_id ? companyMap.get(deal.company_id) : undefined;
     const lastTouch = deal.last_activity_at || deal.seller_engagement_at || deal.client_engagement_at;
+    const marketing = parseMarketingSource(deal.marketing_source);
     return {
       "Deal Name": deal.name,
       "Company": deal.company_name || company?.name || "",
@@ -2144,6 +2197,8 @@ export default function Pipeline() {
       "Tags": (deal.tags ?? []).join("; "),
       "Next Step": deal.next_step || "",
       "Source": deal.source || "",
+      "Marketing Lead": deal.is_marketing_lead ? "Yes" : "No",
+      "Marketing Source": marketing.base ? (MARKETING_SOURCE_LABELS[marketing.base] ?? marketing.base) + (marketing.custom ? `: ${marketing.custom}` : "") : "",
       "Deal ID": deal.id,
       "Company ID": deal.company_id || "",
     };

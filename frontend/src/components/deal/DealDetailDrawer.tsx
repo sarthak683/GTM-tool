@@ -4,7 +4,7 @@ import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
-  Shield, BarChart2, ClipboardList, Presentation,
+  Shield, BarChart2, ClipboardList, Presentation, Megaphone,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
 import { accountSourcingApi, dealsApi, contactsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
@@ -13,6 +13,7 @@ import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
+import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
 import ProvenanceBar from "../ProvenanceBar";
@@ -560,6 +561,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const [localPriorityTag, setLocalPriorityTag] = useState<"P0" | "P1" | "P2" | null>(
     (deal.priority_tag ?? null) as "P0" | "P1" | "P2" | null,
   );
+  const [marketingCustom, setMarketingCustom] = useState(parseMarketingSource(deal.marketing_source).custom);
 
   // Company searchable combobox
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
@@ -1373,6 +1375,53 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <option value="cold_call">Cold Call</option>
                 <option value="linkedin">LinkedIn</option>
               </select>
+            </FieldRow>
+
+            {/* Marketing Lead */}
+            <FieldRow label="Marketing Lead" icon={<Megaphone size={13} />}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#1f2d3d", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(deal.is_marketing_lead)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (!checked) setMarketingCustom("");
+                    patchDeal({ is_marketing_lead: checked, marketing_source: checked ? deal.marketing_source ?? null : null } as Partial<Deal>);
+                  }}
+                />
+                Is this a marketing lead?
+              </label>
+              {deal.is_marketing_lead && (
+                <>
+                  <select
+                    value={parseMarketingSource(deal.marketing_source).base}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === "other" || next === "events") {
+                        patchDeal({ marketing_source: `${next}:${marketingCustom}` } as Partial<Deal>);
+                      } else {
+                        setMarketingCustom("");
+                        patchDeal({ marketing_source: next || null } as Partial<Deal>);
+                      }
+                    }}
+                    style={{ ...fieldInputStyle, marginTop: 6 }}
+                  >
+                    <option value="">Select marketing source</option>
+                    {MARKETING_LEAD_SOURCES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                  {(parseMarketingSource(deal.marketing_source).base === "other" || parseMarketingSource(deal.marketing_source).base === "events") && (
+                    <input
+                      value={marketingCustom}
+                      onChange={(e) => setMarketingCustom(e.target.value)}
+                      onBlur={() => patchDeal({ marketing_source: serializeMarketingSource(parseMarketingSource(deal.marketing_source).base, marketingCustom) } as Partial<Deal>)}
+                      placeholder={parseMarketingSource(deal.marketing_source).base === "other" ? "Describe the other source" : "Describe the event"}
+                      style={{ ...fieldInputStyle, marginTop: 6 }}
+                    />
+                  )}
+                </>
+              )}
             </FieldRow>
 
             {/* Deal Priority Tag (P0/P1/P2) — per deal, not per company */}

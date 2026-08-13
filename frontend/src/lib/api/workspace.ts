@@ -18,6 +18,8 @@ import type {
   RolePermissionsSettings,
   SalesReportSettings,
   SalesResource,
+  DataRoomCategory,
+  DataRoomItem,
   SyncScheduleSettings,
   TaskComment,
   TaskItem,
@@ -761,6 +763,25 @@ export const resourcesApi = {
     request<void>(`/api/v1/resources/${id}`, { method: "DELETE" }),
   options: () =>
     request<{ categories: string[]; modules: string[] }>("/api/v1/resources/meta/options"),
+};
+
+export const dataRoomApi = {
+  list: (category: DataRoomCategory) => {
+    const qs = new URLSearchParams({ category });
+    return request<DataRoomItem[]>(`/api/v1/data-room/items?${qs}`);
+  },
+  create: (data: {
+    category: DataRoomCategory;
+    title: string;
+    embed_url: string;
+    thumbnail_url?: string | null;
+  }) =>
+    request<DataRoomItem>("/api/v1/data-room/items", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  remove: (id: string) =>
+    request<void>(`/api/v1/data-room/items/${id}`, { method: "DELETE" }),
 };
 
 export const authApi = {

@@ -16,6 +16,7 @@ from app.models.battlecard import Battlecard, BattlecardCreate, BattlecardRead, 
 from app.models.custom_demo import CustomDemo
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.sales_resource import SalesResource, SalesResourceCreate, SalesResourceRead, SalesResourceUpdate
+from app.models.data_room_item import DataRoomItem, DataRoomItemCreate, DataRoomItemRead
 from app.models.user import User, UserRead, UserUpdate
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.deal_stage_history import DealStageHistory, DealStageHistoryRead
@@ -51,6 +52,7 @@ __all__ = [
     "CustomDemo",
     "SourcingBatch", "SourcingBatchRead",
     "SalesResource", "SalesResourceCreate", "SalesResourceRead", "SalesResourceUpdate",
+    "DataRoomItem", "DataRoomItemCreate", "DataRoomItemRead",
     "User", "UserRead", "UserUpdate",
     "CompanyStageMilestone",
     "DealStageHistory", "DealStageHistoryRead",

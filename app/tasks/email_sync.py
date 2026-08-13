@@ -145,6 +145,17 @@ async def _record_zippy_tagged_email(session, msg, *, contact_id) -> bool:
             created_at=_message_sent_at(msg),
         )
     )
+    # A rep send on a prospect (even outside a deal) is engagement — surface it
+    # on the parent account as in_progress (forward-only; best-effort).
+    try:
+        from app.models.contact import Contact
+        from app.services.account_status import bump_company_account_status
+
+        contact = await session.get(Contact, contact_id)
+        if contact and contact.company_id:
+            await bump_company_account_status(session, contact.company_id, "in_progress")
+    except Exception:
+        logger.exception("zippy email: account_status bump failed for contact %s", contact_id)
     return True
 
 
@@ -548,6 +559,25 @@ async def _async_sync() -> dict:
                     activities_created += 1
                     touched_deal_ids.add(deal_id)
                     thread_context_cache[thread_cache_key] = thread_segments
+                    # An email on a deal-linked contact confirms the account has
+                    # a live deal — reflect that on account status (forward-only;
+                    # best-effort). Legacy accounts pre-dating the automation get
+                    # bumped to in_pipeline here.
+                    if sender_contact_id:
+                        try:
+                            from app.models.contact import Contact
+                            from app.services.account_status import bump_company_account_status
+
+                            contact = await session.get(Contact, sender_contact_id)
+                            if contact and contact.company_id:
+                                await bump_company_account_status(
+                                    session, contact.company_id, "in_pipeline"
+                                )
+                        except Exception:
+                            logger.exception(
+                                "deal email: account_status bump failed for contact %s",
+                                sender_contact_id,
+                            )
 
             settings_row = await session.get(WorkspaceSettings, 1)
             if settings_row:

@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { NavLink } from "react-router-dom";
-import { Building2, CalendarDays, CheckSquare, KanbanSquare, Radar, Search } from "lucide-react";
+import { Building2, CalendarDays, CheckSquare, Database, KanbanSquare, Radar, Search } from "lucide-react";
 
 const NAV = [
   { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
@@ -8,6 +8,7 @@ const NAV = [
   { to: "/prospecting", label: "Prospects", icon: Radar },
   { to: "/meetings", label: "Meetings", icon: CalendarDays },
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
+  { to: "/data-room", label: "Data Room", icon: Database },
 ];
 
 const itemStyle = (isActive: boolean): React.CSSProperties => ({

@@ -1,3 +1,5 @@
+import type { ContactStatusValue } from "./contactStatus";
+
 export type StepChannel = "email" | "call" | "linkedin";
 
 export type CallDispositionOption = {
@@ -5,6 +7,9 @@ export type CallDispositionOption = {
   label: string;
   sequenceStatus?: "interested" | "replied" | "meeting_booked" | "not_interested";
   suggestedCallStatus?: "attempted" | "connected" | "voicemail" | "callback";
+  // Manual prospect status (contact.account_status) auto-derived from this
+  // disposition when the rep logs the call.
+  accountStatus?: ContactStatusValue;
 };
 
 export const CALL_OUTCOME_OPTIONS = [
@@ -20,51 +25,60 @@ export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
     label: "Demo Scheduled/Booked",
     sequenceStatus: "meeting_booked",
     suggestedCallStatus: "connected",
+    accountStatus: "meeting_booked",
   },
   {
     value: "interested_follow_up_required",
     label: "Interested/Follow-up Required",
     sequenceStatus: "interested",
     suggestedCallStatus: "connected",
+    accountStatus: "in_progress",
   },
   {
     value: "meeting_confirmed",
     label: "Meeting Confirmed",
     sequenceStatus: "meeting_booked",
     suggestedCallStatus: "connected",
+    accountStatus: "meeting_booked",
   },
   {
     value: "call_back_later_rescheduled",
     label: "Call Back Later/Rescheduled",
     sequenceStatus: "interested",
     suggestedCallStatus: "callback",
+    accountStatus: "reach_out_later",
   },
   {
     value: "gatekeeper_connected_to_admin",
     label: "Gatekeeper (connected to admin, not lead)",
     suggestedCallStatus: "connected",
+    accountStatus: "reach_out_later",
   },
   {
     value: "referral",
     label: "Referral",
     sequenceStatus: "interested",
     suggestedCallStatus: "connected",
+    accountStatus: "in_progress",
   },
   {
     value: "connected_not_interested",
     label: "Connected - Not Interested",
     sequenceStatus: "not_interested",
     suggestedCallStatus: "connected",
+    accountStatus: "not_interested",
   },
   {
     value: "no_answer_busy_signal",
     label: "No Answer/Busy Signal",
     suggestedCallStatus: "attempted",
+    accountStatus: "reach_out_later",
   },
   {
     value: "invalid_number_wrong_number",
     label: "Invalid Number/Wrong Number",
     suggestedCallStatus: "attempted",
+    accountStatus: "dnd",
   },
   {
     value: "hang_up",
@@ -76,18 +90,21 @@ export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
     label: "Do Not Contact/DNC",
     sequenceStatus: "not_interested",
     suggestedCallStatus: "connected",
+    accountStatus: "dnd",
   },
   {
     value: "contact_poor_fit",
     label: "Contact Poor Fit",
     sequenceStatus: "not_interested",
     suggestedCallStatus: "connected",
+    accountStatus: "not_the_right_prospect",
   },
   {
     value: "redirected_other_icp",
     label: "Redirected to other ICP",
     sequenceStatus: "interested",
     suggestedCallStatus: "connected",
+    accountStatus: "not_the_right_prospect",
   },
 ];
 
@@ -167,6 +184,23 @@ export function deriveSequenceStatusFromCallDisposition(
   if (currentStatus === "meeting_booked") return currentStatus;
   if (currentStatus === "not_interested" && matched.sequenceStatus !== "meeting_booked") return currentStatus;
   return matched.sequenceStatus;
+}
+
+export function deriveAccountStatusFromCallDisposition(
+  disposition?: string | null,
+  currentStatus?: string | null,
+): string | undefined {
+  if (!disposition) return currentStatus ?? undefined;
+  const matched = CALL_DISPOSITION_OPTIONS.find((option) => option.value === disposition);
+  const derived = matched?.accountStatus;
+  if (!derived) return currentStatus ?? undefined;
+  // A booked meeting is the strongest funnel signal and is never downgraded.
+  if (currentStatus === "meeting_booked") return currentStatus;
+  // Hard negatives only move on a positive signal.
+  if ((currentStatus === "not_interested" || currentStatus === "dnd") && derived !== "meeting_booked") {
+    return currentStatus;
+  }
+  return derived;
 }
 
 export function deriveSequenceStatusFromLinkedinStatus(

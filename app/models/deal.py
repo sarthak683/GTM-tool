@@ -70,6 +70,11 @@ class DealBase(SQLModel):
     last_activity_at: Optional[datetime] = None
     stakeholder_count: int = 0
     owner_id: Optional[str] = None
+    # Marketing lead attribution: flag + source channel dropdown (Google Ads,
+    # Meta Ads, ..., Other/Events with free-text). Kept separate from `source`
+    # (inbound/outbound/etc.) so the two taxonomies don't mix.
+    is_marketing_lead: bool = False
+    marketing_source: Optional[str] = None
 
 
 class Deal(DealBase, table=True):
@@ -141,6 +146,8 @@ class DealCreate(SQLModel):
     email_cc_alias: Optional[str] = None
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
+    is_marketing_lead: bool = False
+    marketing_source: Optional[str] = None
 
     @field_validator("next_step_due_at", mode="before")
     @classmethod
@@ -218,6 +225,8 @@ class DealUpdate(SQLModel):
     priority_tag: Optional[str] = None
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
+    is_marketing_lead: Optional[bool] = None
+    marketing_source: Optional[str] = None
     days_in_stage: Optional[int] = None
     stage_entered_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None
