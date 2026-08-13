@@ -88,6 +88,9 @@ export default function AccountSourcingContactDetail() {
   const [editingPhone, setEditingPhone] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneSaving, setPhoneSaving] = useState(false);
+  const [editingLinkedIn, setEditingLinkedIn] = useState(false);
+  const [linkedInInput, setLinkedInInput] = useState("");
+  const [linkedInSaving, setLinkedInSaving] = useState(false);
   const [editingPhones, setEditingPhones] = useState(false);
   const [phonesDraft, setPhonesDraft] = useState<{ number: string; label?: string }[]>([]);
   const [phonesSaving, setPhonesSaving] = useState(false);
