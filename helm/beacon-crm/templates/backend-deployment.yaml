@@ -80,6 +80,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: app-storage
+              mountPath: /app/storage
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: app-storage
           emptyDir: {}

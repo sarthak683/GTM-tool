@@ -481,6 +481,7 @@ export default function Contacts() {
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
+  const [exportingSelectedContacts, setExportingSelectedContacts] = useState(false);
   const [bulkClaimingSdr, setBulkClaimingSdr] = useState(false);
   const [deletingContacts, setDeletingContacts] = useState(false);
   // Admin bulk SDR reassignment for selected prospects (e.g. splitting an
@@ -2255,6 +2256,42 @@ export default function Contacts() {
                     }}
                   />
                 </label>
+
+                <button
+                  type="button"
+                  disabled={exportingSelectedContacts}
+                  onClick={async () => {
+                    if (selectedContactIds.size === 0) {
+                      toast.info("Select prospects first, then export them as CSV.", "Nothing selected");
+                      return;
+                    }
+                    setExportingSelectedContacts(true);
+                    try {
+                      const blob = await accountSourcingApi.exportContactsCsv({ contactIds: Array.from(selectedContactIds) });
+                      const url = URL.createObjectURL(blob);
+                      const anchor = document.createElement("a");
+                      anchor.href = url;
+                      anchor.download = `prospects-selected-${new Date().toISOString().slice(0, 10)}.csv`;
+                      anchor.click();
+                      URL.revokeObjectURL(url);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to export prospects.", "Export failed");
+                    } finally {
+                      setExportingSelectedContacts(false);
+                    }
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    height: 38, padding: "0 14px", borderRadius: 10,
+                    border: "1px solid #b8d0f0", background: "#eef5ff",
+                    color: "#175089", fontSize: 13, fontWeight: 700,
+                    cursor: exportingSelectedContacts ? "not-allowed" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                    opacity: exportingSelectedContacts ? 0.7 : 1,
+                  }}
+                >
+                  {exportingSelectedContacts ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  {exportingSelectedContacts ? "Exporting…" : "Export CSV"}
+                </button>
 
                 {/* Clear — danger, right side */}
                 {isAdmin && (

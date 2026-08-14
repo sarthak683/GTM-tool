@@ -585,6 +585,8 @@ export default function AccountSourcing() {
   const [companyPages, setCompanyPages] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingContacts, setExportingContacts] = useState(false);
+  const [exportingSelected, setExportingSelected] = useState(false);
+  const [selectionExportError, setSelectionExportError] = useState<string | null>(null);
   const [resettingScope, setResettingScope] = useState<"" | "account-sourcing" | "workspace">("");
   const [activeTab, setActiveTab] = useState<"accounts" | "imports">(() => (initParams.get("tab") === "imports" ? "imports" : "accounts"));
   const [dismissedBatchIds, setDismissedBatchIds] = useState<string[]>(() => {
@@ -814,6 +816,7 @@ export default function AccountSourcing() {
     sortedCompanies.length > 0 && sortedCompanies.every((c) => selectedCompanyIds.has(c.id));
 
   const toggleCompanySelection = useCallback((companyId: string) => {
+    setSelectionExportError(null);
     setSelectedCompanyIds((current) => {
       const next = new Set(current);
       if (next.has(companyId)) next.delete(companyId);
@@ -823,6 +826,7 @@ export default function AccountSourcing() {
   }, []);
 
   const toggleVisibleCompanySelection = useCallback(() => {
+    setSelectionExportError(null);
     setSelectedCompanyIds((current) => {
       if (sortedCompanies.length > 0 && sortedCompanies.every((c) => current.has(c.id))) {
         // All visible already selected → clear just the visible ones.
@@ -836,7 +840,10 @@ export default function AccountSourcing() {
     });
   }, [sortedCompanies]);
 
-  const clearCompanySelection = useCallback(() => setSelectedCompanyIds(new Set()), []);
+  const clearCompanySelection = useCallback(() => {
+    setSelectionExportError(null);
+    setSelectedCompanyIds(new Set());
+  }, []);
 
   // Admin: bulk-assign the selected accounts' AE or SDR. After success, clear
   // the selection and reload so the rows reflect the new owners.
@@ -2060,6 +2067,45 @@ export default function AccountSourcing() {
                   >
                     Clear
                   </button>
+                  <button
+                    type="button"
+                    disabled={exportingSelected}
+                    onClick={async () => {
+                      setSelectionExportError(null);
+                      setExportingSelected(true);
+                      try {
+                        const blob = await accountSourcingApi.exportCsv({ companyIds: Array.from(selectedCompanyIds) });
+                        const url = URL.createObjectURL(blob);
+                        const anchor = document.createElement("a");
+                        anchor.href = url;
+                        anchor.download = `sourced-companies-selected-${new Date().toISOString().slice(0, 10)}.csv`;
+                        anchor.click();
+                        URL.revokeObjectURL(url);
+                      } catch (e) {
+                        setSelectionExportError(e instanceof Error ? e.message : "Export failed");
+                      } finally {
+                        setExportingSelected(false);
+                      }
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      height: 34,
+                      border: "1px solid #b8d0f0",
+                      background: "#eef5ff",
+                      color: "#175089",
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: exportingSelected ? "not-allowed" : "pointer",
+                      opacity: exportingSelected ? 0.7 : 1,
+                    }}
+                  >
+                    {exportingSelected ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                    {exportingSelected ? "Exporting…" : "Export CSV"}
+                  </button>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <select
@@ -2111,6 +2157,12 @@ export default function AccountSourcing() {
                       ))}
                   </select>
                 </div>
+                {selectionExportError && (
+                  <div style={{ flexBasis: "100%", color: colors.red, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                    <AlertCircle size={13} />
+                    {selectionExportError}
+                  </div>
+                )}
               </div>
             )}
             <CompanyTableHeader

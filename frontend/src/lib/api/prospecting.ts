@@ -525,7 +525,7 @@ export const accountSourcingApi = {
       { method: "POST", body: JSON.stringify({ body }) }
     ),
 
-  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string; prospectsMin?: number; prospectsMax?: number }) => {
+  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string; prospectsMin?: number; prospectsMax?: number; companyIds?: string[] }) => {
     const search = new URLSearchParams();
     if (params?.assignedRep) search.set("assigned_rep", params.assignedRep);
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
@@ -533,6 +533,7 @@ export const accountSourcingApi = {
     if (params?.batchId) search.set("batch_id", params.batchId);
     if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
     if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
+    if (params?.companyIds?.length) search.set("company_ids", params.companyIds.join(","));
     const qs = search.toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),
@@ -544,10 +545,11 @@ export const accountSourcingApi = {
     return res.blob();
   },
 
-  exportContactsCsv: async (params?: { assignedRepEmail?: string; batchId?: string }) => {
+  exportContactsCsv: async (params?: { assignedRepEmail?: string; batchId?: string; contactIds?: string[] }) => {
     const search = new URLSearchParams();
     if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
     if (params?.batchId) search.set("batch_id", params.batchId);
+    if (params?.contactIds?.length) search.set("contact_ids", params.contactIds.join(","));
     const qs = search.toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export-contacts${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),

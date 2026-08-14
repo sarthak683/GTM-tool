@@ -901,6 +901,8 @@ export interface DataRoomItem {
   created_by_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
 // Bulk account reassignment from an uploaded CSV/XLSX.
 // `status` mirrors the backend's RowStatus: "ok" is the only one that writes.
 export type AssignmentUploadRowStatus =

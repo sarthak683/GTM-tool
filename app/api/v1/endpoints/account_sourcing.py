@@ -268,6 +268,20 @@ def _icp_analysis(company: Company) -> dict:
     return data if isinstance(data, dict) else entry
 
 
+def _parse_uuid_list(raw: str | None) -> list[UUID] | None:
+    """Parse a comma-separated UUID list query param; None when absent."""
+    if not raw:
+        return None
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    parsed: list[UUID] = []
+    for part in ids:
+        try:
+            parsed.append(UUID(part))
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid UUID: {part}")
+    return parsed or None
+
+
 def _company_export_row(company: Company) -> dict[str, str]:
     # Prefer uploaded analyst values when they exist, but fall back to generated
     # research so exports stay usable for both manual and AI-enriched batches.
@@ -1822,12 +1836,14 @@ async def export_sourced_companies(
     batch_id: UUID | None = Query(default=None),
     prospects_min: int | None = Query(default=None, ge=0),
     prospects_max: int | None = Query(default=None, ge=0),
+    company_ids: str | None = Query(default=None, description="Comma-separated company UUIDs to export (selected rows only)"),
 ):
     """Export sourced companies and preserved source columns as CSV.
 
     Accepts the same `prospects_min`/`prospects_max` bounds as the list
     endpoint so the user can "download the filtered list" without the
-    frontend having to enumerate every visible company id.
+    frontend having to enumerate every visible company id. Pass
+    `company_ids` (comma-separated) to export only the selected rows.
     """
     stmt = (
         select(Company)
@@ -1835,6 +1851,9 @@ async def export_sourced_companies(
         .where(company_visibility_filter(_user.id, _user.role == "admin"))
         .order_by(Company.created_at.desc())
     )
+    selected_ids = _parse_uuid_list(company_ids)
+    if selected_ids:
+        stmt = stmt.where(Company.id.in_(selected_ids))
     if assigned_rep:
         stmt = stmt.where(Company.assigned_rep == assigned_rep)
     if assigned_rep_email:
@@ -1887,6 +1906,7 @@ async def export_sourced_contacts(
     session: DBSession,
     assigned_rep_email: str | None = Query(default=None),
     batch_id: UUID | None = Query(default=None),
+    contact_ids: str | None = Query(default=None, description="Comma-separated contact UUIDs to export (selected rows only)"),
 ):
     stmt = (
         select(Contact, Company)
@@ -1894,6 +1914,9 @@ async def export_sourced_contacts(
         .where(Company.sourcing_batch_id.isnot(None))
         .order_by(Company.created_at.desc(), Contact.created_at.desc())
     )
+    selected_ids = _parse_uuid_list(contact_ids)
+    if selected_ids:
+        stmt = stmt.where(Contact.id.in_(selected_ids))
     # Prospect-visibility: a non-admin may export only their own + unassigned
     # contacts (this CSV emits full name/email/linkedin, so an ungated export was
     # a full-identity workspace dump).
