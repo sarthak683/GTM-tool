@@ -50,17 +50,30 @@ Full procedure, including the mandatory drift gate, is in
 memory — and never skip `helm diff`, which is what would have caught the port
 regression above.
 
+**Two `-f` files, in this order.** The first restores the real
+`postgresql.auth.*` over the `REPLACE_AT_DEPLOY` placeholders; the second
+applies the environment config. Later `-f` wins, so the order matters.
+
+Omitting the first one rewrites the PostgreSQL secret to the literal string
+`REPLACE_AT_DEPLOY` and breaks the database. `helm diff` shows this clearly as
+`password: '-------- # (32 bytes)'` → `'++++++++ # (17 bytes)'` — 17 being the
+length of the placeholder. That is not a cosmetic diff; stop if you see it.
+
 ```bash
 export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
 TAG=<the tag you built and pushed>
 
-# ALWAYS run this first and read every -/+ line
+# ALWAYS run this first and read every -/+ line.
+# Expect ONLY image tag changes. Anything touching password, targetPort,
+# containerPort, probes, selector or volumes is a stop-and-ask.
 helm diff upgrade gtm ./deploy/gtm-chart -n gtm-prod \
+  -f ~/Downloads/gtm-helm/gtm/values.yaml \
   -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
 
 helm upgrade gtm ./deploy/gtm-chart -n gtm-prod \
+  -f ~/Downloads/gtm-helm/gtm/values.yaml \
   -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG

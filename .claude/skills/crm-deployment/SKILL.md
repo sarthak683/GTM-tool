@@ -211,7 +211,7 @@ which fields change on existing objects:
 
 ```bash
 cd /Users/sarthak/GTM-tool
-helm diff upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm-prod.yaml \
+helm diff upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm/values.yaml -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
 ```
@@ -235,7 +235,7 @@ no longer renders, which Helm **deletes** on upgrade.
 
 ```bash
 cd /Users/sarthak/GTM-tool
-helm template gtm ./deploy/gtm-chart -f ~/Downloads/gtm-helm/gtm-prod.yaml \
+helm template gtm ./deploy/gtm-chart -f ~/Downloads/gtm-helm/gtm/values.yaml -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG 2>/dev/null \
   | grep -E "^kind:|^  name:" | paste - - | grep -Ei "deployment|statefulset" \
@@ -305,7 +305,7 @@ warning below.
 ```bash
 cd /Users/sarthak/GTM-tool
 helm upgrade --install gtm ./deploy/gtm-chart -n gtm --create-namespace \
-  -f ~/Downloads/gtm-helm/gtm.yaml \
+  -f ~/Downloads/gtm-helm/gtm/values.yaml -f ~/Downloads/gtm-helm/gtm.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
   --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
@@ -316,7 +316,7 @@ Production — only on explicit instruction, and only after the drift gate:
 ```bash
 cd /Users/sarthak/GTM-tool
 helm upgrade --install gtm ./deploy/gtm-chart -n gtm-prod --create-namespace \
-  -f ~/Downloads/gtm-helm/gtm-prod.yaml \
+  -f ~/Downloads/gtm-helm/gtm/values.yaml -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
   --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
@@ -369,7 +369,7 @@ Roll back **forward** instead: re-run `helm upgrade` pinning the previous known
 ```bash
 kubectl -n "$NS" get deploy -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'  # capture BEFORE deploying
 cd /Users/sarthak/GTM-tool
-helm upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm-prod.yaml \
+helm upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm/values.yaml -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:<PREVIOUS_TAG> \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:<PREVIOUS_TAG>
 ```
