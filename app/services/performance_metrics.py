@@ -125,10 +125,25 @@ def _deal_rep_filter(rep_id: Optional[UUID]):
 
 
 def _distinct_call_day_key():
+    """Group key for call metrics: one rep dialling one contact on one day.
+
+    Repeat dials to the SAME contact on the same day collapse into one unit —
+    that is the intended definition, so a rep can't inflate the metric by
+    redialling one number.
+
+    Calls with no contact linked (``contact_id IS NULL`` — Aircall couldn't
+    match the number to a CRM contact, or the rep logged a manual dial) fall
+    back to the activity's own id, so each counts on its own. Coalescing them
+    to a constant instead made every unlinked call a rep made in a day collapse
+    into a single unit, which silently under-reported dial counts.
+    """
     return func.concat(
         func.coalesce(cast(Activity.created_by_id, String), ""),
         ":",
-        func.coalesce(cast(Activity.contact_id, String), ""),
+        func.coalesce(
+            cast(Activity.contact_id, String),
+            cast(Activity.id, String),
+        ),
         ":",
         cast(func.date(Activity.created_at), String),
     )
@@ -160,11 +175,14 @@ def _connected_call_filter():
 async def calls_made(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
+    """Every dial the rep logged in the period — one row, one call.
+
+    This used to count DISTINCT rep+contact+day groups, so a rep who dialled
+    the same contact three times in a day saw "1". Reps count dials, the label
+    reads "Calls made", and the mismatch read as the CRM losing their work.
+    The deduplicated view is still available as ``contacts_dialed``.
     """
-    Dial count logged against any deal or contact, deduped by
-    rep + contact + day (per the dictionary).
-    """
-    stmt = select(func.count(distinct(_distinct_call_day_key()))).where(
+    stmt = select(func.count()).select_from(Activity).where(
         Activity.type == "call",
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
@@ -176,10 +194,32 @@ async def calls_made(
 async def calls_connected(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
-    """Connected rep/contact/day call groups, matching ``calls_made`` units."""
-    stmt = select(func.count(distinct(_distinct_call_day_key()))).where(
+    """Connected dials, in the same one-row-per-call units as ``calls_made``.
+
+    Must stay in the same units as ``calls_made`` — ``connect_rate`` divides
+    one by the other, so mixing raw counts with deduplicated groups would
+    silently distort the rate.
+    """
+    stmt = select(func.count()).select_from(Activity).where(
         Activity.type == "call",
         _connected_call_filter(),
+        Activity.created_at >= period.start,
+        Activity.created_at < period.end,
+        _activity_rep_filter(rep_id),
+    )
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
+async def contacts_dialed(
+    session: AsyncSession, rep_id: Optional[UUID], period: Period
+) -> int:
+    """Distinct rep+contact+day dial groups — the previous ``calls_made``.
+
+    Kept as its own metric so the anti-gaming view (redials to one number
+    don't inflate the number) is still available alongside the true dial count.
+    """
+    stmt = select(func.count(distinct(_distinct_call_day_key()))).where(
+        Activity.type == "call",
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),

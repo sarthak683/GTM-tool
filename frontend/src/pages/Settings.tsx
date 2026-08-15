@@ -23,7 +23,7 @@ import {
   PhoneCall,
   Loader2,
 } from "lucide-react";
-import { settingsApi, personalEmailSyncApi, driveApi, authApi } from "../lib/api";
+import { settingsApi, personalEmailSyncApi, driveApi, authApi, pushApi } from "../lib/api";
 import { getCachedGmailSync, getCachedRolePermissions, invalidateGmailSyncCache, invalidateRolePermissionsCache } from "../lib/cachedFetch";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder, JobHealthRow } from "../lib/api";
@@ -164,6 +164,7 @@ export default function SettingsPage() {
   // receive "tap to call" notifications when their desktop clicks Call.
   const [pushState, setPushState] = useState<PushSubscriptionState | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
+  const [pushTesting, setPushTesting] = useState(false);
   const [gmail, setGmail] = useState<GmailSyncSettings | null>(null);
   const [reportSender, setReportSender] = useState<ReportSenderSettings | null>(null);
   const [inbox, setInbox] = useState("zippy@beacon.li");
@@ -1257,6 +1258,32 @@ export default function SettingsPage() {
     return () => { cancelled = true; };
   }, [activeTab]);
 
+  const sendTestNotification = async () => {
+    setPushTesting(true);
+    try {
+      const r = await pushApi.sendTest();
+      if (r.total === 0) {
+        toast.error("No devices registered for this account. Tap Enable on the device you want notified.", "No devices");
+      } else if (r.sent > 0) {
+        // Delivery past the push service is invisible to the server, so say
+        // what we actually know and where to look if nothing shows up.
+        toast.success(
+          `Sent to ${r.sent} device${r.sent > 1 ? "s" : ""}. If nothing appears, check notification permission for the installed Beacon app and turn off Focus/Do Not Disturb.`,
+          "Test sent",
+        );
+      } else if (r.removed > 0) {
+        toast.error("That device's subscription had expired and was removed. Tap Enable on the device again.", "Subscription expired");
+      } else {
+        toast.error("Could not send to any registered device.", "Test failed");
+      }
+      setPushState(await getSubscriptionState());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Test notification failed.", "Test failed");
+    } finally {
+      setPushTesting(false);
+    }
+  };
+
   const togglePushNotifications = async () => {
     setPushBusy(true);
     try {
@@ -1269,6 +1296,14 @@ export default function SettingsPage() {
       }
       const next = await getSubscriptionState();
       setPushState(next);
+    } catch (err) {
+      // Without this the toggle just stopped spinning and said nothing when
+      // the browser threw (common on iOS and when a subscription is stale),
+      // which reads to the user as "notifications are silently broken".
+      toast.error(
+        err instanceof Error ? err.message : "Could not change notification setting.",
+        "Notification error",
+      );
     } finally {
       setPushBusy(false);
     }
@@ -2600,6 +2635,24 @@ export default function SettingsPage() {
                   {pushBusy ? <Loader2 size={15} className="animate-spin" /> : <PhoneCall size={15} />}
                   {pushState?.subscribed ? "Disable" : "Enable"}
                 </button>
+                {pushState?.subscribed && (
+                  <button
+                    type="button"
+                    disabled={pushTesting}
+                    onClick={sendTestNotification}
+                    className="crm-button"
+                    style={{
+                      minWidth: 140,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      height: 40, borderRadius: 10, marginLeft: 8,
+                      border: "1px solid #d5e3ef", background: "#fff", color: "#0f2744",
+                      fontWeight: 700, cursor: pushTesting ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {pushTesting ? <Loader2 size={15} className="animate-spin" /> : <PhoneCall size={15} />}
+                    Send test
+                  </button>
+                )}
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

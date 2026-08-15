@@ -137,6 +137,38 @@ async def unsubscribe(
     return {"removed": 1}
 
 
+@router.post("/test", response_model=RingMobileResult)
+async def send_test_notification(
+    current_user: CurrentUser,
+    session: DBSession,
+):
+    """Push a test notification to the caller's own registered devices.
+
+    Why this exists: "I'm not getting notifications" was previously
+    undiagnosable from inside the product. A subscription can look perfectly
+    healthy server-side — the push service returns 201 and we stamp
+    ``last_used_at`` — while the device shows nothing, because delivery past
+    the push service (OS notification settings, Focus mode, an uninstalled
+    PWA) is invisible to us. The reply counts tell the rep exactly which of
+    the two halves is broken:
+
+      total=0  → this device never registered; use the Settings toggle.
+      sent>0   → we handed it to the push service successfully, so if nothing
+                 appears the problem is on the device (notification permission
+                 for the installed app, Focus/DND, or the PWA was removed).
+      removed>0 → the push service reported the subscription dead; it has been
+                 cleaned up, so re-enable notifications on that device.
+    """
+    payload = {
+        "type": "test",
+        "title": "Beacon test notification",
+        "body": "Notifications are working on this device.",
+        "issued_at": datetime.utcnow().isoformat() + "Z",
+    }
+    result = await send_to_user(session, current_user.id, payload)
+    return RingMobileResult(**result)
+
+
 @router.post("/contacts/{contact_id}/ring-mobile", response_model=RingMobileResult)
 async def ring_mobile(
     contact_id: UUID,

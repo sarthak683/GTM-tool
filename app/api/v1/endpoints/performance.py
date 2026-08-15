@@ -149,6 +149,7 @@ async def get_scorecard(
     # Activity block
     calls_c = await pm.calls_connected(session, rep_uuid, p)
     calls_m = await pm.calls_made(session, rep_uuid, p)
+    contacts_d = await pm.contacts_dialed(session, rep_uuid, p)
     emails_s = await pm.emails_sent(session, rep_uuid, p)
     emails_r = await pm.emails_replied_to(
         session, rep_uuid, p, lookback_days=settings.get("email_reply_lookback_days", 30)
@@ -162,6 +163,7 @@ async def get_scorecard(
         title="Activity",
         metrics=[
             _metric("calls_made", "Calls made", calls_m, targets, bands),
+            _metric("contacts_dialed", "Contacts dialed", contacts_d, targets, bands),
             _metric("calls_connected", "Calls connected", calls_c, targets, bands),
             _metric("emails_sent", "Emails sent", emails_s, targets, bands),
             _metric("emails_replied_to", "Emails replied-to", emails_r, targets, bands),

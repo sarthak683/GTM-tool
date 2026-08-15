@@ -1,0 +1,48 @@
+# Staging overrides for the `gtm` namespace (https://gtm.staging2.beacon.li).
+#
+# Usage:
+#   helm upgrade gtm ./helm/beacon-crm -n gtm -f ./helm/beacon-crm/values-staging.yaml \
+#     --set-string backend.image.tag=<TAG> ...
+#
+# Images are NOT pinned here on purpose — pass them per deploy so the tag is
+# explicit and immutable. See .claude/skills/crm-deployment/SKILL.md.
+
+backend:
+  env:
+    # Staging must NOT be "production". That flag gates two things in
+    # app/config.py and app/services/us_pod_call_report.py:
+    #   1. validate_runtime_secrets() — refuses startup unless JWT_SECRET is
+    #      >=32 chars, which the chart's default secret is not.
+    #   2. _resolve_report_recipients() — in production, scheduled sales
+    #      reports go to the REAL recipient list. On staging that would email
+    #      the actual team, so keep this non-production.
+    ENVIRONMENT: development
+
+  service:
+    # This cluster routes through Ambassador/Emissary, not an nginx ingress
+    # controller. A single annotation block on the backend Service declares the
+    # Mappings for both the API and the frontend on the same host, so the
+    # frontend can keep using relative /api URLs.
+    #
+    # Note the explicit :8000 on the backend Mapping — this chart's backend
+    # Service listens on 8000 (the external `gtm` chart fronts it with port 80,
+    # so its Mapping needs no port).
+    annotations:
+      getambassador.io/config: |-
+        ---
+        apiVersion: ambassador/v3alpha1
+        kind: Mapping
+        name: gtm-beacon-crm-backend-mapping
+        host: "gtm.staging2.beacon.li"
+        prefix: /api/
+        rewrite: /api/
+        service: gtm-beacon-crm-backend.gtm:8000
+        timeout_ms: 300000
+        ---
+        apiVersion: ambassador/v3alpha1
+        kind: Mapping
+        name: gtm-beacon-crm-frontend-mapping
+        host: "gtm.staging2.beacon.li"
+        prefix: /
+        service: gtm-beacon-crm-frontend.gtm
+        timeout_ms: 300000

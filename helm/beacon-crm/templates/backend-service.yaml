@@ -5,6 +5,14 @@ metadata:
   labels:
     {{- include "beacon.labels" . | nindent 4 }}
     {{- include "beacon.selectorLabels" (dict "context" . "component" "backend") | nindent 4 }}
+  {{- with .Values.backend.service.annotations }}
+  # Ambassador/Emissary reads routing off this annotation — the cluster has no
+  # nginx ingress controller, so the `ingress` template below is unused here.
+  # One block on the backend Service defines the Mappings for BOTH the API and
+  # the frontend, matching how the external `gtm` chart exposes prod.
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: ClusterIP
   ports:

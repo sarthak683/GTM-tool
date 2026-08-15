@@ -20,6 +20,12 @@ backend:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 8000
+  service:
+    # Ambassador Mappings live here (see templates/backend-service.yaml). Empty
+    # by default so the chart stays cluster-agnostic; supply per environment,
+    # e.g. -f values-staging.yaml. Without this the Services are ClusterIP-only
+    # and the public host returns 404.
+    annotations: {}
   # Right-sized to observed prod usage (~5m CPU, ~290Mi). CPU request is the
   # node-cost lever; mem limit keeps ~2x headroom to avoid OOM.
   resources:

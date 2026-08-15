@@ -1,251 +1,387 @@
 ---
 name: crm-deployment
-description: Deploy Beacon GTM CRM to staging or production by following the repo handoff exactly, with strict production/data safety rules.
+description: Access the Beacon AKS cluster and deploy Beacon GTM CRM to staging or production via Helm, with drift checks and strict production safety rules.
 ---
 
 # Beacon GTM CRM Deployment
 
-Use this skill when the user asks to deploy, push to staging, push to production,
-roll out an image, verify a deployment, or debug a deployment rollout.
+Use when the user asks to deploy, push to staging, push to prod, roll out an
+image, verify a rollout, or inspect cluster state.
 
 ## Hard Rules
 
-- Do not deploy unless the user explicitly asks for a deployment.
-- Default target is staging. Production requires the user to explicitly say
-  `production` or `prod`.
-- Never deploy from memory. Read `AGENTS.md` and the relevant deployment handoff
-  first.
-- Never print, paste, summarize, or commit secrets, kubeconfigs, registry
-  passwords, OAuth tokens, database URLs with passwords, or `.env` contents.
-- Never mutate production data unless the user explicitly authorizes the exact
-  data-changing operation.
-- Kubernetes read-only checks are allowed. Rollouts, image updates, restarts,
-  pod deletes, Helm upgrades, and production deploys require explicit user
-  instruction.
-- If the worktree is dirty, do not revert user changes. Deploy the current
-  working tree only when that is what the user asked for.
-- Do not mix Helm and `kubectl set image` in the same deploy. Use the method
-  stated by the handoff.
+- Never deploy unless the user explicitly asks for a deployment in this session.
+- Default target is **staging**. Production requires the user to say
+  `production` or `prod` explicitly. Approval for staging is never approval for prod.
+- Never print, echo, paste, or commit secrets: kubeconfigs, the ACR password,
+  bearer tokens, `DATABASE_URL` values, or `.env` contents. Filter command output
+  that could contain them (`helm get values`, `kubectl get secret`, the
+  `gtm*.yaml` values files — all contain live credentials in plaintext).
+- Read-only `kubectl get/describe/logs` is allowed without extra confirmation.
+  Helm upgrades, rollouts, restarts, pod deletes, and image changes require
+  explicit instruction.
+- **Always run the drift gate (below) before a production `helm upgrade`.** The
+  chart copy on disk is known to have drifted from what produced the live release.
+- Never mix `helm upgrade` and `kubectl set image` on the same release. Mixing
+  makes the next Helm upgrade silently revert the image.
 
-## Required Files
+## One-Time Machine Setup
 
-Read these before deploying:
+Already done on this Mac (verify, don't redo blindly):
 
-1. `AGENTS.md`
-2. `MAC_DEPLOY_HANDOFF.md`
-3. Any user-provided handoff file, if mentioned
+| Item | Location / value |
+|---|---|
+| Kubeconfig | `/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml` (mode `600`) |
+| Kube context | `beacon-test` — token auth (no client cert) |
+| Helm | `/opt/homebrew/bin/helm` |
+| kubectl | `/usr/local/bin/kubectl` |
+| buildx builder | `builder` (docker-container driver) |
+| Chart + values | `/Users/sarthak/Downloads/gtm-helm/` |
 
-Common local paths used by the owner:
+Verify in one shot:
 
-- Repo: `/Users/sarthak/GTM-tool`
-- Kubeconfig: `/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml`
-- Helm chart copy: `/Users/sarthak/Downloads/gtm-helm/gtm`
-- Staging values: `/Users/sarthak/Downloads/gtm-helm/gtm.yaml`
-- Production values: `/Users/sarthak/Downloads/gtm-helm/gtm-prod.yaml`
+```bash
+export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
+kubectl config current-context && kubectl get ns && helm version --short && docker buildx inspect builder >/dev/null && echo "builder ok"
+```
+
+If the buildx builder is missing:
+
+```bash
+docker buildx create --name builder --driver docker-container --bootstrap
+```
+
+### ACR credential (user runs this, not Claude)
+
+The registry password must be stored in the macOS Keychain by the user. Claude
+must never write it — it would pass through the transcript and the process table.
+
+```bash
+security add-generic-password -a codebuild -s beacon-acr -U -w
+```
+
+Enter the password at the prompt (omitting a value after `-w` makes `security`
+prompt instead of taking it from the command line).
 
 ## Environment Map
 
-- Staging namespace: `gtm`
-- Staging URL: `https://gtm.staging2.beacon.li`
-- Production namespace: `gtm-prod`
-- Production URL: `https://gtm.beacon.li`
-- Backend image: `beacon.azurecr.io/gtm-be:<tag>`
-- Frontend image: `beacon.azurecr.io/gtm-fe:<tag>`
+| | Staging | Production |
+|---|---|---|
+| Namespace | `gtm` | `gtm-prod` |
+| URL | https://gtm.staging2.beacon.li | https://gtm.beacon.li |
+| Helm release | `gtm` | `gtm` |
+| Values file | `~/Downloads/gtm-helm/gtm.yaml` | `~/Downloads/gtm-helm/gtm-prod.yaml` |
+| `ENVIRONMENT` | `development` | `production` |
+
+Images: `beacon.azurecr.io/gtm-be:<TAG>` and `beacon.azurecr.io/gtm-fe:<TAG>`.
+
+Routing is Ambassador `Mapping` annotations on the backend Service: `/api/` →
+`gtm-backend`, `/` → `gtm-frontend`, same host. This is why the frontend is built
+with an **empty** `VITE_API_URL` — it uses relative URLs, so one frontend image
+works in both environments.
+
+## Known Drift — verify before trusting anything below
+
+State observed 2026-08-15. Re-check rather than assuming it still holds.
+
+1. **The two environments run different charts.** Prod runs chart `gtm-0.1.0`
+   (the `~/Downloads` chart) with deployments named `gtm-*-deployment`. Staging
+   was deployed from the **repo-local** `helm/beacon-crm` chart (`beacon-crm-0.1.0`),
+   giving deployments named `gtm-beacon-crm-*`. **Never assume deployment names —
+   discover them.**
+2. **Staging was broken and is now fixed (revisions 186–188, 2026-08-15).**
+   Three separate faults, each masking the next — kept here because the traps
+   are permanent even though the outage is not:
+   - *Read-only filesystem*: `zippy_docs/base.py` calls `ZIPPY_OUTPUT_DIR.mkdir()`
+     at import time (`OSError: [Errno 30] ... '/app/storage'`). Fixed by the
+     `app-storage` emptyDir in `backend-deployment.yaml`. Backend only —
+     `zippy_docs` is imported by `app/main.py` and `zippy_tools.py`, not by any
+     module in the Celery `include` list, so workers need no such mount.
+   - *ImagePullBackOff ×3*: the chart defaults **every** workload to
+     `beacon-crm/backend:latest`, which does not exist in ACR. A deploy that
+     overrides only backend and frontend strands worker, beat, and
+     priority-worker. Always override all five.
+   - *Startup refusal*: the chart's `backend.env.ENVIRONMENT` defaults to
+     `production`, which trips `validate_runtime_secrets()` against the chart's
+     21-char `jwtSecret` (needs ≥32). `values-staging.yaml` sets `development`.
+     This also matters beyond startup: with `ENVIRONMENT=production`,
+     `_resolve_report_recipients()` sends scheduled sales reports to the **real**
+     recipient list — from staging.
+3. **The prod chart lives OUTSIDE git and had two bugs, both fixed by hand on
+   2026-08-15.** `~/Downloads/gtm-helm/gtm` is not version-controlled, so these
+   fixes exist only on this laptop and any stale copy reintroduces them:
+   - `templates/backend/worker.yaml` was missing the second Deployment,
+     `gtm-priority-worker-deployment`. Helm would have **pruned** the only
+     consumer of the `priority` queue (sourcing upload, ICP research, call
+     transcription). Restored from the live release manifest.
+   - `templates/frontend/server.yaml` had `containerPort`, both probes, and the
+     Service `targetPort` on **80**; every `gtm-fe` image serves **8080**.
+     Applying it took prod down with 503s. Service `port` stays 80 (the
+     Ambassador Mapping addresses the Service with no port), `targetPort` is 8080.
+
+   Getting this chart into the repo is the highest-value outstanding fix.
+4. **`DEPLOYMENT_HANDOFF.md` is stale** (Windows paths, older tags/revisions) and
+   the separate PDF-style runbook is wrong about Step 4 — the chart takes full
+   image strings `backend.image` / `frontend.image`, not an `image.tag` key.
+   Prefer `--set-string` over editing `values.yaml`; editing the shared file makes
+   staging and prod share a tag.
 
 ## Preflight
 
-Run safe checks first:
-
 ```bash
-git status --short
-git rev-parse --abbrev-ref HEAD
-git rev-parse --short HEAD
-docker buildx inspect builder --bootstrap
-kubectl --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml -n gtm get deploy
+export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
+NS=gtm                    # staging; NS=gtm-prod only when explicitly asked
+git -C /Users/sarthak/GTM-tool status --short
+git -C /Users/sarthak/GTM-tool rev-parse --short HEAD
 ```
 
-Before building, run the relevant local validation:
+Discover the real workload names and current images:
 
 ```bash
-cd /Users/sarthak/GTM-tool
-python3 -m py_compile $(find app -name '*.py' -not -path '*/__pycache__/*')
-cd frontend && npm run build
+kubectl -n "$NS" get deploy -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,IMAGES:.spec.template.spec.containers[*].image'
+helm -n "$NS" list
 ```
 
-If the repository has faster smoke targets, prefer them:
+Local validation before building:
 
 ```bash
-make backend-compile
-make frontend-build
+cd /Users/sarthak/GTM-tool && make backend-compile && make frontend-build
 ```
 
 ## Tagging
 
-Use a clear new tag so rollout movement is visible. Recommended format:
-
 ```bash
-TAG="v0.xx-$(git rev-parse --short HEAD)"
+TAG="v0.$(date +%y%m%d)-$(git -C /Users/sarthak/GTM-tool rev-parse --short HEAD)"
 ```
 
-If staging is already on the same commit hash, increment the `v0.xx` prefix
-rather than reusing the existing tag.
+Any scheme works as long as the tag is **new** — reusing a tag makes rollout
+movement invisible and defeats `imagePullPolicy: Always`. Backend and frontend
+may carry different tags; the chart takes them independently.
 
 ## Registry Login
 
-Use macOS Keychain. Do not print the password.
-
 ```bash
-ACR_PASSWORD=$(security find-generic-password -a codebuild -s beacon-acr -w)
-printf '%s' "$ACR_PASSWORD" | docker login beacon.azurecr.io -u codebuild --password-stdin
-unset ACR_PASSWORD
+security find-generic-password -a codebuild -s beacon-acr -w \
+  | docker login beacon.azurecr.io -u codebuild --password-stdin
 ```
 
-Expected output includes `Login Succeeded`.
+Expect `Login Succeeded`. Never echo the password or pass it as an argument.
 
 ## Build And Push
 
-Backend:
+AKS nodes are amd64. Build `linux/amd64` only — adding arm64 doubles build time
+for an artifact nothing runs.
+
+Backend (from repo root — it uses the root `Dockerfile`):
 
 ```bash
 cd /Users/sarthak/GTM-tool
-docker buildx build \
-  --platform linux/amd64 \
-  -t beacon.azurecr.io/gtm-be:$TAG \
-  --push \
-  --builder builder \
-  .
+docker buildx build --platform linux/amd64 . \
+  -t beacon.azurecr.io/gtm-be:$TAG --push --builder builder
 ```
 
-Frontend:
+Frontend (from `frontend/` — it has its own Dockerfile and Vite context):
 
 ```bash
 cd /Users/sarthak/GTM-tool/frontend
-docker buildx build \
-  --platform linux/amd64 \
-  -t beacon.azurecr.io/gtm-fe:$TAG \
-  --build-arg VITE_API_URL= \
-  --push \
-  --builder builder \
-  .
+docker buildx build --platform linux/amd64 . \
+  -t beacon.azurecr.io/gtm-fe:$TAG --build-arg VITE_API_URL= --push --builder builder
 ```
 
-Verify both manifests include `linux/amd64`:
+Confirm both landed:
 
 ```bash
 docker buildx imagetools inspect beacon.azurecr.io/gtm-be:$TAG
 docker buildx imagetools inspect beacon.azurecr.io/gtm-fe:$TAG
 ```
 
-## Deploy With Current Operational Flow
+## Drift Gate — mandatory before production
 
-Use this when `MAC_DEPLOY_HANDOFF.md` says Helm is drifted/failed and current
-operational flow is direct image update.
+Run **both** checks. They catch different failures, and skipping the second one
+caused a real production outage on 2026-08-15 (see below).
 
-Set namespace from the explicit target:
+### 1. Field-level diff — the primary gate
+
+`helm-diff` is installed (`helm plugin list` shows `diff`). It shows exactly
+which fields change on existing objects:
 
 ```bash
-KCFG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
-NS=gtm       # staging
-# NS=gtm-prod  # production only if explicitly requested
+cd /Users/sarthak/Downloads/gtm-helm
+helm diff upgrade gtm ./gtm -n gtm-prod -f ./gtm-prod.yaml \
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
 ```
 
-Update staging or production workloads:
+Empty output means no drift. **Read every `-`/`+` pair before proceeding.** Treat
+any change to `targetPort`, `containerPort`, probe ports, `selector`, volumes, or
+`command`/`args` as a stop-and-ask, not a detail.
+
+Why this is mandatory: live objects are routinely corrected out-of-band
+(`kubectl edit`/`patch`) without the chart being updated. A Helm upgrade silently
+reverts those corrections. That is precisely what took `gtm.beacon.li` down —
+the chart said the frontend `targetPort` was 80, the live Service had been fixed
+to 8080, and the upgrade put 80 back. Every `gtm-fe` image serves on 8080
+(`nginx-unprivileged` cannot bind privileged ports), so the Service pointed at a
+dead port and Ambassador returned 503 for ~9 minutes.
+
+### 2. Workload-existence check — catches pruning
+
+The diff above shows changed objects; this one catches whole workloads the chart
+no longer renders, which Helm **deletes** on upgrade.
 
 ```bash
-kubectl --kubeconfig "$KCFG" -n "$NS" set image deploy/gtm-backend-deployment \
-  copilot=beacon.azurecr.io/gtm-be:$TAG \
-  run-migrations=beacon.azurecr.io/gtm-be:$TAG
+cd /Users/sarthak/Downloads/gtm-helm
+helm template gtm ./gtm -f ./gtm-prod.yaml \
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG 2>/dev/null \
+  | grep -E "^kind:|^  name:" | paste - - | grep -Ei "deployment|statefulset" \
+  | awk '{print $NF}' | sort > /tmp/rendered.txt
 
-kubectl --kubeconfig "$KCFG" -n "$NS" set image deploy/gtm-frontend-deployment \
-  copilot=beacon.azurecr.io/gtm-fe:$TAG
+kubectl -n gtm-prod get deploy,statefulset -o name | sed 's|.*/||' | sort > /tmp/live.txt
 
-kubectl --kubeconfig "$KCFG" -n "$NS" set image deploy/gtm-worker-deployment \
-  copilot=beacon.azurecr.io/gtm-be:$TAG
-
-kubectl --kubeconfig "$KCFG" -n "$NS" set image deploy/gtm-priority-worker-deployment \
-  copilot=beacon.azurecr.io/gtm-be:$TAG
-
-kubectl --kubeconfig "$KCFG" -n "$NS" set image deploy/gtm-beat-deployment \
-  copilot=beacon.azurecr.io/gtm-be:$TAG
+echo "=== live but NOT rendered (Helm would prune these) ==="
+comm -13 /tmp/rendered.txt /tmp/live.txt
 ```
 
-The backend deployment has both the `copilot` container and `run-migrations`
-init container. They must use the same backend image tag.
+Anything listed by that last command will be **deleted** by the upgrade. Stop and
+report to the user. Do not proceed on the assumption that Helm will "just leave
+it alone" — it prunes resources it previously managed.
 
-## Rollout Verification
+### 3. Baseline the target BEFORE deploying
+
+Always record what the environment looks like *before* touching it, so you can
+tell whether you broke something or found it broken:
 
 ```bash
-for d in gtm-backend-deployment gtm-frontend-deployment gtm-worker-deployment gtm-priority-worker-deployment gtm-beat-deployment; do
-  kubectl --kubeconfig "$KCFG" -n "$NS" rollout status deploy/$d --timeout=300s
+curl -sS -o /dev/null -w "before: %{http_code}\n" https://gtm.beacon.li/     # prod
+curl -sS -o /dev/null -w "before: %{http_code}\n" https://gtm.staging2.beacon.li/
+kubectl -n "$NS" get deploy -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'
+```
+
+Skipping this on 2026-08-15 meant several minutes were lost during an outage
+just working out whether the deploy had caused it.
+
+## Deploy
+
+### Staging — repo-local `beacon-crm` chart (what `gtm` actually runs)
+
+Staging runs the **repo** chart, whose image values are `repository` + `tag`
+pairs, not the single image strings the external chart uses. All **five**
+workloads must be overridden — the chart defaults each to
+`beacon-crm/backend:latest`, which does not exist in ACR, so any workload you
+forget lands in ImagePullBackOff.
+
+`values-staging.yaml` carries the `ENVIRONMENT=development` override and the
+Ambassador Mappings — always pass it with `-f`, or staging loses its routing and
+refuses to start.
+
+```bash
+export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
+cd /Users/sarthak/GTM-tool
+TAG=v0.15-20260814
+helm upgrade gtm ./helm/beacon-crm -n gtm -f ./helm/beacon-crm/values-staging.yaml \
+  --set-string backend.image.repository=beacon.azurecr.io/gtm-be       --set-string backend.image.tag=$TAG \
+  --set-string frontend.image.repository=beacon.azurecr.io/gtm-fe      --set-string frontend.image.tag=$TAG \
+  --set-string worker.image.repository=beacon.azurecr.io/gtm-be        --set-string worker.image.tag=$TAG \
+  --set-string priorityWorker.image.repository=beacon.azurecr.io/gtm-be --set-string priorityWorker.image.tag=$TAG \
+  --set-string beat.image.repository=beacon.azurecr.io/gtm-be          --set-string beat.image.tag=$TAG
+```
+
+Secrets note: this chart renders its Secret from `values.yaml`, and the live
+release supplies **no** secret overrides — so the committed defaults *are* the
+live values. Confirm before upgrading (compare value lengths, never print
+values); if the live Secret ever diverges from the chart, a Helm upgrade will
+overwrite it.
+
+### Staging — external `gtm` chart
+
+Only if staging is migrated onto the same chart as prod. See the migration
+warning below.
+
+```bash
+cd /Users/sarthak/Downloads/gtm-helm
+helm upgrade --install gtm ./gtm -n gtm --create-namespace \
+  -f ./gtm.yaml \
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
+  --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
+```
+
+Production — only on explicit instruction, and only after the drift gate:
+
+```bash
+cd /Users/sarthak/Downloads/gtm-helm
+helm upgrade --install gtm ./gtm -n gtm-prod --create-namespace \
+  -f ./gtm-prod.yaml \
+  --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
+  --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
+```
+
+Note: deploying the `gtm` chart into the `gtm` namespace while staging still runs
+the `beacon-crm` chart is a **chart migration**, not a routine deploy — it creates
+a new `gtm-postgresql` StatefulSet alongside the existing `gtm-beacon-crm-postgres-0`
+and does not migrate data. Raise this with the user rather than doing it silently.
+
+## Verify
+
+```bash
+for d in $(kubectl -n "$NS" get deploy -o name); do
+  kubectl -n "$NS" rollout status "$d" --timeout=300s
 done
-
-kubectl --kubeconfig "$KCFG" -n "$NS" get pods -o wide
-kubectl --kubeconfig "$KCFG" -n "$NS" get deploy \
-  gtm-backend-deployment gtm-frontend-deployment gtm-worker-deployment gtm-priority-worker-deployment gtm-beat-deployment \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.initContainers[*].image}{"\t"}{.spec.template.spec.containers[*].image}{"\n"}{end}'
+kubectl -n "$NS" get pods -o wide
 ```
 
-Expected:
+Expect: rollouts complete, pods `Running`, new pods at `RESTARTS=0`, and the
+intended tag on every workload.
 
-- All rollout commands succeed.
-- Pods are `Running`.
-- New rollout pods have `RESTARTS=0`.
-- All five workloads show the intended tag.
-
-## Smoke Tests
-
-Staging:
+Smoke:
 
 ```bash
-curl -sS -I https://gtm.staging2.beacon.li/ | sed -n '1,12p'
-curl -sS -i https://gtm.staging2.beacon.li/api/v1/auth/google/login | sed -n '1,16p'
+curl -sS -I https://gtm.staging2.beacon.li/ | head -1     # staging
+curl -sS -I https://gtm.beacon.li/ | head -1              # production
 ```
 
-Production:
+Expect `200`. Then scan logs for the target namespace only:
 
 ```bash
-curl -sS -I https://gtm.beacon.li/ | sed -n '1,12p'
-curl -sS -i https://gtm.beacon.li/api/v1/auth/google/login | sed -n '1,16p'
+kubectl -n "$NS" logs deploy/<backend-deploy> --since=5m --tail=200 \
+  | rg -i "traceback|exception|error|failed" || true
 ```
 
-Expected:
+Separate known external-token noise (Gmail `invalid_grant`, missing API keys)
+from genuine rollout failures.
 
-- `/` returns `200 OK` and `content-type: text/html`.
-- `/api/v1/auth/google/login` returns a redirect or auth response, not `5xx`.
+## Rollback
 
-## Log Check
+**`helm rollback` on `gtm-prod` is a trap.** Images have been changed with
+`kubectl set image` outside Helm, so the stored manifest does not match reality —
+on 2026-08-15 Helm's manifest said `gtm-be:v0.60` while prod actually ran
+`v0.13-c6e7baf`. A rollback would have shipped a months-old image.
 
-For the target namespace only:
+Roll back **forward** instead: re-run `helm upgrade` pinning the previous known
+-good tags, which you recorded during the baseline step.
 
 ```bash
-kubectl --kubeconfig "$KCFG" -n "$NS" logs deploy/gtm-backend-deployment --since=5m --tail=200 | rg -i "traceback|exception|error|failed|crash" || true
-kubectl --kubeconfig "$KCFG" -n "$NS" logs deploy/gtm-worker-deployment --since=5m --tail=120 | rg -i "traceback|exception|error|failed|crash" || true
-kubectl --kubeconfig "$KCFG" -n "$NS" logs deploy/gtm-beat-deployment --since=5m --tail=120 | rg -i "traceback|exception|error|failed|crash" || true
+kubectl -n "$NS" get deploy -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'  # capture BEFORE deploying
+cd /Users/sarthak/Downloads/gtm-helm
+helm upgrade gtm ./gtm -n gtm-prod -f ./gtm-prod.yaml \
+  --set-string backend.image=beacon.azurecr.io/gtm-be:<PREVIOUS_TAG> \
+  --set-string frontend.image=beacon.azurecr.io/gtm-fe:<PREVIOUS_TAG>
 ```
 
-Report deployment-related errors. Separate known external-token errors, such
-as Gmail `invalid_grant`, from rollout failures.
+Use `helm history` for information only, and only trust `helm rollback` once the
+stored manifest and live state have been reconciled.
 
-## Final Response Format
+Then re-run the verify block.
 
-Keep the final concise and include:
+## Reporting
+
+State plainly:
 
 - Target environment and namespace
-- Image tag
-- Rollout result
+- Backend and frontend tags deployed
+- Rollout result and pod health
 - Smoke result
-- Any warnings or known non-deploy issues
-- Explicitly state if production was not touched
-
-Example:
-
-```text
-Pushed to staging only. Prod was not touched.
-
-Staging is now on v0.xx-abcdef0 for backend, frontend, worker, priority worker, and beat.
-All rollouts completed, pods are running with 0 restarts, and smoke checks passed:
-- / returns 200
-- Google login returns redirect as expected
-
-Warning: worker logs still show Gmail invalid_grant for one account; that is a revoked token issue, not a deploy failure.
-```
+- Any drift or pre-existing failures found, separated from deploy outcome
+- Explicitly say whether production was touched

@@ -13,6 +13,11 @@ export const pushApi = {
       method: "DELETE",
       body: JSON.stringify({ endpoint }),
     }),
+  sendTest: () =>
+    request<{ sent: number; removed: number; total: number; configured: number }>(
+      "/api/v1/push/test",
+      { method: "POST" },
+    ),
   ringMobile: (contactId: string) =>
     request<{ sent: number; removed: number; total: number; configured: number }>(
       `/api/v1/push/contacts/${contactId}/ring-mobile`,

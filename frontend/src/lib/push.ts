@@ -44,11 +44,58 @@ function isSupported(): boolean {
   );
 }
 
+function isIOS(): boolean {
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports itself as MacIntel, so touch points are the tell.
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isStandalone(): boolean {
+  return (
+    window.matchMedia?.("(display-mode: standalone)").matches ||
+    (navigator as unknown as { standalone?: boolean }).standalone === true
+  );
+}
+
+/**
+ * iOS only delivers Web Push to a web app installed to the Home Screen. In a
+ * normal Safari tab `PushManager` and `Notification` still exist, so
+ * `isSupported()` is true and `subscribe()` fails with an opaque error — which
+ * looks to the user like "notifications just don't work". Return actionable
+ * guidance instead of letting them hit that wall.
+ */
+function iosInstallBlocker(): string | null {
+  if (isIOS() && !isStandalone()) {
+    return "On iPhone/iPad, open Beacon in Safari, tap Share → Add to Home Screen, then turn notifications on from that installed app. iOS only delivers notifications to the installed app.";
+  }
+  return null;
+}
+
+/**
+ * `navigator.serviceWorker.ready` never settles when no service worker is
+ * registered (e.g. registration failed on load, or the page is on a scope the
+ * SW doesn't cover). Awaiting it bare leaves the Settings toggle spinning with
+ * no error, so bound it.
+ */
+async function swReady(timeoutMs = 10_000): Promise<ServiceWorkerRegistration | null> {
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
 export async function getSubscriptionState(): Promise<PushSubscriptionState> {
   if (!isSupported()) {
     return { supported: false, configured: false, permission: "unsupported", subscribed: false, endpoint: null };
   }
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await swReady();
+  if (!reg) {
+    return { supported: false, configured: false, permission: Notification.permission, subscribed: false, endpoint: null };
+  }
   const existing = await reg.pushManager.getSubscription();
   let configured = false;
   try {
@@ -70,13 +117,29 @@ export async function getSubscriptionState(): Promise<PushSubscriptionState> {
 export async function enablePush(): Promise<{ ok: boolean; reason?: string; endpoint?: string }> {
   if (!isSupported()) return { ok: false, reason: "Push not supported in this browser." };
 
-  const reg = await navigator.serviceWorker.ready;
+  // Check this BEFORE prompting: on iOS in a plain Safari tab the permission
+  // prompt and subscribe() both fail, and the user is left with no idea why.
+  const iosBlocker = iosInstallBlocker();
+  if (iosBlocker) return { ok: false, reason: iosBlocker };
+
+  const reg = await swReady();
+  if (!reg) {
+    return { ok: false, reason: "Service worker isn't ready. Reload the page and try again." };
+  }
 
   // Permission must be requested from a user gesture, so callers should
   // invoke this from a click handler — the browser will throw otherwise
   // on Safari.
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") return { ok: false, reason: `Notification permission ${permission}.` };
+  if (permission !== "granted") {
+    return {
+      ok: false,
+      reason:
+        permission === "denied"
+          ? "Notifications are blocked for this site. Enable them in your browser/site settings, then try again."
+          : `Notification permission ${permission}.`,
+    };
+  }
 
   const keyResp = await pushApi.getVapidPublicKey();
   if (!keyResp.configured || !keyResp.publicKey) {
@@ -92,10 +155,19 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string; endp
     // BufferSource the spec accepts — the runtime value is a real
     // Uint8Array<ArrayBuffer>, only TS doesn't believe us.
     const appServerKey = urlBase64ToUint8Array(keyResp.publicKey) as unknown as BufferSource;
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: appServerKey,
-    });
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: appServerKey,
+      });
+    } catch (err) {
+      // subscribe() rejects for reasons the user can act on (permission
+      // revoked mid-flow, a stale subscription bound to an older VAPID key,
+      // push service unreachable). Surface it rather than throwing past the
+      // caller, which showed the user nothing at all.
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, reason: `Browser refused the subscription: ${msg}` };
+    }
   }
 
   const json = sub.toJSON();
@@ -114,7 +186,8 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string; endp
 
 export async function disablePush(): Promise<{ ok: boolean; reason?: string }> {
   if (!isSupported()) return { ok: false, reason: "Push not supported." };
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await swReady();
+  if (!reg) return { ok: false, reason: "Service worker isn't ready. Reload the page and try again." };
   const sub = await reg.pushManager.getSubscription();
   if (!sub) return { ok: true };
   // Best-effort server delete first, then unsubscribe the browser. If the
