@@ -1,8 +1,12 @@
+import csv
+import io
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlmodel import SQLModel, select
 
@@ -171,6 +175,127 @@ async def _get_or_create_uploaded_placeholder_company(
     )
     await session.flush()  # populate company.id before the caller links contacts
     return company, created
+
+
+@dataclass
+class ContactFilters:
+    """Every filter the prospects list understands.
+
+    Shared by ``list_contacts`` and ``export_contacts_csv`` via ``Depends`` so
+    the CSV export cannot drift from the list it claims to export. When the two
+    took separate parameter sets, the export ignored most of the page's filters
+    and reps had no way to export the view they were actually looking at.
+
+    FastAPI expands these into exactly the same query parameters the endpoints
+    declared individually, so the public API contract is unchanged.
+    """
+
+    company_id: Optional[UUID] = Query(default=None)
+    q: Optional[str] = Query(default=None, description="Search by name, email, title, or company")
+    q_field: Optional[str] = Query(default=None, description="Scope `q` to a single column: name | email | company | title | phone | linkedin. Defaults to multi-field.")
+    q_match: Optional[str] = Query(default=None, description="When scoped: 'exact' for whole-cell case-insensitive equality, 'contains' (default) for substring LIKE. Only honored alongside q_field.")
+    persona: Optional[str] = Query(default=None)
+    sequence_status: Optional[str] = Query(default=None)
+    call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions")
+    email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified")
+    linkedin_status: Optional[str] = Query(default=None, description="Filter by one or more LinkedIn statuses: sent | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted")
+    sort_by: Optional[str] = Query(default=None, description="Sort key: name | first_name | last_name | company | email | title | created_at.")
+    sort_dir: Optional[str] = Query(default=None, description="Sort direction: asc | desc. Defaults to asc.")
+    ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs")
+    sdr_id: Optional[str] = Query(default=None, description="Filter by one or more assigned SDR user IDs")
+    owner_id: Optional[str] = Query(default=None, description="Filter by one or more user IDs across AE or SDR ownership")
+    scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter")
+    prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches")
+    timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')")
+    call_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by call-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
+    email_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
+    call_attempts_bucket: Optional[list[str]] = Query(default=None, description="Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together.")
+    call_attempt_min: Optional[int] = Query(default=None, ge=0, description="Follow-up count lower bound (inclusive): minimum number of logged calls.")
+    call_attempt_max: Optional[int] = Query(default=None, ge=0, description="Follow-up count upper bound (inclusive): maximum number of logged calls.")
+    next_followup_after: Optional[datetime] = Query(default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/after this UTC datetime.")
+    next_followup_before: Optional[datetime] = Query(default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/before this UTC datetime.")
+    call_last_after: Optional[datetime] = Query(default=None, description="Only contacts last called (call_last_at) at/after this UTC datetime.")
+    call_last_before: Optional[datetime] = Query(default=None, description="Only contacts last called (call_last_at) at/before this UTC datetime.")
+
+    def as_repo_kwargs(self) -> dict:
+        """Filter kwargs for ``ContactRepository.list_with_company_name``."""
+        return asdict(self)
+
+
+# Hard ceiling on a single CSV export. High enough for the whole prospect base
+# (~2k today) and low enough that one request cannot pin a worker or blow the
+# response buffer.
+CONTACT_EXPORT_MAX_ROWS = 50_000
+
+
+@router.get("/export.csv")
+async def export_contacts_csv(
+    session: DBSession,
+    current_user: CurrentUser,
+    filters: ContactFilters = Depends(),
+):
+    """Stream every prospect matching the current filters as CSV.
+
+    Why this exists: the prospects list paginates at 50, so exporting ~1900
+    prospects meant tick-selecting across 40 pages. Passing that many ids as a
+    query string is not an option either — ~1900 UUIDs is roughly 70KB of URL,
+    well past the usual 8KB server limit. Filtering server-side sidesteps both.
+
+    Visibility is the same hard gate as the list: a non-admin exports only their
+    own and unassigned prospects. Filters can narrow what the caller already
+    sees, never widen it — this endpoint emits names, emails and LinkedIn URLs,
+    so an ungated version would be a full-identity workspace dump.
+    """
+    repo = ContactRepository(session)
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, current_user) else str(current_user.id)
+    )
+    items, total = await repo.list_with_company_name(
+        restrict_to_role=current_user.role,
+        restrict_to_owner_id=restrict_to_owner_id,
+        skip=0,
+        limit=CONTACT_EXPORT_MAX_ROWS,
+        **filters.as_repo_kwargs(),
+    )
+
+    columns = [
+        ("first_name", "First Name"),
+        ("last_name", "Last Name"),
+        ("email", "Email"),
+        ("phone", "Phone"),
+        ("title", "Title"),
+        ("company_name", "Company"),
+        ("linkedin_url", "LinkedIn"),
+        ("persona", "Persona"),
+        ("timezone", "Timezone"),
+        ("call_disposition", "Call Disposition"),
+        ("linkedin_status", "LinkedIn Status"),
+        ("sequence_status", "Sequence Status"),
+        ("call_attempt_count", "Call Attempts"),
+        ("assigned_to_name", "AE"),
+        ("sdr_name", "SDR"),
+        ("created_at", "Created At"),
+    ]
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([label for _, label in columns])
+    for item in items:
+        writer.writerow(["" if (v := getattr(item, key, None)) is None else v for key, _ in columns])
+
+    filename = f"prospects_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # Lets the UI tell the rep "exported 1,900 prospects" and notice
+            # when a result set was clipped by the ceiling above.
+            "X-Total-Rows": str(total),
+            "X-Exported-Rows": str(len(items)),
+            "Access-Control-Expose-Headers": "X-Total-Rows, X-Exported-Rows",
+        },
+    )
 
 
 @router.get("/", response_model=PaginatedResponse[ContactRead])

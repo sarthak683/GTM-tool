@@ -735,18 +735,11 @@ export default function Contacts() {
     }
   };
 
-  const loadContacts = (opts?: { silent?: boolean }) => {
-    // A filter change fires this twice (once with the old page still in the
-    // closure, once after the page-reset effect runs), so two requests race.
-    // The sequence counter lets only the latest response write state.
-    const seq = ++loadSeqRef.current;
-    // Silent reloads skip the loading state so the table stays mounted — this
-    // is what lets us preserve scroll position after the call drawer closes
-    // (the loading flash would otherwise unmount the list and reset scroll).
-    if (!opts?.silent) setLoading(true);
-    contactsApi.searchPaginated({
-      skip: (page - 1) * pageSize,
-      limit: pageSize,
+  // Every filter currently applied to the prospects list. Shared by the list
+  // request and the CSV export so the exported file always matches what the
+  // rep is looking at — exporting a different set than the screen shows is
+  // exactly the confusion this page had before.
+  const buildContactFilterParams = () => ({
       q: debouncedSearch || undefined,
       qField: searchScope && searchScope !== "all" ? searchScope : undefined,
       qMatch: searchScope && searchScope !== "all" ? searchMatch : undefined,
@@ -777,6 +770,21 @@ export default function Contacts() {
         : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       prospectOnly: true,
+  });
+
+  const loadContacts = (opts?: { silent?: boolean }) => {
+    // A filter change fires this twice (once with the old page still in the
+    // closure, once after the page-reset effect runs), so two requests race.
+    // The sequence counter lets only the latest response write state.
+    const seq = ++loadSeqRef.current;
+    // Silent reloads skip the loading state so the table stays mounted — this
+    // is what lets us preserve scroll position after the call drawer closes
+    // (the loading flash would otherwise unmount the list and reset scroll).
+    if (!opts?.silent) setLoading(true);
+    contactsApi.searchPaginated({
+      skip: (page - 1) * pageSize,
+      limit: pageSize,
+      ...buildContactFilterParams(),
     }).then((result) => {
       // A newer request superseded this one — drop the stale response.
       if (seq !== loadSeqRef.current) return;
@@ -1042,14 +1050,28 @@ export default function Contacts() {
     loadContacts();
   }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
+  // Clear the selection when the FILTERS change — the selected prospects may no
+  // longer be in the result set, so acting on them would be surprising.
+  //
+  // Deliberately excludes `page`: this used to prune the selection down to the
+  // currently visible rows on every load, which meant paging from 1 to 2 threw
+  // away everything selected on page 1. Selecting ~1900 prospects across 40
+  // pages was therefore impossible — each page silently undid the last.
+  // Selection now survives pagination; only a filter change resets it.
+  const isFirstFilterRun = useRef(true);
   useEffect(() => {
-    if (selectedContactIds.size === 0) return;
-    const visibleIds = new Set(contacts.map((contact) => contact.id));
-    setSelectedContactIds((current) => {
-      const next = new Set([...current].filter((id) => visibleIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [contacts, selectedContactIds.size]);
+    if (isFirstFilterRun.current) {
+      isFirstFilterRun.current = false;
+      return;
+    }
+    setSelectedContactIds((current) => (current.size === 0 ? current : new Set()));
+  }, [
+    aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter,
+    emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax,
+    nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to,
+    companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter,
+    timezoneFilter, tab, searchScope, searchMatch,
+  ]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
   // one batch call. Gives each row a progress bar (●━●━◉━○━○) and "Day 7 ·
@@ -2261,25 +2283,45 @@ export default function Contacts() {
                   type="button"
                   disabled={exportingSelectedContacts}
                   onClick={async () => {
-                    if (selectedContactIds.size === 0) {
-                      toast.info("Select prospects first, then export them as CSV.", "Nothing selected");
-                      return;
-                    }
                     setExportingSelectedContacts(true);
+                    const today = new Date().toISOString().slice(0, 10);
                     try {
-                      const blob = await accountSourcingApi.exportContactsCsv({ contactIds: Array.from(selectedContactIds) });
+                      let blob: Blob;
+                      let name: string;
+                      let count: number;
+                      if (selectedContactIds.size > 0) {
+                        blob = await accountSourcingApi.exportContactsCsv({ contactIds: Array.from(selectedContactIds) });
+                        name = `prospects-selected-${today}.csv`;
+                        count = selectedContactIds.size;
+                      } else {
+                        // Nothing ticked = export everything matching the current
+                        // filters. The server applies the same filters and streams
+                        // the lot, so a rep no longer has to tick their way through
+                        // 40 pages to export ~1900 prospects.
+                        const res = await contactsApi.exportCsv(buildContactFilterParams());
+                        blob = res.blob;
+                        name = `prospects-${today}.csv`;
+                        count = res.total;
+                      }
                       const url = URL.createObjectURL(blob);
                       const anchor = document.createElement("a");
                       anchor.href = url;
-                      anchor.download = `prospects-selected-${new Date().toISOString().slice(0, 10)}.csv`;
+                      anchor.download = name;
                       anchor.click();
                       URL.revokeObjectURL(url);
+                      toast.success(
+                        `Exported ${count.toLocaleString()} prospect${count === 1 ? "" : "s"}.`,
+                        "Export ready",
+                      );
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Failed to export prospects.", "Export failed");
                     } finally {
                       setExportingSelectedContacts(false);
                     }
                   }}
+                  title={selectedContactIds.size > 0
+                    ? `Export the ${selectedContactIds.size} selected prospect(s)`
+                    : "Export every prospect matching the current filters"}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     height: 38, padding: "0 14px", borderRadius: 10,
@@ -2290,7 +2332,11 @@ export default function Contacts() {
                   }}
                 >
                   {exportingSelectedContacts ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                  {exportingSelectedContacts ? "Exporting…" : "Export CSV"}
+                  {exportingSelectedContacts
+                    ? "Exporting…"
+                    : selectedContactIds.size > 0
+                      ? `Export ${selectedContactIds.size} selected`
+                      : `Export all${contactsTotal ? ` (${contactsTotal.toLocaleString()})` : ""}`}
                 </button>
 
                 {/* Clear — danger, right side */}

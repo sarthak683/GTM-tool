@@ -48,18 +48,8 @@ export const companiesApi = {
     ),
 };
 
-export const contactsApi = {
-  list: (skip = 0, limit = 200, companyId?: string) => {
-    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
-    if (companyId) params.set("company_id", companyId);
-    return requestList<Contact>(`/api/v1/contacts/?${params}`);
-  },
-  listPaginated: (skip = 0, limit = 50, companyId?: string) => {
-    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
-    if (companyId) params.set("company_id", companyId);
-    return requestPaginated<Contact>(`/api/v1/contacts/?${params}`);
-  },
-  searchPaginated: (params: {
+/** Filters understood by the prospects list. */
+export type ContactSearchParams = {
     skip?: number;
     limit?: number;
     companyId?: string;
@@ -95,11 +85,17 @@ export const contactsApi = {
     timezone?: string[];
     sortBy?: "name" | "first_name" | "last_name" | "company" | "email" | "title" | "created_at";
     sortDir?: "asc" | "desc";
-  }) => {
-    const search = new URLSearchParams({
-      skip: String(params.skip ?? 0),
-      limit: String(params.limit ?? 50),
-    });
+};
+
+/**
+ * Build the query string for the prospects list.
+ *
+ * Shared by searchPaginated and exportCsv so a CSV export can never drift
+ * from the list it claims to represent — the backend shares a matching
+ * ContactFilters dependency for the same reason.
+ */
+const buildContactQuery = (params: ContactSearchParams): URLSearchParams => {
+  const search = new URLSearchParams();
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.q) search.set("q", params.q);
     if (params.qField && params.qField !== "all") search.set("q_field", params.qField);
@@ -129,8 +125,45 @@ export const contactsApi = {
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
     if (params.sortBy) search.set("sort_by", params.sortBy);
     if (params.sortDir) search.set("sort_dir", params.sortDir);
+  return search;
+};
+
+export const contactsApi = {
+  list: (skip = 0, limit = 200, companyId?: string) => {
+    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+    if (companyId) params.set("company_id", companyId);
+    return requestList<Contact>(`/api/v1/contacts/?${params}`);
+  },
+  listPaginated: (skip = 0, limit = 50, companyId?: string) => {
+    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+    if (companyId) params.set("company_id", companyId);
+    return requestPaginated<Contact>(`/api/v1/contacts/?${params}`);
+  },
+  searchPaginated: (params: ContactSearchParams & { skip?: number; limit?: number }) => {
+    const search = buildContactQuery(params);
+    search.set("skip", String(params.skip ?? 0));
+    search.set("limit", String(params.limit ?? 50));
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
   },
+
+  /**
+   * Download every prospect matching these filters as CSV.
+   *
+   * Uses the SAME query builder as searchPaginated, so the file always matches
+   * the list the rep is looking at. The server applies the identical filters
+   * and visibility gate, so no ids travel in the URL — exporting ~1900
+   * prospects would otherwise mean ~70KB of UUIDs, past the usual URL limit.
+   */
+  exportCsv: async (params: ContactSearchParams): Promise<{ blob: Blob; total: number }> => {
+    const search = buildContactQuery(params);
+    const res = await fetch(`${BASE}/api/v1/contacts/export.csv?${search}`, { headers: getAuthHeaders() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Export failed");
+    }
+    return { blob: await res.blob(), total: Number(res.headers.get("X-Total-Rows") ?? 0) };
+  },
+
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
   enrich: (id: string) =>
     request<{ contact_id: string; status: string; fields_updated: string[]; contact: Contact }>(
