@@ -62,6 +62,8 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.outreach import OutreachSequence
+from app.models.reminder import Reminder
+from app.models.task import Task, TaskComment
 from app.repositories.base import BaseRepository
 
 
@@ -163,8 +165,10 @@ class CompanyRepository(BaseRepository[Company]):
         super().__init__(Company, session)
 
     async def get_by_domain(self, domain: str) -> Optional[Company]:
+        # lower() on both sides: the unique index is on lower(domain), so an
+        # exact-case miss here followed by an insert dies on IntegrityError.
         result = await self.session.execute(
-            select(Company).where(Company.domain == domain)
+            select(Company).where(func.lower(Company.domain) == (domain or "").lower())
         )
         return result.scalar_one_or_none()
 
@@ -253,6 +257,43 @@ class CompanyRepository(BaseRepository[Company]):
         )
         for milestone in milestones.scalars().all():
             await self.session.delete(milestone)
+
+        # 3b. reminders — their contact_id/company_id FKs are NO ACTION, so
+        # leaving them in place aborts the whole cascade with a
+        # ForeignKeyViolation (ContactRepository.delete_many learned this the
+        # hard way; this path never did).
+        reminder_stmt = select(Reminder).where(Reminder.company_id == company_id)
+        if contact_ids:
+            reminder_stmt = select(Reminder).where(
+                or_(
+                    Reminder.company_id == company_id,
+                    Reminder.contact_id.in_(contact_ids),
+                )
+            )
+        for reminder in (await self.session.execute(reminder_stmt)).scalars().all():
+            await self.session.delete(reminder)
+
+        # 3c. tasks — entity_id is polymorphic (no FK possible), so deletes
+        # must clean them explicitly or they orphan: prod accumulated 1,925
+        # ghost tasks (13 still open) pointing at deleted deals/contacts.
+        task_filters = [and_(Task.entity_type == "company", Task.entity_id == company_id)]
+        if contact_ids:
+            task_filters.append(and_(Task.entity_type == "contact", Task.entity_id.in_(contact_ids)))
+        if deal_ids:
+            task_filters.append(and_(Task.entity_type == "deal", Task.entity_id.in_(deal_ids)))
+        task_rows = (
+            await self.session.execute(select(Task).where(or_(*task_filters)))
+        ).scalars().all()
+        if task_rows:
+            task_row_ids = [t.id for t in task_rows]
+            for comment in (
+                await self.session.execute(
+                    select(TaskComment).where(TaskComment.task_id.in_(task_row_ids))
+                )
+            ).scalars().all():
+                await self.session.delete(comment)
+            for task_row in task_rows:
+                await self.session.delete(task_row)
 
         # 4. deals
         for deal in deals:

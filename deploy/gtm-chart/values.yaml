@@ -6,6 +6,14 @@ postgresql:
   architecture: standalone
   image:
     repository: bitnamilegacy/postgresql
+    # Pin THE DATABASE to the exact digest production runs today (PG 17.5).
+    # bitnamilegacy is a frozen archive whose :latest floated across major
+    # versions; if a future pod reschedule pulled a PG 18 "latest", postgres
+    # would refuse to start on the PG17 data directory — a hard outage until
+    # someone hand-pins the old image. Digest = imageID of gtm-postgresql-0
+    # on 2026-08-15 (subchart: digest overrides tag). Upgrading majors is a
+    # deliberate migration, not an accidental image pull.
+    digest: "sha256:42a8200d35971f931b869ef5252d996e137c6beb4b8f1b6d2181dc7d1b6f62e0"
   auth:
     username: beacon
     password: "REPLACE_AT_DEPLOY"

@@ -98,16 +98,6 @@ async def _already_processed_external_event(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _most_recent_active_deal(session) -> Optional[Deal]:
-    result = await session.execute(
-        select(Deal)
-        .where(Deal.stage.not_in(["closed_won", "closed_lost"]))
-        .order_by(Deal.last_activity_at.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
-
 async def _find_contact_by_email(session, email: str) -> Optional[Contact]:
     """Look up a contact by email address — used to match Instantly events."""
     if not email:
@@ -950,7 +940,11 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"{lead_email} unsubscribed"
         activity_type = "email"
         if contact:
-            contact.sequence_status = "unsubscribed"
+            # instantly_status always records the email-channel fact; the
+            # funnel status only moves through _should_advance so an
+            # unsubscribe can't erase a meeting outcome.
+            if _should_advance(contact.sequence_status, "unsubscribed"):
+                contact.sequence_status = "unsubscribed"
             contact.instantly_status = "unsubscribed"
             contact.updated_at = now
             session.add(contact)
@@ -959,7 +953,10 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"{lead_email} marked as Interested in Instantly"
         activity_type = "email"
         if contact:
-            contact.sequence_status = "interested"
+            # Guarded: a stray "interested" event used to knock a prospect
+            # back from meeting_booked/replied, shifting every funnel count.
+            if _should_advance(contact.sequence_status, "interested"):
+                contact.sequence_status = "interested"
             contact.updated_at = now
             session.add(contact)
 
@@ -991,7 +988,13 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"Meeting completed with {lead_email}"
         activity_type = "meeting"
         if contact:
-            contact.sequence_status = "meeting_completed"
+            # meeting_booked → meeting_completed is the normal forward path,
+            # but meeting_booked is a "terminal" state to _should_advance, so
+            # allow that hop explicitly.
+            if contact.sequence_status == "meeting_booked" or _should_advance(
+                contact.sequence_status, "meeting_completed"
+            ):
+                contact.sequence_status = "meeting_completed"
             contact.updated_at = now
             session.add(contact)
 
@@ -999,7 +1002,12 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"{lead_email} marked as Closed in Instantly"
         activity_type = "email"
         if contact:
-            contact.sequence_status = "closed"
+            # closed can follow the meeting flow; other terminal negatives
+            # (unsubscribed/bounced/not_interested) shouldn't flip to closed.
+            if contact.sequence_status in ("meeting_booked", "meeting_completed") or _should_advance(
+                contact.sequence_status, "closed"
+            ):
+                contact.sequence_status = "closed"
             contact.instantly_status = "closed"
             contact.updated_at = now
             session.add(contact)
@@ -1021,7 +1029,10 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
         content = f"{lead_email} marked as Wrong Person in Instantly"
         activity_type = "email"
         if contact:
-            contact.sequence_status = "wrong_person"
+            # email_verified and instantly_status are channel facts and always
+            # recorded; the funnel status is guarded like every other write.
+            if _should_advance(contact.sequence_status, "wrong_person"):
+                contact.sequence_status = "wrong_person"
             contact.instantly_status = "wrong_person"
             contact.email_verified = False
             contact.updated_at = now
@@ -1147,9 +1158,11 @@ async def fireflies_webhook(request: Request, session: DBSession) -> dict:
             deal_id = UUID(str(raw_id))
         except ValueError:
             pass
-    if not deal_id:
-        deal = await _most_recent_active_deal(session)
-        deal_id = deal.id if deal else None
+    # No deal_id in the payload → leave the transcript UNLINKED (like tl;dv).
+    # The old fallback attached it to the workspace's most-recently-active open
+    # deal, which put transcripts on unrelated customers' timelines and bumped
+    # that deal's last_activity_at/engagement recency. The Instantly handler
+    # removed this exact fallback for the same reason.
     activity = await _create_activity(
         session,
         type_="transcript",

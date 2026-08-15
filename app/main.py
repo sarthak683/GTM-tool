@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -13,8 +12,6 @@ from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.core.logging_config import setup_logging
 from app.core.request_context import get_request_id, request_id_var
-from app.services.background_jobs import shutdown_background_workers, start_background_workers
-from app.services.meeting_automation import run_due_pre_meeting_intel_once
 from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
 
 # Configure app-wide logging. Without this, the root logger sits at WARNING and
@@ -44,15 +41,6 @@ if settings.SENTRY_DSN:
         logger.info("Sentry error tracking initialised")
     except ImportError:
         logger.warning("SENTRY_DSN set but sentry-sdk is not installed; skipping Sentry init")
-
-
-async def _pre_meeting_automation_loop() -> None:
-    while True:
-        try:
-            await run_due_pre_meeting_intel_once()
-        except Exception:
-            logger.exception("Pre-meeting automation loop failed")
-        await asyncio.sleep(600)
 
 
 async def _ensure_instantly_webhook() -> None:
@@ -85,15 +73,14 @@ async def lifespan(_: FastAPI):
             "Refusing to start: runtime secret validation failed "
             f"({len(secret_problems)} problem(s)). See logs above."
         )
-    await start_background_workers()
+    # Pre-meeting briefs are driven ONLY by Celery beat
+    # (app.tasks.pre_meeting_brief.send_due_pre_meeting_briefs) plus the manual
+    # "Run now" admin endpoint. The API pods used to run their own 10-minute
+    # loop here too, which meant three concurrent schedulers (2 replicas +
+    # beat) racing the same per-meeting dedup flag — the source of duplicate
+    # brief emails. Do not reintroduce an in-process scheduler.
     await _ensure_instantly_webhook()
-    automation_task = asyncio.create_task(_pre_meeting_automation_loop(), name="pre-meeting-automation")
-    try:
-        yield
-    finally:
-        automation_task.cancel()
-        await asyncio.gather(automation_task, return_exceptions=True)
-        await shutdown_background_workers()
+    yield
 
 # FastAPI app bootstrap:
 # 1. create the app

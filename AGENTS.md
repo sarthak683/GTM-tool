@@ -12,7 +12,9 @@ notifications, and scheduled reporting.
 ## Stack
 
 - Backend: Python 3.12, FastAPI, SQLModel, Alembic, Celery, Redis
-- Database: PostgreSQL 16
+- Database: PostgreSQL 16 locally (docker-compose); production currently runs
+  PostgreSQL 17.5 via an UNPINNED `bitnamilegacy/postgresql:latest` image —
+  see deploy/gtm-chart/values.yaml before assuming version-specific behavior.
 - Frontend: React 18, TypeScript, Vite, Tailwind CSS, shadcn-style components
 - Local runtime: Docker Compose
 - AI/data services: OpenAI, Ollama/local models where configured, Qdrant
@@ -52,7 +54,11 @@ Do not assume `3000` or `5173` unless explicitly running Vite dev mode.
 - Rebuild backend: `docker compose up -d --build backend`
 - Rebuild backend + worker + beat: `docker compose up -d --build backend worker beat`
 - Run migrations: `docker compose exec -T backend alembic upgrade head`
-- Backend tests: `docker compose exec -T backend pytest`
+- Backend tests: `scripts/smoke/backend-tests.sh` — NOT a bare
+  `docker compose exec -T backend pytest`: the image excludes `tests/` and
+  `scripts/` (.dockerignore), so the bare command collects ZERO tests and
+  exits green. The script copies the working tree's app/tests/scripts into the
+  running container first and fails loudly if nothing is collected.
 - Frontend build: `docker compose exec -T frontend nginx -t` only checks nginx; use `cd frontend && npm run build` or rebuild the frontend image for TypeScript/Vite.
 - Local health smoke: `scripts/smoke/local-health.sh`
 - Frontend build smoke: `scripts/smoke/frontend-build.sh`

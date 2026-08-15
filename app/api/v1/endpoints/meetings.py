@@ -275,7 +275,9 @@ async def list_meetings(
         if order == "asc"
         else Meeting.scheduled_at.desc().nulls_last()
     )
-    stmt = stmt.order_by(order_by).offset(pagination.skip).limit(pagination.limit)
+    # Meeting.id tiebreaker: several meetings share a scheduled_at (recurring
+    # slots), and OFFSET pagination over ties repeats/drops rows across pages.
+    stmt = stmt.order_by(order_by, Meeting.id).offset(pagination.skip).limit(pagination.limit)
 
     total = (await session.execute(count_stmt)).scalar_one()
     items = list((await session.execute(stmt)).scalars().all())

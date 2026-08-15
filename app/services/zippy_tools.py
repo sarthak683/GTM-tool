@@ -1659,9 +1659,23 @@ async def _execute_update_deal(args: dict, *, user_id: Optional[UUID] = None) ->
             changes.append(f"Next Step Due → {args['next_step_due_at']}")
 
         if args.get("stage") in DEAL_STAGES:
+            _prev_stage = deal.stage
             deal.stage = args["stage"]
             deal.stage_entered_at = datetime.utcnow()
+            deal.days_in_stage = 0
             changes.append(f"Stage → {args['stage']}")
+            # Keep the audit log in lock-step with the stage write (the
+            # contract in app/services/deal_stage_history.py) — Zippy stage
+            # moves were invisible to every stage-history-driven metric.
+            from app.services.deal_stage_history import record_stage_transition
+
+            await record_stage_transition(
+                session,
+                deal_id=deal.id,
+                from_stage=_prev_stage,
+                to_stage=deal.stage,
+                source="zippy",
+            )
 
         if args.get("value") is not None:
             deal.value = Decimal(str(args["value"]))

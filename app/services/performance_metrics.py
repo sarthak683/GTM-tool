@@ -182,7 +182,7 @@ async def calls_made(
     reads "Calls made", and the mismatch read as the CRM losing their work.
     The deduplicated view is still available as ``contacts_dialed``.
     """
-    stmt = select(func.count()).select_from(Activity).where(
+    stmt = select(func.count(distinct(_call_unit()))).select_from(Activity).where(
         Activity.type == "call",
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
@@ -191,16 +191,27 @@ async def calls_made(
     return (await session.execute(stmt)).scalar_one() or 0
 
 
+def _call_unit():
+    """The unit a "call" is counted in: one PHONE CALL, not one activity row.
+
+    An Aircall call emits several rows sharing one call_id (call.created,
+    call.answered, call.ended, transcript) — counting rows made one connected
+    dial read as 3-4 calls. Manual call logs have no call_id and fall back to
+    their own row id, i.e. one row = one call.
+    """
+    return func.coalesce(Activity.call_id, cast(Activity.id, String))
+
+
 async def calls_connected(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
-    """Connected dials, in the same one-row-per-call units as ``calls_made``.
+    """Connected dials, in the same one-call units as ``calls_made``.
 
     Must stay in the same units as ``calls_made`` — ``connect_rate`` divides
     one by the other, so mixing raw counts with deduplicated groups would
     silently distort the rate.
     """
-    stmt = select(func.count()).select_from(Activity).where(
+    stmt = select(func.count(distinct(_call_unit()))).select_from(Activity).where(
         Activity.type == "call",
         _connected_call_filter(),
         Activity.created_at >= period.start,

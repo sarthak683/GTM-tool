@@ -1054,9 +1054,14 @@ async def import_contacts_csv(
                 if value in (None, "", []):
                     continue
                 if key == "enrichment_data":
-                    current_enrichment = existing.enrichment_data if isinstance(existing.enrichment_data, dict) else {}
+                    # dict() copy is load-bearing: mutating the ORM-attached
+                    # dict in place and comparing it to itself always says
+                    # "unchanged", so the merge was silently dropped on every
+                    # re-import. A fresh object makes both the comparison and
+                    # SQLAlchemy's change detection real.
+                    current_enrichment = dict(existing.enrichment_data) if isinstance(existing.enrichment_data, dict) else {}
                     current_enrichment.update(value)
-                    if current_enrichment != existing.enrichment_data:
+                    if current_enrichment != (existing.enrichment_data or {}):
                         existing.enrichment_data = current_enrichment
                         changed = True
                     continue
@@ -1143,7 +1148,10 @@ async def import_contacts_csv(
                     if value in (None, "", []) or key == "email":
                         continue
                     if key == "enrichment_data":
-                        current_enrichment = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+                        # Same copy-before-mutate rule as the update branch
+                        # above: assigning the identical object back gives
+                        # SQLAlchemy no change event and the merge is lost.
+                        current_enrichment = dict(contact.enrichment_data) if isinstance(contact.enrichment_data, dict) else {}
                         current_enrichment.update(value)
                         contact.enrichment_data = current_enrichment
                         continue

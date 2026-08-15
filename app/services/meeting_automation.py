@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.gmail_sender import send_gmail_email
@@ -559,10 +559,16 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                 if config["auto_generate_if_missing"] and _research_is_empty(meeting.research_data):
                     await run_pre_meeting_intelligence(meeting.id, session)
                     generated += 1
+                    # Persist the generated brief immediately: it is valuable on
+                    # its own, and holding it in the open transaction until the
+                    # end of the whole loop meant one late failure threw away
+                    # every earlier meeting's generation work.
+                    await session.commit()
                     meeting = await session.get(Meeting, meeting.id)
 
                 if config["auto_generate_if_missing"] and meeting and not meeting.demo_strategy:
                     await generate_meeting_demo_strategy(meeting.id, session)
+                    await session.commit()
                     meeting = await session.get(Meeting, meeting.id)
 
                 if not meeting:
@@ -584,6 +590,28 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                 if not recipients:
                     skipped += 1
                     continue
+
+                # Atomically claim this meeting's send BEFORE emailing. Several
+                # runners can reach this point for the same meeting (overlapping
+                # beat ticks, plus the manual "Run now" endpoint); the
+                # WHERE intel_email_sent_at IS NULL guard lets exactly one of
+                # them proceed, and committing right away makes the claim
+                # visible to the others before the slow email sends begin.
+                # Checking the flag on the loaded row (above) is not enough —
+                # that read can be minutes stale by the time we get here.
+                claim_time = datetime.utcnow()
+                claim = await session.execute(
+                    update(Meeting)
+                    .where(Meeting.id == meeting.id, Meeting.intel_email_sent_at.is_(None))
+                    .values(intel_email_sent_at=claim_time, updated_at=claim_time)
+                    .execution_options(synchronize_session=False)
+                )
+                await session.commit()
+                if claim.rowcount == 0:
+                    # Lost the race — another runner already claimed (or sent) it.
+                    continue
+                meeting.intel_email_sent_at = claim_time
+                meeting.updated_at = claim_time
 
                 subject, text_body, html_body = _build_meeting_intel_email(meeting)
                 gmail_token_data = (
@@ -654,12 +682,21 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                     settings_row.report_sender_token_data = gmail_token_data
 
                 if not sent_any:
+                    # No provider accepted the email, so nothing reached anyone:
+                    # release the claim and let the next tick retry.
+                    await session.execute(
+                        update(Meeting)
+                        .where(Meeting.id == meeting.id)
+                        .values(intel_email_sent_at=None)
+                        .execution_options(synchronize_session=False)
+                    )
+                    meeting.intel_email_sent_at = None
+                    await session.commit()
                     skipped += 1
                     continue
 
                 if gmail_token_data:
                     settings_row.report_sender_last_error = None
-                meeting.intel_email_sent_at = datetime.utcnow()
                 meeting.updated_at = datetime.utcnow()
                 session.add(meeting)
                 if meeting.deal_id:
@@ -672,9 +709,20 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
                         )
                     )
                 emailed += 1
+                # Commit this meeting's outcome before moving to the next one,
+                # so a failure later in the loop can never roll back a send
+                # that already happened (which would resend it next tick).
+                await session.commit()
             except Exception:
-                logger.exception("Pre-meeting automation failed for meeting %s", meeting.id)
+                # A failure after the committed claim intentionally keeps the
+                # claim: for email, at-most-once beats resending to recipients
+                # who may already have received theirs.
+                logger.exception(
+                    "Pre-meeting automation failed for meeting %s",
+                    getattr(meeting, "id", None),
+                )
                 skipped += 1
+                await session.rollback()
 
         await session.commit()
         return {

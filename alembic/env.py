@@ -56,6 +56,11 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# Arbitrary constant identifying "the Alembic upgrade lock" for this database.
+# Any two migration runners that use the same key serialize on it.
+_MIGRATION_LOCK_KEY = 0x42_EAC0  # "beacon"
+
+
 def run_migrations_online() -> None:
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -63,6 +68,24 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Production runs `alembic upgrade head` from an initContainer on every
+        # backend replica, so two upgrade processes can start at the same time
+        # (rollouts, scale-ups, node replacements). Alembic itself takes no
+        # lock, and concurrent DDL against the same schema can double-apply or
+        # deadlock. A session-level advisory lock serializes them: the second
+        # runner blocks here, then finds every revision already applied and
+        # exits cleanly. The lock releases automatically when the connection
+        # closes, even if the migration crashes.
+        connection.exec_driver_sql(
+            "SELECT pg_advisory_lock(%(key)s)", {"key": _MIGRATION_LOCK_KEY}
+        )
+        # exec_driver_sql autobegins a transaction. Close it now: if a
+        # transaction is already open when Alembic configures, it assumes the
+        # caller owns transaction management and never commits — every
+        # migration then silently rolls back when the connection closes. The
+        # advisory lock is session-level, so it survives this commit and is
+        # held until the connection closes.
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

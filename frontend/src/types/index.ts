@@ -401,7 +401,11 @@ export interface Activity {
 
 // System-generated bell notification. Distinct from Tasks: signals that
 // decay on read, not durable work. See app/services/notifications.py.
-export type NotificationType = "meeting_booked_suggest_deal";
+export type NotificationType =
+  | "meeting_booked_suggest_deal"
+  | "records_added"
+  | "next_step_due"
+  | "prospect_followup_due";
 
 export interface AppNotification {
   id: string;

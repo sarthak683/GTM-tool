@@ -111,7 +111,9 @@ async def list_companies(
     ]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
-    order_by = Company.icp_score.desc()
+    # Company.id tiebreaker: icp_score is heavily tied/NULL, and OFFSET
+    # pagination without a unique sort key repeats and drops rows across pages.
+    order_by = (Company.icp_score.desc(), Company.id)
     if q and q.strip():
         # Server-side search so selectors find any matching account, not just
         # the top-N-by-ICP slice the client happened to load. Substring OR
@@ -126,7 +128,7 @@ async def list_companies(
                 func.similarity(Company.name, qval) > 0.3,
             )
         )
-        order_by = func.similarity(Company.name, qval).desc()
+        order_by = (func.similarity(Company.name, qval).desc(), Company.id)
     items, total = await repo.list_paginated(
         *filters,
         skip=pagination.skip,

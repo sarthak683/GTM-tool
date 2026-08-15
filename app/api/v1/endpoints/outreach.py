@@ -22,6 +22,7 @@ from app.models.outreach import (
     OutreachStepUpdate,
 )
 from app.repositories.outreach import OutreachRepository
+from app.services.disposition_effects import _should_advance
 from app.services.outreach_generator import generate_sequence
 from app.services.contact_access import (
     authorize_contact_edit,
@@ -1080,17 +1081,24 @@ async def sync_campaign_from_instantly(
                     if not status_within_assignment(contact, _last_contact_at):
                         pass
                     elif lead_status == -1:
-                        contact.sequence_status = "bounced"
+                        if _should_advance(contact.sequence_status, "bounced"):
+                            contact.sequence_status = "bounced"
                         contact.instantly_status = "bounced"
                         contact.email_verified = False
                     elif lead_status == -2:
-                        contact.sequence_status = "unsubscribed"
+                        if _should_advance(contact.sequence_status, "unsubscribed"):
+                            contact.sequence_status = "unsubscribed"
                         contact.instantly_status = "unsubscribed"
                     elif interest == 2:
-                        contact.sequence_status = "meeting_booked"
+                        if _should_advance(contact.sequence_status, "meeting_booked"):
+                            contact.sequence_status = "meeting_booked"
                         contact.instantly_status = "meeting_booked"
                     elif interest == 1:
-                        contact.sequence_status = "interested"
+                        # Guarded like the webhook path: Instantly's lifetime
+                        # interest flag must not knock a prospect back from
+                        # replied/meeting_booked (it used to, shifting funnels).
+                        if _should_advance(contact.sequence_status, "interested"):
+                            contact.sequence_status = "interested"
                         contact.instantly_status = "interested"
                     # interest == -1 ("not interested") deliberately NOT mapped:
                     # Instantly stamps it on auto-replies/OOO/imports with no real

@@ -1325,6 +1325,12 @@ async def sales_activity_drilldown(
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).limit(offset + limit + 1)
         elif metric in EMAIL_SEND_METRICS or metric == "email_replies":
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc())
+        elif metric in {"calls", "connected_calls", "live_calls"}:
+            # Call metrics dedupe per call_id in Python (one Aircall call spans
+            # several rows), so fetch the window un-offset and paginate the
+            # deduped list below — SQL offset over raw rows would misalign the
+            # pages with the deduped card counts.
+            activity_stmt = activity_stmt.order_by(Activity.created_at.desc())
         else:
             activity_stmt = activity_stmt.order_by(Activity.created_at.desc()).offset(offset).limit(limit + 1)
         activities = (await session.execute(activity_stmt)).scalars().all()
@@ -1413,6 +1419,36 @@ async def sales_activity_drilldown(
                 reply_filtered.append(activity)
             reply_has_more = len(reply_filtered) > offset + limit
             activities = reply_filtered[offset:offset + limit + 1]
+
+        # Call metrics: one row per CALL, not per Aircall event row — the rows
+        # are ordered newest-first, so the surviving row is the final-state one
+        # (call.ended, which carries the outcome). Mirrors the dashboard's
+        # per-call rollup so drilldown rows == card count.
+        call_has_more = False
+        if metric in {"calls", "connected_calls", "live_calls"}:
+            call_filtered = []
+            seen_call_units: set[str] = set()
+            for activity in activities:
+                unit = (activity.call_id or "").strip()
+                if unit:
+                    if unit in seen_call_units:
+                        continue
+                    seen_call_units.add(unit)
+                call_filtered.append(activity)
+            call_has_more = len(call_filtered) > offset + limit
+            activities = call_filtered[offset:offset + limit + 1]
+        elif metric == "total":
+            # The merged "total" stream must also count each call once.
+            _seen_units: set[str] = set()
+            _dedup_total = []
+            for activity in activities:
+                unit = (activity.call_id or "").strip()
+                if unit:
+                    if unit in _seen_units:
+                        continue
+                    _seen_units.add(unit)
+                _dedup_total.append(activity)
+            activities = _dedup_total
 
         # total merges globally, so every fetched activity must participate;
         # single-metric pages are already the final slice (cap at limit).
@@ -1984,6 +2020,9 @@ async def sales_activity_drilldown(
         # Pagination happened on the Python-filtered reply list (offset/limit +
         # sentinel), so use that list's overflow flag, not the SQL page size.
         has_more = locals().get("reply_has_more", False)
+    elif metric in {"calls", "connected_calls", "live_calls"}:
+        # Pagination happened on the per-call deduped list.
+        has_more = locals().get("call_has_more", False)
     elif metric in {"demos_scheduled", "demos_done", "demos_converted", "ae_demos_scheduled", "ae_demos_done", "ae_demos_converted"}:
         has_more = demo_has_more
     else:
@@ -2178,6 +2217,7 @@ async def sales_dashboard(
                 Activity.created_at,
                 Activity.created_by_id,
                 Activity.aircall_user_name,
+                Activity.call_id,
                 Activity.call_outcome,
                 Activity.call_duration,
                 Activity.content,
@@ -2433,6 +2473,15 @@ async def sales_dashboard(
     # Touchpoint breakdown tracking:
     # call_contact_seen[rep_key] = set of contact_ids already called (for first vs 2nd+ detection)
     call_contact_seen: dict[str, set[str]] = {}
+    # One Aircall call produces SEVERAL activity rows, all medium="call":
+    # call.created, call.answered, call.ended, plus a transcript row — so
+    # counting rows triples connected calls and quadruples recorded ones.
+    # Roll rows up per (rep, call_id): the first row (rows are sorted by
+    # created_at, so the call-start row) counts the call and picks its bucket;
+    # later rows of the same call only upgrade its connected/live outcome in
+    # that same bucket. Rows without a call_id (manual call logs) are one row
+    # per call already and keep the old per-row path.
+    call_rollup: dict[tuple[str, str], dict] = {}
     # email_contact_counts[rep_key][contact_id] = number of emails sent to that contact
     email_contact_counts: dict[str, dict[str, int]] = {}
 
@@ -2516,14 +2565,47 @@ async def sales_dashboard(
                 advanced_stage_ids=advanced_stage_ids,
             ):
                 continue
+            call_key = str(getattr(row, "call_id", None) or "").strip()
+            call_state = None
+            if call_key:
+                rollup_key = (rep_key, call_key)
+                call_state = call_rollup.get(rollup_key)
+                if call_state is not None:
+                    # Later event row of an already-counted call: only upgrade
+                    # its outcome inside the bucket it was first counted in.
+                    if (
+                        outcome in {"connected", "callback", "answered"}
+                        and not call_state["connected"]
+                    ):
+                        call_state["connected"] = True
+                        call_state["bucket"]["connected_calls"] += 1
+                        if call_state["period"] is not None:
+                            call_state["period"]["connected_calls"] += 1
+                    if outcome in {"connected", "answered"} and not call_state["live"]:
+                        call_state["live"] = True
+                        call_state["bucket"]["live_calls"] += 1
+                        if call_state["period"] is not None:
+                            call_state["period"]["live_calls"] += 1
+                    continue
+                call_state = {
+                    "bucket": activity_bucket,
+                    "period": period_counts,
+                    "connected": False,
+                    "live": False,
+                }
+                call_rollup[rollup_key] = call_state
             activity_bucket["calls"] += 1
             if period_counts is not None:
                 period_counts["calls"] += 1
             if outcome in {"connected", "callback", "answered"}:
+                if call_state is not None:
+                    call_state["connected"] = True
                 activity_bucket["connected_calls"] += 1
                 if period_counts is not None:
                     period_counts["connected_calls"] += 1
             if outcome in {"connected", "answered"}:
+                if call_state is not None:
+                    call_state["live"] = True
                 activity_bucket["live_calls"] += 1
                 if period_counts is not None:
                     period_counts["live_calls"] += 1

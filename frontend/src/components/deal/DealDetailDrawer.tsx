@@ -12,7 +12,7 @@ import { getCachedGmailSync } from "../../lib/cachedFetch";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
-import { avatarColor, formatCurrency, formatDate, getInitials } from "../../lib/utils";
+import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials } from "../../lib/utils";
 import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
@@ -334,7 +334,7 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
     <div style={{ border: "1px solid #e3ebf4", borderRadius: 14, background: "#fff", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0, boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {stat("Amount", deal.value != null ? formatCurrency(deal.value) : "—")}
-        {stat("Close date", deal.close_date_est ? formatDate(deal.close_date_est) : "—")}
+        {stat("Close date", deal.close_date_est ? formatDateOnly(deal.close_date_est) : "—")}
         {stat("Stage age", deal.days_in_stage != null ? `${deal.days_in_stage}d` : "—")}
         {stat("Health", deal.health ? deal.health[0].toUpperCase() + deal.health.slice(1) : "—", healthColor)}
       </div>

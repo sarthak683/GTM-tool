@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, case, false, func, or_, select
+from sqlalchemy import String, and_, case, cast, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -273,7 +273,11 @@ class ContactRepository(BaseRepository[Contact]):
             Activity.created_at >= Contact.sdr_assigned_at,
         )
         call_attempt_count_subq = (
-            select(func.count(Activity.id))
+            # Distinct per call, not per row: an Aircall call spawns several
+            # type="call" rows sharing one call_id (created/answered/ended), so
+            # a raw row count showed 3 attempts per dial. Manual logs have no
+            # call_id and fall back to their own row id (one row = one call).
+            select(func.count(func.distinct(func.coalesce(Activity.call_id, cast(Activity.id, String)))))
             .where(Activity.contact_id == Contact.id)
             .where(Activity.type == "call")
             .where(after_current_sdr_assignment)
@@ -933,6 +937,7 @@ class ContactRepository(BaseRepository[Contact]):
         from app.models.deal import DealContact
         from app.models.outreach import OutreachStep
         from app.models.reminder import Reminder
+        from app.models.task import Task, TaskComment
 
         # De-duplicate, preserve order, drop falsy ids defensively.
         unique_ids = list(dict.fromkeys(cid for cid in contact_ids if cid))
@@ -973,6 +978,20 @@ class ContactRepository(BaseRepository[Contact]):
             )
             await self.session.execute(
                 sa_delete(AngelMapping).where(AngelMapping.contact_id.in_(chunk))
+            )
+            # tasks.entity_id is polymorphic (no FK), so contact deletion must
+            # clean them explicitly or they orphan into ghost rows the Tasks
+            # workspace still lists (prod had 137 contact-ghosts, 9 open).
+            task_ids_subq = select(Task.id).where(
+                Task.entity_type == "contact", Task.entity_id.in_(chunk)
+            )
+            await self.session.execute(
+                sa_delete(TaskComment).where(TaskComment.task_id.in_(task_ids_subq))
+            )
+            await self.session.execute(
+                sa_delete(Task).where(
+                    Task.entity_type == "contact", Task.entity_id.in_(chunk)
+                )
             )
             await self.session.execute(
                 sa_delete(Contact).where(Contact.id.in_(chunk))

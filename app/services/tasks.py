@@ -8,6 +8,7 @@ from typing import Callable, Iterable
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -23,6 +24,7 @@ from app.services.account_sourcing import append_company_activity_log
 from app.services.activity_signal_classifier import ActivitySignal, classify_activity_text
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
+from app.services.deal_stage_history import record_stage_transition
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
 from app.services.deal_activity import deal_activity_condition, engagement_only
 from app.services.deal_activity_interpreter import DealActivityInterpretation, interpret_deal_activity
@@ -482,7 +484,26 @@ async def _upsert_system_task(
         task_track=task_track,
         due_at=effective_due_at,
     )
-    session.add(task)
+    try:
+        # Savepoint + flush: refresh_system_tasks_for_entity fires from
+        # concurrent webhook events on both API replicas, and both can pass the
+        # _find_open_system_task check. uq_tasks_open_system_key makes the
+        # loser's INSERT fail right here — swallow it (the winner's task is the
+        # one we wanted) instead of aborting the caller's whole transaction.
+        async with session.begin_nested():
+            session.add(task)
+            await session.flush()
+    except IntegrityError:
+        logger.info(
+            "system task %s/%s/%s created concurrently; reusing the winner",
+            entity_type, entity_id, system_key,
+        )
+        return await _find_open_system_task(
+            session,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            system_key=system_key,
+        )
     return task
 
 
@@ -3781,6 +3802,17 @@ async def apply_task_action(
                 created_by_id=actor_id,
             )
         )
+        # deal_stage_history is the ONLY input to demos/win-rate/cycle-time
+        # scorecards — a stage write without it makes the transition invisible
+        # to every outcome metric.
+        await record_stage_transition(
+            session,
+            deal_id=deal_id,
+            from_stage=previous_stage,
+            to_stage=stage,
+            changed_by_id=actor_id,
+            source="system_task",
+        )
         await record_deal_stage_milestone(
             session,
             deal=deal,
@@ -3810,6 +3842,16 @@ async def apply_task_action(
                 "next_step": "Review meeting context and advance the opportunity",
                 "stage_entered_at": datetime.utcnow(),
             }
+        )
+        # Initial-stage history row: a deal born at demo_done without one is
+        # invisible to the demos/win-rate scorecards built on stage history.
+        await record_stage_transition(
+            session,
+            deal_id=deal.id,
+            from_stage=None,
+            to_stage=deal.stage,
+            changed_by_id=actor_id,
+            source="system_task_convert",
         )
         await record_deal_stage_milestone(
             session,

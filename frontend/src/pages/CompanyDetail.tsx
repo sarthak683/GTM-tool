@@ -8,9 +8,11 @@ import {
   enrichmentApi,
   intelligenceApi,
   outreachApi,
+  settingsApi,
   signalsApi,
 } from "../lib/api";
-import type { Company, Contact, Deal, Signal } from "../types";
+import type { Company, Contact, Deal, DealStageSetting, Signal } from "../types";
+import { defaultDealStage, FALLBACK_DEAL_STAGES } from "./accountSourcingCompanyDetailShared";
 import {
   ArrowLeft,
   BrainCircuit,
@@ -32,7 +34,7 @@ import {
   getProspectTrackingTone,
 } from "../lib/prospectTracking";
 import { useAuth } from "../lib/AuthContext";
-import { formatCurrency, formatDate, avatarColor, getInitials } from "../lib/utils";
+import { formatCurrency, formatDate, formatDateOnly, avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import { SkeletonList } from "../components/ui/Skeleton";
 
@@ -133,6 +135,25 @@ export default function CompanyDetail() {
     stage: "discovery",
     close_date_est: "",
   });
+  // Configured pipeline stages — the hardcoded discovery/demo/poc list this
+  // modal used no longer exists in the pipeline, so deals created here landed
+  // in unknown stages: rendered only via the board's "extras" fallback column,
+  // excluded from the stage forecast, and missing from analytics stage buckets.
+  const [dealStages, setDealStages] = useState<DealStageSetting[]>([]);
+  const availableDealStages = dealStages.length ? dealStages : FALLBACK_DEAL_STAGES;
+  useEffect(() => {
+    settingsApi
+      .getDealStages()
+      .then((config) => setDealStages(config.stages ?? []))
+      .catch(() => setDealStages([]));
+  }, []);
+  useEffect(() => {
+    setDealForm((current) => {
+      if (availableDealStages.some((stage) => stage.id === current.stage)) return current;
+      return { ...current, stage: defaultDealStage(availableDealStages) };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealStages]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [brief, setBrief] = useState<string | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -637,7 +658,7 @@ export default function CompanyDetail() {
                         <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#9ace3d]">
                           {d.name}
                         </Link>
-                        <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDate(d.close_date_est)}</p>
+                        <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDateOnly(d.close_date_est)}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[14px] font-bold tabular text-[#2d4056]">{formatCurrency(d.value)}</span>
@@ -744,13 +765,11 @@ export default function CompanyDetail() {
                     value={dealForm.stage}
                     onChange={(e) => setDealForm((f) => ({ ...f, stage: e.target.value }))}
                   >
-                    <option value="discovery">discovery</option>
-                    <option value="demo">demo</option>
-                    <option value="poc">poc</option>
-                    <option value="proposal">proposal</option>
-                    <option value="negotiation">negotiation</option>
-                    <option value="closed_won">closed_won</option>
-                    <option value="closed_lost">closed_lost</option>
+                    {availableDealStages.map((stage) => (
+                      <option key={stage.id} value={stage.id}>
+                        {stage.label || stage.id.replace(/_/g, " ")}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <input

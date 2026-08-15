@@ -173,6 +173,17 @@ def normalize_sales_report_settings(value: dict | None, defaults: dict | None = 
         # the legacy single key when only one of the two has ever run.
         "last_scheduled_daily_send_key": merged.get("last_scheduled_daily_send_key"),
         "last_scheduled_weekly_send_key": merged.get("last_scheduled_weekly_send_key"),
+        # Per-recipient delivery tracking for a partially-failed send key. Lets
+        # the next beat tick deliver ONLY to recipients who have not received
+        # this key's report yet, instead of re-sending to all of them every 15
+        # minutes until a fully-clean pass (one flaky mailbox used to mean
+        # duplicate reports for the other ten people).
+        "partial_send_key": merged.get("partial_send_key"),
+        "partial_sent_recipients": [
+            str(r).strip().lower()
+            for r in (merged.get("partial_sent_recipients") or [])
+            if isinstance(r, str) and "@" in r
+        ],
         # When true (default), the weekly day ALSO sends the daily report for
         # the prior weekday — so reps get both the Thursday recap and the
         # Mon-Fri summary on Friday morning. Set false to keep the old
@@ -726,6 +737,27 @@ async def _build_us_pod_call_report_for_period(
             .order_by(Activity.created_at.asc())
         )
     ).scalars().all()
+
+    # Collapse multi-row Aircall calls into ONE row per call before counting.
+    # A single dial emits call.created/answered/ended (+ transcript/note) rows
+    # that all match the type/medium filter above — counting rows tripled call
+    # totals and summed the duration once per row. Keep the most informative
+    # row per call_id: the last one carrying a call_outcome (the call.ended
+    # row), else the last row seen. Rows without call_id (manual call logs)
+    # are already one row per call and pass through untouched.
+    _by_call: dict[str, Activity] = {}
+    _deduped: list[Activity] = []
+    for activity in activities:  # ordered created_at ASC
+        _key = (activity.call_id or "").strip()
+        if not _key:
+            _deduped.append(activity)
+            continue
+        _current = _by_call.get(_key)
+        if _current is None or activity.call_outcome or not _current.call_outcome:
+            _by_call[_key] = activity
+    _deduped.extend(_by_call.values())
+    _deduped.sort(key=lambda a: (a.created_at is None, a.created_at))
+    activities = _deduped
 
     deal_owner, contact_owner = await _load_owner_maps(session, activities)
     daily_counts: dict[UUID, dict[date, int]] = defaultdict(lambda: defaultdict(int))

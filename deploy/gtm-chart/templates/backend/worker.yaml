@@ -99,7 +99,14 @@ spec:
           command: [ "celery" ]
           # --queues=priority is what separates this from the default worker
           # above, which consumes the "celery" queue.
-          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo", "--queues=priority" ]
+          #
+          # prefork/concurrency=1, NOT --pool=solo, for the same reason as the
+          # default worker: solo cannot enforce task_time_limit (no child to
+          # kill), so one hung ICP-research HTTP call or Whisper upload wedged
+          # the only priority consumer forever; after visibility_timeout the
+          # broker redelivered the wedged message and side-effectful tasks
+          # (sourcing upload -> paid enrichment) ran twice.
+          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=prefork", "--concurrency=1", "--queues=priority" ]
           imagePullPolicy: "Always"
           envFrom:
             - secretRef:

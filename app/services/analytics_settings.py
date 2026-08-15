@@ -39,7 +39,12 @@ async def get_analytics_settings(session: AsyncSession) -> dict:
 
 async def update_analytics_settings(session: AsyncSession, patch: dict) -> dict:
     row = await _load_or_create_row(session)
-    current = row.analytics_settings or build_default_analytics_settings()
+    # Copy before mutating: `row.analytics_settings` is the ORM-attached dict,
+    # and updating it in place then re-assigning the SAME object gives
+    # SQLAlchemy no attribute-change event (plain JSON column, no MutableDict)
+    # — the commit writes nothing while the endpoint returns the merged dict as
+    # if saved. Only ever assign a NEW dict.
+    current = dict(row.analytics_settings or build_default_analytics_settings())
     current.update(patch)
     row.analytics_settings = current
     await session.commit()

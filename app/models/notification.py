@@ -21,6 +21,12 @@ NOTIFICATION_TYPES = (
     # Informational: prospects and/or accounts were added (manual add or
     # import). Fanned out to admins + the assigned owner. No Accept action.
     "records_added",
+    # Reminder nudges emitted by beat tasks. Both existed in production data
+    # (376 rows) before they were registered here — keep this constant in sync
+    # with every create_notification(type=...) call site, since the frontend
+    # bell renders by type.
+    "next_step_due",           # app/tasks/deal_reminders.py
+    "prospect_followup_due",   # app/tasks/prospect_reminders.py
 )
 
 

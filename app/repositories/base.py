@@ -60,7 +60,14 @@ class BaseRepository(Generic[ModelT]):
         for f in filters:
             stmt = stmt.where(f)
         if order_by is not None:
-            stmt = stmt.order_by(order_by)
+            # Accept a tuple/list of clauses so callers can append a unique
+            # tiebreaker (e.g. Model.id) — OFFSET pagination over a non-unique
+            # sort key repeats/drops rows across pages whenever the planner
+            # reorders ties.
+            if isinstance(order_by, (list, tuple)):
+                stmt = stmt.order_by(*order_by)
+            else:
+                stmt = stmt.order_by(order_by)
         stmt = stmt.offset(skip).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

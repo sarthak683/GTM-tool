@@ -313,277 +313,303 @@ async def _async_sync() -> dict:
         activities_created = 0
         touched_deal_ids: set = set()
         thread_context_cache: dict[tuple[str, str], list[str]] = {}
+        failed_message_ids: list[str] = []
 
         async with SessionLocal() as session:
             for msg in messages:
-                # Collect all email addresses from this message
-                all_addrs = set()
-                all_addrs.add(msg.from_addr)
-                all_addrs.update(msg.to_addrs)
-                all_addrs.update(msg.cc_addrs)
-                # Remove the shared inbox address itself
-                all_addrs.discard(inbox.lower())
-                all_addrs.discard("")
+                try:
+                    # Collect all email addresses from this message
+                    all_addrs = set()
+                    all_addrs.add(msg.from_addr)
+                    all_addrs.update(msg.to_addrs)
+                    all_addrs.update(msg.cc_addrs)
+                    # Remove the shared inbox address itself
+                    all_addrs.discard(inbox.lower())
+                    all_addrs.discard("")
 
-                if not all_addrs:
-                    continue
+                    if not all_addrs:
+                        continue
 
-                matched_via = "contacts"
-                matched_aliases = _extract_deal_aliases(all_addrs, inbox)
-                deal_ids: list = []
+                    matched_via = "contacts"
+                    matched_aliases = _extract_deal_aliases(all_addrs, inbox)
+                    deal_ids: list = []
 
-                # Zippy-only mode: a message is tracked ONLY if it carries a
-                # zippy+<deal-alias> address. No alias → not opted-in; skip
-                # without falling back to contact-email matching.
-                if zippy_only and not matched_aliases:
-                    continue
+                    # Zippy-only mode: a message is tracked ONLY if it carries a
+                    # zippy+<deal-alias> address. No alias → not opted-in; skip
+                    # without falling back to contact-email matching.
+                    if zippy_only and not matched_aliases:
+                        continue
 
-                if matched_aliases:
-                    matched_via = "alias"
-                    deal_rows = await session.execute(
-                        select(Deal.id).where(Deal.email_cc_alias.in_(matched_aliases))
-                    )
-                    deal_ids = list(dict.fromkeys([row.id for row in deal_rows.all()]))
-                    if not deal_ids:
-                        # Alias present but no deal owns it. In zippy-only mode
-                        # tell the sender so they can fix it — we never auto-
-                        # create a deal (a CC typo shouldn't spawn junk).
-                        if zippy_only:
-                            await _notify_unmatched_zippy_alias(session, msg, matched_aliases)
-                        logger.warning(
-                            "Email sync: alias %s did not map to a deal for message %s",
-                            ", ".join(matched_aliases),
-                            msg.message_id,
+                    if matched_aliases:
+                        matched_via = "alias"
+                        deal_rows = await session.execute(
+                            select(Deal.id).where(Deal.email_cc_alias.in_(matched_aliases))
                         )
-                        # The alias names a deal we don't have — a typo, or more
-                        # often a prospecting thread where no deal exists yet.
-                        # The rep still tagged Zippy on their own send, which is
-                        # the whole point of Zippy, so count it. This is the
-                        # dominant shape: reps use zippy+<alias> on 59 of every
-                        # 72 tagged emails, so returning early here dropped
-                        # nearly all prospecting mail.
+                        deal_ids = list(dict.fromkeys([row.id for row in deal_rows.all()]))
+                        if not deal_ids:
+                            # Alias present but no deal owns it. In zippy-only mode
+                            # tell the sender so they can fix it — we never auto-
+                            # create a deal (a CC typo shouldn't spawn junk).
+                            if zippy_only:
+                                await _notify_unmatched_zippy_alias(session, msg, matched_aliases)
+                            logger.warning(
+                                "Email sync: alias %s did not map to a deal for message %s",
+                                ", ".join(matched_aliases),
+                                msg.message_id,
+                            )
+                            # The alias names a deal we don't have — a typo, or more
+                            # often a prospecting thread where no deal exists yet.
+                            # The rep still tagged Zippy on their own send, which is
+                            # the whole point of Zippy, so count it. This is the
+                            # dominant shape: reps use zippy+<alias> on 59 of every
+                            # 72 tagged emails, so returning early here dropped
+                            # nearly all prospecting mail.
+                            if is_our_sending_address(msg.from_addr):
+                                if await _record_zippy_tagged_email(
+                                    session, msg, contact_id=None
+                                ):
+                                    activities_created += 1
+                            continue
+
+                    # Find matching contacts (case-insensitive: parsed addresses
+                    # are lowercased, but stored contact emails may not be)
+                    contact_result = await session.execute(
+                        select(Contact.id, Contact.email, Contact.company_id).where(
+                            func.lower(Contact.email).in_(list(all_addrs))
+                        )
+                    )
+                    matched_contacts = contact_result.all()
+
+                    contact_ids = [c.id for c in matched_contacts]
+                    matched_contact_emails = {str(c.email or "").strip().lower() for c in matched_contacts if c.email}
+
+                    # Find deals linked to these contacts
+                    if not deal_ids and contact_ids:
+                        deal_result = await session.execute(
+                            select(DealContact.deal_id).where(
+                                DealContact.contact_id.in_(contact_ids)
+                            ).distinct()
+                        )
+                        deal_ids = [row.deal_id for row in deal_result.all()]
+
+                    if not deal_ids:
+                        # No deal — but if the rep CC'd Zippy on their own outbound,
+                        # that IS the send we are here to track. Zippy exists so a
+                        # rep can tag any email from any of their sending addresses
+                        # without connecting that mailbox; prospecting mail by
+                        # definition has no deal yet, so requiring one silently
+                        # dropped exactly the emails the Emails Out metric needs.
+                        # Being in Zippy's mailbox IS the tag. Do not look for a Zippy
+                        # address in the headers: `all_addrs` has the inbox address
+                        # discarded above, bcc_addrs is never added to it, and a BCC'd
+                        # copy carries no trace of the recipient at all — so a header
+                        # check silently missed every plain-CC and BCC tag. The
+                        # sender guard is what keeps a prospect's reply-all out.
                         if is_our_sending_address(msg.from_addr):
                             if await _record_zippy_tagged_email(
-                                session, msg, contact_id=None
+                                session,
+                                msg,
+                                contact_id=contact_ids[0] if contact_ids else None,
                             ):
                                 activities_created += 1
                         continue
 
-                # Find matching contacts (case-insensitive: parsed addresses
-                # are lowercased, but stored contact emails may not be)
-                contact_result = await session.execute(
-                    select(Contact.id, Contact.email, Contact.company_id).where(
-                        func.lower(Contact.email).in_(list(all_addrs))
+                    # Determine sender contact (for activity.contact_id)
+                    sender_contact_id = None
+                    for c in matched_contacts:
+                        if str(c.email or "").strip().lower() == msg.from_addr:
+                            sender_contact_id = c.id
+                            break
+
+                    # Batch-fetch all linked Deals and their Companies in two queries
+                    # instead of N individual session.get() calls (avoids N+1 pattern).
+                    deals_result = await session.execute(
+                        select(Deal).where(Deal.id.in_(deal_ids))
                     )
-                )
-                matched_contacts = contact_result.all()
+                    deals_by_id: dict = {str(deal.id): deal for deal in deals_result.scalars().all()}
+                    company_ids = list({deal.company_id for deal in deals_by_id.values() if deal and deal.company_id})
+                    companies_result = await session.execute(
+                        select(Company).where(Company.id.in_(company_ids))
+                    ) if company_ids else None
+                    companies_by_id: dict = {str(c.id): c for c in (companies_result.scalars().all() if companies_result else [])}
 
-                contact_ids = [c.id for c in matched_contacts]
-                matched_contact_emails = {str(c.email or "").strip().lower() for c in matched_contacts if c.email}
-
-                # Find deals linked to these contacts
-                if not deal_ids and contact_ids:
-                    deal_result = await session.execute(
-                        select(DealContact.deal_id).where(
-                            DealContact.contact_id.in_(contact_ids)
-                        ).distinct()
-                    )
-                    deal_ids = [row.deal_id for row in deal_result.all()]
-
-                if not deal_ids:
-                    # No deal — but if the rep CC'd Zippy on their own outbound,
-                    # that IS the send we are here to track. Zippy exists so a
-                    # rep can tag any email from any of their sending addresses
-                    # without connecting that mailbox; prospecting mail by
-                    # definition has no deal yet, so requiring one silently
-                    # dropped exactly the emails the Emails Out metric needs.
-                    # Being in Zippy's mailbox IS the tag. Do not look for a Zippy
-                    # address in the headers: `all_addrs` has the inbox address
-                    # discarded above, bcc_addrs is never added to it, and a BCC'd
-                    # copy carries no trace of the recipient at all — so a header
-                    # check silently missed every plain-CC and BCC tag. The
-                    # sender guard is what keeps a prospect's reply-all out.
-                    if is_our_sending_address(msg.from_addr):
-                        if await _record_zippy_tagged_email(
-                            session,
-                            msg,
-                            contact_id=contact_ids[0] if contact_ids else None,
-                        ):
-                            activities_created += 1
-                    continue
-
-                # Determine sender contact (for activity.contact_id)
-                sender_contact_id = None
-                for c in matched_contacts:
-                    if str(c.email or "").strip().lower() == msg.from_addr:
-                        sender_contact_id = c.id
-                        break
-
-                # Batch-fetch all linked Deals and their Companies in two queries
-                # instead of N individual session.get() calls (avoids N+1 pattern).
-                deals_result = await session.execute(
-                    select(Deal).where(Deal.id.in_(deal_ids))
-                )
-                deals_by_id: dict = {str(deal.id): deal for deal in deals_result.scalars().all()}
-                company_ids = list({deal.company_id for deal in deals_by_id.values() if deal and deal.company_id})
-                companies_result = await session.execute(
-                    select(Company).where(Company.id.in_(company_ids))
-                ) if company_ids else None
-                companies_by_id: dict = {str(c.id): c for c in (companies_result.scalars().all() if companies_result else [])}
-
-                # Dedup check: skip this message entirely if already logged for all linked deals.
-                # This avoids calling Claude when the email is already fully processed.
-                new_deal_ids = []
-                for deal_id in deal_ids:
-                    existing = await session.execute(
-                        select(Activity.id).where(
-                            and_(
-                                Activity.email_message_id == msg.message_id,
-                                Activity.deal_id == deal_id,
+                    # Dedup check: skip this message entirely if already logged for all linked deals.
+                    # This avoids calling Claude when the email is already fully processed.
+                    new_deal_ids = []
+                    for deal_id in deal_ids:
+                        existing = await session.execute(
+                            select(Activity.id).where(
+                                and_(
+                                    Activity.email_message_id == msg.message_id,
+                                    Activity.deal_id == deal_id,
+                                )
                             )
                         )
+                        if not existing.first():
+                            new_deal_ids.append(deal_id)
+
+                    if not new_deal_ids:
+                        continue  # All deals already have this email — skip Claude entirely
+
+                    # Only call Claude and Google Docs after confirming at least one deal needs this email
+                    google_doc_contexts, updated_token = await fetch_google_doc_context(
+                        msg.body_text,
+                        token_data=gmail.updated_token_payload or token_payload,
+                        client_id=settings.gmail_client_id,
+                        client_secret=settings.gmail_client_secret,
                     )
-                    if not existing.first():
-                        new_deal_ids.append(deal_id)
+                    if updated_token and updated_token != (gmail.updated_token_payload or token_payload):
+                        gmail.updated_token_payload = updated_token
+                    google_doc_transcript = "\n\n".join(context["text"] for context in google_doc_contexts if context.get("text")).strip()
+                    latest_message_text = "\n".join(
+                        part for part in [msg.subject or "", msg.body_text or "", google_doc_transcript] if part
+                    ).strip()
 
-                if not new_deal_ids:
-                    continue  # All deals already have this email — skip Claude entirely
+                    ai_summary = None
+                    if len(msg.body_text) >= settings.EMAIL_SUMMARY_MIN_CHARS:
+                        ai_summary = await _summarize_email(msg.subject, msg.body_text)
 
-                # Only call Claude and Google Docs after confirming at least one deal needs this email
-                google_doc_contexts, updated_token = await fetch_google_doc_context(
-                    msg.body_text,
-                    token_data=gmail.updated_token_payload or token_payload,
-                    client_id=settings.gmail_client_id,
-                    client_secret=settings.gmail_client_secret,
-                )
-                if updated_token and updated_token != (gmail.updated_token_payload or token_payload):
-                    gmail.updated_token_payload = updated_token
-                google_doc_transcript = "\n\n".join(context["text"] for context in google_doc_contexts if context.get("text")).strip()
-                latest_message_text = "\n".join(
-                    part for part in [msg.subject or "", msg.body_text or "", google_doc_transcript] if part
-                ).strip()
-
-                ai_summary = None
-                if len(msg.body_text) >= settings.EMAIL_SUMMARY_MIN_CHARS:
-                    ai_summary = await _summarize_email(msg.subject, msg.body_text)
-
-                # Create activity for each deal that doesn't already have this email
-                for deal_id in new_deal_ids:
-                    deal = deals_by_id.get(str(deal_id))
-                    company = companies_by_id.get(str(deal.company_id)) if deal and deal.company_id else None
-                    company_domain = _normalize_domain(company.domain if company else None)
-                    linked_contact_rows = (
-                        await session.execute(
-                            select(Contact.id, Contact.email)
-                            .join(DealContact, DealContact.contact_id == Contact.id)
-                            .where(DealContact.deal_id == deal_id)
-                        )
-                    ).all()
-                    linked_contact_ids = {row.id for row in linked_contact_rows}
-                    linked_contact_emails = {
-                        str(row.email or "").strip().lower() for row in linked_contact_rows if row.email
-                    }
-                    suggested_existing_contacts = []
-                    for contact in matched_contacts:
-                        if matched_via != "alias":
-                            continue
-                        if contact.id in linked_contact_ids:
-                            continue
-                        suggested_existing_contacts.append({
-                            "contact_id": str(contact.id),
-                            "email": str(contact.email or "").strip().lower(),
-                        })
-
-                    suggested_new_participants = []
-                    if matched_via == "alias" and company_domain and not company_domain.endswith(".unknown"):
-                        for addr in sorted(all_addrs):
-                            normalized_addr = (addr or "").strip().lower()
-                            if not normalized_addr or "@" not in normalized_addr:
-                                continue
-                            if normalized_addr in linked_contact_emails or normalized_addr in matched_contact_emails:
-                                continue
-                            addr_domain = _normalize_domain(normalized_addr.split("@", 1)[1])
-                            if addr_domain != company_domain:
-                                continue
-                            display_name = _build_display_name(
-                                normalized_addr,
-                                msg.from_name if normalized_addr == msg.from_addr else None,
+                    # Create activity for each deal that doesn't already have this email
+                    for deal_id in new_deal_ids:
+                        deal = deals_by_id.get(str(deal_id))
+                        company = companies_by_id.get(str(deal.company_id)) if deal and deal.company_id else None
+                        company_domain = _normalize_domain(company.domain if company else None)
+                        linked_contact_rows = (
+                            await session.execute(
+                                select(Contact.id, Contact.email)
+                                .join(DealContact, DealContact.contact_id == Contact.id)
+                                .where(DealContact.deal_id == deal_id)
                             )
-                            first_name, last_name = _infer_name_from_email(normalized_addr)
-                            suggested_new_participants.append({
-                                "email": normalized_addr,
-                                "display_name": display_name,
-                                "first_name": first_name,
-                                "last_name": last_name,
+                        ).all()
+                        linked_contact_ids = {row.id for row in linked_contact_rows}
+                        linked_contact_emails = {
+                            str(row.email or "").strip().lower() for row in linked_contact_rows if row.email
+                        }
+                        suggested_existing_contacts = []
+                        for contact in matched_contacts:
+                            if matched_via != "alias":
+                                continue
+                            if contact.id in linked_contact_ids:
+                                continue
+                            suggested_existing_contacts.append({
+                                "contact_id": str(contact.id),
+                                "email": str(contact.email or "").strip().lower(),
                             })
 
-                    thread_cache_key = (str(deal_id), msg.thread_id or msg.message_id)
-                    if thread_cache_key not in thread_context_cache:
-                        thread_context_cache[thread_cache_key] = await _load_existing_thread_segments(
-                            session,
-                            deal_id=deal_id,
-                            thread_id=msg.thread_id or msg.message_id,
-                        )
-                    thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
-                    thread_latest_intent = detect_latest_intent_from_segments(thread_segments)
-                    thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
-
-                    activity = Activity(
-                        type="email",
-                        source="gmail_sync",
-                        deal_id=deal_id,
-                        contact_id=sender_contact_id,
-                        content=msg.body_text[:2000] if msg.body_text else None,
-                        ai_summary=ai_summary,
-                        email_message_id=msg.message_id,
-                        email_subject=msg.subject,
-                        email_from=msg.from_addr,
-                        email_to=", ".join(msg.to_addrs),
-                        email_cc=", ".join(msg.cc_addrs),
-                        email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
-                        event_metadata={
-                            "matched_via": matched_via,
-                            "raw_email_from": msg.from_addr,
-                            "matched_aliases": matched_aliases or None,
-                            "gmail_thread_id": msg.thread_id or None,
-                            "suggested_existing_contacts": suggested_existing_contacts or None,
-                            "suggested_new_participants": suggested_new_participants or None,
-                            "thread_latest_intent": thread_latest_intent,
-                            "thread_latest_message_text": latest_message_text[:2500],
-                            "thread_context_excerpt": thread_context_excerpt,
-                            "google_doc_links": [context["url"] for context in google_doc_contexts] or None,
-                            "google_doc_transcript": google_doc_transcript[:4000] or None,
-                        },
-                    )
-                    session.add(activity)
-                    activities_created += 1
-                    touched_deal_ids.add(deal_id)
-                    thread_context_cache[thread_cache_key] = thread_segments
-                    # An email on a deal-linked contact confirms the account has
-                    # a live deal — reflect that on account status (forward-only;
-                    # best-effort). Legacy accounts pre-dating the automation get
-                    # bumped to in_pipeline here.
-                    if sender_contact_id:
-                        try:
-                            from app.models.contact import Contact
-                            from app.services.account_status import bump_company_account_status
-
-                            contact = await session.get(Contact, sender_contact_id)
-                            if contact and contact.company_id:
-                                await bump_company_account_status(
-                                    session, contact.company_id, "in_pipeline"
+                        suggested_new_participants = []
+                        if matched_via == "alias" and company_domain and not company_domain.endswith(".unknown"):
+                            for addr in sorted(all_addrs):
+                                normalized_addr = (addr or "").strip().lower()
+                                if not normalized_addr or "@" not in normalized_addr:
+                                    continue
+                                if normalized_addr in linked_contact_emails or normalized_addr in matched_contact_emails:
+                                    continue
+                                addr_domain = _normalize_domain(normalized_addr.split("@", 1)[1])
+                                if addr_domain != company_domain:
+                                    continue
+                                display_name = _build_display_name(
+                                    normalized_addr,
+                                    msg.from_name if normalized_addr == msg.from_addr else None,
                                 )
-                        except Exception:
-                            logger.exception(
-                                "deal email: account_status bump failed for contact %s",
-                                sender_contact_id,
+                                first_name, last_name = _infer_name_from_email(normalized_addr)
+                                suggested_new_participants.append({
+                                    "email": normalized_addr,
+                                    "display_name": display_name,
+                                    "first_name": first_name,
+                                    "last_name": last_name,
+                                })
+
+                        thread_cache_key = (str(deal_id), msg.thread_id or msg.message_id)
+                        if thread_cache_key not in thread_context_cache:
+                            thread_context_cache[thread_cache_key] = await _load_existing_thread_segments(
+                                session,
+                                deal_id=deal_id,
+                                thread_id=msg.thread_id or msg.message_id,
                             )
+                        thread_segments = [*thread_context_cache[thread_cache_key], latest_message_text]
+                        thread_latest_intent = detect_latest_intent_from_segments(thread_segments)
+                        thread_context_excerpt = "\n\n".join(thread_segments[-4:])[:4000]
+
+                        activity = Activity(
+                            type="email",
+                            source="gmail_sync",
+                            deal_id=deal_id,
+                            contact_id=sender_contact_id,
+                            content=msg.body_text[:2000] if msg.body_text else None,
+                            ai_summary=ai_summary,
+                            email_message_id=msg.message_id,
+                            email_subject=msg.subject,
+                            email_from=msg.from_addr,
+                            email_to=", ".join(msg.to_addrs),
+                            email_cc=", ".join(msg.cc_addrs),
+                            email_bcc=", ".join(msg.bcc_addrs) if msg.bcc_addrs else None,
+                            event_metadata={
+                                "matched_via": matched_via,
+                                "raw_email_from": msg.from_addr,
+                                "matched_aliases": matched_aliases or None,
+                                "gmail_thread_id": msg.thread_id or None,
+                                "suggested_existing_contacts": suggested_existing_contacts or None,
+                                "suggested_new_participants": suggested_new_participants or None,
+                                "thread_latest_intent": thread_latest_intent,
+                                "thread_latest_message_text": latest_message_text[:2500],
+                                "thread_context_excerpt": thread_context_excerpt,
+                                "google_doc_links": [context["url"] for context in google_doc_contexts] or None,
+                                "google_doc_transcript": google_doc_transcript[:4000] or None,
+                            },
+                        )
+                        session.add(activity)
+                        activities_created += 1
+                        touched_deal_ids.add(deal_id)
+                        thread_context_cache[thread_cache_key] = thread_segments
+                        # An email on a deal-linked contact confirms the account has
+                        # a live deal — reflect that on account status (forward-only;
+                        # best-effort). Legacy accounts pre-dating the automation get
+                        # bumped to in_pipeline here.
+                        if sender_contact_id:
+                            try:
+                                from app.models.contact import Contact
+                                from app.services.account_status import bump_company_account_status
+
+                                contact = await session.get(Contact, sender_contact_id)
+                                if contact and contact.company_id:
+                                    await bump_company_account_status(
+                                        session, contact.company_id, "in_pipeline"
+                                    )
+                            except Exception:
+                                logger.exception(
+                                    "deal email: account_status bump failed for contact %s",
+                                    sender_contact_id,
+                                )
+                    await session.commit()
+                except Exception:
+                    # One malformed message must not wedge the whole inbox.
+                    # Before this isolation, a single poison message aborted
+                    # the batch, froze the Redis cursor, and the task then
+                    # re-fetched and died on the same message every 3 minutes
+                    # — while the backlog behind it grew past the fetch cap
+                    # and was silently dropped. Roll back this message's
+                    # partial state and keep going; each processed message
+                    # commits individually, so earlier work is already safe.
+                    failed_message_ids.append(msg.message_id)
+                    logger.exception(
+                        "Email sync: message %s failed; skipping it", msg.message_id
+                    )
+                    await session.rollback()
 
             settings_row = await session.get(WorkspaceSettings, 1)
             if settings_row:
                 if gmail.updated_token_payload:
                     settings_row.gmail_token_data = gmail.updated_token_payload
-                settings_row.gmail_last_error = None
+                if failed_message_ids:
+                    # Skipped-message failures must stay visible: clearing the
+                    # error field here while silently skipping messages would
+                    # recreate the "green badge, missing data" pattern.
+                    settings_row.gmail_last_error = (
+                        f"{len(failed_message_ids)} message(s) failed and were "
+                        f"skipped this run: {', '.join(failed_message_ids[:3])}"
+                    )[:500]
+                else:
+                    settings_row.gmail_last_error = None
                 session.add(settings_row)
 
             await session.commit()
@@ -595,11 +621,15 @@ async def _async_sync() -> dict:
         # Update cursor
         r.set(REDIS_KEY_LAST_SYNC, str(current_epoch))
 
-        logger.info(f"Email sync complete: {len(messages)} emails → {activities_created} activities")
+        logger.info(
+            "Email sync complete: %d emails → %d activities (%d failed/skipped)",
+            len(messages), activities_created, len(failed_message_ids),
+        )
         return {
             "status": "completed",
             "emails_found": len(messages),
             "activities_created": activities_created,
+            "messages_failed": len(failed_message_ids),
         }
     except Exception as exc:
         async with SessionLocal() as session:

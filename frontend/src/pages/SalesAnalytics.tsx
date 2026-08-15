@@ -1,4 +1,5 @@
 import "./sales-analytics-refresh.css";
+import { formatDateOnly, parseDateOnly } from "../lib/utils";
 
 // ── Visibility flags — set to false to hide, true to show ────────────────────
 const SHOW_DEAL_VELOCITY    = false;
@@ -143,6 +144,9 @@ function formatCurrency(val: number | null | undefined): string {
 
 function fmtMilestoneDate(iso: string | null | undefined): string {
   if (!iso) return "—";
+  // Date-only values must NOT go through new Date(iso): JS parses them as UTC
+  // midnight, showing the previous day for anyone west of UTC.
+  if (iso.length <= 10) return formatDateOnly(iso);
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -2964,10 +2968,14 @@ export default function SalesAnalytics() {
         if (drilldown.rep_user_id) filtered = filtered.filter((deal) => deal.assigned_to_id === drilldown.rep_user_id);
         if (drilldown.stalled_only) filtered = filtered.filter((deal) => (deal.days_in_stage ?? 0) >= 30);
         if (drilldown.overdue_close_date) {
+          const todayStart = new Date();
+          todayStart.setHours(0, 0, 0, 0);
           filtered = filtered.filter((deal) => {
             if (closedStageIds.has(deal.stage) || !deal.close_date_est) return false;
-            const closeDate = new Date(deal.close_date_est);
-            return !Number.isNaN(closeDate.getTime()) && closeDate < today;
+            // Local-calendar parse — UTC parse flagged deals closing today as
+            // overdue from the previous local evening.
+            const closeDate = parseDateOnly(deal.close_date_est);
+            return closeDate !== null && closeDate < todayStart;
           });
         }
         if (drilldown.missing_close_date) filtered = filtered.filter((deal) => !closedStageIds.has(deal.stage) && !deal.close_date_est);

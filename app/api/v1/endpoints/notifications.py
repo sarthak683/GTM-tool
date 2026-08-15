@@ -283,6 +283,19 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
         event_metadata={"notification_id": str(notification.id), **(payload or {})},
     ))
 
+    # Initial-stage history row — without it this deal never appears in the
+    # stage-history-driven scorecards (demos, win rate, cycle time).
+    from app.services.deal_stage_history import record_stage_transition
+
+    await record_stage_transition(
+        session,
+        deal_id=deal.id,
+        from_stage=None,
+        to_stage=deal.stage,
+        changed_by_id=user.id,
+        source="notification_accept",
+    )
+
     try:
         await record_deal_stage_milestone(
             session,

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.google_calendar import CalendarEvent
@@ -202,7 +203,9 @@ async def sync_calendar_events(
             # ── Pass 1: exact contact email → deal (only when unambiguous) ─
             matched_contact_ids: list[UUID] = []
             for addr in external_attendees:
-                cid = contact_email_map.get(addr)
+                # The map's keys are lowercased; calendar attendee addresses
+                # arrive in whatever case the organizer typed.
+                cid = contact_email_map.get((addr or "").lower())
                 if cid:
                     matched_contact_ids.append(cid)
 
@@ -394,8 +397,24 @@ async def sync_calendar_events(
                     created_at=now,
                     updated_at=now,
                 )
-                session.add(meeting)
-                stats["meetings_created"] += 1
+                try:
+                    # Savepoint + flush: the same gcal event is upserted by every
+                    # Beacon attendee's sync, and concurrent syncs both pass the
+                    # SELECT above. uq_meetings_external_source_id makes the
+                    # loser's INSERT fail here — roll back just this event (not
+                    # the whole batch) and let the next tick take the update
+                    # path against the winner's row.
+                    async with session.begin_nested():
+                        session.add(meeting)
+                        await session.flush()
+                    stats["meetings_created"] += 1
+                except IntegrityError:
+                    stats["meetings_deduped"] = stats.get("meetings_deduped", 0) + 1
+                    logger.info(
+                        "calendar_sync: event %s created concurrently by another sync; skipped",
+                        source_id,
+                    )
+                    continue
                 logger.info(
                     "calendar_sync: created meeting '%s' (deal=%s, company=%s, start=%s)",
                     event.title,

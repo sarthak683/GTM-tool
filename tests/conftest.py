@@ -21,9 +21,7 @@ def client():
     environment-dependent work that has no place in a unit/routing test:
 
       * ``settings.validate_runtime_secrets()`` (would raise in prod-like envs),
-      * ``start_background_workers()`` (spawns async background jobs),
-      * Instantly webhook registration (outbound HTTP),
-      * the pre-meeting automation loop (an infinite ``asyncio`` task).
+      * Instantly webhook registration (outbound HTTP).
 
     Skipping the lifespan lets us assert on auth/routing in isolation. Endpoints
     that need a DB session still *resolve* the ``get_session`` dependency, but the

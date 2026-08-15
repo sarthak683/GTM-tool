@@ -113,6 +113,32 @@ export function formatDate(dateStr?: string | null): string {
   });
 }
 
+/**
+ * Format a DATE-ONLY value ("2026-08-20", e.g. deal.close_date_est).
+ *
+ * Never feed date-only strings to `new Date(...)` + toLocaleString: JS parses
+ * "2026-08-20" as UTC MIDNIGHT, so any user west of UTC sees the PREVIOUS day
+ * ("Aug 19, 7:00 PM"). Build a local calendar date from the parts instead.
+ */
+export function formatDateOnly(dateStr?: string | null): string {
+  if (!dateStr) return "—";
+  const [y, m, d] = dateStr.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** Local calendar Date for a date-only string — for overdue/range comparisons. */
+export function parseDateOnly(dateStr?: string | null): Date | null {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
 export function isValidDateValue(dateStr?: string | null): boolean {
   if (!dateStr) return false;
   return !Number.isNaN(new Date(dateStr).getTime());

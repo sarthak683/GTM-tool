@@ -6,7 +6,7 @@ import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, sett
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
-import { avatarColor, formatCurrency, formatDate, getInitials } from "../lib/utils";
+import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
@@ -1075,7 +1075,12 @@ function CrmImportModal({
 
 
 function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected, onToggleSelect }: { deal: Deal; onClick: () => void; onDragStart: () => void; onDragEnd: () => void; priorityTag?: "P0" | "P1" | "P2" | null; selected?: boolean; onToggleSelect?: () => void }) {
-  const isOverdue = deal.close_date_est && new Date(deal.close_date_est) < new Date();
+  // Local-calendar comparison: UTC-parsing a date-only string marked deals
+  // closing TODAY as overdue from ~7 PM the previous evening for US users.
+  const _todayStart = new Date();
+  _todayStart.setHours(0, 0, 0, 0);
+  const _closeLocal = parseDateOnly(deal.close_date_est);
+  const isOverdue = Boolean(_closeLocal && _closeLocal < _todayStart);
 
   return (
     <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1097,7 +1102,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
         </button>
         {deal.close_date_est && (
           <span style={{ fontSize: 9, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
-            {formatDate(deal.close_date_est)}
+            {formatDateOnly(deal.close_date_est)}
           </span>
         )}
       </div>
@@ -1933,9 +1938,10 @@ export default function Pipeline() {
       if (overdueOnly) {
         items = items.filter((deal) => {
           if (closedStageIds.has(deal.stage) || !deal.close_date_est) return false;
-          const closeDate = new Date(deal.close_date_est);
-          if (Number.isNaN(closeDate.getTime())) return false;
-          return closeDate < today;
+          // Local-calendar parse: UTC parsing shifted the date a day back for
+          // US users and flagged today's deals overdue the evening before.
+          const closeDate = parseDateOnly(deal.close_date_est);
+          return closeDate !== null && closeDate < startOfToday;
         });
       }
       if (missingCloseDateOnly) items = items.filter((deal) => !closedStageIds.has(deal.stage) && !deal.close_date_est);
@@ -1944,8 +1950,8 @@ export default function Pipeline() {
           if (closedStageIds.has(deal.stage)) return false;
           if (closeDateFilters.includes("missing") && !deal.close_date_est) return true;
           if (!deal.close_date_est) return false;
-          const closeDate = new Date(deal.close_date_est);
-          if (Number.isNaN(closeDate.getTime())) return false;
+          const closeDate = parseDateOnly(deal.close_date_est);
+          if (closeDate === null) return false;
           return closeDateFilters.some((filter) => {
             if (filter === "overdue") return closeDate < startOfToday;
             if (filter === "this_week") return closeDate >= startOfToday && closeDate <= endOfWeek;
@@ -2190,7 +2196,7 @@ export default function Pipeline() {
       "Health Score": deal.health_score ?? "",
       "Priority": deal.priority_tag || "",
       "Commit": deal.commit_to_deal ? "Yes" : "No",
-      "Close Date": deal.close_date_est ? formatDate(deal.close_date_est) : "",
+      "Close Date": deal.close_date_est ? formatDateOnly(deal.close_date_est) : "",
       "Days In Stage": deal.days_in_stage ?? "",
       "Last Activity": lastTouch ? formatDate(lastTouch) : "",
       "Contacts": deal.contact_count ?? deal.stakeholder_count ?? 0,

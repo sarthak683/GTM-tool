@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.tldv import TldvClient, TldvError
@@ -244,7 +244,13 @@ async def _find_activity(session: AsyncSession, external_source_id: str) -> Acti
 async def _match_contacts(session: AsyncSession, attendee_emails: list[str]) -> list[Contact]:
     if not attendee_emails:
         return []
-    result = await session.execute(select(Contact).where(Contact.email.in_(attendee_emails)))
+    # Case-insensitive: stored contact emails aren't normalized (the unique
+    # index is on lower(email)), and an exact-case IN () silently loses the
+    # meeting→contact→deal link for any mixed-case row.
+    lowered = [e.lower() for e in attendee_emails if e]
+    result = await session.execute(
+        select(Contact).where(func.lower(Contact.email).in_(lowered))
+    )
     return result.scalars().all()
 
 
@@ -1097,6 +1103,10 @@ async def sync_tldv_history(
 
     page = 1
     processed = 0
+    failed = 0
+    first_failed_at: datetime | None = None
+    oldest_seen_at: datetime | None = None
+    truncated = False
     sync_started_at = datetime.utcnow()
 
     while True:
@@ -1118,14 +1128,31 @@ async def sync_tldv_history(
                     hit_old_meeting = True
                     break
                 continue
-            await sync_tldv_meeting(
-                session,
-                meeting_id=meeting_id,
-                client=client,
-                preloaded_meeting=meeting_payload,
-                stats=stats,
-            )
-            processed += 1
+            if happened_at and (oldest_seen_at is None or happened_at < oldest_seen_at):
+                oldest_seen_at = happened_at
+            try:
+                await sync_tldv_meeting(
+                    session,
+                    meeting_id=meeting_id,
+                    client=client,
+                    preloaded_meeting=meeting_payload,
+                    stats=stats,
+                )
+                processed += 1
+            except Exception:
+                # One poisoned meeting (API 500, bad payload, DB conflict) must
+                # not block every meeting behind it in the page order — that is
+                # how a single record turned into "no tl;dv import since July".
+                # sync_tldv_meeting commits per meeting, so rolling back only
+                # discards the failed one; earlier meetings are already durable.
+                failed += 1
+                if happened_at and (first_failed_at is None or happened_at < first_failed_at):
+                    first_failed_at = happened_at
+                logger.exception(
+                    "tl;dv sync: meeting %s failed; continuing with remaining meetings",
+                    meeting_id,
+                )
+                await session.rollback()
 
         if hit_old_meeting:
             break
@@ -1133,12 +1160,21 @@ async def sync_tldv_history(
         page += 1
         pages = payload.get("pages")
         if max_pages is not None and page > max_pages:
+            # Stopped because of OUR page budget, not because tl;dv ran out of
+            # results — meetings older than the last row we saw may still be
+            # unfetched inside the scan window. The caller must not advance its
+            # cursor past oldest_seen_at, or those meetings are lost forever.
+            truncated = not (isinstance(pages, int) and page > pages)
             break
         if isinstance(pages, int) and page > pages:
             break
 
     return {
         "processed": processed,
+        "failed": failed,
+        "first_failed_at": first_failed_at.isoformat() if first_failed_at else None,
+        "oldest_seen_at": oldest_seen_at.isoformat() if oldest_seen_at else None,
+        "truncated": truncated,
         "incremental": incremental,
         "sync_started_at": sync_started_at.isoformat(),
         **stats.as_dict(),

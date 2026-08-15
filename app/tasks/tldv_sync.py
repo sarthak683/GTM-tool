@@ -121,12 +121,53 @@ async def _async_sync() -> dict:
                     since=scan_from,  # None on first run → full lookback
                 )
 
-                # ── Write last_synced_at back to DB ───────────────────────────────
+                # ── Advance the cursor only past work that actually happened ──
+                # Base target is when the scan STARTED (a meeting appearing
+                # mid-scan was never seen). Two caps pull it further back:
+                #  * truncated: the page budget stopped us with unfetched
+                #    meetings still inside the window — advancing past
+                #    oldest_seen_at would skip them permanently (this is the
+                #    mechanism behind "tl;dv imported nothing since July").
+                #  * failed: a poisoned meeting was skipped this run; keep it
+                #    inside the next run's window so it gets retried.
+                def _parse_iso(value):
+                    try:
+                        return datetime.fromisoformat(str(value)) if value else None
+                    except ValueError:
+                        return None
+
+                cursor_target = _parse_iso(result.get("sync_started_at")) or datetime.utcnow()
+                if result.get("truncated"):
+                    oldest_seen = _parse_iso(result.get("oldest_seen_at"))
+                    if oldest_seen is not None:
+                        cursor_target = min(cursor_target, oldest_seen)
+                first_failed = _parse_iso(result.get("first_failed_at"))
+                if first_failed is not None:
+                    cursor_target = min(cursor_target, first_failed)
+
+                # ── Write the cursor back WITHOUT clobbering concurrent edits ──
+                # `cfg` is a snapshot from task start, and this sync can run for
+                # minutes. Writing that stale snapshot back erased anything
+                # committed in between — report send-keys (causing duplicate
+                # report sends) and admin settings edits (silently reverted).
+                # Re-read the row fresh under FOR UPDATE and patch ONLY our key.
                 if row:
-                    updated_cfg = dict(cfg)
-                    updated_cfg["tldv_last_synced_at"] = datetime.utcnow().isoformat()
-                    row.sync_schedule_settings = updated_cfg
-                    session.add(row)
+                    fresh = (
+                        await session.execute(
+                            select(WorkspaceSettings)
+                            .where(WorkspaceSettings.id == 1)
+                            .with_for_update()
+                            # Without populate_existing the identity map hands
+                            # back the stale `row` object from task start and
+                            # the whole re-read is theater.
+                            .execution_options(populate_existing=True)
+                        )
+                    ).scalar_one_or_none()
+                    if fresh is not None:
+                        updated_cfg = dict(fresh.sync_schedule_settings or {})
+                        updated_cfg["tldv_last_synced_at"] = cursor_target.isoformat()
+                        fresh.sync_schedule_settings = updated_cfg
+                        session.add(fresh)
                     await session.commit()
 
                 logger.info("tl;dv sync completed: %s", result)

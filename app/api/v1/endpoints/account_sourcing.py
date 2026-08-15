@@ -835,9 +835,15 @@ async def _process_uploaded_rows(
                     contact_fields["sdr_name"] = sdr_user["name"]
                 existing_contact = None
                 if contact_fields.get("email"):
+                    # lower() match: the contacts unique index is on
+                    # lower(email); an exact-case miss here inserts a duplicate
+                    # that dies on the index — failing the row AFTER its company
+                    # was already committed.
                     existing_contact = (
                         await session.execute(
-                            select(Contact).where(Contact.email == contact_fields["email"]).limit(1)
+                            select(Contact)
+                            .where(func.lower(Contact.email) == str(contact_fields["email"]).lower())
+                            .limit(1)
                         )
                     ).scalars().first()
                 if not existing_contact:

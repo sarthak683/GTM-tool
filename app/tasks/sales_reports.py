@@ -93,6 +93,8 @@ async def _async_send_us_pod_call_report(
         scheduled_report_type,
         send_us_pod_call_report_email,
     )
+    from sqlalchemy import select
+
     from app.models.settings import WorkspaceSettings
 
     parsed_date = date.fromisoformat(report_date) if report_date else None
@@ -206,47 +208,102 @@ async def _async_send_us_pod_call_report(
                 })
                 continue
 
-            report = await send_us_pod_call_report_email(
-                session,
-                parsed_date,
-                report_type=rtype,
-                recipients=recipients,
-                reps=reps,
-                config_key=config_key,
-                config_defaults=config_defaults,
-                pod_label=pod_label,
-            )
-            send_results = report.get("send_results", []) or []
-            all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
-            failed_recipients = [
-                r.get("to") for r in send_results if r.get("status") != "sent" and r.get("to")
-            ]
+            # Per-recipient dedup within one send key: a previous tick may have
+            # delivered to most recipients and failed on one. Retry ONLY the
+            # missing ones — re-sending to everyone every 15 minutes until a
+            # fully-clean pass meant one flaky mailbox duplicated the report
+            # for the other ten people.
+            already_sent: set[str] = set()
+            if scheduled_call and report_settings.get("partial_send_key") == tkey:
+                already_sent = {
+                    str(r).lower() for r in (report_settings.get("partial_sent_recipients") or [])
+                }
 
-            if scheduled_call and all_sent:
-                current = normalize_sales_report_settings(report_settings, defaults=config_defaults)
-                current[_stored_key_field(rtype)] = tkey
-                # Maintain the legacy single-key field too — keeps any
-                # external consumer that reads `last_scheduled_send_key`
-                # working without a migration.
-                current["last_scheduled_send_key"] = tkey
-                current["last_scheduled_send_at"] = datetime.now(timezone.utc).isoformat()
-                row = await session.get(WorkspaceSettings, 1)
+            pass_recipients = recipients
+            if scheduled_call and already_sent and recipients is None:
+                pass_recipients = [
+                    r for r in (report_settings.get("recipients") or [])
+                    if str(r).lower() not in already_sent
+                ]
+                if not pass_recipients:
+                    # Everyone already received this key's report; just finish
+                    # the bookkeeping below as a fully-sent pass.
+                    pass_recipients = []
+
+            if scheduled_call and already_sent and pass_recipients == []:
+                send_results = []
+                all_sent = True
+                failed_recipients = []
+            else:
+                report = await send_us_pod_call_report_email(
+                    session,
+                    parsed_date,
+                    report_type=rtype,
+                    recipients=pass_recipients,
+                    reps=reps,
+                    config_key=config_key,
+                    config_defaults=config_defaults,
+                    pod_label=pod_label,
+                )
+                send_results = report.get("send_results", []) or []
+                all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
+                failed_recipients = [
+                    r.get("to") for r in send_results if r.get("status") != "sent" and r.get("to")
+                ]
+
+            sent_now = {
+                str(r.get("to")).lower() for r in send_results
+                if r.get("status") == "sent" and r.get("to")
+            }
+            covered = already_sent | sent_now
+
+            if scheduled_call:
+                # Write state against a FRESH, row-locked read and patch only
+                # this pod's block. The session-cached row dates from task
+                # start; writing through it (or plain session.get, which
+                # returns the same stale identity-mapped object) clobbers
+                # whatever the tl;dv cursor write or an admin settings edit
+                # committed in between.
+                row = (
+                    await session.execute(
+                        select(WorkspaceSettings)
+                        .where(WorkspaceSettings.id == 1)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
                 if row is not None:
                     sync_settings = dict(row.sync_schedule_settings or {})
+                    stored_block = sync_settings.get(config_key)
+                    current = normalize_sales_report_settings(
+                        stored_block if isinstance(stored_block, dict) else report_settings,
+                        defaults=config_defaults,
+                    )
+                    if all_sent:
+                        current[_stored_key_field(rtype)] = tkey
+                        # Maintain the legacy single-key field too — keeps any
+                        # external consumer that reads `last_scheduled_send_key`
+                        # working without a migration.
+                        current["last_scheduled_send_key"] = tkey
+                        current["last_scheduled_send_at"] = datetime.now(timezone.utc).isoformat()
+                        current["partial_send_key"] = None
+                        current["partial_sent_recipients"] = []
+                    elif sent_now:
+                        current["partial_send_key"] = tkey
+                        current["partial_sent_recipients"] = sorted(covered)
                     sync_settings[config_key] = current
                     row.sync_schedule_settings = sync_settings
                     session.add(row)
                     await session.commit()
-                # Re-load into the local copy so the NEXT pass in this loop
-                # sees the just-committed key (avoids re-sending if the
-                # weekly's already-sent on a retry).
-                report_settings = current
-            elif scheduled_call and not all_sent:
-                logger.warning(
-                    "US pod call report (%s) partial-failure: %d/%d recipients failed (%s). "
-                    "Not committing send_key — Beat will retry next tick.",
-                    rtype, len(failed_recipients), len(send_results), failed_recipients,
-                )
+                    # Re-load into the local copy so the NEXT pass in this loop
+                    # sees the just-committed state.
+                    report_settings = current
+                if not all_sent:
+                    logger.warning(
+                        "US pod call report (%s) partial-failure: %d/%d recipients failed (%s). "
+                        "Delivered ones are recorded; Beat retries only the rest next tick.",
+                        rtype, len(failed_recipients), len(send_results), failed_recipients,
+                    )
 
             per_type_results.append({
                 "report_type": rtype,

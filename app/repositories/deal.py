@@ -719,6 +719,20 @@ class DealRepository(BaseRepository[Deal]):
             sa_delete(CompanyStageMilestone).where(CompanyStageMilestone.deal_id == deal_id)
         )
         await self.session.execute(sa_delete(DealContact).where(DealContact.deal_id == deal_id))
+        # tasks.entity_id is polymorphic (no FK) — without explicit cleanup,
+        # deal deletion strands ghost tasks (prod accumulated 1,788 of them
+        # across 502 deleted deals, 4 still open).
+        from app.models.task import Task, TaskComment
+
+        task_ids_subq = select(Task.id).where(
+            Task.entity_type == "deal", Task.entity_id == deal_id
+        )
+        await self.session.execute(
+            sa_delete(TaskComment).where(TaskComment.task_id.in_(task_ids_subq))
+        )
+        await self.session.execute(
+            sa_delete(Task).where(Task.entity_type == "deal", Task.entity_id == deal_id)
+        )
 
         deal = await self.get(deal_id)
         if deal:

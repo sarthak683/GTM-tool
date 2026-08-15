@@ -71,6 +71,32 @@ def _run_async_task(coro):
 )
 def sync_personal_inbox(self, connection_id: str) -> dict:
     """Sync one user's personal Gmail inbox. Called per-user."""
+    import redis
+
+    from app.config import settings as app_settings
+
+    # Per-connection overlap guard. The 10-minute fan-out re-enqueues every
+    # connection each tick while one sync may legitimately run up to the
+    # 30-minute time limit (backfills); without this, two workers sync the same
+    # mailbox from the same cursor concurrently and race the check-then-insert
+    # dedup into duplicate email activities. TTL sits above time_limit so a
+    # killed worker's lock always expires before the next legitimate run.
+    lock_key = f"personal_sync:lock:{connection_id}"
+    r = redis.Redis.from_url(app_settings.REDIS_URL, decode_responses=True)
+    try:
+        acquired = r.set(lock_key, "1", nx=True, ex=1900)
+        if not acquired:
+            logger.info(
+                "Personal email sync for connection %s already in flight; skipping",
+                connection_id,
+            )
+            return {"status": "skipped", "reason": "sync already in flight"}
+    except redis.RedisError:
+        # If Redis is unreachable the broker is down too — let the task run
+        # rather than adding a new failure mode for the lock itself.
+        logger.warning("Personal sync lock unavailable; running unlocked")
+        acquired = False
+
     try:
         return _run_async_task(_async_sync_inbox(connection_id))
     except Exception as exc:
@@ -84,6 +110,12 @@ def sync_personal_inbox(self, connection_id: str) -> dict:
             return {"status": "reconnect_required", "reason": "invalid_grant"}
         logger.error("Personal email sync failed for connection %s: %s", connection_id, exc)
         raise self.retry(exc=exc)
+    finally:
+        if acquired:
+            try:
+                r.delete(lock_key)
+            except redis.RedisError:
+                pass  # TTL expires it
 
 
 @celery_app.task(
@@ -97,9 +129,13 @@ def sync_all_personal_inboxes(self) -> dict:
     """
     try:
         return _run_async_task(_enqueue_all_inboxes())
-    except Exception as exc:
-        logger.error("Failed to enqueue personal inbox syncs: %s", exc)
-        return {"queued": 0, "error": str(exc)}
+    except Exception:
+        # Re-raise instead of returning {"error": ...}: a swallowed exception
+        # makes Celery record SUCCESS, job_health advances last_effective_at,
+        # and the System Health panel shows green while zero inboxes sync —
+        # the exact blind spot the job_health rework exists to close.
+        logger.exception("Failed to enqueue personal inbox syncs")
+        raise
 
 
 async def _enqueue_all_inboxes() -> dict:
