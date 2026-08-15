@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-worker-deployment" .Release.Name }}
+  namespace: {{ include "beacon.namespace" . }}
+  labels:
+    k8s-app: {{.Release.Name}}-{{ printf "worker" }}
+    {{- include "beacon.labels" . | nindent 4 }}
+spec:
+  progressDeadlineSeconds: 420
+  revisionHistoryLimit: 10
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: {{.Release.Name}}-{{ printf "worker" }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        k8s-app: {{.Release.Name}}-{{ printf "worker" }}
+    spec:
+      containers:
+        - name: copilot
+          image: "{{.Values.backend.image}}"
+          command: [ "celery" ]
+          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo" ]
+          imagePullPolicy: "Always"
+          envFrom:
+            - secretRef:
+                name: {{.Release.Name}}-backend-secret
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# Priority-queue worker.
+#
+# This Deployment exists in the live gtm/gtm-prod releases but had gone missing
+# from this chart copy, so `helm upgrade` would have PRUNED it — silently
+# removing the only consumer of the "priority" queue (sourcing upload, ICP
+# research, call transcription), leaving those tasks queued forever.
+#
+# Restored from the live release manifest (revision 163). Name, labels and
+# selector match the running object exactly so Helm adopts it in place instead
+# of recreating it — `spec.selector` is immutable, so they must not drift.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-priority-worker-deployment" .Release.Name }}
+  namespace: {{ include "beacon.namespace" . }}
+  labels:
+    k8s-app: {{.Release.Name}}-{{ printf "priority-worker" }}
+    {{- include "beacon.labels" . | nindent 4 }}
+spec:
+  progressDeadlineSeconds: 420
+  revisionHistoryLimit: 10
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: {{.Release.Name}}-{{ printf "priority-worker" }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop to zero priority consumers mid-rollout.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        k8s-app: {{.Release.Name}}-{{ printf "priority-worker" }}
+    spec:
+      containers:
+        - name: copilot
+          image: "{{.Values.backend.image}}"
+          command: [ "celery" ]
+          # --queues=priority is what separates this from the default worker
+          # above, which consumes the "celery" queue.
+          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo", "--queues=priority" ]
+          imagePullPolicy: "Always"
+          envFrom:
+            - secretRef:
+                name: {{.Release.Name}}-backend-secret
+          {{- with (default .Values.worker.resources (get .Values "priorityWorker" | default dict).resources) }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

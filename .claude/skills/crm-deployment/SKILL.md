@@ -36,7 +36,8 @@ Already done on this Mac (verify, don't redo blindly):
 | Helm | `/opt/homebrew/bin/helm` |
 | kubectl | `/usr/local/bin/kubectl` |
 | buildx builder | `builder` (docker-container driver) |
-| Chart + values | `/Users/sarthak/Downloads/gtm-helm/` |
+| Chart (in git) | `deploy/gtm-chart/` — see `deploy/README.md` |
+| Env values (NOT in git — hold live secrets) | `~/Downloads/gtm-helm/gtm.yaml`, `gtm-prod.yaml` |
 
 Verify in one shot:
 
@@ -107,9 +108,9 @@ State observed 2026-08-15. Re-check rather than assuming it still holds.
      This also matters beyond startup: with `ENVIRONMENT=production`,
      `_resolve_report_recipients()` sends scheduled sales reports to the **real**
      recipient list — from staging.
-3. **The prod chart lives OUTSIDE git and had two bugs, both fixed by hand on
-   2026-08-15.** `~/Downloads/gtm-helm/gtm` is not version-controlled, so these
-   fixes exist only on this laptop and any stale copy reintroduces them:
+3. **The prod chart had two bugs, both fixed 2026-08-15 and now vendored into
+   git at `deploy/gtm-chart/`.** Deploy from the repo copy, not from
+   `~/Downloads/gtm-helm/gtm` — that copy is stale and reintroduces both:
    - `templates/backend/worker.yaml` was missing the second Deployment,
      `gtm-priority-worker-deployment`. Helm would have **pruned** the only
      consumer of the `priority` queue (sourcing upload, ICP research, call
@@ -119,7 +120,10 @@ State observed 2026-08-15. Re-check rather than assuming it still holds.
      Applying it took prod down with 503s. Service `port` stays 80 (the
      Ambassador Mapping addresses the Service with no port), `targetPort` is 8080.
 
-   Getting this chart into the repo is the highest-value outstanding fix.
+   Secrets are NOT vendored: the per-environment `gtm.yaml`/`gtm-prod.yaml` stay
+   at `~/Downloads/gtm-helm/` (gitignored here), and `postgresql.auth.*` in the
+   committed `values.yaml` is placeheld with `REPLACE_AT_DEPLOY`. Always pass the
+   real values file with `-f`. See `deploy/README.md`.
 4. **`DEPLOYMENT_HANDOFF.md` is stale** (Windows paths, older tags/revisions) and
    the separate PDF-style runbook is wrong about Step 4 — the chart takes full
    image strings `backend.image` / `frontend.image`, not an `image.tag` key.
@@ -206,8 +210,8 @@ caused a real production outage on 2026-08-15 (see below).
 which fields change on existing objects:
 
 ```bash
-cd /Users/sarthak/Downloads/gtm-helm
-helm diff upgrade gtm ./gtm -n gtm-prod -f ./gtm-prod.yaml \
+cd /Users/sarthak/GTM-tool
+helm diff upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
 ```
@@ -230,8 +234,8 @@ The diff above shows changed objects; this one catches whole workloads the chart
 no longer renders, which Helm **deletes** on upgrade.
 
 ```bash
-cd /Users/sarthak/Downloads/gtm-helm
-helm template gtm ./gtm -f ./gtm-prod.yaml \
+cd /Users/sarthak/GTM-tool
+helm template gtm ./deploy/gtm-chart -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG 2>/dev/null \
   | grep -E "^kind:|^  name:" | paste - - | grep -Ei "deployment|statefulset" \
@@ -299,9 +303,9 @@ Only if staging is migrated onto the same chart as prod. See the migration
 warning below.
 
 ```bash
-cd /Users/sarthak/Downloads/gtm-helm
-helm upgrade --install gtm ./gtm -n gtm --create-namespace \
-  -f ./gtm.yaml \
+cd /Users/sarthak/GTM-tool
+helm upgrade --install gtm ./deploy/gtm-chart -n gtm --create-namespace \
+  -f ~/Downloads/gtm-helm/gtm.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
   --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
@@ -310,9 +314,9 @@ helm upgrade --install gtm ./gtm -n gtm --create-namespace \
 Production — only on explicit instruction, and only after the drift gate:
 
 ```bash
-cd /Users/sarthak/Downloads/gtm-helm
-helm upgrade --install gtm ./gtm -n gtm-prod --create-namespace \
-  -f ./gtm-prod.yaml \
+cd /Users/sarthak/GTM-tool
+helm upgrade --install gtm ./deploy/gtm-chart -n gtm-prod --create-namespace \
+  -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG \
   --kubeconfig /Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
@@ -364,8 +368,8 @@ Roll back **forward** instead: re-run `helm upgrade` pinning the previous known
 
 ```bash
 kubectl -n "$NS" get deploy -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'  # capture BEFORE deploying
-cd /Users/sarthak/Downloads/gtm-helm
-helm upgrade gtm ./gtm -n gtm-prod -f ./gtm-prod.yaml \
+cd /Users/sarthak/GTM-tool
+helm upgrade gtm ./deploy/gtm-chart -n gtm-prod -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:<PREVIOUS_TAG> \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:<PREVIOUS_TAG>
 ```

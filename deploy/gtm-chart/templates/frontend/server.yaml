@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-frontend-deployment" .Release.Name }}
+  namespace: {{ include "beacon.namespace" . }}
+  labels:
+    k8s-app: {{.Release.Name}}-{{ printf "frontend" }}
+    {{- include "beacon.labels" . | nindent 4 }}
+spec:
+  progressDeadlineSeconds: 420
+  revisionHistoryLimit: 10
+  replicas: 2
+  selector:
+    matchLabels:
+      k8s-app: {{.Release.Name}}-{{ printf "frontend" }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        k8s-app: {{.Release.Name}}-{{ printf "frontend" }}
+    spec:
+      containers:
+        - name: copilot
+          image: "{{.Values.frontend.image}}"
+          imagePullPolicy: "Always"
+          # 8080, not 80: the frontend image is nginxinc/nginx-unprivileged,
+          # which runs as non-root and cannot bind privileged ports. Every
+          # gtm-fe image serves on 8080 — this chart said 80, so the Service
+          # and probes pointed at a port nothing listens on, which took the
+          # site down with 503s until it was corrected out-of-band.
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          {{- with .Values.frontend.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{.Release.Name}}-frontend
+  namespace: {{ include "beacon.namespace" . }}
+  labels:
+    k8s-svc: {{.Release.Name}}-{{ printf "frontend" }}
+    {{- include "beacon.labels" . | nindent 4 }}
+  annotations:
+  {{- with .Values.frontend.service.annotations}}
+    {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    # Service port stays 80 — the Ambassador Mapping addresses this Service as
+    # `gtm-frontend.<ns>` with no port, which defaults to 80. targetPort must be
+    # 8080 to reach the unprivileged nginx in the container.
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    k8s-app: {{.Release.Name}}-{{ printf "frontend" }}

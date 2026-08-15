@@ -1,0 +1,19 @@
+apiVersion: v2
+name: gtm
+description: Helm chart for deploying the Beacon application
+
+type: application
+
+version: 0.1.0
+
+appVersion: "v0.0.1-staging"
+
+dependencies:
+  - name: redis
+    repository: https://charts.bitnami.com/bitnami
+    version: 22.0.7
+    condition: redis.enabled
+  - name: postgresql
+    repository: https://charts.bitnami.com/bitnami
+    version: 18.5.14
+    condition: postgresql.enabled

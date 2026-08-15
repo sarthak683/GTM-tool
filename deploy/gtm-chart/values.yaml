@@ -1,0 +1,80 @@
+global:
+  certs:
+    email: dk@beacon.li
+postgresql:
+  enabled: true
+  architecture: standalone
+  image:
+    repository: bitnamilegacy/postgresql
+  auth:
+    username: beacon
+    password: "REPLACE_AT_DEPLOY"
+    rootPassword: "REPLACE_AT_DEPLOY"
+    database: "beacon"
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+
+redis:
+  image:
+    repository: bitnamilegacy/redis
+  architecture: standalone
+  auth:
+    enabled: false
+  commonConfiguration: |-
+    maxmemory 896mb
+    maxmemory-policy allkeys-lru
+    notify-keyspace-events Egxe
+  master:
+    persistence:
+      enabled: false
+
+backend:
+  image: "beacon.azurecr.io/gtm-be:v0.9"
+  domain: ""
+  env: { }
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector: { }
+  service:
+    annotations: { }
+
+frontend:
+  image: "beacon.azurecr.io/gtm-fe:v0.9"
+  env: { }
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector: { }
+  service:
+    annotations: { }
+
+beat:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector: { }
+
+worker:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector: { }

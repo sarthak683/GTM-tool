@@ -44,3 +44,10 @@ MAC_DEPLOY_HANDOFF.md
 .idea/
 .DS_Store
 Thumbs.db
+
+# Per-environment Helm values carry live credentials (inline DB passwords, API
+# keys). The chart itself lives in deploy/gtm-chart/; these must never be
+# committed. See deploy/README.md.
+deploy/**/gtm.yaml
+deploy/**/gtm-prod.yaml
+deploy/**/values-*.local.yaml

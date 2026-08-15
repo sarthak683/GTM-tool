@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-beat-deployment" .Release.Name }}
+  namespace: {{ include "beacon.namespace" . }}
+  labels:
+    k8s-app: {{.Release.Name}}-{{ printf "beat" }}
+    {{- include "beacon.labels" . | nindent 4 }}
+spec:
+  progressDeadlineSeconds: 420
+  revisionHistoryLimit: 10
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: {{.Release.Name}}-{{ printf "beat" }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        k8s-app: {{.Release.Name}}-{{ printf "beat" }}
+    spec:
+      containers:
+        - name: copilot
+          image: "{{.Values.backend.image}}"
+          command: ["celery" ]
+          args: [ "-A", "app.celery_app.celery_app", "beat", "--loglevel=info" ]
+          imagePullPolicy: "Always"
+          envFrom:
+            - secretRef:
+                name: {{.Release.Name}}-backend-secret
+          {{- with .Values.beat.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.beat.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
