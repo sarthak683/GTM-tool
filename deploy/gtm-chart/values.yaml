@@ -15,6 +15,26 @@ postgresql:
     persistence:
       enabled: true
       size: 20Gi
+    # Was inheriting the subchart default of 192Mi / 150m, which OOMKilled the
+    # production database on 2026-08-15 at ~109Mi steady state — under two-fold
+    # headroom for a database whose usage spikes on concurrent queries, sorts
+    # and autovacuum. An OOM kill drops every in-flight connection at once,
+    # which surfaces to reps as unexplained intermittent failures.
+    # 1Gi gives ~9x headroom over observed steady state; the node pool runs at
+    # ~35% memory with ~29Gi allocatable per node, so this costs nothing.
+    # ephemeral-storage is carried over from the subchart preset an explicit
+    # `resources` block replaces wholesale. Postgres spills large sorts to temp
+    # files on the node's disk (the 20Gi PVC holds data, not temp), so dropping
+    # the cap would let a runaway query fill the node.
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+        ephemeral-storage: 2Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 50Mi
 
 redis:
   image:
@@ -23,24 +43,42 @@ redis:
   auth:
     enabled: false
   commonConfiguration: |-
-    maxmemory 896mb
+    # maxmemory MUST stay below the container limit below. It previously said
+    # 896mb against a 192Mi container, so Redis believed it had ~4.6x the memory
+    # it could actually use — instead of evicting per allkeys-lru it would be
+    # OOMKilled, losing the Celery broker and every queued task with it.
+    maxmemory 384mb
     maxmemory-policy allkeys-lru
     notify-keyspace-events Egxe
   master:
     persistence:
       enabled: false
+    # ephemeral-storage preserved from the subchart preset — see the note on
+    # postgresql above; an explicit resources block replaces it wholesale.
+    resources:
+      limits:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 2Gi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+        ephemeral-storage: 50Mi
 
 backend:
   image: "beacon.azurecr.io/gtm-be:v0.9"
   domain: ""
   env: { }
+  # Observed 307Mi against a 512Mi limit while serving a ~4.9k-row CSV export —
+  # 1.7x headroom, close enough that a couple of concurrent exports or a large
+  # report could OOM the API. 1Gi restores ~3x headroom over that peak.
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: "1"
+      memory: 1Gi
     requests:
       cpu: 250m
-      memory: 256Mi
+      memory: 384Mi
   nodeSelector: { }
   service:
     annotations: { }

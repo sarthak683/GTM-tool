@@ -50,14 +50,20 @@ Full procedure, including the mandatory drift gate, is in
 memory — and never skip `helm diff`, which is what would have caught the port
 regression above.
 
-**Two `-f` files, in this order.** The first restores the real
-`postgresql.auth.*` over the `REPLACE_AT_DEPLOY` placeholders; the second
-applies the environment config. Later `-f` wins, so the order matters.
+**Two `-f` files, in this order.** `gtm-secrets.yaml` restores the real
+`postgresql.auth.*` over the `REPLACE_AT_DEPLOY` placeholders; the environment
+file applies its config. Later `-f` wins, so the order matters.
 
-Omitting the first one rewrites the PostgreSQL secret to the literal string
+Omitting the first rewrites the PostgreSQL secret to the literal string
 `REPLACE_AT_DEPLOY` and breaks the database. `helm diff` shows this clearly as
 `password: '-------- # (32 bytes)'` → `'++++++++ # (17 bytes)'` — 17 being the
 length of the placeholder. That is not a cosmetic diff; stop if you see it.
+
+`gtm-secrets.yaml` contains **only** those two credentials, deliberately. Do not
+substitute the old `gtm/values.yaml` here: it is a full copy of the chart's
+values, so layering it silently reverts anything tuned in this repo. That is how
+a resource increase first appeared to apply and then didn't — the external file
+put the old `512Mi` limits straight back.
 
 ```bash
 export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
@@ -67,13 +73,13 @@ TAG=<the tag you built and pushed>
 # Expect ONLY image tag changes. Anything touching password, targetPort,
 # containerPort, probes, selector or volumes is a stop-and-ask.
 helm diff upgrade gtm ./deploy/gtm-chart -n gtm-prod \
-  -f ~/Downloads/gtm-helm/gtm/values.yaml \
+  -f ~/Downloads/gtm-helm/gtm-secrets.yaml \
   -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
 
 helm upgrade gtm ./deploy/gtm-chart -n gtm-prod \
-  -f ~/Downloads/gtm-helm/gtm/values.yaml \
+  -f ~/Downloads/gtm-helm/gtm-secrets.yaml \
   -f ~/Downloads/gtm-helm/gtm-prod.yaml \
   --set-string backend.image=beacon.azurecr.io/gtm-be:$TAG \
   --set-string frontend.image=beacon.azurecr.io/gtm-fe:$TAG
