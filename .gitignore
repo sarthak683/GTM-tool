@@ -51,3 +51,7 @@ Thumbs.db
 deploy/**/gtm.yaml
 deploy/**/gtm-prod.yaml
 deploy/**/values-*.local.yaml
+
+# Claude Code machine-local settings. Never tracked: it accumulates per-machine
+# permission rules that have historically embedded live credentials.
+.claude/settings.local.json
