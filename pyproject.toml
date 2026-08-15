@@ -15,6 +15,12 @@ asyncio_mode = "auto"
 # Only collect from tests/. Stops pytest from wandering into app/, scripts/, or
 # alembic/ and importing modules with heavy import-time side effects.
 testpaths = ["tests"]
+# Put the repo root on sys.path so `from app...` imports resolve. Without this
+# every test file fails at COLLECTION with "No module named 'app'" — which is
+# what CI had been doing on main: 202 passing tests reported as 24 errors, so
+# the suite gated nothing. It works locally only because the Docker image
+# installs the app onto the interpreter path.
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py312"
