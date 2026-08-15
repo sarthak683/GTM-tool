@@ -986,12 +986,18 @@ export interface JobHealthRow {
   schedule: string;
   last_run_at: string | null;
   last_success_at: string | null;
+  /** When the job last did real work, as opposed to running and skipping. */
+  last_effective_at: string | null;
+  /** Why the last run did nothing, e.g. "gmail not connected". */
+  last_skip_reason: string | null;
   last_status: string | null;
   last_error: string | null;
   last_duration_ms: number | null;
   runs_total: number;
   failures_total: number;
-  staleness: "ok" | "stale" | "failing" | "unknown";
+  skips_total: number;
+  /** "idle" = running on schedule but deliberately doing nothing. */
+  staleness: "ok" | "idle" | "stale" | "failing" | "unknown";
 }
 export interface JobHealthResponse {
   jobs: JobHealthRow[];

@@ -45,12 +45,33 @@ redis:
   commonConfiguration: |-
     # maxmemory MUST stay below the container limit below. It previously said
     # 896mb against a 192Mi container, so Redis believed it had ~4.6x the memory
-    # it could actually use — instead of evicting per allkeys-lru it would be
-    # OOMKilled, losing the Celery broker and every queued task with it.
+    # it could actually use — instead of evicting it would be OOMKilled, losing
+    # the Celery broker and every queued task with it.
     maxmemory 384mb
-    maxmemory-policy allkeys-lru
+    # noeviction, NOT allkeys-lru. This Redis is the Celery broker: its keys are
+    # queued task messages, not a cache. Under allkeys-lru (what it ran until
+    # 2026-08-15) Redis answers memory pressure by *deleting queued tasks* —
+    # silently, with no error to the producer, no entry in any log, and no
+    # failure recorded against the task that never ran. A sourcing upload, an
+    # ICP research job or a call transcription simply never happens.
+    #
+    # That is the single best explanation available for "the CRM works
+    # sometimes but not consistently": the failure mode is invisible by
+    # construction. With noeviction the producer gets an OOM error it can retry
+    # and surface, which is the difference between a bug and a mystery.
+    maxmemory-policy noeviction
     notify-keyspace-events Egxe
   master:
+    # NOT ENABLED, deliberately, and it is a real remaining gap: with no volume
+    # a Redis restart (OOM kill, node drain, Helm upgrade) drops every queued
+    # task on the floor. Celery task_acks_late (see app/celery_app.py) recovers
+    # tasks a *worker* loses, but nothing recovers tasks the *broker* loses.
+    #
+    # Turning this on is not a values-only edit: persistence.enabled adds a
+    # volumeClaimTemplate, and Kubernetes rejects changes to a StatefulSet's
+    # volumeClaimTemplates, so `helm upgrade` fails until the StatefulSet is
+    # deleted (`--cascade=orphan`) and recreated. That is a planned maintenance
+    # window on the broker, not something to bundle into an app deploy.
     persistence:
       enabled: false
     # ephemeral-storage preserved from the subchart preset — see the note on
@@ -108,11 +129,18 @@ beat:
   nodeSelector: { }
 
 worker:
+  # Sized for the prefork pool (see templates/backend/worker.yaml): a parent
+  # plus --concurrency=2 children, each a full app process. Observed 110Mi as a
+  # single solo process, so ~330Mi is the realistic floor before any task loads
+  # data — instantly_sync pulls lead batches on top of that. 512Mi would have
+  # OOMKilled the pool, and an OOMKilled worker loses whatever it was running.
+  # The node pool sits at ~35% memory with ~29Gi allocatable, so 1Gi is free.
+  # CPU raised in step: two I/O-bound children sharing 500m would throttle.
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: "1"
+      memory: 1Gi
     requests:
       cpu: 250m
-      memory: 256Mi
+      memory: 384Mi
   nodeSelector: { }

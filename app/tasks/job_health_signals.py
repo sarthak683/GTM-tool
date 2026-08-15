@@ -14,7 +14,12 @@ Design notes:
   closed by post-run) and is fully guarded — a tracking failure must never break
   the task it is observing.
 - A task that runs and returns ``{"status": "skipped"}`` still counts as a
-  successful *run*; that's the point — it proves the scheduler is alive.
+  successful *run* — that proves the scheduler is alive — but it does NOT
+  advance ``last_effective_at``. Treating the two as the same thing is what
+  let production show 14/14 green on 2026-08-15 while tl;dv had imported no
+  meeting since April, no pre-meeting brief had gone out all month, and
+  personal inbox sync had been skipping every user since the previous evening.
+  Each of those tasks was, accurately, running and returning without error.
 """
 from __future__ import annotations
 
@@ -50,7 +55,35 @@ def _run(coro) -> None:
         loop.close()
 
 
-async def _record(task_name: str, status: str, error: str | None, duration_ms: int | None) -> None:
+_SKIP_STATUSES = {"skipped", "disabled", "throttled", "noop"}
+
+
+def _skip_reason(retval) -> str | None:
+    """Return why this run did no work, or None if it did work.
+
+    Tasks signal a deliberate no-op by returning a dict with a ``status`` of
+    skipped/disabled/throttled — the convention already used across
+    email_sync, personal_email_sync, sales_reports, tldv_sync and
+    instantly_sync. Reading it here means new tasks get the behaviour for free,
+    which is the same reason this module reads beat_schedule rather than
+    keeping its own list.
+    """
+    if not isinstance(retval, dict):
+        return None
+    status = str(retval.get("status") or "").strip().lower()
+    if status not in _SKIP_STATUSES:
+        return None
+    reason = retval.get("reason") or status
+    return str(reason)[:500]
+
+
+async def _record(
+    task_name: str,
+    status: str,
+    error: str | None,
+    duration_ms: int | None,
+    skip_reason: str | None = None,
+) -> None:
     from sqlalchemy import select
 
     from app.database import task_session
@@ -64,15 +97,29 @@ async def _record(task_name: str, status: str, error: str | None, duration_ms: i
         if row is None:
             row = JobHealth(task_name=task_name, runs_total=0, failures_total=0)
         row.last_run_at = now
-        row.last_status = status
         row.last_duration_ms = duration_ms
         row.runs_total = (row.runs_total or 0) + 1
-        if status == "success":
-            row.last_success_at = now
-            row.last_error = None
-        else:
+
+        if status != "success":
+            row.last_status = status
             row.failures_total = (row.failures_total or 0) + 1
             row.last_error = (error or "")[:1000]
+        elif skip_reason is not None:
+            # Ran cleanly but did nothing. last_success_at still advances — the
+            # run genuinely did not fail — while last_effective_at deliberately
+            # does not, so "green but idle for four months" is visible.
+            row.last_status = "skipped"
+            row.last_success_at = now
+            row.last_error = None
+            row.last_skip_reason = skip_reason
+            row.skips_total = (row.skips_total or 0) + 1
+        else:
+            row.last_status = "success"
+            row.last_success_at = now
+            row.last_effective_at = now
+            row.last_error = None
+            row.last_skip_reason = None
+
         row.updated_at = now
         session.add(row)
         await session.commit()
@@ -96,8 +143,9 @@ def _on_postrun(task_id=None, task=None, retval=None, state=None, **_kwargs) -> 
         duration_ms = int((time.perf_counter() - start) * 1000) if start is not None else None
         if state == "SUCCESS":
             status, error = "success", None
+            skip_reason = _skip_reason(retval)
         else:
-            status, error = "failure", str(retval)
-        _run(_record(task.name, status, error, duration_ms))
+            status, error, skip_reason = "failure", str(retval), None
+        _run(_record(task.name, status, error, duration_ms, skip_reason))
     except Exception:  # pragma: no cover - never let tracking break the task
         logger.warning("job_health: failed to record %s", getattr(task, "name", "?"), exc_info=True)

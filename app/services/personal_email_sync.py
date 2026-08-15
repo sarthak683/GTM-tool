@@ -176,14 +176,19 @@ def _is_internal_address(addr: str, internal_domain: str) -> bool:
     )
 
 
-def _normalize_beacon_sender(addr: str) -> str:
+def _normalize_beacon_sender(addr: str | None) -> str | None:
     """Return the primary-domain identity used only for user lookup.
 
     Activity.email_from must retain the actual message sender. Normalizing that
     stored value makes alternate-domain sends display as if they came from
     @beacon.li and loses the evidence analytics needs to explain the source.
+
+    Accepts None: Instantly leads legitimately carry neither `email_account` nor
+    `from_email` (instantly_sync._backfill_synced_email_events resolves the
+    sender as `... or None`). Treating that as a TypeError aborted the whole
+    campaign's lead sync on every 15-minute poll.
     """
-    if "@" not in addr:
+    if not addr or "@" not in addr:
         return addr
     local, domain = addr.rsplit("@", 1)
     if domain.strip().lower() in _ALL_BEACON_DOMAINS:

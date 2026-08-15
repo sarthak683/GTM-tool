@@ -582,7 +582,14 @@ async def _async_sync_active_campaigns() -> dict:
                                 synced += 1
                     except Exception:
                         errors += 1
-                        logger.exception("Failed to sync leads for campaign %s", campaign_id)
+                        # Scope matters when reading these in prod: this handler
+                        # covers ONE contact's lead lookup, not the campaign.
+                        # The old "Failed to sync leads for campaign %s" wording
+                        # made a per-contact bug look like a campaign-wide outage.
+                        logger.exception(
+                            "Failed to sync lead %s in campaign %s",
+                            contact.email, campaign_id,
+                        )
 
             except InstantlyError:
                 errors += 1

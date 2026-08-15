@@ -37,8 +37,29 @@ celery_app.conf.update(
     # Instantly, tl;dv ...) wedges a worker slot forever. Generous enough for
     # the longest legit batch jobs; tasks may still override per-task (e.g.
     # sync_personal_inbox sets 1800).
+    #
+    # These only take effect on the prefork pool — enforcing them means killing
+    # the child process running the task, which a single-process pool cannot do.
+    # The default worker ran `--pool=solo` until 2026-08-15, so this safety net
+    # was silently inert on exactly the queue that makes the long HTTP calls.
+    # See deploy/gtm-chart/templates/backend/worker.yaml.
     task_time_limit=3600,
     task_soft_time_limit=3300,
+    # Acknowledge a task only after it finishes, so a worker that dies mid-task
+    # (OOM kill, node drain, rollout) puts the message back instead of dropping
+    # it. Celery's default acks-early means every deploy silently discards
+    # whatever was in flight.
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    # Pairs with acks_late: reserve one task at a time. The default of 4 lets a
+    # single worker sit on three more messages it cannot start, which both
+    # delays them and widens the window in which a crash loses them.
+    worker_prefetch_multiplier=1,
+    # Redis redelivers an unacknowledged message after visibility_timeout. It
+    # defaults to 3600s — exactly task_time_limit — so a task running near its
+    # limit could be handed to a second worker and run twice. Keep it clear of
+    # the limit so redelivery only ever means "the worker really is gone".
+    broker_transport_options={"visibility_timeout": 7200},
     # Result blobs are only read by short-lived status pollers (imports,
     # enrichment) — don't let beat-task results pile up in Redis for the
     # default 24h.
@@ -126,6 +147,13 @@ celery_app.conf.update(
         "relink-unlinked-meetings-daily": {
             "task": "app.tasks.meeting_relink.relink_unlinked_meetings_task",
             "schedule": crontab(hour=3, minute=0),
+        },
+        # Fail call recordings abandoned mid-pipeline by a worker that died.
+        # Every 30 min: the reaper's own cutoff (2h) decides what is stuck, so
+        # the schedule only sets how quickly a rep stops staring at a spinner.
+        "reap-stuck-call-recordings": {
+            "task": "app.tasks.transcribe_call.reap_stuck_call_recordings",
+            "schedule": 1800,
         },
         # Daily AE meeting reminder to Google Chat — 6 PM IST = 12:30 UTC.
         # Posts tomorrow's account meetings (demo_scheduled or no-deal accounts).

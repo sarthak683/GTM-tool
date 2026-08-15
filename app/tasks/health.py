@@ -42,8 +42,8 @@ def recalculate_all_deal_health() -> dict:
 
 async def _async_recalculate() -> int:
     from app.database import task_session
-    from app.models.activity import Activity
     from app.models.deal import Deal
+    from app.services.deal_activity import latest_touch_by_deal
     from app.services.deal_health import compute_health
     from app.services.deal_linker import reconcile_deal_stakeholders
     from app.services.internal_domains import get_internal_domains
@@ -58,16 +58,20 @@ async def _async_recalculate() -> int:
         deals = result.scalars().all()
 
         # compute_health only needs each deal's LATEST activity timestamp —
-        # one grouped max() instead of loading every Activity row (content +
-        # JSONB) for every active deal, which dominated this nightly task.
-        latest_by_deal: dict = {}
-        if deals:
-            latest_rows = await session.execute(
-                select(Activity.deal_id, func.max(Activity.created_at))
-                .where(Activity.deal_id.in_([d.id for d in deals]))
-                .group_by(Activity.deal_id)
-            )
-            latest_by_deal = {row[0]: row[1] for row in latest_rows.all()}
+        # grouped max() instead of loading every Activity row (content + JSONB)
+        # for every active deal, which dominated this nightly task.
+        #
+        # This used to filter on Activity.deal_id alone, so it missed every call
+        # logged against a stakeholder — only 24 of 13,139 calls in the previous
+        # 60 days carried a deal_id. Deals went red while being actively worked.
+        # Including the stakeholder arm moved 83 of 601 open deals to a fresher
+        # last-touch (16.5 days fresher on average) and cost no deal anything.
+        #
+        # Not changed here: system field_change/stage_change rows still count as
+        # a touch. They arguably should not, but excluding them removes the only
+        # activity 385 of those 601 deals have — see the note in
+        # app.services.deal_activity.latest_touch_by_deal before flipping it.
+        latest_by_deal = await latest_touch_by_deal(session, [d.id for d in deals])
 
         # The internal-domain set is workspace-global — fetch it once for the
         # whole run instead of once per deal inside reconcile_deal_stakeholders.

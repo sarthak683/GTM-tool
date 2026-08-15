@@ -2977,11 +2977,15 @@ export default function SettingsPage() {
                       const tone =
                         j.staleness === "failing" ? { bg: "#fdecec", fg: "#b42336", label: "Failing" }
                         : j.staleness === "stale" ? { bg: "#fff5e6", fg: "#a8650a", label: "Stale" }
+                        // Idle reads as blue, not green: the job is healthy but
+                        // producing nothing, which is a state someone should
+                        // look at rather than scroll past.
+                        : j.staleness === "idle" ? { bg: "#eef5ff", fg: "#175089", label: "Idle" }
                         : j.staleness === "ok" ? { bg: "#eafbf0", fg: "#1f8f5f", label: "OK" }
                         : { bg: "#eef1f6", fg: "#6b7794", label: "No data" };
-                      const lastRun = j.last_run_at
-                        ? new Date(j.last_run_at.endsWith("Z") ? j.last_run_at : `${j.last_run_at}Z`).toLocaleString()
-                        : "—";
+                      const fmt = (v: string | null) =>
+                        v ? new Date(v.endsWith("Z") ? v : `${v}Z`).toLocaleString() : "—";
+                      const lastRun = fmt(j.last_run_at);
                       return (
                         <tr key={j.beat_name} style={{ borderTop: "1px solid #eef1f6" }}>
                           <td style={{ padding: "10px 14px" }}>
@@ -2989,14 +2993,29 @@ export default function SettingsPage() {
                             <div style={{ fontSize: 11, color: "#9fb0c0" }}>{j.task}</div>
                           </td>
                           <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{j.schedule}</td>
-                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{lastRun}</td>
+                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>
+                            {lastRun}
+                            {/* "Last run" alone can't tell a working job from one
+                                that runs every 3 minutes and does nothing, which
+                                is how several integrations stayed dead for months
+                                behind a green badge. Show when it last did work. */}
+                            <div style={{ fontSize: 11, color: "#9fb0c0", marginTop: 2 }}>
+                              did work: {fmt(j.last_effective_at)}
+                            </div>
+                          </td>
                           <td style={{ padding: "10px 14px" }}>
                             <span style={{ background: tone.bg, color: tone.fg, padding: "3px 9px", borderRadius: 999, fontWeight: 700, fontSize: 11.5 }}>{tone.label}</span>
                             {j.last_error ? <div style={{ fontSize: 11, color: "#b42336", marginTop: 4, maxWidth: 320, lineHeight: 1.4 }}>{j.last_error}</div> : null}
+                            {!j.last_error && j.last_skip_reason ? (
+                              <div style={{ fontSize: 11, color: "#175089", marginTop: 4, maxWidth: 320, lineHeight: 1.4 }}>
+                                skipped: {j.last_skip_reason}
+                              </div>
+                            ) : null}
                           </td>
                           <td style={{ padding: "10px 14px", color: "#5b6b7d" }}>
                             {j.runs_total}
                             {j.failures_total > 0 ? <span style={{ color: "#b42336", fontWeight: 600 }}> · {j.failures_total} failed</span> : null}
+                            {j.skips_total > 0 ? <span style={{ color: "#175089", fontWeight: 600 }}> · {j.skips_total} skipped</span> : null}
                           </td>
                         </tr>
                       );

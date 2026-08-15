@@ -65,6 +65,13 @@ async def get_job_health(session: DBSession, _admin: AdminUser) -> dict:
             staleness = "failing"
         elif (now - last_run_aware).total_seconds() > (2 * gap + 300):
             staleness = "stale"
+        elif r.last_status == "skipped":
+            # Running fine, doing nothing. Its own category rather than "ok",
+            # because the previous behaviour — reporting these as ok — is what
+            # kept tl;dv (nothing imported since April), pre-meeting briefs
+            # (none sent all month) and personal inbox sync (off since the
+            # previous evening) showing green while reps chased the symptoms.
+            staleness = "idle"
         else:
             staleness = "ok"
 
@@ -74,14 +81,20 @@ async def get_job_health(session: DBSession, _admin: AdminUser) -> dict:
             "schedule": _schedule_label(sched),
             "last_run_at": last_run.isoformat() if last_run else None,
             "last_success_at": r.last_success_at.isoformat() if r and r.last_success_at else None,
+            # When the job last did real work, as opposed to merely running.
+            "last_effective_at": (
+                r.last_effective_at.isoformat() if r and r.last_effective_at else None
+            ),
+            "last_skip_reason": r.last_skip_reason if r else None,
             "last_status": r.last_status if r else None,
             "last_error": r.last_error if r else None,
             "last_duration_ms": r.last_duration_ms if r else None,
             "runs_total": r.runs_total if r else 0,
             "failures_total": r.failures_total if r else 0,
+            "skips_total": r.skips_total if r else 0,
             "staleness": staleness,
         })
 
-    order = {"failing": 0, "stale": 1, "unknown": 2, "ok": 3}
+    order = {"failing": 0, "stale": 1, "idle": 2, "unknown": 3, "ok": 4}
     jobs.sort(key=lambda j: order.get(j["staleness"], 9))
     return {"jobs": jobs, "as_of": now.isoformat()}

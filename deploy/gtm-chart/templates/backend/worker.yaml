@@ -27,7 +27,23 @@ spec:
         - name: copilot
           image: "{{.Values.backend.image}}"
           command: [ "celery" ]
-          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo" ]
+          # prefork, NOT --pool=solo (what this ran until 2026-08-15), for two
+          # reasons measured in production:
+          #
+          # 1. task_time_limit / task_soft_time_limit in app/celery_app.py are
+          #    enforced by killing the child process running the task. A
+          #    single-process pool has no child to kill, so the documented
+          #    "safety net" against a hung Gmail/Instantly/tl;dv HTTP call did
+          #    not exist on the queue that makes all of those calls.
+          # 2. solo runs exactly one task at a time.
+          #    sync_active_instantly_campaigns takes ~175s every 15 min, and for
+          #    that whole time nothing else on the default queue can run —
+          #    including every per-user inbox sync, which is fanned out onto
+          #    this same queue.
+          #
+          # concurrency 2 fits the 512Mi limit (each child is a full app
+          # process); raise it with the memory limit, not on its own.
+          args: [ "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=prefork", "--concurrency=2" ]
           imagePullPolicy: "Always"
           envFrom:
             - secretRef:

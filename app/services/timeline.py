@@ -22,6 +22,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.user import User
+from app.services.deal_activity import deal_activity_condition
 
 TimelineEvent = dict[str, Any]
 
@@ -201,10 +202,17 @@ async def build_contact_timeline(
 async def build_deal_timeline(
     session, deal_id: UUID, limit: int = 150
 ) -> list[TimelineEvent]:
-    """Return chronological timeline (newest first) for a single deal."""
+    """Return chronological timeline (newest first) for a single deal.
+
+    Includes activities logged against a linked stakeholder, not only those
+    carrying this deal's id. Calls are recorded against the contact, so filtering
+    on ``Activity.deal_id`` alone rendered a deal timeline with essentially every
+    call missing — build_company_timeline below already ORs the contact arm; this
+    applies the same rule one level down.
+    """
     activities_result = await session.execute(
         select(Activity)
-        .where(Activity.deal_id == deal_id)
+        .where(deal_activity_condition(deal_id))
         .order_by(Activity.created_at.desc())
         .limit(limit)
     )

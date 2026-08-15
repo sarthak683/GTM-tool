@@ -21,7 +21,7 @@ import asyncio
 import logging
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -277,3 +277,79 @@ async def _mark_failed(recording_id: UUID, reason: str) -> None:
             await _set_failed(session, recording_id, reason[:2000])
     finally:
         await engine.dispose()
+
+
+# ── Stuck-recording reaper ───────────────────────────────────────────
+
+# States a recording passes *through*. A row sitting in one of these long after
+# the task's own time limit means the task is never coming back to it.
+_IN_FLIGHT_STATUSES = ("uploaded", "transcribing", "classifying")
+
+# task_time_limit is 3600s; anything still in flight after 2h has outlived any
+# legitimate run, including a retry.
+STUCK_AFTER = timedelta(hours=2)
+
+
+@celery_app.task(name="app.tasks.transcribe_call.reap_stuck_call_recordings")
+def reap_stuck_call_recordings() -> dict:
+    """Fail recordings abandoned mid-pipeline so the UI stops spinning.
+
+    transcribe_call_task writes a fail state on its own crash path, but that
+    only runs if the *process* survives to run it. When the worker itself dies
+    — OOM kill, node drain, rollout — the row is left in whatever intermediate
+    state it had reached, with nothing scheduled to ever touch it again.
+
+    Production on 2026-08-15 held 25 such rows (15 classifying, 9 transcribing,
+    1 uploaded), the newest from mid-July: a month of reps watching a recording
+    that would never finish, with no error to report and nothing in any queue.
+
+    Marking them failed is honest and actionable — the rep can re-record. It is
+    also all that is possible: the audio lives only in Redis for the duration of
+    the task, so a stuck row has no recoverable audio behind it.
+    """
+    return _run_reaper()
+
+
+def _run_reaper() -> dict:
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_reap())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _reap() -> dict:
+    from app.database import task_session
+    from app.models.call_recording import CallRecording
+
+    cutoff = datetime.utcnow() - STUCK_AFTER
+    async with task_session() as session:
+        rows = (
+            await session.execute(
+                select(CallRecording).where(
+                    CallRecording.status.in_(_IN_FLIGHT_STATUSES),
+                    CallRecording.updated_at < cutoff,
+                )
+            )
+        ).scalars().all()
+
+        for recording in rows:
+            # Capture the stage it died in before overwriting it — that's the
+            # only diagnostic the row will carry afterwards.
+            stalled_at = recording.status
+            recording.status = "failed"
+            recording.failure_reason = (
+                f"Transcription did not finish (abandoned in '{stalled_at}' "
+                "state). The worker handling it stopped before it could complete. "
+                "Please re-record this call."
+            )
+            recording.updated_at = datetime.utcnow()
+            session.add(recording)
+
+        if rows:
+            await session.commit()
+            logger.warning("reaped %d stuck call recordings", len(rows))
+
+        return {"reaped": len(rows)}

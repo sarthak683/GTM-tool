@@ -17,6 +17,13 @@ from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+# How far behind the stored cursor each run re-scans. Covers tl;dv's own
+# recording upload + processing delay, during which a finished meeting exists
+# but is not yet returned by the API. Deliberately much wider than the 5-minute
+# sync interval: the cost of overlap is a few deduped rows, the cost of a gap is
+# a permanently missing meeting.
+CURSOR_OVERLAP = timedelta(hours=6)
+
 
 def _run_async_task(coro):
     """Run a coroutine inside a fresh event loop with orderly shutdown."""
@@ -46,6 +53,7 @@ async def _async_sync() -> dict:
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy import select
+    from app.clients.tldv import TldvClient
     from app.config import settings
     from app.models.settings import WorkspaceSettings
     from app.services.tldv_sync import sync_tldv_history
@@ -62,6 +70,16 @@ async def _async_sync() -> dict:
                 if not cfg.get("tldv_sync_enabled", True):
                     logger.info("tl;dv sync is disabled in settings, skipping")
                     return {"status": "disabled"}
+
+                # Missing credentials is a configuration state, not a failure —
+                # report it as a skip so it shows as "Idle: tl;dv API key not
+                # configured" rather than a permanent red badge an operator
+                # learns to ignore. sync_tldv_history raises ValueError for this
+                # (TldvClient.mock), which is indistinguishable from a real
+                # error once it reaches the except below, so check it up front.
+                if TldvClient().mock:
+                    logger.info("tl;dv sync skipped — API key not configured")
+                    return {"status": "skipped", "reason": "tl;dv API key not configured"}
 
                 # ── Self-throttle: skip if not enough time has passed ─────────────
                 interval_minutes: int = int(cfg.get("tldv_sync_interval_minutes") or 5)
@@ -83,11 +101,24 @@ async def _async_sync() -> dict:
                 page_size: int = int(cfg.get("tldv_page_size") or 10)
                 max_pages: int = int(cfg.get("tldv_max_pages") or 2)
 
+                # Re-scan a window behind the cursor rather than starting exactly
+                # where the last run stopped. A tl;dv meeting becomes visible to
+                # the API only after the recording finishes uploading and
+                # processing, so its own timestamp can already be older than the
+                # cursor by the time we could have seen it. With an exact cursor
+                # that meeting is skipped once and then never looked at again —
+                # a silently lost call recording, with the task still reporting
+                # success. Re-scanning is free: sync_tldv_history dedupes on
+                # external_source_id, so a re-seen meeting is a no-op update.
+                scan_from = (
+                    last_synced_at - CURSOR_OVERLAP if last_synced_at else None
+                )
+
                 result = await sync_tldv_history(
                     session,
                     page_size=page_size,
                     max_pages=max_pages,
-                    since=last_synced_at,  # None on first run → full lookback
+                    since=scan_from,  # None on first run → full lookback
                 )
 
                 # ── Write last_synced_at back to DB ───────────────────────────────
@@ -100,8 +131,14 @@ async def _async_sync() -> dict:
 
                 logger.info("tl;dv sync completed: %s", result)
                 return result if isinstance(result, dict) else {"status": "ok"}
-            except Exception as exc:
-                logger.warning("tl;dv sync failed: %s", exc)
-                return {"error": str(exc)}
+            except Exception:
+                # Re-raise rather than returning {"error": ...}. Swallowing the
+                # exception into a return value makes Celery mark the task
+                # SUCCESS, which is what job_health records — so a tl;dv sync
+                # that has been failing for weeks shows a green badge on the
+                # System Health panel. Note the cursor is NOT advanced on this
+                # path, so the next run retries the same window.
+                logger.exception("tl;dv sync failed")
+                raise
     finally:
         await engine.dispose()

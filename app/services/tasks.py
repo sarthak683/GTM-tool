@@ -24,6 +24,7 @@ from app.services.activity_signal_classifier import ActivitySignal, classify_act
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
+from app.services.deal_activity import deal_activity_condition, engagement_only
 from app.services.deal_activity_interpreter import DealActivityInterpretation, interpret_deal_activity
 from app.services.deal_stage_playbook import stage_allows_stage_move, stage_allows_system_key
 from app.services.deal_health import compute_health
@@ -81,7 +82,7 @@ async def compute_deal_task_input_hash(session: AsyncSession, deal: Deal) -> str
     activities = (
         await session.execute(
             select(Activity)
-            .where(Activity.deal_id == deal.id)
+            .where(deal_activity_condition(deal.id))
             .order_by(Activity.created_at.desc())
             .limit(AI_TASK_SIGNAL_WINDOW)
         )
@@ -3016,10 +3017,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
     activity_rows = (
         await session.execute(
             select(Activity)
-            .where(
-                Activity.deal_id == deal.id,
-                Activity.type.in_(["email", "call", "note", "transcript", "meeting"]),
-            )
+            .where(deal_activity_condition(deal.id), engagement_only())
             .order_by(Activity.created_at.desc())
             .limit(25)
         )

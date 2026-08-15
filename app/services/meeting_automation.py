@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.gmail_sender import send_gmail_email
 from app.clients.resend_client import send_email
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
@@ -468,7 +468,18 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
     "Run now" admin action so it sends immediately regardless of clock time).
     The `enabled` flag is always respected.
     """
-    async with AsyncSessionLocal() as session:
+    # task_session() (NullPool, one-shot engine), not the shared
+    # AsyncSessionLocal pool — same reason deal_reminders and sales_reports use
+    # it: Celery runs each task in a fresh event loop, and the shared pool hands
+    # back an asyncpg connection bound to the previous, now-dead one
+    # ("Task got Future attached to a different loop").
+    #
+    # This is the last beat-scheduled caller that was still on the shared pool,
+    # and it shows: job_health recorded 1,698 failures across 3,461 runs of
+    # send_due_pre_meeting_briefs — a ~49% failure rate, matching the
+    # success/fail/success/fail cadence that signature produces. Every failed
+    # run inside the daily send window is a brief that never reached the rep.
+    async with task_session() as session:
         settings_row = await _get_or_create_settings(session)
         config = normalize_pre_meeting_settings(settings_row.pre_meeting_automation_settings)
         if not config["enabled"]:
