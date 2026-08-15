@@ -46,6 +46,7 @@ US_POD_REPORT_RECIPIENTS = [
     "sarthak@beacon.li",
     "maithili@beacon.li",
     "manognya@beacon.li",
+    "john@beacon.li",
 ]
 
 # India pod — same {name, email, aliases} roster shape as US, sourced from the
@@ -64,6 +65,7 @@ INDIA_POD_REPORT_RECIPIENTS = [
     "sarthak@beacon.li",
     "maithili@beacon.li",
     "manognya@beacon.li",
+    "john@beacon.li",
 ]
 
 # India pod works an IST daytime (it doesn't call US prospects overnight like the
@@ -502,6 +504,9 @@ async def _build_call_detail_rows(
     # For "Mtg booked" calls, show the deal's next scheduled meeting — the one
     # the call presumably just booked. Picks the earliest upcoming meeting per
     # deal; falls back to the most recent past one if nothing is upcoming.
+    # When the deal has no linked meeting, fall back to the deal's own
+    # pipeline "meeting booked date" (Deal.close_date_est), which is set when
+    # the deal is created/updated in the pipeline.
     meeting_by_deal: dict[UUID, datetime] = {}
     booked_deal_ids = {c["deal_id"] for c in candidates if c["deal_id"] and c["is_meeting_booked"]}
     if booked_deal_ids:
@@ -523,11 +528,27 @@ async def _build_call_detail_rows(
             if meeting.scheduled_at >= now and existing < now:
                 meeting_by_deal[meeting.deal_id] = meeting.scheduled_at
 
+    close_date_by_deal: dict[UUID, date] = {}
+    deals = (
+        await session.execute(select(Deal).where(Deal.id.in_(booked_deal_ids)))
+    ).scalars().all()
+    for deal in deals:
+        if deal.close_date_est:
+            close_date_by_deal[deal.id] = deal.close_date_est
+
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
         contact = contacts_by_id.get(candidate["contact_id"]) if candidate["contact_id"] else None
         company = companies_by_id.get(contact.company_id) if contact and contact.company_id else None
-        meeting_at = meeting_by_deal.get(candidate["deal_id"]) if candidate["deal_id"] else None
+        deal_id = candidate["deal_id"] if candidate["deal_id"] else None
+        meeting_at = meeting_by_deal.get(deal_id) if deal_id else None
+        close_date = close_date_by_deal.get(deal_id) if deal_id else None
+        if meeting_at:
+            meeting_date_display = meeting_at.strftime("%b %d, %I:%M %p")
+        elif close_date:
+            meeting_date_display = close_date.strftime("%b %d, %Y")
+        else:
+            meeting_date_display = "—"
         rows.append(
             {
                 "rep_name": candidate["rep_name"],
@@ -535,7 +556,7 @@ async def _build_call_detail_rows(
                 "prospect_name": f"{contact.first_name} {contact.last_name}".strip() if contact else "—",
                 "designation": (contact.title if contact and contact.title else "—"),
                 "outcome_label": candidate["outcome_label"],
-                "meeting_date": meeting_at.strftime("%b %d, %I:%M %p") if meeting_at else "—",
+                "meeting_date": meeting_date_display,
                 "created_at": candidate["created_at"],
             }
         )

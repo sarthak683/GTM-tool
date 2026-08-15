@@ -944,6 +944,8 @@ function ActivityDrilldownModal({
     return true;
   });
 
+  const showAssignments = displayedRows.some((row) => row.ae_name || row.sdr_name);
+
   return (
     <div
       role="dialog"
@@ -997,7 +999,10 @@ function ActivityDrilldownModal({
                 type="button"
                 onClick={() => downloadCsv(
                   `${title.toLowerCase().replace(/[\s·]+/g, "-")}-sources`,
-                  ["When", "Direction/Type", "Source", "Person", "Company", "Subject/Outcome", "From", "To"],
+                  [
+                    "When", "Direction/Type", "Source", "Person", "Company", "Subject/Outcome", "From", "To",
+                    ...(showAssignments ? ["AE Assigned", "SDR Assigned"] : []),
+                  ],
                   data.rows.map((row) => [
                     formatSnapshotTime(row.occurred_at),
                     row.direction || row.activity_type || "",
@@ -1007,6 +1012,7 @@ function ActivityDrilldownModal({
                     row.subject || row.call_outcome || "",
                     row.from_email || "",
                     row.to_email || "",
+                    ...(showAssignments ? [row.ae_name || "", row.sdr_name || ""] : []),
                   ]),
                 )}
                 style={exportBtnStyle}
@@ -1037,6 +1043,8 @@ function ActivityDrilldownModal({
                     <th style={thSty}>When</th>
                     <th style={thSty}>Source</th>
                     <th style={thSty}>Person / Company</th>
+                    {showAssignments && <th style={thSty}>AE Assigned</th>}
+                    {showAssignments && <th style={thSty}>SDR Assigned</th>}
                     <th style={thSty}>Details</th>
                   </tr>
                 </thead>
@@ -1061,6 +1069,20 @@ function ActivityDrilldownModal({
                         <p style={{ margin: 0, fontWeight: 800, color: "#1d2b3a" }}>{row.contact_name || row.contact_email || row.company_name || "—"}</p>
                         <p style={{ margin: "4px 0 0", color: "#62748a" }}>{row.company_name || row.deal_name || "—"}</p>
                       </td>
+                      {showAssignments && (
+                        <td style={tdSty}>
+                          <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 8, background: "#eef4ff", color: "#3555c4", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>
+                            {row.ae_name || "—"}
+                          </span>
+                        </td>
+                      )}
+                      {showAssignments && (
+                        <td style={tdSty}>
+                          <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 8, background: "#eefaf2", color: "#1e8a5e", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>
+                            {row.sdr_name || "—"}
+                          </span>
+                        </td>
+                      )}
                       <td style={{ ...tdSty, color: "#3f5065" }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                           <div style={{ flex: 1 }}>
@@ -2455,7 +2477,7 @@ export default function SalesAnalytics() {
       .catch(() => setPods([]));
   }, []);
 
-  const [windowDays, setWindowDays] = useState<number>(90);
+  const [windowDays, setWindowDays] = useState<number>(7);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
   const [repFilter, setRepFilter] = useState<string[]>([]);
   const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
@@ -2699,17 +2721,22 @@ export default function SalesAnalytics() {
     text: string;
     value: number;
   }>>(() => {
-    const rows = data?.rep_activity ?? [];
-    const sum = (field: keyof SalesRepActivityRow) => rows.reduce((acc, row) => acc + Number((row[field] as number | undefined) ?? 0), 0);
+    // Global unique counts (each demo counted once) so the week buckets
+    // reconcile to the Demo Scheduled total. Fall back to summing the per-rep
+    // rows only if the backend hasn't shipped meeting_bucket_totals yet.
+    const totals = data?.meeting_bucket_totals;
+    const sum = (field: keyof SalesRepActivityRow) => totals
+      ? 0
+      : (data?.rep_activity ?? []).reduce((acc, row) => acc + Number((row[field] as number | undefined) ?? 0), 0);
 
     return [
-      { key: "next_1w", label: "Next 1 Week", sub: "scheduled", tone: "#fff8ec", text: "#c07a1a", value: sum("meetings_next_1w") },
-      { key: "next_2w", label: "Next 1–2 Weeks", sub: "scheduled", tone: "#edf4ff", text: "#3856c8", value: sum("meetings_next_2w") },
-      { key: "beyond_2w", label: ">2 Weeks", sub: "scheduled", tone: "#eefbf2", text: "#1e8a5e", value: sum("meetings_beyond_2w") },
-      { key: "direct_sql", label: "Direct SQL", sub: "VP / SVP / Chief", tone: "#f3eaff", text: "#7c3aed", value: sum("direct_sql") },
-      { key: "demo_rescheduled", label: "Demo Rescheduled", sub: "date changed", tone: "#fff2f2", text: "#c0392b", value: sum("demos_rescheduled") },
+      { key: "next_1w", label: "Next 1 Week", sub: "scheduled", tone: "#fff8ec", text: "#c07a1a", value: totals?.meetings_next_1w ?? sum("meetings_next_1w") },
+      { key: "next_2w", label: "Next 1–2 Weeks", sub: "scheduled", tone: "#edf4ff", text: "#3856c8", value: totals?.meetings_next_2w ?? sum("meetings_next_2w") },
+      { key: "beyond_2w", label: ">2 Weeks", sub: "scheduled", tone: "#eefbf2", text: "#1e8a5e", value: totals?.meetings_beyond_2w ?? sum("meetings_beyond_2w") },
+      { key: "direct_sql", label: "Direct SQL", sub: "VP / SVP / Chief", tone: "#f3eaff", text: "#7c3aed", value: totals?.direct_sql ?? sum("direct_sql") },
+      { key: "demo_rescheduled", label: "Demo Rescheduled", sub: "date changed", tone: "#fff2f2", text: "#c0392b", value: totals?.demo_rescheduled ?? sum("demos_rescheduled") },
     ];
-  }, [data?.rep_activity]);
+  }, [data?.rep_activity, data?.meeting_bucket_totals]);
 
   const metricCards: Array<{
     label: string;
