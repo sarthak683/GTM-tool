@@ -7,9 +7,9 @@
 /* ───────────────────────────────────────────────────────────────────────
  * Design tokens — shared with the rest of the refresh family
  * ─────────────────────────────────────────────────────────────────────── */
-/* Card spacing — push them apart for clearer rhythm */
+/* Card spacing — one consistent rhythm at true (un-zoomed) pixel size */
 .sales-analytics-page {
-  gap: 22px !important;
+  gap: 16px !important;
 }
 
 /* The overview tab content is a React fragment mixing element types — a grid
@@ -17,28 +17,23 @@
  * 2-column grid wrappers. A margin-based `panel + panel` hack missed the
  * div→section seams (leaving cards flush) and wrongly offset the right column
  * in 2-up rows. Giving the wrapper a real flex column makes EVERY child share
- * one consistent vertical rhythm, regardless of tag. */
+ * one consistent vertical rhythm, regardless of tag. Section headings sit
+ * 18px above their cards via this gap. */
 .sa-tab-content {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-}
-
-/* Inner multi-column chart grids */
-.sales-analytics-page [style*="display: grid"][style*="gridTemplateColumns"],
-.sales-analytics-page [style*="display:grid"][style*="grid-template-columns"] {
-  gap: 18px !important;
+  gap: 18px;
 }
 
 .sales-analytics-page {
   --sa-bg-1:        #f6f8fc;
   --sa-bg-2:        #eef3fa;
   --sa-surface:     #ffffff;
-  --sa-border:      #e2eaf5;
+  --sa-border:      #e3e9f2;
   --sa-border-soft: #eef2f8;
-  --sa-ink:         #0f1f33;
+  --sa-ink:         #142335;
   --sa-ink-soft:    #4a5b73;
-  --sa-ink-mute:    #7d8ea6;
+  --sa-ink-mute:    #68788d;
   --sa-primary:     #5a9216;
   --sa-primary-soft:#f1f9e2;
   --sa-accent:      #2f9e8f;
@@ -55,15 +50,7 @@
     radial-gradient(circle at top right, rgba(154, 206, 61, 0.10), transparent 35%),
     radial-gradient(circle at bottom left, rgba(111, 174, 39, 0.06), transparent 30%),
     linear-gradient(180deg, var(--sa-bg-1) 0%, var(--sa-bg-2) 100%) !important;
-  padding: 14px 4px 56px !important;
-}
-
-/* Wider container */
-.sales-analytics-page > * {
-  max-width: min(1920px, calc(100vw - 16px));
-  margin-left: auto !important;
-  margin-right: auto !important;
-  width: 100%;
+  padding: 10px 4px 40px !important;
 }
 
 /* Entrance */
@@ -76,60 +63,15 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Hero — slimmer, modern
+ * Filter bar — compact controls row under the Layout topbar title.
+ * (The old marketing hero was removed; the topbar owns the page title.)
+ * Needs overflow visible + a stacking bump so the rep/geo dropdown
+ * popovers are not clipped by later siblings.
  * ─────────────────────────────────────────────────────────────────────── */
-.sales-analytics-page .crm-panel:first-of-type {
-  border-radius: 18px !important;
-  border: 1px solid var(--sa-border) !important;
-  box-shadow: var(--sa-shadow-md) !important;
+.sales-analytics-page .sa-filter-bar {
   position: relative;
-  overflow: hidden;
-  padding: 18px 22px !important;
-  background: linear-gradient(135deg, #ffffff 0%, #f8fcf1 60%, #eef7e1 100%) !important;
-}
-.sales-analytics-page .crm-panel:first-of-type::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, var(--sa-primary), var(--sa-accent));
-  opacity: 0.9;
-}
-.sales-analytics-page .crm-panel:first-of-type::after {
-  content: "";
-  position: absolute;
-  right: -80px; top: -80px;
-  width: 260px; height: 260px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(154, 206, 61, 0.12), transparent 70%);
-  pointer-events: none;
-}
-
-/* Hero typography — compress the marketing copy */
-.sales-analytics-page .crm-panel:first-of-type h2 {
-  font-size: 26px !important;
-  letter-spacing: -0.025em !important;
-  color: var(--sa-ink) !important;
-}
-.sales-analytics-page .crm-panel:first-of-type p {
-  color: var(--sa-ink-soft) !important;
-  font-size: 13px !important;
-  line-height: 1.55 !important;
-}
-.sales-analytics-page .crm-panel:first-of-type p[style*="text-transform: uppercase"] {
-  font-size: 10.5px !important;
-  letter-spacing: 0.1em !important;
-  color: var(--sa-ink-mute) !important;
-}
-
-/* Period picker buttons (in the hero side card) */
-.sales-analytics-page .crm-panel:first-of-type button[style*="border-radius: 999px"] {
-  height: 34px !important;
-  font-size: 11.5px !important;
-  letter-spacing: 0.02em;
-  transition: all 0.14s ease;
-}
-.sales-analytics-page .crm-panel:first-of-type button[style*="border-radius: 999px"]:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  z-index: 30;
+  overflow: visible;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -140,9 +82,9 @@
   border: 1px solid var(--sa-border) !important;
   border-radius: 16px !important;
   box-shadow: var(--sa-shadow-sm) !important;
-  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.sales-analytics-page .crm-panel:not(:first-of-type):hover {
+.sales-analytics-page .crm-panel:not(.sa-filter-bar):hover {
   box-shadow: var(--sa-shadow-md) !important;
   border-color: #cfdaea !important;
 }
@@ -150,11 +92,6 @@
 /* ── Leaderboard cards (SDR + AE) ─────────────────────────────────────── */
 .sales-analytics-page .sa-leaderboard.crm-panel {
   border-top: 2.5px solid #4a8c5c !important;
-}
-.sales-analytics-page .sa-leaderboard.crm-panel h2 {
-  font-size: 22px !important;
-  font-weight: 800 !important;
-  color: #1a2e1e !important;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -287,24 +224,12 @@
   opacity: 0.5;
 }
 
-/* ───────────────────────────────────────────────────────────────────────
- * Big numbers / KPI values throughout the page
- * Heuristic — large fontWeight 800 text becomes the KPI hero number
- * ─────────────────────────────────────────────────────────────────────── */
-.sales-analytics-page [style*="font-weight: 800"][style*="font-size: 28"],
-.sales-analytics-page [style*="font-weight: 800"][style*="font-size: 32"],
-.sales-analytics-page [style*="font-weight: 800"][style*="font-size: 36"] {
-  letter-spacing: -0.025em !important;
-  color: var(--sa-ink) !important;
-  font-feature-settings: "tnum" 1, "lnum" 1;
-}
-
-/* Uppercase micro-labels */
-.sales-analytics-page [style*="text-transform: uppercase"][style*="letter-spacing"] {
-  font-size: 10.5px !important;
-  letter-spacing: 0.08em !important;
-  font-weight: 800 !important;
-}
+/* NOTE: the old attribute-selector heuristics that keyed off inline styles
+ * ([style*="font-size: 28"] KPI numbers, [style*="text-transform: uppercase"]
+ * micro-labels, [style*="gridTemplateColumns"] grid gaps) were removed. The
+ * inline styles they targeted no longer exist after the un-zoom compaction,
+ * and the 10.5px micro-label override violated the 11px font floor. Sizing
+ * now lives directly on the elements in SalesAnalytics.tsx. */
 
 /* ───────────────────────────────────────────────────────────────────────
  * Tables inside analytics — same treatment as prospects table
@@ -312,11 +237,12 @@
 .sales-analytics-page .crm-table thead th {
   background: linear-gradient(180deg, #fbfcfe 0%, #f3f7fc 100%) !important;
   border-bottom: 1px solid var(--sa-border) !important;
-  font-size: 10.5px !important;
+  font-size: 11px !important;
   font-weight: 800 !important;
   text-transform: uppercase !important;
-  letter-spacing: 0.08em !important;
-  color: #5e7290 !important;
+  letter-spacing: 0.06em !important;
+  color: #68788d !important;
+  padding: 10px 14px !important;
 }
 .sales-analytics-page .crm-table tbody td {
   border-bottom: 1px solid var(--sa-border-soft) !important;
@@ -339,24 +265,26 @@
 .sales-analytics-page *::-webkit-scrollbar-track { background: transparent; }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Buttons — modernize
+ * Buttons — subtle hover feedback. Scoped to panel buttons; excludes the
+ * 34px filter-bar controls so the filter row never shifts on hover.
  * ─────────────────────────────────────────────────────────────────────── */
-.sales-analytics-page button[style*="border-radius"]:not([style*="border-radius: 999px"]) {
+.sales-analytics-page .crm-panel:not(.sa-filter-bar) button[style*="border-radius"] {
   transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
-.sales-analytics-page button[style*="border-radius"]:not([style*="border-radius: 999px"]):not([disabled]):hover {
+.sales-analytics-page .crm-panel:not(.sa-filter-bar) button[style*="border-radius"]:not([disabled]):hover {
   transform: translateY(-1px);
 }
 
 /* Mobile */
 @media (max-width: 760px) {
   .sales-analytics-page {
-    padding: 10px 4px 80px !important;
+    padding: 8px 4px 80px !important;
   }
-  .sales-analytics-page .crm-panel:first-of-type {
-    padding: 14px 16px !important;
+  .sales-analytics-page .sa-filter-bar {
+    padding: 10px 12px !important;
+    gap: 12px !important;
   }
-  .sales-analytics-page .crm-panel:first-of-type h2 {
-    font-size: 22px !important;
+  .sales-analytics-page .sa-filter-bar > div {
+    min-width: 0;
   }
 }

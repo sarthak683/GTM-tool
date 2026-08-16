@@ -71,7 +71,7 @@ const PALETTE = {
   text: "#1f3144",
   muted: "#66788d",
   subtle: "#8b9db2",
-  hairline: "#e3ebf4",
+  hairline: "#e3e9f2",
   panel: "#ffffff",
   tintBlue: "#eef4ff",
   tintBlueBorder: "#d7e2fb",
@@ -111,17 +111,17 @@ function Panel({
     <section
       className="crm-panel"
       style={{
-        padding: 24,
+        padding: 18,
         display: "flex",
         flexDirection: "column",
-        gap: 18,
+        gap: 14,
       }}
     >
       {(title || action) && (
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {title && <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: PALETTE.text, letterSpacing: "-0.01em" }}>{title}</h2>}
-            {subtitle && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: PALETTE.muted, maxWidth: 680 }}>{subtitle}</p>}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {title && <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: PALETTE.text, letterSpacing: "-0.01em" }}>{title}</h2>}
+            {subtitle && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: PALETTE.muted, maxWidth: 680 }}>{subtitle}</p>}
           </div>
           {action}
         </div>
@@ -456,7 +456,7 @@ export function ScorecardTab({ reps }: { reps: RepSummary[] }) {
             >
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>{attainmentPct}%</div>
-                <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", color: PALETTE.subtle, textTransform: "uppercase", marginTop: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: PALETTE.subtle, textTransform: "uppercase", marginTop: 4 }}>
                   Attainment
                 </div>
               </div>
@@ -765,11 +765,11 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 10, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Deals</div>
+                        <div style={{ fontSize: 11, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Deals</div>
                         <div style={{ fontSize: 14, color: PALETTE.text, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{row.deals}</div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 10, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Median</div>
+                        <div style={{ fontSize: 11, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Median</div>
                         <div style={{ fontSize: 14, color: PALETTE.text, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
                           {row.median_days != null ? `${row.median_days.toFixed(1)}d` : "—"}
                         </div>
@@ -1028,18 +1028,18 @@ function RedAlertModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 {["Deal", "Amount", "Date in Stage", "AE Assigned", "SDR Assigned"].map((h, i) => (
-                  <th key={h} style={{ padding: "10px 16px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#8b9db2", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                  <th key={h} style={{ padding: "10px 14px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {deals.map((d, i) => (
                 <tr key={d.deal_id} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
-                  <td style={{ padding: "12px 16px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
-                  <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
-                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{fmtDate(d.stage_entered_at)}</td>
-                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.ae_name || "—"}</td>
-                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(d.stage_entered_at)}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.ae_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
                 </tr>
               ))}
               {deals.length === 0 && (
@@ -1102,17 +1102,17 @@ function PipelineBucketModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 {["Deal Name", "Amount", "Stage", "AE Assigned"].map((h, i) => (
-                  <th key={h} style={{ padding: "10px 16px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#8b9db2", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                  <th key={h} style={{ padding: "10px 14px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {deals.map((d, i) => (
                 <tr key={d.deal_id} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
-                  <td style={{ padding: "12px 16px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
-                  <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
-                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.stage}</td>
-                  <td style={{ padding: "12px 16px", color: "#62748a" }}>{d.ae_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.stage}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.ae_name || "—"}</td>
                 </tr>
               ))}
               {deals.length === 0 && <tr><td colSpan={4} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>}
@@ -1199,7 +1199,7 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
                     onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
                     onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
                   >
-                    <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                       {label}
                     </div>
                     <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, marginTop: 6, lineHeight: 1 }}>
@@ -1290,7 +1290,7 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
                 onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
                 onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
               >
-                <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
                   Late Stage · PoC Agreed → Closed
                 </div>
                 <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>
@@ -1327,7 +1327,7 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
                 onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
                 onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
               >
-                <div style={{ fontSize: 10, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: isHot ? PALETTE.tintRedText : PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
                   Small Avg. Deal Size
                 </div>
                 <div style={{ fontSize: 32, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>
@@ -1470,7 +1470,7 @@ export function ForecastTab({ reps }: { reps: RepSummary[] }) {
                   <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 28, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>{attainmentPct}%</div>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: PALETTE.subtle, textTransform: "uppercase", marginTop: 4, letterSpacing: "0.1em" }}>to quota</div>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: PALETTE.subtle, textTransform: "uppercase", marginTop: 4, letterSpacing: "0.1em" }}>to quota</div>
                     </div>
                   </div>
                 </div>
@@ -2007,7 +2007,7 @@ function TouchpointPill({
           </span>
         )}
       </div>
-      <span style={{ fontSize: 10, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</span>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
         {rows.map((r) => (
           <div key={r.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -2144,7 +2144,7 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
         </div>
 
         {/* Right — account selector only */}
-        <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
+        <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#f8fafc", padding: 12, display: "grid", gap: 10 }}>
           <div>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Account</p>
             <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total weekly touches in the current window.</p>
@@ -2181,7 +2181,7 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
       </div>
 
       {/* Weekly Outreach Mix chart — full width */}
-      <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+      <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
         <div>
           <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
           <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars show weekly volume by channel — calls, emails, LinkedIn, and meetings — so you can spot where effort is concentrated.</p>
@@ -2283,7 +2283,7 @@ function IncentiveTab() {
         {data && data.rows.length > 0 && (
           <div style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ display: "grid", gap: 10, minWidth: 760 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
                 <span>Rep</span>
                 <span style={{ textAlign: "right" }}>Direct SQL</span>
                 <span style={{ textAlign: "right" }}>Converted</span>

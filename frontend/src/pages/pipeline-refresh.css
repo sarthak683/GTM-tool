@@ -1,0 +1,70 @@
+/* Pipeline refresh — true-scale (post zoom-removal) presentation classes.
+   Owned by Pipeline.tsx; keep board-only styles here, not in index.css. */
+
+/* 11px uppercase muted section label used across the left rail. */
+.pr-rail-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #68788d;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Funnel summary tiles: 16px value + 11px label, 2-col grid. */
+.pr-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pr-summary-tile {
+  border-radius: 10px;
+  border: 1px solid #e3e9f2;
+  background: #fff;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pr-summary-tile--accent {
+  background: #f3fbe3;
+  border-color: #cfe89a;
+}
+
+.pr-summary-tile--success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.pr-summary-value {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: #142335;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pr-summary-tile--accent .pr-summary-value {
+  color: #4d7c0f;
+}
+
+.pr-summary-tile--success .pr-summary-value {
+  color: #15803d;
+}
+
+.pr-summary-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #68788d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

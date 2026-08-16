@@ -109,7 +109,8 @@ export const pageStyle: CSSProperties = {
 };
 
 export const wrapStyle: CSSProperties = {
-  maxWidth: 1450,
+  // Matches the app-shell content width set by Layout.
+  maxWidth: 1560,
   margin: "0 auto",
   display: "grid",
   gap: 16,
@@ -203,21 +204,21 @@ export function MetricCard({ label, value, hint, tone = "neutral", onClick }: {
         border: `1px solid ${toneStyle.border}`,
         background: toneStyle.bg,
         borderRadius: 14,
-        padding: "14px 16px",
+        padding: "11px 14px",
         cursor: onClick ? "pointer" : "default",
       }}
     >
       <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.5 }}>{label.toUpperCase()}</div>
-      <div style={{ marginTop: 8, color: toneStyle.accent, fontWeight: 800, fontSize: 26 }}>{value}</div>
-      <div style={{ marginTop: 6, color: colors.sub, fontSize: 13, lineHeight: 1.45 }}>{hint}</div>
+      <div style={{ marginTop: 6, color: toneStyle.accent, fontWeight: 800, fontSize: 20 }}>{value}</div>
+      <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.45 }}>{hint}</div>
     </div>
   );
 }
 
 export function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div style={{ ...cardStyle, padding: "18px 20px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800, marginBottom: 12 }}>
+    <div style={{ ...cardStyle, padding: "16px 18px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800, fontSize: 14.5, marginBottom: 10 }}>
         {icon}
         <span>{title}</span>
       </div>
@@ -320,7 +321,7 @@ export function ListCard({ title, items, empty }: { title: string; items: string
           {items.map((item, idx) => (
             <div key={`${title}-${idx}`} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
               <CheckCircle2 size={14} color={colors.primary} style={{ marginTop: 2, flexShrink: 0 }} />
-              <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.55 }}>{item}</div>
+              <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>{item}</div>
             </div>
           ))}
         </div>

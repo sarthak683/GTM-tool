@@ -15,6 +15,8 @@
   --p-ink-mute:     #7d8ea6;
   --p-primary:      #1d4ed8;
   --p-primary-soft: #eaf1ff;
+  --p-accent:       #6fae27;   /* global accent green (hover shade) */
+  --p-accent-soft:  #f3fbe3;
   --p-success:      #16a34a;
   --p-warn:         #d97706;
   --p-danger:       #dc2626;
@@ -62,16 +64,16 @@
   overflow: hidden;
 }
 
-/* Header — soft gradient */
+/* Header — soft gradient. 11px floor, 10/14 padding per the global pass. */
 .contacts-table-panel .crm-table thead th {
   background: linear-gradient(180deg, #fbfcfe 0%, #f3f7fc 100%) !important;
   border-bottom: 1px solid var(--p-border) !important;
-  font-size: 10.5px !important;
+  font-size: 11px !important;
   font-weight: 800 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.08em !important;
   color: #5e7290 !important;
-  padding: 12px 14px !important;
+  padding: 10px 14px !important;
   white-space: nowrap;
   user-select: none;
 }
@@ -112,16 +114,16 @@
   border-radius: 0 3px 3px 0;
 }
 
-/* Selected — blue tint stays since it conveys "selected" state */
+/* Selected — soft green tint, matching the green checkbox accent */
 .contacts-table-panel .crm-table tbody tr:has(input[type="checkbox"]:checked) td {
-  background: #eef4fc !important;
+  background: #f6fbec !important;
 }
 .contacts-table-panel .crm-table tbody tr:has(input[type="checkbox"]:checked) td:first-child::before {
   content: "";
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 3px;
-  background: var(--p-primary);
+  background: var(--p-accent);
 }
 
 /* Avatar — denser */
@@ -162,11 +164,11 @@
   text-decoration: none !important;
 }
 
-/* Checkboxes */
+/* Checkboxes — green accent (matches the inline accentColor #6fae27) */
 .contacts-table-panel .crm-table input[type="checkbox"] {
   width: 16px !important;
   height: 16px !important;
-  accent-color: var(--p-primary) !important;
+  accent-color: var(--p-accent) !important;
   cursor: pointer;
 }
 
@@ -180,24 +182,54 @@
 .contacts-page *::-webkit-scrollbar-thumb:hover { background: #a8bbd2; }
 .contacts-page *::-webkit-scrollbar-track { background: transparent; }
 
-/* Action bar — soft elevation */
-.contacts-page > div > div:first-child > div:nth-child(2) {
-  background: var(--p-surface) !important;
-  border-radius: 14px !important;
-  border: 1px solid var(--p-border) !important;
-  box-shadow: var(--p-shadow-sm) !important;
-  padding: 9px 12px !important;
-  gap: 8px !important;
+/* ───────────────────────────────────────────────────────────────────────
+ * Toolbar (.prospect-toolbar) — the bar itself is styled inline in
+ * Contacts.tsx; these classes cover the pieces inline styles can't reach.
+ *
+ * NOTE: the old positional hook (`.contacts-page > div > div:first-child >
+ * div:nth-child(2)`) and the dead `[style*="sticky"]` filter-card hook were
+ * removed with the toolbar reorganization — the first no longer matched the
+ * action bar (it hit the 2nd KPI card and the mobile card list), the second
+ * matched nothing.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/* Search placeholder — single line, ellipsized (textarea placeholders wrap
+   by default, which made the scoped-search hint break onto two rows). */
+.prospect-search-input::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #94a8bc;
+  font-weight: 500;
 }
 
-/* Filter card sticky frost */
-.contacts-page .prospect-desktop-only[style*="sticky"] {
-  background: rgba(255, 255, 255, 0.92) !important;
-  backdrop-filter: saturate(180%) blur(12px);
-  -webkit-backdrop-filter: saturate(180%) blur(12px);
-  border: 1px solid var(--p-border) !important;
-  box-shadow: var(--p-shadow-md) !important;
-  border-radius: 14px !important;
+/* "More ⋯" overflow-menu items */
+.prospect-more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #2c4a63;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+}
+.prospect-more-item:hover:not(:disabled) {
+  background: #f5f7fb;
+}
+.prospect-more-item.danger {
+  color: #b42336;
+}
+.prospect-more-item.danger:hover:not(:disabled) {
+  background: #fff5f5;
 }
 
 /* Disabled buttons */

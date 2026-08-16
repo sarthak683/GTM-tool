@@ -1,29 +1,25 @@
-import { useState } from "react";
 import { Mail, PhoneCall, Linkedin } from "lucide-react";
 import type { Contact } from "../../types";
 import type { LifecycleSummary } from "../../lib/api";
 import { linkedinOutcomeColor } from "../../lib/prospectWorkflow";
 
 /**
- * Outcome-colored progress cell.
+ * Compact single-line progress cell.
  *
- * The dot rail reads left-to-right as a *timeline of outcomes*, not event
- * types — one yellow dot per recorded activity, then a colored qualifier
- * dot for the decisive outcome. This matches how SDRs talk about prospects:
- * "called 3 times, one positive reply" rather than "1 sent, 2 opened, 1
- * clicked."
+ * One small chip per channel (✉ email, ☎ call, and LinkedIn when a motion
+ * exists), colored by state so a rep can scan dozens of rows:
+ *   GREY  — not started
+ *   AMBER — activity in flight (sent/opened, attempts, callback scheduled)
+ *   GREEN — positive outcome (reply, meeting/demo booked)
+ *   RED   — hard negative (not interested, wrong number, DNC, bounce)
  *
- * Color contract (consistent across email + call):
- *   YELLOW — activity happened (call attempt, email sent)
- *   BLUE   — engaged / follow-up in flight (email opened, callback scheduled)
- *   GREEN  — positive outcome (reply, meeting booked, demo scheduled)
- *   RED    — hard negative (not interested, wrong number, DNC, bounce)
- *   WHITE  — pending follow-up slot (only after blue, paired with a date)
+ * Full detail (sub-status, timestamps, follow-up date) lives in the title
+ * tooltip on each chip. A single muted meta line below shows last-touch
+ * recency and live-sequence progress ONLY when that adds information.
  *
- * Call lane example: ●●● ◐ ◯  Apr 12      (3 attempts, callback scheduled)
- *                    yyy  b   w
- * Email lane:        ● ● ●                 (sent → opened → positive reply)
- *                    y b g
+ * The internal color contract below (yellow/blue/green/red/white) is kept
+ * as-is because it mirrors the backend outcome-color filter buckets; the
+ * chips fold yellow/blue/white into the AMBER "in flight" tone.
  */
 
 type OutcomeColor = "yellow" | "blue" | "green" | "red" | "white";
@@ -52,25 +48,23 @@ type ChannelState = {
   followupDateLabel?: string;
 };
 
-// Outcome-color palette. Each color carries the full surface kit (dot fill,
-// chip bg/fg, tint for the row background, the left accent strip, and a
-// translucent ring for hover glow).
-const PALETTE: Record<OutcomeColor, { dot: string; border: string; chipBg: string; chipFg: string; tint: string; bar: string; ring: string }> = {
-  yellow: { dot: "#facc15", border: "#ca8a04", chipBg: "#fffbeb", chipFg: "#854d0e", tint: "#fffbf0", bar: "#facc15", ring: "rgba(250,204,21,0.30)" },
-  blue:   { dot: "#3b82f6", border: "#2563eb", chipBg: "#eff6ff", chipFg: "#1d4ed8", tint: "#f5f9ff", bar: "#3b82f6", ring: "rgba(59,130,246,0.28)" },
-  green:  { dot: "#22c55e", border: "#16a34a", chipBg: "#ecfdf5", chipFg: "#15803d", tint: "#f3fbf6", bar: "#22c55e", ring: "rgba(34,197,94,0.30)" },
-  red:    { dot: "#ef4444", border: "#dc2626", chipBg: "#fef2f2", chipFg: "#b91c1c", tint: "#fff5f5", bar: "#ef4444", ring: "rgba(239,68,68,0.30)" },
-  white:  { dot: "#ffffff", border: "#cbd5e1", chipBg: "#f8fafc", chipFg: "#475569", tint: "#fafbfd", bar: "#cbd5e1", ring: "rgba(148,164,189,0.22)" },
-};
+// Chip tones — the compact render surface. Grey = untouched, amber = in
+// flight, green = positive, red = negative. Palette values follow the global
+// design tokens (soft green #f3fbe3 / dark green text #4d7c0f, border
+// #e3e9f2, muted #68788d).
+type ChipTone = { bg: string; border: string; fg: string };
+const TONE_IDLE: ChipTone = { bg: "#f4f6f9", border: "#e3e9f2", fg: "#68788d" };
+const TONE_INFLIGHT: ChipTone = { bg: "#fffbeb", border: "#fde68a", fg: "#92400e" };
+const TONE_POSITIVE: ChipTone = { bg: "#f3fbe3", border: "#cfe89a", fg: "#4d7c0f" };
+const TONE_NEGATIVE: ChipTone = { bg: "#fef2f2", border: "#fecaca", fg: "#b91c1c" };
 
-// Hero-color resolution — red and green are the decisive outcomes; blue is
-// in-flight; yellow is activity-only; white is pending. When multiple lanes
-// have signal, the hottest color drives the cell border + accent strip.
-const COLOR_RANK: Record<OutcomeColor, number> = { red: 5, green: 4, blue: 3, yellow: 2, white: 1 };
-function hottest(a: OutcomeColor | null, b: OutcomeColor | null): OutcomeColor | null {
-  if (!a) return b;
-  if (!b) return a;
-  return COLOR_RANK[a] >= COLOR_RANK[b] ? a : b;
+function chipTone(color: OutcomeColor | null): ChipTone {
+  if (!color) return TONE_IDLE;
+  if (color === "green") return TONE_POSITIVE;
+  if (color === "red") return TONE_NEGATIVE;
+  // yellow (attempted), blue (engaged/callback), white (pending slot) all
+  // read as "in flight" at row-scan granularity; detail is in the tooltip.
+  return TONE_INFLIGHT;
 }
 
 // Disposition buckets — kept in sync with the backend filter mappings in
@@ -278,147 +272,41 @@ function formatRecent(d: Date | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function Dot({ color, title }: OutcomeDot) {
-  const p = PALETTE[color];
-  return (
-    <span
-      title={title}
-      aria-label={title}
-      style={{
-        width: 9, height: 9, borderRadius: 999,
-        background: p.dot,
-        border: color === "white" ? `1.5px solid ${p.border}` : "none",
-        boxShadow: color === "white" ? "none" : `0 0 0 2px ${p.dot}22`,
-        flexShrink: 0,
-      }}
-    />
-  );
+// Full-detail tooltip line for one channel — label, sub-status, attempt/open
+// detail (via the still-computed dot titles), timestamp, follow-up date.
+function channelTitle(channel: string, state: ChannelState): string {
+  const parts = [
+    `${channel}: ${state.label}`,
+    state.sub,
+    state.overflowCount ? `+${state.overflowCount} more` : null,
+    state.timestamp ? state.timestamp.toLocaleString() : null,
+    state.followupDateLabel ? `Follow-up: ${state.followupDateLabel}` : null,
+  ].filter(Boolean) as string[];
+  return parts.join(" · ");
 }
 
-// Dot rail layout: pre-terminal dots → "+N" overflow pill → terminal
-// outcome dot → optional date label. The ordering matters: putting "+N"
-// before the terminal dot reads "activity, more activity hidden, decisive
-// outcome" — natural for both lanes.
-function DotRail({ dots, overflowCount, terminalDot, followupDateLabel }: {
-  dots: OutcomeDot[];
-  overflowCount?: number;
-  terminalDot?: OutcomeDot;
-  followupDateLabel?: string;
-}) {
-  const isEmpty = dots.length === 0 && !overflowCount && !terminalDot && !followupDateLabel;
-  if (isEmpty) {
-    return <span aria-hidden="true" style={{ width: 1, height: 10, display: "inline-block" }} />;
-  }
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-      {dots.map((d, i) => <Dot key={i} color={d.color} title={d.title} />)}
-      {overflowCount && overflowCount > 0 ? (
-        <span
-          title={`${overflowCount} more`}
-          style={{
-            fontSize: 10, fontWeight: 800, color: "#67768a",
-            letterSpacing: "0.02em",
-            padding: "1px 5px", borderRadius: 999,
-            background: "#f1f5f9", border: "1px solid #dbe3ee",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          +{overflowCount}
-        </span>
-      ) : null}
-      {terminalDot ? <Dot color={terminalDot.color} title={terminalDot.title} /> : null}
-      {followupDateLabel ? (
-        <span style={{
-          marginLeft: 2,
-          fontSize: 10.5, fontWeight: 800,
-          color: PALETTE.blue.chipFg,
-          background: PALETTE.blue.chipBg,
-          padding: "2px 7px", borderRadius: 999,
-          border: `1px solid ${PALETTE.blue.ring}`,
-          fontVariantNumeric: "tabular-nums",
-        }}>
-          {followupDateLabel}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function ChannelRow({ Icon, channel, state }: {
+function StatusChip({ Icon, channel, state }: {
   Icon: typeof Mail;
   channel: string;
   state: ChannelState;
 }) {
-  const palette = state.heroColor ? PALETTE[state.heroColor] : PALETTE.white;
-  const titleParts = [
-    `${channel}: ${state.label}`,
-    state.sub,
-    state.timestamp ? state.timestamp.toLocaleString() : null,
-    state.followupDateLabel ? `Follow-up: ${state.followupDateLabel}` : null,
-  ].filter(Boolean) as string[];
-  const isInactive = !state.heroColor;
-
+  const tone = chipTone(state.heroColor);
+  const text = state.followupDateLabel ? `${state.label} · ${state.followupDateLabel}` : state.label;
   return (
-    <div
-      title={titleParts.join(" · ")}
+    <span
+      title={channelTitle(channel, state)}
+      aria-label={channelTitle(channel, state)}
       style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 10px", borderRadius: 10,
-        background: isInactive ? "#fafbfd" : `linear-gradient(180deg, #ffffff 0%, ${palette.tint} 100%)`,
-        border: `1px solid ${isInactive ? "#e8eef5" : palette.ring}`,
+        display: "inline-flex", alignItems: "center", gap: 5,
+        height: 22, padding: "0 8px", borderRadius: 999,
+        background: tone.bg, border: `1px solid ${tone.border}`, color: tone.fg,
+        fontSize: 11.5, fontWeight: 700, lineHeight: "20px",
+        whiteSpace: "nowrap", maxWidth: 168, minWidth: 0,
       }}
     >
-      <div style={{
-        width: 26, height: 26, borderRadius: 8,
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        background: palette.chipBg,
-        border: `1px solid ${palette.ring}`,
-        color: palette.chipFg, flexShrink: 0,
-      }}>
-        <Icon size={13} />
-      </div>
-
-      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{
-            fontSize: 10, fontWeight: 800, color: "#67768a",
-            textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0,
-          }}>
-            {channel}
-          </span>
-          <span style={{
-            fontSize: 12.5, fontWeight: 800, color: palette.chipFg,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>
-            {state.label}
-          </span>
-        </div>
-        <span style={{
-          fontSize: 10.5, color: "#7a8ea4", fontWeight: 600,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {state.sub}
-        </span>
-      </div>
-
-      <DotRail
-        dots={state.dots}
-        overflowCount={state.overflowCount}
-        terminalDot={state.terminalDot}
-        followupDateLabel={state.followupDateLabel}
-      />
-
-      {state.timestamp ? (
-        <span style={{
-          fontSize: 10, fontWeight: 800, color: palette.chipFg,
-          background: "#ffffff", padding: "2px 7px", borderRadius: 999,
-          border: `1px solid ${palette.ring}`,
-          flexShrink: 0, fontVariantNumeric: "tabular-nums",
-        }}>
-          {formatRecent(state.timestamp)}
-        </span>
-      ) : null}
-    </div>
+      <Icon size={11} style={{ flexShrink: 0 }} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{text}</span>
+    </span>
   );
 }
 
@@ -432,18 +320,7 @@ export function ProgressCell({
   const email = getEmailChannel(contact);
   const call = getCallChannel(contact);
   const linkedin = getLinkedinChannel(contact);
-  const heroColor = hottest(hottest(email.heroColor, call.heroColor), linkedin.heroColor);
-  const heroPalette = heroColor ? PALETTE[heroColor] : PALETTE.white;
-  const [hover, setHover] = useState(false);
 
-  // Pick the strongest signal across all channels for the hero pill.
-  const heroState = (() => {
-    const active = [email, call, linkedin].filter((c) => c.heroColor);
-    if (active.length === 0) return email;
-    return active.reduce((best, c) =>
-      COLOR_RANK[c.heroColor!] > COLOR_RANK[best.heroColor!] ? c : best,
-    );
-  })();
   // Pick the most recent per-event timestamp across both channels. When
   // there's clear activity (heroColor set) but no per-event timestamp —
   // Instantly sometimes records the open count without populating
@@ -467,110 +344,50 @@ export function ProgressCell({
     lifecycle &&
     lifecycle.total_steps > 0 &&
     !["never_launched", "ready"].includes(lifecycle.status);
-  const seqPct = hasLiveSequence ? Math.min(100, Math.round((lifecycle!.done_count / Math.max(1, lifecycle!.total_steps)) * 100)) : 0;
+
+  // Meta line renders only when it adds information beyond the chips:
+  // last-touch recency and/or live-sequence progress. "No touches yet" would
+  // duplicate two grey chips, so it stays in the tooltip only.
+  const showMeta = Boolean(lastTouch || hasLiveSequence);
+
+  const cellTitle = [
+    channelTitle("Email", email),
+    channelTitle("Call", call),
+    linkedin.heroColor || contact.linkedin_url ? channelTitle("LinkedIn", linkedin) : null,
+    lastTouch ? `Last touch: ${lastTouch.toLocaleString()}` : "No touches yet",
+  ].filter(Boolean).join("\n");
 
   return (
     <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        minWidth: 320,
-        position: "relative",
-        background: "#ffffff",
-        borderRadius: 14,
-        border: "1px solid #e5edf5",
-        overflow: "hidden",
-        boxShadow: hover
-          ? `0 8px 24px -8px ${heroPalette.ring}, 0 0 0 1px ${heroPalette.ring}`
-          : "inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(15,39,68,0.04)",
-        transform: hover ? "translateY(-1px)" : "translateY(0)",
-        transition: "box-shadow 160ms ease, transform 160ms ease",
-        cursor: "pointer",
-      }}
+      title={cellTitle}
+      style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180, maxWidth: 280 }}
     >
-      <div style={{
-        position: "absolute", left: 0, top: 0, bottom: 0,
-        width: 3,
-        background: heroColor
-          ? `linear-gradient(180deg, ${heroPalette.bar} 0%, ${heroPalette.bar}99 100%)`
-          : "#e5edf5",
-      }} />
-
-      <div style={{
-        padding: "10px 14px 8px",
-        background: heroColor
-          ? `linear-gradient(135deg, ${heroPalette.tint} 0%, #ffffff 70%)`
-          : "#ffffff",
-        borderBottom: "1px solid #eef2f7",
-        display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between",
-      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+        <StatusChip Icon={Mail} channel="Email" state={email} />
+        <StatusChip Icon={PhoneCall} channel="Call" state={call} />
+        {/* LinkedIn chip only once a motion is logged — an untouched LinkedIn
+            channel stays out of the rail to keep rows scannable; the Action
+            column still exposes the LinkedIn buttons. */}
+        {linkedin.heroColor ? <StatusChip Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
+      </div>
+      {showMeta ? (
         <span style={{
-          fontSize: 10.5, fontWeight: 800,
-          textTransform: "uppercase", letterSpacing: "0.07em",
-          color: heroPalette.chipFg,
-          padding: "3px 9px", borderRadius: 999,
-          background: heroPalette.chipBg,
-          border: `1px solid ${heroPalette.ring}`,
+          fontSize: 11, color: "#68788d", fontWeight: 600,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          fontVariantNumeric: "tabular-nums",
         }}>
-          {heroColor ? heroState.label : "No activity"}
-        </span>
-        {lastTouch ? (
-          <span style={{
-            fontSize: 10.5, color: "#67768a", fontWeight: 700,
-            fontVariantNumeric: "tabular-nums",
-          }}>
-            {formatRecent(lastTouch)} ago
-          </span>
-        ) : (
-          <span style={{ fontSize: 10.5, color: "#9aa9bb", fontWeight: 600, fontStyle: "italic" }}>
-            No touches yet
-          </span>
-        )}
-      </div>
-
-      <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
-        <ChannelRow Icon={Mail} channel="Email" state={email} />
-        <ChannelRow Icon={PhoneCall} channel="Call" state={call} />
-        {/* LinkedIn lane renders when it's a viable channel (the prospect has a
-            LinkedIn URL) OR once a motion is logged — so a new prospect shows its
-            LinkedIn touchpoint alongside Email/Call instead of it going missing.
-            Only prospects with no LinkedIn URL and no motion stay compact. */}
-        {linkedin.heroColor || contact.linkedin_url ? <ChannelRow Icon={Linkedin} channel="LinkedIn" state={linkedin} /> : null}
-      </div>
-
-      {hasLiveSequence ? (
-        <div style={{
-          padding: "6px 14px 10px",
-          display: "flex", alignItems: "center", gap: 8,
-        }}>
-          <span style={{ fontSize: 10, fontWeight: 800, color: "#67768a", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Seq
-          </span>
-          <div style={{
-            flex: 1, height: 4, borderRadius: 999, background: "#eef2f7", overflow: "hidden",
-          }}>
-            <div style={{
-              width: `${seqPct}%`,
-              height: "100%",
-              borderRadius: 999,
-              background: `linear-gradient(90deg, ${heroPalette.bar}, ${heroPalette.dot})`,
-              transition: "width 200ms ease",
-            }} />
-          </div>
-          <span style={{ fontSize: 10.5, color: "#67768a", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-            {lifecycle!.days_since_launch != null ? `D${lifecycle!.days_since_launch} · ` : ""}
-            {lifecycle!.done_count}/{lifecycle!.total_steps}
-          </span>
-          {lifecycle!.overdue_count > 0 ? (
-            <span style={{
-              fontSize: 10, color: "#b91c1c", fontWeight: 800,
-              padding: "1px 6px", borderRadius: 999,
-              background: "#fef2f2", border: "1px solid #fecaca",
-            }}>
-              {lifecycle!.overdue_count} late
-            </span>
+          {lastTouch ? `Last touch ${formatRecent(lastTouch)}` : null}
+          {lastTouch && hasLiveSequence ? " · " : null}
+          {hasLiveSequence ? (
+            <>
+              {`Seq ${lifecycle!.done_count}/${lifecycle!.total_steps}`}
+              {lifecycle!.days_since_launch != null ? ` · D${lifecycle!.days_since_launch}` : null}
+              {lifecycle!.overdue_count > 0 ? (
+                <span style={{ color: "#b91c1c", fontWeight: 700 }}>{` · ${lifecycle!.overdue_count} late`}</span>
+              ) : null}
+            </>
           ) : null}
-        </div>
+        </span>
       ) : null}
     </div>
   );

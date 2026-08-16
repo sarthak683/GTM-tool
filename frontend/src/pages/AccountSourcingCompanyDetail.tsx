@@ -111,7 +111,7 @@ function RecotapSignalsPanel({ rtp }: { rtp?: RecotapSignals | null }) {
   ];
   const pill = "999px";
   return (
-    <div style={{ marginTop: 12, border: "1px solid #d9e1ec", borderRadius: 14, background: "#fbfdff", padding: "14px 16px", display: "grid", gap: 12 }}>
+    <div style={{ marginTop: 10, border: "1px solid #d9e1ec", borderRadius: 14, background: "#fbfdff", padding: "12px 14px", display: "grid", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: "0.06em" }}>Recotap signals</span>
         <span style={{ fontSize: 10, fontWeight: 700, color: rtp.source === "seed" ? "#b56d00" : "#1f8f5f", background: rtp.source === "seed" ? "#fff4df" : "#e8f8f0", border: `1px solid ${rtp.source === "seed" ? "#ffe3b3" : "#cdeedc"}`, borderRadius: pill, padding: "2px 8px" }}>
@@ -1105,6 +1105,15 @@ export default function AccountSourcingCompanyDetail() {
     [],
   );
 
+  // ── Alias domains + merge state (admin) ──────────────────────────────────
+  // Declared BEFORE the loading/not-found early returns: hooks below an early
+  // return change the hook count between renders and crash with React #310
+  // the moment `loading` flips false.
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [savingAliases, setSavingAliases] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState("");
+  const [merging, setMerging] = useState(false);
+
   if (loading) {
     return (
       <div style={pageStyle}>
@@ -1182,11 +1191,7 @@ export default function AccountSourcingCompanyDetail() {
 
   // Manual account status. Clicking the active status clears it. Optimistic
   // update with rollback so the segmented control feels instant.
-  // ── Alias domains + merge (admin) ─────────────────────────────────────────
-  const [aliasDraft, setAliasDraft] = useState("");
-  const [savingAliases, setSavingAliases] = useState(false);
-  const [mergeSourceId, setMergeSourceId] = useState("");
-  const [merging, setMerging] = useState(false);
+  // ── Alias domains + merge handlers (state lives above the early returns) ──
 
   const saveAliasDomains = async (next: string[]) => {
     if (!company || savingAliases) return;
@@ -1293,8 +1298,8 @@ export default function AccountSourcingCompanyDetail() {
     <div className="account-sourcing-detail-page ascd-page" style={pageStyle}>
       <style>{`
         @media (max-width: 768px) {
-          .ascd-hero { padding: 14px !important; }
-          .ascd-hero h1 { font-size: 24px !important; }
+          .ascd-hero { padding: 12px !important; }
+          .ascd-hero h1 { font-size: 20px !important; }
           .ascd-hero-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
           .ascd-main-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
           .ascd-section { padding: 12px !important; border-radius: 14px !important; }
@@ -1325,19 +1330,19 @@ export default function AccountSourcingCompanyDetail() {
           className="ascd-hero"
           style={{
             ...cardStyle,
-            padding: "24px 26px",
+            padding: "16px 18px",
             background: "linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(242,247,255,0.98) 60%, rgba(255,244,236,0.98) 100%)",
           }}
         >
-          <div className="ascd-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 20, alignItems: "start" }}>
+          <div className="ascd-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 290px)", gap: 16, alignItems: "start" }}>
             <div style={{ minWidth: 0, maxWidth: 980 }}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#f3fbe3", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
-                <Brain size={13} />
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "4px 10px", background: "#f3fbe3", color: colors.primary, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>
+                <Brain size={12} />
                 ACCOUNT INTELLIGENCE
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-                <Building2 size={18} color="#8b98ad" />
-                <h1 style={{ margin: 0, color: colors.text, fontSize: 34, lineHeight: 1.1 }}>{company.name}</h1>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                <Building2 size={17} color="#8b98ad" />
+                <h1 style={{ margin: 0, color: colors.text, fontSize: 24, lineHeight: 1.15, fontWeight: 800 }}>{company.name}</h1>
                 <span style={{ ...ICP_STYLE[tier], borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
                   {tier.toUpperCase()} · {company.icp_score ?? 0}/100
                 </span>
@@ -1356,10 +1361,10 @@ export default function AccountSourcingCompanyDetail() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 9,
+                  gap: 8,
                   flexWrap: "wrap",
-                  marginTop: 14,
-                  padding: "11px 15px",
+                  marginTop: 10,
+                  padding: "9px 12px",
                   // Neutral grey panel so it reads as a distinct control and every
                   // colored pill pops against it (a tinted panel would swallow the
                   // same-hue pill, e.g. the blue "In Progress").
@@ -1409,8 +1414,8 @@ export default function AccountSourcingCompanyDetail() {
                   Save button. Sits directly under the status control. */}
               <div
                 style={{
-                  marginTop: 12,
-                  padding: "12px 15px",
+                  marginTop: 10,
+                  padding: "10px 12px",
                   background: "#ffffff",
                   border: "1px solid #e3e9f2",
                   borderRadius: 14,
@@ -1610,7 +1615,7 @@ export default function AccountSourcingCompanyDetail() {
                 ) : null}
               </div>
 
-              <p style={{ marginTop: 14, marginBottom: 0, color: colors.sub, lineHeight: 1.75, fontSize: 15, maxWidth: 920 }}>
+              <p style={{ marginTop: 10, marginBottom: 0, color: colors.sub, lineHeight: 1.6, fontSize: 13, maxWidth: 920 }}>
                 {companySummary || "This account is in sourcing. Use the sections below to quickly decide fit, identify missing stakeholders, and shape the next prospecting move."}
               </p>
 
@@ -1951,13 +1956,13 @@ export default function AccountSourcingCompanyDetail() {
             </div>
           </div>
 
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${colors.border}`, display: "flex", gap: 16, flexWrap: "wrap", color: colors.faint, fontSize: 13 }}>
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${colors.border}`, display: "flex", gap: 16, flexWrap: "wrap", color: colors.faint, fontSize: 12.5 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={12} /> Enriched: {ts(company.enriched_at)}</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={12} /> Created: {formatDate(company.created_at)}</span>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
           <MetricCard
             label="ICP Score"
             value={`${company.icp_score ?? 0}`}

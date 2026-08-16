@@ -227,13 +227,13 @@ function EngagementPanel({
           >
             <Icon size={10} />
           </span>
-          <span style={{ fontSize: 9, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#5f6f84", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             {side === "rep" ? "Rep" : "Client"}
           </span>
         </div>
         <span
           style={{
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             color: tone.color,
             background: tone.background,
@@ -274,10 +274,10 @@ function EngagementPanel({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.06em" }}>
               {side === "rep" ? "Rep engagement" : "Client engagement"}
             </span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: tone.color }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: tone.color }}>
               {tone.label}
             </span>
           </div>
@@ -298,7 +298,7 @@ function EngagementPanel({
             </div>
           ) : null}
           {timestamp && (
-            <div style={{ fontSize: 10, color: "#8ca0b3" }}>
+            <div style={{ fontSize: 11, color: "#8ca0b3" }}>
               Last touch {relativeTime(timestamp)}
             </div>
           )}
@@ -321,7 +321,7 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
   const due = dueLabel(deal.next_step_due_at);
   const stat = (label: string, value: string, color?: string) => (
     <div style={{ minWidth: 78, flex: "1 1 78px" }}>
-      <div style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
       <div style={{ fontSize: 14, fontWeight: 800, color: color || "#16273d", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
     </div>
   );
@@ -341,12 +341,12 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
       </div>
       <div style={{ borderTop: "1px solid #eef2f7", paddingTop: 9, display: "grid", gap: 5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Next step</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Next step</span>
           {deal.next_step ? (
             <>
               <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 700, color: "#16273d" }}>{deal.next_step}</span>
               {due ? (
-                <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: due.overdue ? "#be123c" : "#1d4ed8", background: due.overdue ? "#fff1f2" : "#eff6ff", border: `1px solid ${due.overdue ? "#fecdd3" : "#bfdbfe"}` }}>
+                <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: due.overdue ? "#be123c" : "#1d4ed8", background: due.overdue ? "#fff1f2" : "#eff6ff", border: `1px solid ${due.overdue ? "#fecdd3" : "#bfdbfe"}` }}>
                   {due.overdue ? "Overdue" : "Due"} · {due.text}
                 </span>
               ) : null}
@@ -373,11 +373,11 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
         {/* Trust signal — only promise a reminder when one will actually fire:
             deal_reminders skips unassigned deals, so gate on assignment. */}
         {deal.next_step && due && deal.assigned_to_id ? (
-          <div style={{ fontSize: 10.5, color: "#7a8ea4" }}>
+          <div style={{ fontSize: 11, color: "#7a8ea4" }}>
             Beacon will remind {deal.assigned_rep_name || "the owner"} on {due.text}
           </div>
         ) : deal.next_step && due ? (
-          <div style={{ fontSize: 10.5, color: "#b08400" }}>
+          <div style={{ fontSize: 11, color: "#b08400" }}>
             Assign an owner to get a reminder on {due.text}
           </div>
         ) : null}
@@ -388,9 +388,9 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
       {(qualificationDue || deal.qualification_reason) ? (
         <div style={{ borderTop: "1px solid #eef2f7", paddingTop: 9, display: "grid", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Qualification criteria</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>Qualification criteria</span>
             {qualificationDue && !deal.qualification_reason ? (
-              <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: "#b08400", background: "#fffbeb", border: "1px solid #fde68a" }}>
+              <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "2px 9px", color: "#b08400", background: "#fffbeb", border: "1px solid #fde68a" }}>
                 Required after demo
               </span>
             ) : null}
@@ -480,7 +480,7 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <span style={{ minWidth: 0, flex: 1, fontSize: 13, fontWeight: 800, color: "#1f2d3d", lineHeight: 1.35 }}>{task.title}</span>
               {priorityLabel ? (
-                <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, color: "#6d28d9", background: "#f3ecff", border: "1px solid #e3d6fb", borderRadius: 999, padding: "2px 7px" }}>{priorityLabel}</span>
+                <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, color: "#6d28d9", background: "#f3ecff", border: "1px solid #e3d6fb", borderRadius: 999, padding: "2px 7px" }}>{priorityLabel}</span>
               ) : null}
             </div>
             {task.description ? (
@@ -951,8 +951,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
         {/* ── Header ───────────────────────────────────────────────── */}
         <div style={{
-          padding: "22px 28px 18px", borderBottom: "1px solid #e4eecf",
-          display: "flex", flexDirection: "column", gap: 12,
+          padding: "16px 22px 14px", borderBottom: "1px solid #e4eecf",
+          display: "flex", flexDirection: "column", gap: 10,
           background: "linear-gradient(180deg, #f4fbe6 0%, #ffffff 100%)",
         }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -965,7 +965,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 onBlur={handleNameSave}
                 onKeyDown={(e) => e.key === "Enter" && handleNameSave()}
                 style={{
-                  fontSize: 23, fontWeight: 800, color: "#1f2d3d", flex: 1, letterSpacing: "-0.01em",
+                  fontSize: 19, fontWeight: 800, color: "#142335", flex: 1, letterSpacing: "-0.01em",
                   border: "1px solid #cfe89a", borderRadius: 8, padding: "4px 8px",
                   outline: "none",
                 }}
@@ -975,7 +975,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <h2
                   onClick={() => { setEditingName(true); setNameVal(deal.name); }}
                   style={{
-                    fontSize: 23, fontWeight: 800, color: "#1f2d3d", cursor: "pointer", letterSpacing: "-0.01em",
+                    fontSize: 19, fontWeight: 800, color: "#142335", cursor: "pointer", letterSpacing: "-0.01em",
                     lineHeight: 1.25, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}
                   title="Click to edit"
@@ -1121,9 +1121,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
           </div>
         </div>
 
-        <div style={{ padding: "0 28px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
+        <div style={{ padding: "0 22px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
           {/* nowrap + horizontal scroll so the 6 tabs don't clip on narrow phones */}
-          <div style={{ display: "flex", gap: 8, padding: "12px 0 14px", overflowX: "auto", flexWrap: "nowrap", scrollbarWidth: "none" }}>
+          <div style={{ display: "flex", gap: 8, padding: "10px 0 12px", overflowX: "auto", flexWrap: "nowrap", scrollbarWidth: "none" }}>
             {[
               { id: "overview", label: "Overview" },
               { id: "meddpicc", label: `MEDDPICC${deal.meddpicc_score != null ? ` (${deal.meddpicc_score})` : ""}` },
@@ -1144,7 +1144,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     background: active ? "#f3fbe3" : "transparent",
                     color: active ? "#4d7c0f" : "#6f8399",
                     borderRadius: 10,
-                    padding: "8px 13px",
+                    padding: "7px 12px",
                     fontSize: 13,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -1160,7 +1160,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
         </div>
 
         {/* ── Scrollable body ──────────────────────────────────────── */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 22, background: "#f5f8fc" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 22px 24px", display: "flex", flexDirection: "column", gap: 18, background: "#f5f8fc" }}>
           {activeTab === "overview" ? (
             <>
 
@@ -1221,7 +1221,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                         color: "#4d7c0f",
                         borderRadius: 8,
                         padding: "3px 7px",
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: 800,
                         cursor: "pointer",
                         flexShrink: 0,
@@ -1515,7 +1515,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               onBlur={(e) => patchDeal({ next_step: e.target.value || null } as Partial<Deal>)}
               placeholder="e.g. Send pricing proposal by Friday"
               style={{
-                width: "100%", height: 38, borderRadius: 10,
+                width: "100%", height: 36, borderRadius: 10,
                 border: "1px solid #dbe6f2", padding: "0 12px",
                 fontSize: 13, outline: "none",
               }}
@@ -1720,7 +1720,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                         onMouseEnter={(e) => e.currentTarget.style.background = "#f3fbe3"}
                         onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                       >
-                        <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(c.first_name + c.last_name)}`}
+                        <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(c.first_name + c.last_name)}`}
                           style={{ width: 24, height: 24, flexShrink: 0 }}>
                           {getInitials(`${c.first_name} ${c.last_name}`)}
                         </div>
@@ -1760,7 +1760,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       borderRadius: 12, border: "1px solid #e8eef5", background: "#fff",
                       cursor: "pointer",
                     }}>
-                      <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(name)}`}
+                      <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(name)}`}
                         style={{ width: 28, height: 28, flexShrink: 0 }}>
                         {getInitials(name || "?")}
                       </div>
@@ -1770,7 +1770,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       </div>
                       {dc.persona && (
                         <span style={{
-                          fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
+                          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
                           background: ps.bg, color: ps.color,
                         }}>
                           {dc.persona.replace(/_/g, " ")}
@@ -1778,7 +1778,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       )}
                       {dc.role && (
                         <span style={{
-                          fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
+                          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
                           background: "#f3fbe3", color: "#4d7c0f",
                         }}>
                           {dc.role.replace(/_/g, " ")}
@@ -1820,7 +1820,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       type="button"
                       onClick={() => void handleLinkAllCompanyContacts(unlinked)}
                       style={{
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: 800,
                         padding: "5px 9px",
                         borderRadius: 8,
@@ -1847,13 +1847,13 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                           borderRadius: 12, border: "1px dashed #dbe6f2", background: "#fafcfe",
                           cursor: "pointer",
                         }}>
-                          <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(name)}`}
+                          <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(name)}`}
                             style={{ width: 24, height: 24, flexShrink: 0 }}>
                             {getInitials(name || "?")}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{name}</div>
-                            <div style={{ fontSize: 10, color: "#94a3b8" }}>{c.title ?? c.email}</div>
+                            <div style={{ fontSize: 11, color: "#94a3b8" }}>{c.title ?? c.email}</div>
                           </div>
                           <button
                             onClick={async (event) => {
@@ -1862,7 +1862,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                               setDealContacts((prev) => [dc, ...prev]);
                             }}
                             style={{
-                              fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
+                              fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
                               background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
                               cursor: "pointer",
                             }}
@@ -2022,7 +2022,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     <select
                       value={emailDraftTo}
                       onChange={(e) => setEmailDraftTo(e.target.value)}
-                      style={{ height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", background: "#fff", color: "#22334d", fontSize: 13 }}
+                      style={{ height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", background: "#fff", color: "#22334d", fontSize: 13 }}
                     >
                       <option value="">Select recipient</option>
                       {emailRecipients.map((recipient) => (
@@ -2035,7 +2035,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     <input
                       value={emailDraftSubject}
                       onChange={(e) => setEmailDraftSubject(e.target.value)}
-                      style={{ height: 38, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", color: "#22334d", fontSize: 13 }}
+                      style={{ height: 36, borderRadius: 10, border: "1px solid #dbe6f2", padding: "0 10px", color: "#22334d", fontSize: 13 }}
                     />
                   </label>
                 </div>
@@ -2295,7 +2295,7 @@ export default memo(DealDetailDrawer);
 function FieldRow({ label, icon, children }: { label: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#8295a8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#8295a8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
         {icon} {label}
       </div>
       {children}
@@ -2357,7 +2357,7 @@ function StageJourney({ history, deal, stages }: { history: StageHistoryRow[]; d
           <span style={{ width: 9, height: 9, borderRadius: "50%", background: colorOf(seg.stage), flexShrink: 0 }} />
           <span style={{ fontSize: 13, fontWeight: seg.current ? 800 : 600, color: seg.current ? "#1f2d3d" : "#46586d", flex: 1, textTransform: "capitalize" }}>
             {labelOf(seg.stage)}
-            {seg.current && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 999, padding: "1px 7px" }}>current</span>}
+            {seg.current && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 999, padding: "1px 7px" }}>current</span>}
           </span>
           <span style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_formatDuration(seg.duration)}</span>
         </div>
@@ -2538,7 +2538,7 @@ function MeddpiccPanel({
                   {dim.label}
                 </span>
                 <span style={{
-                  marginLeft: 8, fontSize: 10, fontWeight: 600,
+                  marginLeft: 8, fontSize: 11, fontWeight: 600,
                   padding: "2px 7px", borderRadius: 5,
                   background: `${MEDDPICC_LEVEL_COLORS[val]}18`,
                   color: MEDDPICC_LEVEL_COLORS[val],
@@ -2563,7 +2563,7 @@ function MeddpiccPanel({
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: 800,
                     padding: "2px 8px",
                     borderRadius: 999,
@@ -2573,12 +2573,12 @@ function MeddpiccPanel({
                     Captured detail
                   </span>
                   {detail?.change_reason && (
-                    <span style={{ fontSize: 10, color: "#3f6212", fontWeight: 700 }}>
+                    <span style={{ fontSize: 11, color: "#3f6212", fontWeight: 700 }}>
                       {formatMeddpiccChangeReason(detail.change_reason)}
                     </span>
                   )}
                   {detail?.updated_at && (
-                    <span style={{ fontSize: 10, color: "#7a8ca1" }}>
+                    <span style={{ fontSize: 11, color: "#7a8ca1" }}>
                       Updated {formatDate(detail.updated_at)}
                     </span>
                   )}
@@ -2604,7 +2604,7 @@ function MeddpiccPanel({
                       <span
                         key={tag}
                         style={{
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: 700,
                           padding: "2px 7px",
                           borderRadius: 999,
@@ -2633,7 +2633,7 @@ function MeddpiccPanel({
                 border: "1px solid #e7eef6",
               }}>
                 <span style={{
-                  fontSize: 10,
+                  fontSize: 11,
                   fontWeight: 800,
                   padding: "2px 8px",
                   borderRadius: 999,
@@ -2644,7 +2644,7 @@ function MeddpiccPanel({
                 </span>
                 {aiMeta.confidence && (
                   <span style={{
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: 800,
                     padding: "2px 8px",
                     borderRadius: 999,
@@ -2766,7 +2766,7 @@ function FlagMatrixCard({
         }}
       >
         <div>
-          <div style={{ fontSize: 10, fontWeight: 800, color: bucketMeta.color, letterSpacing: 0.6 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: bucketMeta.color, letterSpacing: 0.6 }}>
             FORECAST CATEGORY
           </div>
           <div style={{ fontSize: 18, fontWeight: 800, color: bucketMeta.color, marginTop: 2 }}>
@@ -3306,7 +3306,7 @@ function ActivityFeedItem({ activity, onMoveToPoc, pocEligible }: { activity: Ac
 }
 
 const fieldInputStyle: React.CSSProperties = {
-  width: "100%", height: 38, borderRadius: 10,
+  width: "100%", height: 36, borderRadius: 10,
   border: "1px solid #dbe5f0", padding: "0 12px",
   fontSize: 13, color: "#1f2d3d", background: "#fff", outline: "none",
   transition: "border-color 0.15s ease, box-shadow 0.15s ease",

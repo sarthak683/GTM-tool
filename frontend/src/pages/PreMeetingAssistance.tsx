@@ -912,18 +912,10 @@ export default function PreMeetingAssistance() {
           }
         }
       `}</style>
-      {/* Header */}
-      <section className="crm-panel" style={{ padding: 22, display: "grid", gap: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 0 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 800, color: colors.text, marginBottom: 4, letterSpacing: "-0.01em" }}>
-              Meetings
-            </h2>
-            <p className="crm-muted" style={{ maxWidth: 620, lineHeight: 1.6, margin: 0, fontSize: 13 }}>
-              Prep upcoming calls with account intel, stakeholder talk tracks, and recent activity. Use Past to review completed or overdue meetings in the same workspace.
-            </p>
-          </div>
-
+      {/* Header strip — the topbar already renders the page title; this panel
+          only carries the live counters or the next-meeting spotlight. */}
+      <section className="crm-panel" style={{ padding: 14, display: "grid", gap: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           {/* Next-meeting spotlight (replaces generic counter when there's a clear
               next up). Clickable to jump straight to prep. */}
           {(() => {
@@ -984,7 +976,7 @@ export default function PreMeetingAssistance() {
                   <CalendarDays size={18} />
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: imminent ? "#4d7c0f" : "#3555c4" }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: imminent ? "#4d7c0f" : "#3555c4" }}>
                     Next up · {countdown}
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: colors.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

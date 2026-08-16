@@ -1,3 +1,4 @@
+import "./pipeline-refresh.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -278,11 +279,14 @@ function EngagementBadge({
     setShowDetail(true);
   };
 
+  const fullText = `${side === "rep" ? "Rep" : "Client"} · ${tone.label}${line ? ` · ${line}` : ""}`;
+
   return (
     <div
       ref={badgeRef}
       onMouseEnter={handleEnter}
       onMouseLeave={() => setShowDetail(false)}
+      aria-label={fullText}
       style={{
         minWidth: 0,
         flex: 1,
@@ -290,7 +294,7 @@ function EngagementBadge({
         borderRadius: 999,
         border: `1px solid ${tone.border}`,
         background: "#ffffff",
-        padding: "3px 6px",
+        padding: "3px 8px",
         display: "flex",
         alignItems: "center",
         gap: 5,
@@ -299,10 +303,10 @@ function EngagementBadge({
     >
       <span
         style={{
-          width: 12,
-          height: 12,
+          width: 14,
+          height: 14,
           borderRadius: 999,
-          background: "#ffffff",
+          background: tone.background,
           border: `1px solid ${tone.border}`,
           display: "inline-flex",
           alignItems: "center",
@@ -311,17 +315,13 @@ function EngagementBadge({
           flexShrink: 0,
         }}
       >
-        <Icon size={8} />
+        <Icon size={9} />
       </span>
-      <span style={{ fontSize: 8, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.05em", flexShrink: 0 }}>
-        {side === "rep" ? "REP" : "CL"}
+      <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.03em", flexShrink: 0 }}>
+        {side === "rep" ? "Rep" : "CL"}
       </span>
-      <span style={{ fontSize: 8, fontWeight: 700, color: tone.color, flexShrink: 0 }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: tone.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
         {tone.label}
-      </span>
-      <span style={{ width: 3, height: 3, borderRadius: 999, background: tone.accent, flexShrink: 0 }} />
-      <span style={{ fontSize: 9, color: "#7f8ea3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
-        {line}
       </span>
       {showDetail && coords && createPortal(
         <div
@@ -345,10 +345,10 @@ function EngagementBadge({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#6f7f95", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               {side === "rep" ? "Rep engagement" : "Client engagement"}
             </span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: tone.color }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: tone.color }}>
               {tone.label}
             </span>
           </div>
@@ -368,11 +368,11 @@ function EngagementBadge({
               <span style={{ fontWeight: 700 }}>What happened:</span> {signal.detail}
             </div>
           ) : null}
-          <div style={{ fontSize: 10, color: "#8ca0b3", lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, color: "#8ca0b3", lineHeight: 1.4 }}>
             {ENGAGEMENT_SIGNAL_LEGEND}
           </div>
           {timestamp && (
-            <div style={{ fontSize: 10, color: "#8ca0b3" }}>
+            <div style={{ fontSize: 11, color: "#8ca0b3" }}>
               Last touch {relativeTime(timestamp)}
             </div>
           )}
@@ -466,16 +466,16 @@ function MultiSelectFilter({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</label>
+      <label className="pr-rail-label">{label}</label>
       <div ref={ref} style={{ position: "relative" }}>
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
-          style={{ width: "100%", height: 38, borderRadius: 12, border: values.length ? "1.5px solid #cfe89a" : "1px solid #e2eaf2", background: values.length ? "#f3fbe3" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12, fontWeight: 600, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
+          style={{ width: "100%", height: 34, borderRadius: 10, border: values.length ? "1.5px solid #cfe89a" : "1px solid #e3e9f2", background: values.length ? "#f3fbe3" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12.5, fontWeight: 600, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
         >
           {displayLabel}
           {values.length > 1 && (
-            <span style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, background: "#9ace3d", color: "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, background: "#9ace3d", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
               {values.length}
             </span>
           )}
@@ -523,7 +523,7 @@ function MultiSelectFilter({
                 <div style={{ padding: "8px 10px", fontSize: 11, color: "#94a3b8" }}>No matches</div>
               )}
               {visibleOptions.map((option) => (
-                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#fff7f2" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#f3fbe3" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
                   <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
                   <span>{option.label}</span>
                 </label>
@@ -537,19 +537,19 @@ function MultiSelectFilter({
 }
 
 function SummaryCard({ label, value, tone = "default", action }: { label: string; value: string | number; tone?: "default" | "accent" | "success"; action?: ReactNode }) {
-  const palette = tone === "accent" ? { bg: "#f3fbe3", border: "#cfe89a", value: "#4d7c0f" } : tone === "success" ? { bg: "#f0fdf4", border: "#bbf7d0", value: "#15803d" } : { bg: "#f8fafc", border: "#e8eef5", value: "#48607b" };
+  const toneClass = tone === "accent" ? " pr-summary-tile--accent" : tone === "success" ? " pr-summary-tile--success" : "";
   return (
-    <div style={{ padding: "10px 10px", borderRadius: 10, background: palette.bg, border: `1px solid ${palette.border}` }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: palette.value, lineHeight: 1 }}>{value}</div>
+    <div className={`pr-summary-tile${toneClass}`}>
+      <div className="pr-summary-value">
+        <span>{value}</span>
         {action}
       </div>
-      <div style={{ fontSize: 10, color: "#7a96b0", marginTop: 3 }}>{label}</div>
+      <div className="pr-summary-label" title={label}>{label}</div>
     </div>
   );
 }
 
-const chip = (background: string, color: string, border: string) => ({ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background, color, border: `1px solid ${border}` } as const);
+const chip = (background: string, color: string, border: string) => ({ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background, color, border: `1px solid ${border}` } as const);
 const modalInputStyle = { height: 42, borderRadius: 12, border: "1px solid #d7e2ee", padding: "0 14px", fontSize: 14 } as const;
 
 function FunnelSettingsModal({
@@ -1084,7 +1084,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
   const isOverdue = Boolean(_closeLocal && _closeLocal < _todayStart);
 
   return (
-    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       {/* Header row: select + grip + name + close date */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         {onToggleSelect && (
@@ -1099,10 +1099,10 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
         )}
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0, cursor: "grab" }} />
         <button type="button" onClick={onClick} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d", lineHeight: 1.35 }}>{deal.name}</span>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: "#142335", lineHeight: 1.35 }}>{deal.name}</span>
         </button>
         {deal.close_date_est && (
-          <span style={{ fontSize: 9, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
             {formatDateOnly(deal.close_date_est)}
           </span>
         )}
@@ -1110,12 +1110,12 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
 
       <button type="button" onClick={onClick} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, textAlign: "left" }}>
         {deal.company_name && (
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#5e738b" }}>
-            <Building2 size={11} />
-            <span>{deal.company_name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#68788d", minWidth: 0 }}>
+            <Building2 size={11} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.company_name}</span>
           </div>
         )}
-        <div style={{ fontSize: 15, fontWeight: 700, color: deal.value ? "#1f2a37" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: deal.value ? "#4d7c0f" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
         {deal.next_step && (
           <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>
             {deal.next_step}
@@ -1136,13 +1136,13 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
       {/* Footer: avatar + days + contacts + P-tag */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {deal.assigned_rep_name ? <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 20, height: 20 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#e8eef5" }} />}
-          <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: "#7a8ca1" }}><Clock3 size={10} /><span>{deal.days_in_stage ?? 0}d</span></div>
-          {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 10, color: "#5e738b", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={10} />{deal.contact_count}</span>}
+          {deal.assigned_rep_name ? <div title={deal.assigned_rep_name} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: "#68788d" }}><Clock3 size={11} /><span>{deal.days_in_stage ?? 0}d</span></div>
+          {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 11, color: "#68788d", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={11} />{deal.contact_count}</span>}
         </div>
         {priorityTag && (
           <span style={{
-            fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 5, flexShrink: 0,
+            fontSize: 11, fontWeight: 800, padding: "1px 7px", borderRadius: 5, flexShrink: 0,
             background: priorityTag === "P0" ? "#fff1f2" : priorityTag === "P1" ? "#fff7ed" : "#f0fdf4",
             color: priorityTag === "P0" ? "#be123c" : priorityTag === "P1" ? "#c2410c" : "#15803d",
             border: `1px solid ${priorityTag === "P0" ? "#fecdd3" : priorityTag === "P1" ? "#fed7aa" : "#bbf7d0"}`,
@@ -1165,7 +1165,7 @@ function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
         border: "1px solid #e8eef5",
         background: "#fff",
         boxShadow: "0 1px 4px rgba(17,34,68,0.04)",
-        padding: 14,
+        padding: 12,
         display: "flex",
         flexDirection: "column",
         gap: 9,
@@ -1192,7 +1192,7 @@ function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
 
 function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDelete }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void; onDelete?: () => void }) {
   return (
-    <button type="button" className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+    <button type="button" className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
@@ -1214,21 +1214,21 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {(contact.assigned_to_name || contact.sdr_name) ? <div className={`flex items-center justify-center rounded-full text-[9px] font-bold ${avatarColor(contact.assigned_to_name || contact.sdr_name || "")}`} style={{ width: 20, height: 20 }}>{getInitials(contact.assigned_to_name || contact.sdr_name || "RP")}</div> : <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#e8eef5" }} />}
-          <div style={{ fontSize: 10, color: "#7a8ca1" }}>{contact.sequence_status || contact.instantly_status || "ready"}</div>
+          {(contact.assigned_to_name || contact.sdr_name) ? <div title={contact.assigned_to_name || contact.sdr_name || ""} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(contact.assigned_to_name || contact.sdr_name || "")}`} style={{ width: 22, height: 22 }}>{getInitials(contact.assigned_to_name || contact.sdr_name || "RP")}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
+          <div style={{ fontSize: 11, color: "#68788d" }}>{contact.sequence_status || contact.instantly_status || "ready"}</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {contact.email
             ? <Mail size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Email</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 6px", cursor: "pointer", lineHeight: 1.5 }}>+Email</span>
           }
           {contact.phone
             ? <Phone size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+Phone</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 6px", cursor: "pointer", lineHeight: 1.5 }}>+Phone</span>
           }
           {contact.linkedin_url
             ? <Globe size={11} color="#7a8ca1" />
-            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 9, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 5px", cursor: "pointer", lineHeight: 1.5 }}>+LinkedIn</span>
+            : <span onClick={(e) => { e.stopPropagation(); onOpen(); }} style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f", background: "#f3fbe3", border: "1px solid #cfe89a", borderRadius: 5, padding: "1px 6px", cursor: "pointer", lineHeight: 1.5 }}>+LinkedIn</span>
           }
         </div>
       </div>
@@ -1238,13 +1238,13 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
 
 function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
-    <div style={{ width: 286, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10, padding: "0 4px" }}>
+    <div style={{ width: 312, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, padding: "0 4px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: stage.color || STAGE_COLOR[stage.id] || "#94a3b8", flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: stage.group === "closed" ? "#7a8ca1" : "#2d4258", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.label}</span>
-            <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#ecf1f7", color: "#48607b", flexShrink: 0 }}>{count}</span>
+            <span title={stage.label} style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: stage.group === "closed" ? "#7a8ca1" : "#142335", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999, background: "#ecf1f7", color: "#48607b", flexShrink: 0 }}>{count}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
             {onExport && (
@@ -1263,8 +1263,8 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, on
         </div>
         {typeof totalValue === "number" && Number.isFinite(totalValue) && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
-            <span style={{ fontSize: 13, fontWeight: 800, color: totalValue > 0 ? "#4d7c0f" : "#94a3b8", letterSpacing: "0.01em" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: totalValue > 0 ? "#4d7c0f" : "#94a3b8", letterSpacing: "0.01em" }}>
               {formatCurrency(totalValue)}
             </span>
           </div>
@@ -2644,12 +2644,9 @@ export default function Pipeline() {
   return (
     <>
       <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
-        <div className="desktop-only pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "20px 16px", gap: 18, overflowY: "auto" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2744", marginBottom: 4 }}>Pipeline</div>
-              <div style={{ fontSize: 11, color: "#7a96b0", lineHeight: 1.5 }}>Drag cards across lanes to move deals or prospects through your stages. Click any card to open the detail drawer.</div>
-            </div>
+        <div className="desktop-only pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "16px 14px", gap: 14, overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, position: "relative" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#142335" }}>Pipeline</div>
             <div style={{ position: "relative", flexShrink: 0 }}>
               <button
                 type="button"
@@ -2727,14 +2724,14 @@ export default function Pipeline() {
             </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 2 }}>View</span>
+            <span className="pr-rail-label" style={{ marginBottom: 2 }}>View</span>
             {[{ key: "deal" as const, label: "Deals", sub: "Sales pipeline", icon: DollarSign, active: "#175089", soft: "#eaf2ff" }].map((item) => {
               const Icon = item.icon;
               const active = tab === item.key;
               return (
                 <button key={item.key} type="button" onClick={() => { setTab(item.key); resetFilters(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", border: active ? `1.5px solid ${item.key === "deal" ? "#b8d0f0" : "#b2e0dc"}` : "1.5px solid transparent", background: active ? (item.key === "deal" ? "#f0f6ff" : "#f0faf9") : "transparent", textAlign: "left" }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: active ? item.active : item.soft, color: active ? "#fff" : item.active }}><Icon size={15} /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600, color: active ? "#0f2744" : "#4d6178" }}>{item.label}</div><div style={{ fontSize: 10, color: "#7a96b0", marginTop: 1 }}>{item.sub}</div></div>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600, color: active ? "#142335" : "#4d6178" }}>{item.label}</div><div style={{ fontSize: 11, color: "#68788d", marginTop: 1 }}>{item.sub}</div></div>
                 </button>
               );
             })}
@@ -2742,13 +2739,10 @@ export default function Pipeline() {
 
           <div style={{ height: 1, background: "#e8eef5" }} />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Funnel summary</span>
-              <div style={{ fontSize: 10, color: "#a0b2c5", marginTop: 2 }}>ToFU = top, MoFU = mid, BoFU = bottom</div>
-            </div>
-            {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={14} /></button>}
+            <span className="pr-rail-label">Funnel summary</span>
+            {isAdmin && <button type="button" onClick={() => setShowFunnelSettings(true)} style={{ border: "1px solid #dbe6f2", background: "#fff", borderRadius: 8, width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#5e738b", cursor: "pointer" }} title={`${tab === "deal" ? "Deal" : "Prospect"} summary settings`}><Settings2 size={13} /></button>}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div className="pr-summary-grid">
             {summaryCardsToRender.map((card) => (
               <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} />
             ))}
@@ -2767,8 +2761,8 @@ export default function Pipeline() {
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
-              fontSize: 12,
-              fontWeight: 800,
+              fontSize: 12.5,
+              fontWeight: 700,
               cursor: currentBoardLoading || summary.total === 0 ? "not-allowed" : "pointer",
             }}
             title={stageFilters.length ? "Export the currently filtered stages" : "Export all visible stages"}
@@ -2780,12 +2774,12 @@ export default function Pipeline() {
           <div style={{ height: 1, background: "#e8eef5" }} />
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: 4 }}><Filter size={10} />Filters</span>
-              {hasFilters && <button onClick={resetFilters} style={{ fontSize: 10, color: "#dc2626", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 3, fontWeight: 500 }}><RotateCcw size={9} />Reset</button>}
+              <span className="pr-rail-label"><Filter size={11} />Filters</span>
+              {hasFilters && <button onClick={resetFilters} style={{ fontSize: 11, color: "#dc2626", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}><RotateCcw size={10} />Reset</button>}
             </div>
             <div style={{ position: "relative" }}>
               <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
-              <input type="text" placeholder={`Search ${tab === "deal" ? "deals" : "prospects"}...`} value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", height: 32, borderRadius: 8, border: search ? "1.5px solid #b8d0f0" : "1px solid #e2eaf2", background: search ? "#f0f6ff" : "#f8fafc", paddingLeft: 28, paddingRight: 10, fontSize: 12, outline: "none" }} />
+              <input type="text" placeholder={`Search ${tab === "deal" ? "deals" : "prospects"}...`} value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", height: 34, borderRadius: 8, border: search ? "1.5px solid #cfe89a" : "1px solid #e3e9f2", background: search ? "#f3fbe3" : "#f8fafc", paddingLeft: 28, paddingRight: 10, fontSize: 12.5, outline: "none", boxSizing: "border-box" }} />
             </div>
             {/* Mine shortcut — one-click filter to deals owned by the current
                 user. Toggles the Assignee filter atomically so the rest of
@@ -2799,13 +2793,13 @@ export default function Pipeline() {
                     onClick={() => handleAssigneeFilterChange(mineActive ? [] : [user.id!])}
                     title={mineActive ? "Showing only your deals — click to clear" : "Show only deals assigned to you"}
                     style={{
-                      height: 32,
+                      height: 34,
                       padding: "0 12px",
                       borderRadius: 8,
-                      border: mineActive ? "1.5px solid #cfe89a" : "1px solid #e2eaf2",
+                      border: mineActive ? "1.5px solid #cfe89a" : "1px solid #e3e9f2",
                       background: mineActive ? "#f3fbe3" : "#f8fafc",
-                      color: mineActive ? "#a04a1c" : "#48607b",
-                      fontSize: 12,
+                      color: mineActive ? "#4d7c0f" : "#48607b",
+                      fontSize: 12.5,
                       fontWeight: 700,
                       cursor: "pointer",
                       whiteSpace: "nowrap",
@@ -2829,56 +2823,56 @@ export default function Pipeline() {
             {tab === "deal" && <MultiSelectFilter values={contactFilters} onChange={setContactFilters} label="Contacts" allLabel="Any Contacts" options={contactOptions} />}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>AE Triage</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: needsAttentionOnly ? "1.5px solid #c4b5fd" : "1px solid #e2eaf2", background: needsAttentionOnly ? "#f5f3ff" : "#f8fafc" }}>
+                <label className="pr-rail-label">AE Triage</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: needsAttentionOnly ? "1.5px solid #c4b5fd" : "1px solid #e2eaf2", background: needsAttentionOnly ? "#f5f3ff" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={needsAttentionOnly}
                     onChange={(e) => handleNeedsAttentionOnlyChange(e.target.checked)}
                     style={{ accentColor: "#7c3aed", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: needsAttentionOnly ? "#6d28d9" : "#2d4258" }}>Needs attention (no next step / overdue / stale / no contact)</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3, color: needsAttentionOnly ? "#6d28d9" : "#2d4258" }}>Needs attention (no next step / overdue / stale / no contact)</span>
                 </label>
               </div>
             )}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Deal Aging</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: stalledOnly ? "1.5px solid #fcd34d" : "1px solid #e2eaf2", background: stalledOnly ? "#fffbeb" : "#f8fafc" }}>
+                <label className="pr-rail-label">Deal Aging</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: stalledOnly ? "1.5px solid #fcd34d" : "1px solid #e2eaf2", background: stalledOnly ? "#fffbeb" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={stalledOnly}
                     onChange={(e) => handleStalledOnlyChange(e.target.checked)}
                     style={{ accentColor: "#d97706", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (30d+ in stage)</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (30d+ in stage)</span>
                 </label>
               </div>
             )}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Close Date Hygiene</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: overdueOnly ? "1.5px solid #fecaca" : "1px solid #e2eaf2", background: overdueOnly ? "#fef2f2" : "#f8fafc" }}>
+                <label className="pr-rail-label">Close Date Hygiene</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: overdueOnly ? "1.5px solid #fecaca" : "1px solid #e2eaf2", background: overdueOnly ? "#fef2f2" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={overdueOnly}
                     onChange={(e) => handleOverdueOnlyChange(e.target.checked)}
                     style={{ accentColor: "#dc2626", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: overdueOnly ? "#b91c1c" : "#2d4258" }}>Overdue close dates only</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: overdueOnly ? "#b91c1c" : "#2d4258" }}>Overdue close dates only</span>
                 </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: missingCloseDateOnly ? "1.5px solid #fde68a" : "1px solid #e2eaf2", background: missingCloseDateOnly ? "#fffbeb" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: missingCloseDateOnly ? "1.5px solid #fde68a" : "1px solid #e2eaf2", background: missingCloseDateOnly ? "#fffbeb" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={missingCloseDateOnly}
                     onChange={(e) => handleMissingCloseDateOnlyChange(e.target.checked)}
                     style={{ accentColor: "#d97706", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: missingCloseDateOnly ? "#b45309" : "#2d4258" }}>Missing close date only</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: missingCloseDateOnly ? "#b45309" : "#2d4258" }}>Missing close date only</span>
                 </label>
                 {closeMonthFilter && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, height: 38, padding: "0 10px", borderRadius: 12, border: "1.5px solid #c7d2fe", background: "#eef2ff" }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#4338ca" }}>Close month: {closeMonthFilter}</span>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, height: 34, padding: "0 10px", borderRadius: 10, border: "1.5px solid #c7d2fe", background: "#eef2ff" }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "#4338ca" }}>Close month: {closeMonthFilter}</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -2899,15 +2893,15 @@ export default function Pipeline() {
             )}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: "#7a96b0", textTransform: "uppercase", letterSpacing: "0.5px" }}>Commit to Deal</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 38, padding: "0 10px", borderRadius: 12, border: commitFilter.length ? "1.5px solid #bbf7d0" : "1px solid #e2eaf2", background: commitFilter.length ? "#f0fdf4" : "#f8fafc" }}>
+                <label className="pr-rail-label">Commit to Deal</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: commitFilter.length ? "1.5px solid #bbf7d0" : "1px solid #e2eaf2", background: commitFilter.length ? "#f0fdf4" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={commitFilter.length > 0}
                     onChange={(e) => setCommitFilter(e.target.checked ? ["committed"] : [])}
                     style={{ accentColor: "#22c55e", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: commitFilter.length ? "#15803d" : "#2d4258" }}>Committed only</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: commitFilter.length ? "#15803d" : "#2d4258" }}>Committed only</span>
                 </label>
               </div>
             )}
@@ -2917,14 +2911,14 @@ export default function Pipeline() {
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>
-          <div className="desktop-only" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f2744", margin: 0 }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}` }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
+          <div className="desktop-only" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              <h2 style={{ fontSize: 14, fontWeight: 700, color: "#142335", margin: 0, whiteSpace: "nowrap" }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}`, whiteSpace: "nowrap" }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#6b7f95" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GripVertical size={11} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>
-              {busyStage && <span style={{ color: "#4d7c0f", fontWeight: 600 }}>Updating lane...</span>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#68788d", minWidth: 0 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><GripVertical size={12} style={{ flexShrink: 0 }} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>
+              {busyStage && <span style={{ color: "#4d7c0f", fontWeight: 600, whiteSpace: "nowrap" }}>Updating lane...</span>}
             </div>
           </div>
 
@@ -3003,7 +2997,7 @@ export default function Pipeline() {
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrency(deal.value)}</span>
-                        {(() => { const p = deal.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
+                        {(() => { const p = deal.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
                       </div>
                     </div>
                   </div>
@@ -3026,7 +3020,7 @@ export default function Pipeline() {
                         <div style={{ fontSize: 12, color: "#71859b" }}>{contact.title || contact.company_name || "No title"}</div>
                         {contact.company_id && companyMap.has(contact.company_id) && <div style={{ fontSize: 11, color: "#96a7ba" }}>{companyMap.get(contact.company_id)?.name}</div>}
                       </div>
-                      <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>{stage.label}</span>
+                      <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>{stage.label}</span>
                     </div>
                   </div>
                 ))}

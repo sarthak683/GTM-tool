@@ -8,10 +8,12 @@ import {
   Brain,
   Building2,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Download,
   Flame,
   Loader2,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -64,6 +66,8 @@ function parseAccountSort(value: string | null): AccountSortKey {
   return ACCOUNT_SORT_OPTIONS.some((option) => option.value === value) ? (value as AccountSortKey) : "recent";
 }
 
+// Slim KPI stat block — number + 11px label only. The longer caption lives in
+// the title tooltip so the whole 8-up strip stays under ~72px tall.
 function SummaryCard({
   icon,
   label,
@@ -72,7 +76,6 @@ function SummaryCard({
   tone = "neutral",
   onClick,
   active = false,
-  showActiveBadge = true,
 }: {
   icon: ReactNode;
   label: string;
@@ -81,52 +84,57 @@ function SummaryCard({
   tone?: "neutral" | "primary" | "warm" | "green";
   onClick?: () => void;
   active?: boolean;
-  showActiveBadge?: boolean;
 }) {
   const toneStyle = {
-    neutral: { bg: "#f8fbff", border: colors.border, accent: colors.sub, activeBorder: "#94a3b8" },
-    primary: { bg: "#f3fbe3", border: "#cfe89a", accent: colors.primary, activeBorder: colors.primary },
-    warm: { bg: "#fff7eb", border: "#ffe0b2", accent: colors.amber, activeBorder: colors.amber },
-    green: { bg: "#eefcf5", border: "#cdeedc", accent: colors.green, activeBorder: colors.green },
+    neutral: { bg: "#f8fbff", accent: colors.sub, activeBorder: "#94a3b8" },
+    primary: { bg: "#f3fbe3", accent: colors.primary, activeBorder: colors.primary },
+    warm: { bg: "#fff7eb", accent: colors.amber, activeBorder: colors.amber },
+    green: { bg: "#eefcf5", accent: colors.green, activeBorder: colors.green },
   }[tone];
 
   return (
     <div
+      className="as-stat-block"
+      title={active && onClick ? `${hint} Filtered — click to clear.` : hint}
       style={{
-        ...cardStyle,
-        padding: "18px 18px 16px",
-        background: toneStyle.bg,
-        // Thicker colored border + subtle ring when the card's filter is active,
-        // so the rep sees which card is "on".
-        borderColor: active ? toneStyle.activeBorder : toneStyle.border,
-        borderWidth: active ? 2 : 1,
-        boxShadow: active ? `0 0 0 3px ${toneStyle.bg}` : undefined,
+        border: `1px solid ${active ? toneStyle.activeBorder : "#e3e9f2"}`,
+        boxShadow: active ? `0 0 0 2px ${toneStyle.bg}` : "0 1px 2px rgba(15,23,42,0.04)",
+        background: active ? toneStyle.bg : "#ffffff",
+        borderRadius: 10,
+        padding: "9px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        minWidth: 0,
         cursor: onClick ? "pointer" : "default",
-        position: "relative",
       }}
       onClick={onClick}
     >
-      {active && showActiveBadge && (
-        <span
-          style={{
-            position: "absolute", top: 10, right: 12,
-            fontSize: 10, fontWeight: 800, letterSpacing: 0.4,
-            color: toneStyle.activeBorder, textTransform: "uppercase",
-          }}
-          title="Click again to clear filter"
-        >
-          FILTERED · CLICK TO CLEAR
-        </span>
-      )}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ color: toneStyle.accent }}>{icon}</div>
-        <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.5 }}>{label.toUpperCase()}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <span style={{ color: toneStyle.accent, display: "inline-flex", flexShrink: 0 }}>{icon}</span>
+        <span style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", lineHeight: 1.25, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{label}</span>
       </div>
-      <div style={{ marginTop: 14, color: colors.text, fontSize: 28, fontWeight: 800 }}>{value}</div>
-      <div style={{ marginTop: 6, color: colors.sub, fontSize: 13, lineHeight: 1.5 }}>{hint}</div>
+      <div style={{ color: active ? toneStyle.accent : colors.text, fontSize: 19, fontWeight: 800, lineHeight: 1.15 }}>{value}</div>
     </div>
   );
 }
+
+// Shared row style for the "More ⋯" toolbar dropdown items.
+const MENU_ITEM_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  border: 0,
+  background: "transparent",
+  color: "#142335",
+  borderRadius: 8,
+  padding: "9px 10px",
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: "pointer",
+  textAlign: "left",
+};
 
 function UploadPanel({
   onUploaded,
@@ -349,7 +357,7 @@ function CompanyAvatar({ name }: { name: string }) {
   const idx = [...clean].reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % AVATAR_PALETTE.length;
   const [bg, fg] = AVATAR_PALETTE[idx];
   return (
-    <div style={{ width: 38, height: 38, borderRadius: 11, background: bg, color: fg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>
+    <div style={{ width: 32, height: 32, borderRadius: 9, background: bg, color: fg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, flexShrink: 0 }}>
       {initial}
     </div>
   );
@@ -369,6 +377,13 @@ function prettyRepName(name?: string | null, email?: string | null): string | nu
   return e || null;
 }
 
+// Owner chips show first name only (full name + role lives in the wrapper's
+// title tooltip) so "Pravalika" never truncates inside the AE·SDR column.
+function firstNameOnly(name: string | null): string | null {
+  if (!name) return null;
+  return name.trim().split(/\s+/)[0] || name;
+}
+
 function CompanyTableHeader({
   selectable,
   allSelected,
@@ -378,9 +393,9 @@ function CompanyTableHeader({
   allSelected?: boolean;
   onToggleAll?: () => void;
 } = {}) {
-  const cell: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
+  const cell: CSSProperties = { fontSize: 11, fontWeight: 800, color: "#9aa7b8", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div className={`as-company-table-header${selectable ? " as-selectable" : ""}`} style={{ padding: "2px 18px 8px" }}>
+    <div className={`as-company-table-header${selectable ? " as-selectable" : ""}`} style={{ padding: "2px 14px 6px" }}>
       {selectable && (
         <input
           type="checkbox"
@@ -420,6 +435,8 @@ function CompanyCard({
   const journeyStyle = rtp?.journey_stage ? (JOURNEY_STAGE_STYLE[rtp.journey_stage] ?? NEUTRAL_BADGE) : NEUTRAL_BADGE;
   const engagementStyle = rtp?.engagement ? (ENGAGEMENT_STYLE[rtp.engagement] ?? NEUTRAL_BADGE) : NEUTRAL_BADGE;
   const domainText = company.domain.endsWith(".unknown") ? "Domain unresolved" : company.domain;
+  const aeName = prettyRepName(company.assigned_rep_name || company.assigned_rep, company.assigned_rep_email);
+  const sdrName = prettyRepName(company.sdr_name, company.sdr_email);
 
   return (
     <div
@@ -427,9 +444,9 @@ function CompanyCard({
       onClick={() => nav(`/account-sourcing/${company.id}`)}
       style={{
         ...cardStyle,
-        borderRadius: 14,
+        borderRadius: 12,
         boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
-        padding: "11px 18px",
+        padding: "8px 14px",
         cursor: "pointer",
         transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background 0.15s",
         ...(selected ? { background: "#f3f9ea", borderColor: "#cfe89a" } : null),
@@ -453,11 +470,11 @@ function CompanyCard({
         </div>
       )}
       {/* Account */}
-      <div className="as-col-account" style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+      <div className="as-col-account" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         <CompanyAvatar name={company.name} />
-        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-          <div style={{ color: colors.text, fontWeight: 800, fontSize: 14.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
-          <div style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+          <div style={{ color: colors.text, fontWeight: 800, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
+          <div style={{ color: colors.faint, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
             {domainText}{company.industry ? ` · ${company.industry}` : ""}
           </div>
         </div>
@@ -467,9 +484,9 @@ function CompanyCard({
           there are no perpetually-empty columns. ICP tier always renders; the
           rest (status, disposition, Recotap journey/engagement, HQ) appear only
           when set. Wraps to a second line on dense rows. */}
-      <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 0 }}>
+      <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 5, minWidth: 0 }}>
         {hasIcp ? (
-          <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
+          <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "2px 8px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
         ) : null}
         {statusOption ? (
           // Status is the primary at-a-glance signal, so it gets a SOLID filled
@@ -478,44 +495,48 @@ function CompanyCard({
           // reuse accountStatusOption() so they stay in lockstep with the detail
           // page and analytics. (Matches the "active" status badge on the
           // company detail page.)
-          <span title={`Account status · ${statusOption.label}`} style={{ background: statusOption.color, color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.02em", whiteSpace: "nowrap", boxShadow: `0 1px 3px ${statusOption.color}55` }}>{statusOption.label}</span>
+          <span title={`Account status · ${statusOption.label}`} style={{ background: statusOption.color, color: "#fff", borderRadius: 999, padding: "2px 9px", fontSize: 11, fontWeight: 800, letterSpacing: "0.02em", whiteSpace: "nowrap", boxShadow: `0 1px 3px ${statusOption.color}55` }}>{statusOption.label}</span>
         ) : null}
         {disposition ? (
-          <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>
+          <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>
         ) : null}
         {rtp?.journey_stage ? (
-          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
+          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
         ) : null}
         {rtp?.engagement ? (
-          <span title="Recotap buying intent (engagement, from account score)" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>Intent · {rtp.engagement}</span>
+          <span title="Recotap buying intent (engagement, from account score)" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>Intent · {rtp.engagement}</span>
         ) : null}
         {rtp?.hq_location ? (
-          <span style={{ color: colors.faint, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{rtp.hq_location}</span>
+          <span style={{ color: colors.faint, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{rtp.hq_location}</span>
         ) : null}
       </div>
 
-      {/* Owners (AE + SDR) — names only, never raw emails */}
+      {/* Owners (AE + SDR) — first names only (full name in tooltip), never raw emails */}
       <div className="as-col-owners as-company-card-assign" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-        <AssignDropdown
-          entityType="company"
-          entityId={company.id}
-          role="ae"
-          currentAssignedId={company.assigned_to_id ?? null}
-          currentAssignedName={prettyRepName(company.assigned_rep_name || company.assigned_rep, company.assigned_rep_email)}
-          onAssigned={onAssigned}
-          compact
-          label="AE"
-        />
-        <AssignDropdown
-          entityType="company"
-          entityId={company.id}
-          role="sdr"
-          currentAssignedId={company.sdr_id ?? null}
-          currentAssignedName={prettyRepName(company.sdr_name, company.sdr_email)}
-          onAssigned={onAssigned}
-          compact
-          label="SDR"
-        />
+        <span title={aeName ? `AE · ${aeName}` : "Assign AE"} style={{ display: "inline-flex" }}>
+          <AssignDropdown
+            entityType="company"
+            entityId={company.id}
+            role="ae"
+            currentAssignedId={company.assigned_to_id ?? null}
+            currentAssignedName={firstNameOnly(aeName)}
+            onAssigned={onAssigned}
+            compact
+            label="AE"
+          />
+        </span>
+        <span title={sdrName ? `SDR · ${sdrName}` : "Assign SDR"} style={{ display: "inline-flex" }}>
+          <AssignDropdown
+            entityType="company"
+            entityId={company.id}
+            role="sdr"
+            currentAssignedId={company.sdr_id ?? null}
+            currentAssignedName={firstNameOnly(sdrName)}
+            onAssigned={onAssigned}
+            compact
+            label="SDR"
+          />
+        </span>
         <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />
       </div>
     </div>
@@ -559,6 +580,20 @@ export default function AccountSourcing() {
   const [prospectsMin, setProspectsMin] = useState<number | undefined>(initialPMin !== null ? Number(initialPMin) : undefined);
   const [prospectsMax, setProspectsMax] = useState<number | undefined>(initialPMax !== null ? Number(initialPMax) : undefined);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
+  // Presentation-only UI state: the "More ⋯" toolbar dropdown and the
+  // secondary filter row. The filter row auto-opens when any of the filters it
+  // hosts was restored from the URL/localStorage, so active filters are never
+  // hidden behind a collapsed toggle.
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [showMoreFilters, setShowMoreFilters] = useState<boolean>(() => Boolean(
+    parseSearchParamList(initParams.get("tier")).length ||
+    parseSearchParamList(initParams.get("own")).length ||
+    parseSearchParamList(initParams.get("disp")).length ||
+    parseSearchParamList(initParams.get("lane")).length ||
+    parseSearchParamList(initParams.get("journey")).length ||
+    initParams.get("pmin") !== null ||
+    initParams.get("pmax") !== null,
+  ));
   const [advOp, setAdvOp] = useState<ProspectOp>("gt");
   const [advValue, setAdvValue] = useState("");
   const [advValue2, setAdvValue2] = useState("");
@@ -874,6 +909,10 @@ export default function AccountSourcing() {
   );
 
   const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length);
+  // Count of active filters living behind the "More filters" toggle, so the
+  // collapsed toggle still signals that hidden filters are narrowing the list.
+  const moreFilterCount =
+    tierFilter.length + ownerFilter.length + dispositionFilter.length + laneFilter.length + journeyFilter.length + (hasAdvancedFilter ? 1 : 0);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -1006,278 +1045,400 @@ export default function AccountSourcing() {
     }
   }, [createForm.companiesText, load]);
 
+  // Import-status card, rendered in one of two slots: above the table while the
+  // import actively needs attention (running / awaiting review), below the
+  // table once completed.
+  const batchNeedsAttention = Boolean(
+    latestVisibleBatch && ["pending", "processing", "awaiting_confirmation"].includes(latestVisibleBatch.status),
+  );
+  const importStatusCard = latestVisibleBatch ? (
+    <div
+      style={{
+        ...cardStyle,
+        borderRadius: 14,
+        padding: "14px 16px",
+        display: "grid",
+        gap: 12,
+        background:
+          latestVisibleBatch.status === "completed"
+            ? "#f0faf4"
+            : latestVisibleBatch.status === "awaiting_confirmation"
+              ? "#fff8ef"
+              : "#fbfdff",
+        border:
+          latestVisibleBatch.status === "completed"
+            ? "1px solid #c8e8d8"
+            : latestVisibleBatch.status === "awaiting_confirmation"
+              ? "1px solid #ffd8a8"
+              : `1px solid ${colors.border}`,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {latestVisibleBatch.status === "completed" ? (
+              <CheckCircle2 size={16} color={colors.green} />
+            ) : latestVisibleBatch.status === "awaiting_confirmation" ? (
+              <AlertCircle size={16} color={colors.amber} />
+            ) : (
+              <Loader2 size={16} className="animate-spin" color={colors.primary} />
+            )}
+            <span style={{ color: colors.text, fontWeight: 800, fontSize: 14 }}>{latestVisibleBatch.filename}</span>
+          </div>
+          <div style={{ color: colors.sub, fontSize: 12.5 }}>
+            {latestProgressMessage || "Tracking research progress"}
+            {latestVisibleBatch.created_by_name ? ` • Uploaded by ${latestVisibleBatch.created_by_name}` : ""}
+            {` • ${ts(latestVisibleBatch.created_at)}`}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {latestVisibleBatch.status === "awaiting_confirmation" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                style={{
+                  border: "1px solid #ffd29a",
+                  background: "#fff2db",
+                  color: colors.amber,
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Review TAL verdicts
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingBatchApproval(latestVisibleBatch)}
+                style={{
+                  border: 0,
+                  background: colors.primary,
+                  color: "#fff",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Continue enrichment
+              </button>
+            </>
+          ) : null}
+          {latestVisibleBatch.status === "completed" ? (
+            <button
+              type="button"
+              onClick={() => setDismissedBatchIds((current) => [...current, latestVisibleBatch.id])}
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: "#fff",
+                color: colors.text,
+                borderRadius: 10,
+                padding: "8px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Close card
+            </button>
+          ) : (
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: colors.card,
+                color: colors.text,
+                borderRadius: 10,
+                padding: "8px 12px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+              Refresh progress
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+        <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "10px 12px" }}>
+          <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>PROGRESS</div>
+          <div style={{ marginTop: 4, color: colors.text, fontWeight: 800, fontSize: 18 }}>
+            {latestVisibleBatch.processed_rows}/{latestVisibleBatch.total_rows}
+          </div>
+          <div style={{ marginTop: 3, color: colors.sub, fontSize: 12 }}>Accounts processed</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "10px 12px" }}>
+          <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CONTACTS FOUND</div>
+          <div style={{ marginTop: 4, color: colors.text, fontWeight: 800, fontSize: 18 }}>
+            {latestVisibleBatch.contacts_found ?? 0}
+          </div>
+          <div style={{ marginTop: 3, color: colors.sub, fontSize: 12 }}>Relevant stakeholders saved</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "10px 12px" }}>
+          <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CURRENT STEP</div>
+          <div style={{ marginTop: 4, color: colors.text, fontWeight: 800, fontSize: 15 }}>
+            {formatBatchStage(latestVisibleBatch.current_stage, latestVisibleBatch.status)}
+          </div>
+          <div style={{ marginTop: 3, color: colors.sub, fontSize: 12 }}>{etaText}</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "10px 12px" }}>
+          <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>TAL VERDICTS</div>
+          <div style={{ marginTop: 4, color: colors.text, fontWeight: 800, fontSize: 15 }}>
+            {String(latestVerdictSummary.target || 0)} target / {String(latestVerdictSummary.watch || 0)} watch
+          </div>
+          <div style={{ marginTop: 3, color: colors.sub, fontSize: 12 }}>
+            {latestVerdictSummary.message ? String(latestVerdictSummary.message) : "No uploaded verdicts"}
+          </div>
+        </div>
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
+        <div
+          style={{
+            width: `${progressPercent}%`,
+            height: "100%",
+            background: latestVisibleBatch.status === "completed" ? colors.green : colors.primary,
+          }}
+        />
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="account-sourcing-page" style={pageStyle}>
       <style>{`
         @media (max-width: 768px) {
-          .as-hero-card { padding: 16px !important; }
-          .as-hero-card h1 { font-size: 28px !important; }
-          .as-hero-card p { font-size: 14px !important; }
-          .as-summary-grid { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+          .as-toolbar { align-items: stretch !important; }
+          .as-toolbar-actions { width: 100% !important; }
+          .as-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 6px !important; }
           .as-filter-bar { position: static !important; top: auto !important; padding: 10px !important; }
-          .as-filter-row { flex-direction: column !important; gap: 8px !important; }
+          .as-filter-row { flex-direction: column !important; align-items: stretch !important; gap: 8px !important; }
           .as-filter-row > * { width: 100% !important; }
           .as-company-card { flex-wrap: wrap !important; padding: 12px !important; gap: 10px !important; }
-          .as-company-card-desktop-chips { display: none !important; }
-          .as-company-card-mobile-chips { display: flex !important; }
           .as-company-card-assign { display: none !important; }
         }
       `}</style>
       <div style={containerStyle}>
-        <div
-          className="as-hero-card"
-          style={{
-            ...cardStyle,
-            padding: "26px 26px 22px",
-            background: "radial-gradient(circle at top right, #eef7db 0%, transparent 28%), radial-gradient(circle at left center, #fff2ea 0%, transparent 24%), #ffffff",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, borderRadius: 999, padding: "6px 12px", background: "#f1f9e2", color: colors.primary, fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>
-                <Sparkles size={13} />
-                GTM ENGINEERING
-              </div>
-              <h1 style={{ margin: "14px 0 0", color: colors.text, fontSize: 42, letterSpacing: 0.2 }}>Account Sourcing</h1>
-              <p style={{ margin: "10px 0 0", color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 780 }}>
-                Start with company names and turn them into presentable account briefs with verdicts, timing, outreach angles, and a clean view of where to aim next.
-              </p>
-              <div style={{ marginTop: 18, display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#f7faff", border: `1px solid ${colors.border}`, borderRadius: 14, padding: "8px" }}>
-                {[
-                  { id: "accounts", label: "Accounts" },
-                  { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length})` : ""}` },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id as "accounts" | "imports")}
+        {/* Compact toolbar — the topbar already renders the page title, so this
+            row is just the tab switcher plus the primary actions. Secondary and
+            destructive actions live in the "More ⋯" menu. */}
+        <div className="as-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ffffff", border: "1px solid #e3e9f2", borderRadius: 10, padding: 3 }}>
+            {[
+              { id: "accounts", label: "Accounts" },
+              { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length})` : ""}` },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as "accounts" | "imports")}
+                style={{
+                  border: 0,
+                  background: activeTab === tab.id ? "#f3fbe3" : "transparent",
+                  color: activeTab === tab.id ? "#4d7c0f" : colors.sub,
+                  borderRadius: 8,
+                  padding: "6px 14px",
+                  minHeight: 30,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="as-toolbar-actions" style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {isAdmin && (
+              <button type="button" className="crm-button primary" onClick={() => setShowCreateModal(true)}>
+                <Plus size={14} />
+                Add Accounts
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                className="crm-button soft"
+                onClick={async () => {
+                  if (!window.confirm("Run ICP research for all sourced accounts? Uses web search + Claude AI — no Apollo or Hunter credits.\n\nThis may take 15-30s per company.")) return;
+                  setBulkIcpRunning(true);
+                  setBulkIcpResult(null);
+                  try {
+                    const result = await accountSourcingApi.bulkIcpResearch(false);
+                    setBulkIcpResult(`Queued ${result.queued} of ${result.total} accounts for ICP research`);
+                  } catch (e) {
+                    setBulkIcpResult(e instanceof Error ? e.message : "Failed to queue ICP research");
+                  } finally {
+                    setBulkIcpRunning(false);
+                  }
+                }}
+                disabled={bulkIcpRunning}
+                style={{ opacity: bulkIcpRunning ? 0.7 : 1 }}
+              >
+                {bulkIcpRunning ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
+                Run ICP Research
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                className="crm-button soft"
+                onClick={async () => {
+                  if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
+                  setBulkEnriching(true);
+                  setBulkEnrichResult(null);
+                  try {
+                    const result = await accountSourcingApi.bulkEnrichAll(false);
+                    setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
+                  } catch (e) {
+                    setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
+                  } finally {
+                    setBulkEnriching(false);
+                  }
+                }}
+                disabled={bulkEnriching}
+                style={{ opacity: bulkEnriching ? 0.7 : 1 }}
+              >
+                {bulkEnriching ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                Enrich All
+              </button>
+            )}
+            <button
+              type="button"
+              className="crm-button soft"
+              onClick={() => void load()}
+              title="Refresh"
+              aria-label="Refresh accounts"
+              style={{ padding: "0 10px" }}
+            >
+              <RefreshCw size={15} />
+            </button>
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                className="crm-button soft"
+                onClick={() => setMoreMenuOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={moreMenuOpen}
+                title="More actions"
+              >
+                More
+                <MoreHorizontal size={15} />
+              </button>
+              {moreMenuOpen && (
+                <>
+                  <div onClick={() => setMoreMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+                  <div
+                    role="menu"
+                    className="as-more-menu"
                     style={{
-                      border: 0,
-                      background: activeTab === tab.id ? "#f1f9e2" : "transparent",
-                      color: activeTab === tab.id ? colors.primary : colors.sub,
+                      position: "absolute",
+                      right: 0,
+                      top: "calc(100% + 6px)",
+                      zIndex: 61,
+                      minWidth: 228,
+                      background: "#ffffff",
+                      border: "1px solid #e3e9f2",
                       borderRadius: 10,
-                      padding: "10px 14px",
-                      fontWeight: 800,
-                      cursor: "pointer",
+                      boxShadow: "0 18px 44px rgba(15,23,42,0.16)",
+                      padding: 6,
+                      display: "grid",
+                      gap: 2,
                     }}
                   >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-              {isAdmin && (
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  style={{
-                    border: 0,
-                    background: "#6fae27",
-                    color: "#fff",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  <Plus size={15} />
-                  Add Accounts
-                </button>
-              )}
-              {isAdmin && (
-                <>
-                  <button
-                    onClick={() => void runReset("account-sourcing")}
-                    disabled={Boolean(resettingScope)}
-                    style={{
-                      border: "1px solid #f0c2c8",
-                      background: "#fff6f7",
-                      color: colors.red,
-                      borderRadius: 12,
-                      padding: "10px 14px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: 700,
-                      cursor: resettingScope ? "not-allowed" : "pointer",
-                      opacity: resettingScope ? 0.7 : 1,
-                    }}
-                  >
-                    {resettingScope === "account-sourcing" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                    Clear Account Sourcing
-                  </button>
-                  <button
-                    onClick={() => void runReset("workspace")}
-                    disabled={Boolean(resettingScope)}
-                    style={{
-                      border: "1px solid #f5d4d8",
-                      background: "#fffafb",
-                      color: colors.red,
-                      borderRadius: 12,
-                      padding: "10px 14px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: 700,
-                      cursor: resettingScope ? "not-allowed" : "pointer",
-                      opacity: resettingScope ? 0.7 : 1,
-                    }}
-                  >
-                    {resettingScope === "workspace" ? <Loader2 size={15} className="animate-spin" /> : <AlertCircle size={15} />}
-                    Clear Workspace
-                  </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={MENU_ITEM_STYLE}
+                      onClick={async () => {
+                        setMoreMenuOpen(false);
+                        setExportingContacts(true);
+                        try {
+                          const blob = await accountSourcingApi.exportContactsCsv();
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `sourced-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        } finally {
+                          setExportingContacts(false);
+                        }
+                      }}
+                    >
+                      {exportingContacts ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      Export Contacts
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={MENU_ITEM_STYLE}
+                      onClick={async () => {
+                        setMoreMenuOpen(false);
+                        setExporting(true);
+                        try {
+                          const blob = await accountSourcingApi.exportCsv();
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `sourced-companies-${new Date().toISOString().slice(0, 10)}.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        } finally {
+                          setExporting(false);
+                        }
+                      }}
+                    >
+                      {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      Export CSV
+                    </button>
+                    {isAdmin && (
+                      <>
+                        <div style={{ height: 1, background: "#e3e9f2", margin: "4px 6px" }} />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="as-menu-danger"
+                          disabled={Boolean(resettingScope)}
+                          style={{ ...MENU_ITEM_STYLE, color: colors.red, opacity: resettingScope ? 0.7 : 1, cursor: resettingScope ? "not-allowed" : "pointer" }}
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            void runReset("account-sourcing");
+                          }}
+                        >
+                          {resettingScope === "account-sourcing" ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                          Clear Account Sourcing
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="as-menu-danger"
+                          disabled={Boolean(resettingScope)}
+                          style={{ ...MENU_ITEM_STYLE, color: colors.red, opacity: resettingScope ? 0.7 : 1, cursor: resettingScope ? "not-allowed" : "pointer" }}
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            void runReset("workspace");
+                          }}
+                        >
+                          {resettingScope === "workspace" ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                          Clear Workspace
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </>
               )}
-              <button
-                onClick={async () => {
-                  setExportingContacts(true);
-                  try {
-                    const blob = await accountSourcingApi.exportContactsCsv();
-                    const url = URL.createObjectURL(blob);
-                    const anchor = document.createElement("a");
-                    anchor.href = url;
-                    anchor.download = `sourced-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
-                    anchor.click();
-                    URL.revokeObjectURL(url);
-                  } finally {
-                    setExportingContacts(false);
-                  }
-                }}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {exportingContacts ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                Export Contacts
-              </button>
-              <button
-                onClick={async () => {
-                  setExporting(true);
-                  try {
-                    const blob = await accountSourcingApi.exportCsv();
-                    const url = URL.createObjectURL(blob);
-                    const anchor = document.createElement("a");
-                    anchor.href = url;
-                    anchor.download = `sourced-companies-${new Date().toISOString().slice(0, 10)}.csv`;
-                    anchor.click();
-                    URL.revokeObjectURL(url);
-                  } finally {
-                    setExporting(false);
-                  }
-                }}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                Export CSV
-              </button>
-              {isAdmin && (
-                <>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm("Run ICP research for all sourced accounts? Uses web search + Claude AI — no Apollo or Hunter credits.\n\nThis may take 15-30s per company.")) return;
-                      setBulkIcpRunning(true);
-                      setBulkIcpResult(null);
-                      try {
-                        const result = await accountSourcingApi.bulkIcpResearch(false);
-                        setBulkIcpResult(`Queued ${result.queued} of ${result.total} accounts for ICP research`);
-                      } catch (e) {
-                        setBulkIcpResult(e instanceof Error ? e.message : "Failed to queue ICP research");
-                      } finally {
-                        setBulkIcpRunning(false);
-                      }
-                    }}
-                    disabled={bulkIcpRunning}
-                    style={{
-                      border: `1px solid #c3dfc0`,
-                      background: "#edfaeb",
-                      color: "#1a6b2a",
-                      borderRadius: 12,
-                      padding: "10px 14px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: 700,
-                      cursor: bulkIcpRunning ? "not-allowed" : "pointer",
-                      opacity: bulkIcpRunning ? 0.7 : 1,
-                    }}
-                  >
-                    {bulkIcpRunning ? <Loader2 size={15} className="animate-spin" /> : <Brain size={15} />}
-                    Run ICP Research
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm("Queue enrichment for all sourced accounts? This may take a while depending on how many companies you have.")) return;
-                      setBulkEnriching(true);
-                      setBulkEnrichResult(null);
-                      try {
-                        const result = await accountSourcingApi.bulkEnrichAll(false);
-                        setBulkEnrichResult(`Queued ${result.queued} of ${result.total} accounts for enrichment`);
-                      } catch (e) {
-                        setBulkEnrichResult(e instanceof Error ? e.message : "Failed to queue enrichment");
-                      } finally {
-                        setBulkEnriching(false);
-                      }
-                    }}
-                    disabled={bulkEnriching}
-                    style={{
-                      border: `1px solid #cfe89a`,
-                      background: "#f3fbe3",
-                      color: "#4d7c0f",
-                      borderRadius: 12,
-                      padding: "10px 14px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: 700,
-                      cursor: bulkEnriching ? "not-allowed" : "pointer",
-                      opacity: bulkEnriching ? 0.7 : 1,
-                    }}
-                  >
-                    {bulkEnriching ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                    Enrich All Accounts
-                  </button>
-                </>
-              )}
-              <button
-                onClick={() => void load()}
-                style={{
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  borderRadius: 12,
-                  padding: "10px 14px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                <RefreshCw size={15} /> Refresh
-              </button>
             </div>
           </div>
         </div>
@@ -1354,275 +1515,90 @@ export default function AccountSourcing() {
           const importsActive = activeTab === "imports";
 
           return (
-            <>
-              <div className="as-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-                <SummaryCard
-                  icon={<Building2 size={18} />}
-                  label="Sourced Accounts"
-                  value={String(totalCompanies)}
-                  hint="Total accounts currently available for enrichment and prospecting."
-                  tone="neutral"
-                  onClick={toggleSourced}
-                  active={sourcedActive}
-                  showActiveBadge={false}
-                />
-                <SummaryCard
-                  icon={<Flame size={18} />}
-                  label="Hot Accounts"
-                  value={String(hotCount)}
-                  hint="Accounts with the strongest ICP fit and highest near-term potential."
-                  tone="warm"
-                  onClick={() => toggleTier("hot")}
-                  active={isTierActive("hot")}
-                />
-                <SummaryCard
-                  icon={<TrendingUp size={18} />}
-                  label="Warm Accounts"
-                  value={String(warmCount)}
-                  hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
-                  tone="primary"
-                  onClick={() => toggleTier("warm")}
-                  active={isTierActive("warm")}
-                />
-                <SummaryCard
-                  icon={<Target size={18} />}
-                  label="High Priority"
-                  value={String(highPriorityCount)}
-                  hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
-                  tone="green"
-                  onClick={() => toggleDisposition("working")}
-                  active={isDispositionActive("working")}
-                />
-              </div>
-
-              <div className="as-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-                <SummaryCard
-                  icon={<Users size={18} />}
-                  label="Engaged Accounts"
-                  value={String(engagedCount)}
-                  hint="Accounts where reps have logged active motion or positive interest."
-                  tone="primary"
-                  onClick={() => toggleDisposition("interested")}
-                  active={isDispositionActive("interested")}
-                />
-                <SummaryCard
-                  icon={<Target size={18} />}
-                  label="Research Complete"
-                  value={String(researchedCount)}
-                  hint="Accounts with a generated Beacon research brief already available."
-                  tone="green"
-                  onClick={toggleImportsTab}
-                  active={importsActive}
-                  showActiveBadge={false}
-                />
-                <SummaryCard
-                  icon={<Sparkles size={18} />}
-                  label="Target Verdicts"
-                  value={String(targetVerdictCount)}
-                  hint={`${watchVerdictCount} more accounts are currently in Watch.`}
-                  tone="warm"
-                  onClick={toggleImportsTab}
-                  active={importsActive}
-                  showActiveBadge={false}
-                />
-                <SummaryCard
-                  icon={<AlertCircle size={18} />}
-                  label="Needs Review"
-                  value={String(unresolvedCount + unenrichedCount)}
-                  hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
-                  tone="warm"
-                  onClick={toggleImportsTab}
-                  active={importsActive}
-                  showActiveBadge={false}
-                />
-              </div>
-            </>
+            <div className="as-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 8 }}>
+              <SummaryCard
+                icon={<Building2 size={13} />}
+                label="Sourced"
+                value={String(totalCompanies)}
+                hint="Total accounts currently available for enrichment and prospecting."
+                tone="neutral"
+                onClick={toggleSourced}
+                active={sourcedActive}
+              />
+              <SummaryCard
+                icon={<Flame size={13} />}
+                label="Hot"
+                value={String(hotCount)}
+                hint="Accounts with the strongest ICP fit and highest near-term potential."
+                tone="warm"
+                onClick={() => toggleTier("hot")}
+                active={isTierActive("hot")}
+              />
+              <SummaryCard
+                icon={<TrendingUp size={13} />}
+                label="Warm"
+                value={String(warmCount)}
+                hint="Good-fit accounts that still need stronger proof, timing, or persona clarity."
+                tone="primary"
+                onClick={() => toggleTier("warm")}
+                active={isTierActive("warm")}
+              />
+              <SummaryCard
+                icon={<Target size={13} />}
+                label="High Priority"
+                value={String(highPriorityCount)}
+                hint="Accounts worth the fastest follow-up based on fit, intent, and sales feedback."
+                tone="green"
+                onClick={() => toggleDisposition("working")}
+                active={isDispositionActive("working")}
+              />
+              <SummaryCard
+                icon={<Users size={13} />}
+                label="Engaged"
+                value={String(engagedCount)}
+                hint="Accounts where reps have logged active motion or positive interest."
+                tone="primary"
+                onClick={() => toggleDisposition("interested")}
+                active={isDispositionActive("interested")}
+              />
+              <SummaryCard
+                icon={<Target size={13} />}
+                label="Researched"
+                value={String(researchedCount)}
+                hint="Accounts with a generated Beacon research brief already available."
+                tone="green"
+                onClick={toggleImportsTab}
+                active={importsActive}
+              />
+              <SummaryCard
+                icon={<Sparkles size={13} />}
+                label="Target Verdicts"
+                value={String(targetVerdictCount)}
+                hint={`${watchVerdictCount} more accounts are currently in Watch.`}
+                tone="warm"
+                onClick={toggleImportsTab}
+                active={importsActive}
+              />
+              <SummaryCard
+                icon={<AlertCircle size={13} />}
+                label="Needs Review"
+                value={String(unresolvedCount + unenrichedCount)}
+                hint={`${unresolvedCount} unresolved domains, ${unenrichedCount} accounts without completed enrichment.`}
+                tone="warm"
+                onClick={toggleImportsTab}
+                active={importsActive}
+              />
+            </div>
           );
         })()}
 
-        {isAdmin && activeTab === "accounts" ? (
-          <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
-        ) : null}
-
-        {isAdmin && activeTab === "accounts" ? (
-          <BulkReassignUpload onApplied={() => load()} />
-        ) : null}
-
-        {latestVisibleBatch ? (
-          <div
-            style={{
-              ...cardStyle,
-              padding: "16px 18px",
-              display: "grid",
-              gap: 12,
-              background:
-                latestVisibleBatch.status === "completed"
-                  ? "#f0faf4"
-                  : latestVisibleBatch.status === "awaiting_confirmation"
-                    ? "#fff8ef"
-                    : "#fbfdff",
-              border:
-                latestVisibleBatch.status === "completed"
-                  ? "1px solid #c8e8d8"
-                  : latestVisibleBatch.status === "awaiting_confirmation"
-                    ? "1px solid #ffd8a8"
-                    : `1px solid ${colors.border}`,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start" }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {latestVisibleBatch.status === "completed" ? (
-                    <CheckCircle2 size={16} color={colors.green} />
-                  ) : latestVisibleBatch.status === "awaiting_confirmation" ? (
-                    <AlertCircle size={16} color={colors.amber} />
-                  ) : (
-                    <Loader2 size={16} className="animate-spin" color={colors.primary} />
-                  )}
-                  <span style={{ color: colors.text, fontWeight: 800, fontSize: 15 }}>{latestVisibleBatch.filename}</span>
-                </div>
-                <div style={{ color: colors.sub, fontSize: 13 }}>
-                  {latestProgressMessage || "Tracking research progress"}
-                  {latestVisibleBatch.created_by_name ? ` • Uploaded by ${latestVisibleBatch.created_by_name}` : ""}
-                  {` • ${ts(latestVisibleBatch.created_at)}`}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {latestVisibleBatch.status === "awaiting_confirmation" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
-                      style={{
-                        border: "1px solid #ffd29a",
-                        background: "#fff2db",
-                        color: colors.amber,
-                        borderRadius: 10,
-                        padding: "8px 12px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Review TAL verdicts
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingBatchApproval(latestVisibleBatch)}
-                      style={{
-                        border: 0,
-                        background: colors.primary,
-                        color: "#fff",
-                        borderRadius: 10,
-                        padding: "8px 12px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Continue enrichment
-                    </button>
-                  </>
-                ) : null}
-                {latestVisibleBatch.status === "completed" ? (
-                  <button
-                    type="button"
-                    onClick={() => setDismissedBatchIds((current) => [...current, latestVisibleBatch.id])}
-                    style={{
-                      border: `1px solid ${colors.border}`,
-                      background: "#fff",
-                      color: colors.text,
-                      borderRadius: 10,
-                      padding: "8px 12px",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Close card
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => void load()}
-                    disabled={loading}
-                    style={{
-                      border: `1px solid ${colors.border}`,
-                      background: colors.card,
-                      color: colors.text,
-                      borderRadius: 10,
-                      padding: "8px 12px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.7 : 1,
-                    }}
-                  >
-                    {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                    Refresh progress
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>PROGRESS</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
-                  {latestVisibleBatch.processed_rows}/{latestVisibleBatch.total_rows}
-                </div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Accounts processed</div>
-              </div>
-              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CONTACTS FOUND</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 20 }}>
-                  {latestVisibleBatch.contacts_found ?? 0}
-                </div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>Relevant stakeholders saved</div>
-              </div>
-              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>CURRENT STEP</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 16 }}>
-                  {formatBatchStage(latestVisibleBatch.current_stage, latestVisibleBatch.status)}
-                </div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>{etaText}</div>
-              </div>
-              <div style={{ background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>TAL VERDICTS</div>
-                <div style={{ marginTop: 6, color: colors.text, fontWeight: 800, fontSize: 18 }}>
-                  {String(latestVerdictSummary.target || 0)} target / {String(latestVerdictSummary.watch || 0)} watch
-                </div>
-                <div style={{ marginTop: 4, color: colors.sub, fontSize: 12 }}>
-                  {latestVerdictSummary.message ? String(latestVerdictSummary.message) : "No uploaded verdicts"}
-                </div>
-              </div>
-            </div>
-            <div style={{ height: 8, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
-              <div
-                style={{
-                  width: `${progressPercent}%`,
-                  height: "100%",
-                  background: latestVisibleBatch.status === "completed" ? colors.green : colors.primary,
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
+        {/* Import status stays above the table ONLY while the import actively
+            needs attention (running or awaiting review). Completed cards move
+            below the table so the account list stays high on the page. */}
+        {batchNeedsAttention ? importStatusCard : null}
 
         {activeTab === "accounts" ? (
           <>
-            <JourneyFunnel
-              summary={journeySummary}
-              active={journeyFilter}
-              onToggle={(stage) => {
-                setPage(1);
-                setJourneyFilter((prev) => (prev.length === 1 && prev[0] === stage ? [] : [stage]));
-              }}
-              onSync={handleSyncRecotap}
-              syncing={syncingRecotap}
-            />
             {showAdvancedFilter && (
               <div
                 data-mobile-modal
@@ -1763,244 +1739,272 @@ export default function AccountSourcing() {
               className="as-filter-bar"
               style={{
                 ...cardStyle,
-                padding: "14px 16px",
+                borderRadius: 14,
+                padding: "10px 12px",
                 display: "grid",
-                gap: 12,
+                gap: 10,
                 position: "sticky",
-                top: 16,
+                top: 8,
                 zIndex: 5,
               }}
             >
-          <div className="as-filter-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ position: "relative", minWidth: 260, flex: 1 }}>
-              <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: 11 }} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search companies..."
-                style={{
-                  width: "100%",
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 10,
-                  padding: "10px 12px 10px 30px",
-                  fontSize: 14,
-                  outline: "none",
-                }}
-              />
-            </div>
-            <div style={{ color: colors.sub, fontSize: 14, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
-              <span>{totalCompanies} companies sourced</span>
-              <span>{highPriorityCount} high-priority</span>
-              <span>{researchedCount} researched</span>
-              <span>{targetVerdictCount} target verdicts</span>
-              <button
-                type="button"
-                onClick={() => {
-                  // Hydrate the modal draft from the active bounds so the
-                  // user sees their current rule when they open it.
-                  if (prospectsMin !== undefined && prospectsMax !== undefined && prospectsMin === prospectsMax) {
-                    setAdvOp("eq"); setAdvValue(String(prospectsMin)); setAdvValue2("");
-                  } else if (prospectsMin !== undefined && prospectsMax !== undefined) {
-                    setAdvOp("between"); setAdvValue(String(prospectsMin)); setAdvValue2(String(prospectsMax));
-                  } else if (prospectsMin !== undefined) {
-                    setAdvOp("gt"); setAdvValue(String(prospectsMin - 1)); setAdvValue2("");
-                  } else if (prospectsMax !== undefined) {
-                    setAdvOp("lt"); setAdvValue(String(prospectsMax + 1)); setAdvValue2("");
-                  }
-                  setShowAdvancedFilter(true);
-                }}
-                title="Filter accounts by the number of prospects they have"
-                style={{
-                  height: 36, padding: "0 12px", borderRadius: 10,
-                  border: hasAdvancedFilter ? "1.5px solid #ffb995" : `1px solid ${colors.border}`,
-                  background: hasAdvancedFilter ? "#f3fbe3" : colors.card,
-                  color: hasAdvancedFilter ? "#4d7c0f" : colors.text,
-                  fontSize: 13, fontWeight: 700, cursor: "pointer",
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                }}
-              >
-                Advanced Filter{hasAdvancedFilter ? " •" : ""}
-              </button>
-              {hasAdvancedFilter && (
-                <button
-                  type="button"
-                  disabled={downloadingFiltered}
-                  onClick={async () => {
-                    setDownloadingFiltered(true);
-                    try {
-                      const blob = await accountSourcingApi.exportCsv({
-                        prospectsMin,
-                        prospectsMax,
-                      });
-                      const url = URL.createObjectURL(blob);
-                      const anchor = document.createElement("a");
-                      anchor.href = url;
-                      anchor.download = `sourced-companies-filtered-${new Date().toISOString().slice(0, 10)}.csv`;
-                      anchor.click();
-                      URL.revokeObjectURL(url);
-                    } finally {
-                      setDownloadingFiltered(false);
-                    }
-                  }}
-                  style={{
-                    height: 36, padding: "0 12px", borderRadius: 10,
-                    border: "1px solid #6fae27", background: "#6fae27",
-                    color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    opacity: downloadingFiltered ? 0.7 : 1,
-                  }}
-                >
-                  {downloadingFiltered ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                  Download filtered
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <MultiSelectFilter
-                values={tierFilter}
-                onChange={setTierFilter}
-                options={TIER_OPTIONS}
-                label="ICP Tier"
-                allLabel="All ICP tiers"
-                minWidth={130}
-              />
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 10, fontWeight: 700, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.5 }}>View</label>
+              {/* Row 1 — search + the most-used filters. Everything else lives
+                  behind the "More filters" toggle below. */}
+              <div className="as-filter-row" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ position: "relative", minWidth: 200, flex: "1 1 200px" }}>
+                  <Search size={14} color={colors.faint} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search companies..."
+                    style={{
+                      width: "100%",
+                      height: 42,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 10,
+                      padding: "0 12px 0 30px",
+                      fontSize: 13,
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
                 <select
                   value={ownerScope}
                   onChange={(event) => setOwnerScope(event.target.value === "mine" ? "mine" : "all")}
+                  title="View — all accounts or only mine"
                   style={{
                     height: 42,
-                    borderRadius: 12,
+                    borderRadius: 10,
                     border: ownerScope === "mine" ? "1.5px solid #cfe89a" : "1px solid #d9e1ec",
                     background: ownerScope === "mine" ? "#f3fbe3" : "#fff",
-                    padding: "0 32px 0 12px",
+                    padding: "0 28px 0 12px",
                     fontSize: 13,
                     color: "#1d2b3c",
                     outline: "none",
-                    minWidth: 150,
+                    minWidth: 130,
                     cursor: "pointer",
                   }}
                 >
                   <option value="all">All accounts</option>
                   <option value="mine">My accounts</option>
                 </select>
-              </div>
-              {teamUsers.length > 0 && (
+                {teamUsers.length > 0 && (
+                  <MultiSelectFilter
+                    values={sdrFilter}
+                    onChange={setSdrFilter}
+                    options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                    label="SDR Assigned"
+                    allLabel="SDR: All"
+                    minWidth={140}
+                    hideLabel
+                  />
+                )}
                 <MultiSelectFilter
-                  values={ownerFilter}
-                  onChange={setOwnerFilter}
-                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
-                  label="AE Assigned"
-                  allLabel="AE Assigned: All"
-                  minWidth={180}
+                  values={statusFilter}
+                  onChange={setStatusFilter}
+                  options={ACCOUNT_STATUS_FILTER_OPTIONS}
+                  label="Status"
+                  allLabel="Status: All"
+                  minWidth={130}
+                  hideLabel
                 />
-              )}
-              {teamUsers.length > 0 && (
-                <MultiSelectFilter
-                  values={sdrFilter}
-                  onChange={setSdrFilter}
-                  options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
-                  label="SDR Assigned"
-                  allLabel="SDR Assigned: All"
-                  minWidth={190}
-                />
-              )}
-              <MultiSelectFilter
-                values={dispositionFilter}
-                onChange={setDispositionFilter}
-                options={DISPOSITION_OPTIONS}
-                label="Disposition"
-                allLabel="All dispositions"
-                minWidth={150}
-              />
-              <MultiSelectFilter
-                values={statusFilter}
-                onChange={setStatusFilter}
-                options={ACCOUNT_STATUS_FILTER_OPTIONS}
-                label="Status"
-                allLabel="All statuses"
-                minWidth={150}
-              />
-              <MultiSelectFilter
-                values={laneFilter}
-                onChange={setLaneFilter}
-                options={OUTREACH_LANE_OPTIONS}
-                label="Outreach Lane"
-                allLabel="All lanes"
-                minWidth={170}
-              />
-              <MultiSelectFilter
-                values={journeyFilter}
-                onChange={setJourneyFilter}
-                options={JOURNEY_FILTER_OPTIONS}
-                label="Journey Stage"
-                allLabel="All journey stages"
-                minWidth={175}
-              />
-              <select
-                value={sortBy}
-                onChange={(event) => setSortBy(event.target.value as AccountSortKey)}
-                title="Sort the currently visible account page"
-                style={{
-                  height: 38,
-                  minWidth: 190,
-                  borderRadius: 10,
-                  border: `1px solid ${colors.border}`,
-                  background: colors.card,
-                  color: colors.text,
-                  padding: "0 12px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  outline: "none",
-                }}
-              >
-                {ACCOUNT_SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={{ color: colors.sub, fontSize: 13, fontWeight: 700 }}>
-                {companyTotal === 0 ? "0 shown" : `${showingStart}-${showingEnd} of ${companyTotal}`}
-              </span>
-              <span style={{ color: colors.faint, fontSize: 12 }}>Page {page} of {Math.max(companyPages, 1)}</span>
-              {hasFilters ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearch("");
-                    setOwnerScope("all");
-                    setOwnerFilter([]);
-                    setSdrFilter([]);
-                    setTierFilter([]);
-                    setDispositionFilter([]);
-                    setStatusFilter([]);
-                    setLaneFilter([]);
-                    setJourneyFilter([]);
-                  }}
+                <select
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value as AccountSortKey)}
+                  title="Sort the currently visible account page"
                   style={{
+                    height: 42,
+                    minWidth: 160,
+                    borderRadius: 10,
                     border: `1px solid ${colors.border}`,
                     background: colors.card,
                     color: colors.text,
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontWeight: 700,
-                    cursor: "pointer",
+                    padding: "0 12px",
                     fontSize: 13,
+                    fontWeight: 700,
+                    outline: "none",
+                    cursor: "pointer",
                   }}
                 >
-                  Reset filters
+                  {ACCOUNT_SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowMoreFilters((open) => !open)}
+                  aria-expanded={showMoreFilters}
+                  title="Show ICP tier, AE, disposition, outreach lane, journey stage, and the prospects-count rule"
+                  style={{
+                    height: 42,
+                    padding: "0 12px",
+                    borderRadius: 10,
+                    border: moreFilterCount > 0 ? "1.5px solid #cfe89a" : `1px solid ${colors.border}`,
+                    background: moreFilterCount > 0 ? "#f3fbe3" : colors.card,
+                    color: moreFilterCount > 0 ? "#4d7c0f" : colors.text,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  More filters{moreFilterCount > 0 ? ` (${moreFilterCount})` : ""}
+                  <ChevronDown size={13} style={{ transform: showMoreFilters ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
                 </button>
-              ) : null}
-            </div>
-          </div>
+                <span style={{ marginLeft: "auto", color: colors.sub, fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}>
+                  {companyTotal === 0 ? "0 shown" : `${showingStart}-${showingEnd} of ${companyTotal}`}
+                </span>
+                {hasFilters ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch("");
+                      setOwnerScope("all");
+                      setOwnerFilter([]);
+                      setSdrFilter([]);
+                      setTierFilter([]);
+                      setDispositionFilter([]);
+                      setStatusFilter([]);
+                      setLaneFilter([]);
+                      setJourneyFilter([]);
+                    }}
+                    style={{
+                      height: 42,
+                      border: `1px solid ${colors.border}`,
+                      background: colors.card,
+                      color: colors.text,
+                      borderRadius: 10,
+                      padding: "0 12px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    Reset filters
+                  </button>
+                ) : null}
+              </div>
+
+              {/* Row 2 — the less-used filters, revealed on demand (auto-opens
+                  when one of them is active). Every filter stays functional. */}
+              {showMoreFilters && (
+                <div className="as-filter-row" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: "1px solid #eef2f8", paddingTop: 10 }}>
+                  <MultiSelectFilter
+                    values={tierFilter}
+                    onChange={setTierFilter}
+                    options={TIER_OPTIONS}
+                    label="ICP Tier"
+                    allLabel="ICP Tier: All"
+                    minWidth={130}
+                    hideLabel
+                  />
+                  {teamUsers.length > 0 && (
+                    <MultiSelectFilter
+                      values={ownerFilter}
+                      onChange={setOwnerFilter}
+                      options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                      label="AE Assigned"
+                      allLabel="AE: All"
+                      minWidth={140}
+                      hideLabel
+                    />
+                  )}
+                  <MultiSelectFilter
+                    values={dispositionFilter}
+                    onChange={setDispositionFilter}
+                    options={DISPOSITION_OPTIONS}
+                    label="Disposition"
+                    allLabel="Disposition: All"
+                    minWidth={150}
+                    hideLabel
+                  />
+                  <MultiSelectFilter
+                    values={laneFilter}
+                    onChange={setLaneFilter}
+                    options={OUTREACH_LANE_OPTIONS}
+                    label="Outreach Lane"
+                    allLabel="Lane: All"
+                    minWidth={140}
+                    hideLabel
+                  />
+                  <MultiSelectFilter
+                    values={journeyFilter}
+                    onChange={setJourneyFilter}
+                    options={JOURNEY_FILTER_OPTIONS}
+                    label="Journey Stage"
+                    allLabel="Journey: All"
+                    minWidth={140}
+                    hideLabel
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Hydrate the modal draft from the active bounds so the
+                      // user sees their current rule when they open it.
+                      if (prospectsMin !== undefined && prospectsMax !== undefined && prospectsMin === prospectsMax) {
+                        setAdvOp("eq"); setAdvValue(String(prospectsMin)); setAdvValue2("");
+                      } else if (prospectsMin !== undefined && prospectsMax !== undefined) {
+                        setAdvOp("between"); setAdvValue(String(prospectsMin)); setAdvValue2(String(prospectsMax));
+                      } else if (prospectsMin !== undefined) {
+                        setAdvOp("gt"); setAdvValue(String(prospectsMin - 1)); setAdvValue2("");
+                      } else if (prospectsMax !== undefined) {
+                        setAdvOp("lt"); setAdvValue(String(prospectsMax + 1)); setAdvValue2("");
+                      }
+                      setShowAdvancedFilter(true);
+                    }}
+                    title="Filter accounts by the number of prospects they have"
+                    style={{
+                      height: 42, padding: "0 12px", borderRadius: 10,
+                      border: hasAdvancedFilter ? "1.5px solid #cfe89a" : `1px solid ${colors.border}`,
+                      background: hasAdvancedFilter ? "#f3fbe3" : colors.card,
+                      color: hasAdvancedFilter ? "#4d7c0f" : colors.text,
+                      fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}
+                  >
+                    Advanced Filter{hasAdvancedFilter ? " •" : ""}
+                  </button>
+                  {hasAdvancedFilter && (
+                    <button
+                      type="button"
+                      disabled={downloadingFiltered}
+                      onClick={async () => {
+                        setDownloadingFiltered(true);
+                        try {
+                          const blob = await accountSourcingApi.exportCsv({
+                            prospectsMin,
+                            prospectsMax,
+                          });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = `sourced-companies-filtered-${new Date().toISOString().slice(0, 10)}.csv`;
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        } finally {
+                          setDownloadingFiltered(false);
+                        }
+                      }}
+                      style={{
+                        height: 42, padding: "0 12px", borderRadius: 10,
+                        border: "1px solid #6fae27", background: "#6fae27",
+                        color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        opacity: downloadingFiltered ? 0.7 : 1,
+                      }}
+                    >
+                      {downloadingFiltered ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                      Download filtered
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {loading ? (
@@ -2013,7 +2017,7 @@ export default function AccountSourcing() {
             {hasFilters ? "No companies match these filters." : "No companies sourced yet."}
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gap: 6 }}>
             {canSelectAccounts && selectedCompanyIds.size > 0 && (
               <div
                 className="as-selection-bar"
@@ -2224,6 +2228,30 @@ export default function AccountSourcing() {
             </div>
           </div>
         )}
+
+            {/* Secondary panels — intentionally BELOW the account table so the
+                list is the first thing reps reach. */}
+            <JourneyFunnel
+              summary={journeySummary}
+              active={journeyFilter}
+              onToggle={(stage) => {
+                setPage(1);
+                setJourneyFilter((prev) => (prev.length === 1 && prev[0] === stage ? [] : [stage]));
+              }}
+              onSync={handleSyncRecotap}
+              syncing={syncingRecotap}
+            />
+            {!batchNeedsAttention ? importStatusCard : null}
+            {isAdmin ? (
+              <div style={{ ...cardStyle, borderRadius: 14, padding: "14px 16px", display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 2 }}>
+                  <span style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>IMPORT &amp; BULK TOOLS</span>
+                  <span style={{ color: colors.sub, fontSize: 12.5 }}>Bring accounts in from a workbook, or reassign owners in bulk.</span>
+                </div>
+                <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
+                <BulkReassignUpload onApplied={() => load()} />
+              </div>
+            ) : null}
           </>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>

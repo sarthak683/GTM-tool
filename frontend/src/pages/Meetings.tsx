@@ -64,19 +64,12 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 22,
     boxShadow: "0 14px 36px rgba(15,23,42,0.05)",
   },
-  toolbar: {
-    padding: 18,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap",
-  },
   chip: {
     display: "inline-flex",
     alignItems: "center",
-    gap: 8,
-    padding: "7px 12px",
+    gap: 6,
+    height: 34,
+    padding: "0 12px",
     borderRadius: 999,
     border: "1px solid #d8e4ef",
     background: "#f8fbff",
@@ -88,15 +81,15 @@ const styles: Record<string, CSSProperties> = {
     border: "none",
     background: "#1f6feb",
     color: "white",
-    borderRadius: 12,
-    padding: "10px 16px",
+    borderRadius: 8,
+    padding: "0 14px",
     fontSize: 13,
     fontWeight: 700,
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
     cursor: "pointer",
-    minHeight: 44,
+    height: 34,
   },
   table: {
     width: "100%",
@@ -105,16 +98,17 @@ const styles: Record<string, CSSProperties> = {
   },
   th: {
     textAlign: "left",
-    padding: "14px 20px",
+    padding: "10px 14px",
     fontSize: 11,
-    color: "#7f8fa5",
+    fontWeight: 700,
+    color: "#68788d",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
     borderBottom: "1px solid #e8eef5",
     background: "#f9fbfe",
   },
   td: {
-    padding: "14px 20px",
+    padding: "11px 14px",
     borderBottom: "1px solid #edf2f8",
     fontSize: 13,
     color: "#30485f",
@@ -227,7 +221,7 @@ function MultiSelectDropdown({
         type="button"
         onClick={() => { setOpen((o) => !o); setQuery(""); }}
         style={{
-          height: 36,
+          height: 34,
           borderRadius: 8,
           border: isActive ? "1px solid #b8cff7" : "1px solid #d7e2ee",
           background: isActive ? "#eef4ff" : "#fff",
@@ -529,11 +523,6 @@ export default function Meetings() {
     <div style={styles.page}>
       <style>{`
         @media (max-width: 768px) {
-          .meetings-page-toolbar {
-            flex-direction: column !important;
-            gap: 10px !important;
-            padding: 12px !important;
-          }
           .meetings-filter-bar {
             flex-direction: column !important;
             gap: 8px !important;
@@ -550,38 +539,15 @@ export default function Meetings() {
           }
         }
       `}</style>
-      <div className="meetings-page-toolbar" style={{ ...styles.panel, ...styles.toolbar }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={styles.chip}>
-              <span style={{ fontWeight: 800 }}>{totalMeetings}</span>
-              Meetings
-            </span>
-            {hasFilters && (
-              <span style={{ ...styles.chip, background: "#fff7ed", color: "#b94a20", borderColor: "#ffd3be" }}>
-                {totalMeetings} shown
-              </span>
-            )}
-          </div>
-          <p style={{ margin: 0, fontSize: 12, color: "#7a8ea4", maxWidth: 560 }}>
-            Log discovery calls, demos, and QBRs here. Beacon sends a pre-meeting intel brief to the assigned rep 12 hours before each scheduled meeting — covering account context, prior meeting notes, and email threads.
-          </p>
-        </div>
-        <button style={styles.buttonPrimary} onClick={() => setShowModal(true)}>
-          <Plus size={14} />
-          New Meeting
-        </button>
-      </div>
-
-      {/* Filter bar — primary controls always visible, advanced filters hidden behind
-          a "More filters" disclosure.  Most reps only need search / status / assignee
-          / show-internal; keeping the bar dense was visual noise we lived with too
-          long. */}
-      <div className="meetings-filter-bar" style={{ ...styles.panel, position: "relative", zIndex: 20, overflow: "visible", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* The Layout topbar already renders the "Meetings" title + subtitle, so the
+          page opens directly with one compact filter row: search / status / rep /
+          internal / more filters, plus the meeting count and the New Meeting
+          action. The old duplicate header panel is gone. */}
+      <div className="meetings-filter-bar" style={{ ...styles.panel, position: "relative", zIndex: 20, overflow: "visible", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Free-text search: matches meeting title, linked company name,
               and any text inside the attendees JSON (names + emails). */}
-          <div className="meetings-filter-input" style={{ position: "relative", minWidth: 280, flex: "1 1 280px", maxWidth: 380 }}>
+          <div className="meetings-filter-input" style={{ position: "relative", minWidth: 260, flex: "1 1 260px", maxWidth: 380 }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#7a8ea4" }} />
             <input
               type="text"
@@ -591,9 +557,9 @@ export default function Meetings() {
               style={{
                 width: "100%",
                 boxSizing: "border-box",
-                height: 36,
+                height: 34,
                 padding: "0 32px 0 30px",
-                borderRadius: 10,
+                borderRadius: 8,
                 border: "1px solid #d5e3ef",
                 fontSize: 13,
                 color: "#0f2744",
@@ -652,7 +618,7 @@ export default function Meetings() {
             onClick={() => setShowInternal((v) => !v)}
             title={showInternal ? "Showing only internal meetings; click to return to customer meetings" : "Show only internal meetings"}
             style={{
-              height: 36,
+              height: 34,
               padding: "0 12px",
               borderRadius: 8,
               border: showInternal ? "1px solid #c5b1ff" : "1px solid #d5e3ef",
@@ -670,13 +636,11 @@ export default function Meetings() {
             {showInternal ? "Internal only" : "Internal"}
           </button>
 
-          <div style={{ flex: 1 }} />
-
           <button
             type="button"
             onClick={() => setShowAdvancedFilters((v) => !v)}
             style={{
-              height: 36,
+              height: 34,
               padding: "0 12px",
               borderRadius: 8,
               border: hasAdvancedFilters ? "1px solid #c5d6ff" : "1px solid #d5e3ef",
@@ -697,11 +661,26 @@ export default function Meetings() {
             <button
               type="button"
               onClick={() => { setStatusFilter([]); setTypeFilter([]); setAssigneeFilter([]); setLinkFilter([]); setRecentSyncHours(""); setSearchInput(""); setShowInternal(false); }}
-              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              style={{ height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid #ffd0d8", background: "#fff5f7", color: "#c55656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
             >
               Reset
             </button>
           )}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Count badge + primary action — moved here from the removed header panel. */}
+          <span
+            style={styles.chip}
+            title="Log discovery calls, demos, and QBRs here. Beacon sends a pre-meeting intel brief to the assigned rep 12 hours before each scheduled meeting — covering account context, prior meeting notes, and email threads."
+          >
+            <span style={{ fontWeight: 800 }}>{totalMeetings}</span>
+            {hasFilters ? "shown" : "meetings"}
+          </span>
+          <button style={styles.buttonPrimary} onClick={() => setShowModal(true)}>
+            <Plus size={14} />
+            New Meeting
+          </button>
         </div>
 
         {/* Advanced filter row — hidden by default; kept in DOM so state is
@@ -729,7 +708,7 @@ export default function Meetings() {
               value={recentSyncHours}
               onChange={(e) => setRecentSyncHours(e.target.value as "" | "1" | "24" | "168")}
               style={{
-                height: 36,
+                height: 34,
                 padding: "0 28px 0 10px",
                 borderRadius: 8,
                 border: "1px solid #d5e3ef",
@@ -806,7 +785,7 @@ export default function Meetings() {
                                 border: "1px solid #d7ccff",
                                 background: "#f1ecff",
                                 color: "#5b3bd4",
-                                fontSize: 10,
+                                fontSize: 11,
                                 fontWeight: 700,
                                 textTransform: "uppercase",
                                 letterSpacing: "0.05em",
@@ -826,7 +805,7 @@ export default function Meetings() {
                                 border: "1px solid #ffd8b4",
                                 background: "#fff6ec",
                                 color: "#b25a1d",
-                                fontSize: 10,
+                                fontSize: 11,
                                 fontWeight: 700,
                                 textTransform: "uppercase",
                                 letterSpacing: "0.05em",
@@ -866,6 +845,28 @@ export default function Meetings() {
                       )}
                     </td>
                     <td data-label="Type" style={{ ...styles.td, textTransform: "capitalize" }}>{m.meeting_type.replace(/_/g, " ")}</td>
+                    {/* Scheduled / Status / Prep cells restored — the header listed
+                        these columns but the row skipped them, so every cell after
+                        Type rendered under the wrong header. */}
+                    <td data-label="Scheduled" style={{ ...styles.td, whiteSpace: "nowrap" }}>
+                      {m.scheduled_at
+                        ? (invalidSchedule ? <span style={{ color: "#b42336", fontWeight: 700 }}>Invalid date</span> : formatOptionalDate(m.scheduled_at))
+                        : <span style={{ color: "#8a95a6" }}>—</span>}
+                    </td>
+                    <td data-label="Status" style={styles.td}>
+                      <span style={{ ...styles.statusChip, background: timingToneStyle.bg, color: timingToneStyle.color, borderColor: timingToneStyle.border }}>
+                        {timingLabel(m)}
+                      </span>
+                    </td>
+                    <td data-label="Prep" style={styles.td}>
+                      {hasBrief ? (
+                        <span style={{ ...styles.statusChip, background: "#ecf8f0", color: "#15803d", borderColor: "#c7e8d3" }}>Brief ready</span>
+                      ) : prepBlocked && !m.is_internal ? (
+                        <span title={needsReviewReason} style={{ ...styles.statusChip, background: "#fff6ec", color: "#b25a1d", borderColor: "#ffd8b4" }}>Link needed</span>
+                      ) : (
+                        <span style={{ color: "#8a95a6", fontSize: 12.5 }}>—</span>
+                      )}
+                    </td>
                     <td data-label="Added by" style={styles.td}>
                       {(() => {
                         // Map the meeting's sync metadata to a compact
@@ -957,7 +958,7 @@ export default function Meetings() {
               type="button"
               disabled={page <= 1}
               onClick={() => setPage((current) => Math.max(1, current - 1))}
-              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? "#94a8be" : "#25384d", cursor: page <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+              style={{ height: 34, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page <= 1 ? "#f7f9fc" : "#fff", color: page <= 1 ? "#94a8be" : "#25384d", cursor: page <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
             >
               Previous
             </button>
@@ -965,7 +966,7 @@ export default function Meetings() {
               type="button"
               disabled={page >= meetingPages}
               onClick={() => setPage((current) => Math.min(meetingPages, current + 1))}
-              style={{ height: 36, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page >= meetingPages ? "#f7f9fc" : "#fff", color: page >= meetingPages ? "#94a8be" : "#25384d", cursor: page >= meetingPages ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+              style={{ height: 34, padding: "0 12px", borderRadius: 10, border: "1px solid #d7e2ee", background: page >= meetingPages ? "#f7f9fc" : "#fff", color: page >= meetingPages ? "#94a8be" : "#25384d", cursor: page >= meetingPages ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
             >
               Next
             </button>

@@ -11,14 +11,14 @@
   --as-bg-1:        #f6f8fc;
   --as-bg-2:        #eef3fa;
   --as-surface:     #ffffff;
-  --as-border:      #e2eaf5;
+  --as-border:      #e3e9f2;
   --as-border-soft: #eef2f8;
-  --as-ink:         #0f1f33;
+  --as-ink:         #142335;
   --as-ink-soft:    #4a5b73;
-  --as-ink-mute:    #7d8ea6;
-  --as-primary:     #1d4ed8;
-  --as-primary-soft:#eaf1ff;
-  --as-accent:      #06b6d4;
+  --as-ink-mute:    #68788d;
+  --as-primary:     #6fae27;
+  --as-primary-soft:#f3fbe3;
+  --as-accent:      #9ace3d;
   --as-success:     #16a34a;
   --as-warn:        #d97706;
   --as-danger:      #dc2626;
@@ -38,49 +38,36 @@
   padding: 18px 16px 56px !important;
 }
 
-/* Widen the wrap — same treatment as prospects detail */
-.account-sourcing-page > div:not([class]),
-.account-sourcing-page > [class]:not(.as-filter-bar):not(.as-hero-card) {
-  max-width: min(1920px, calc(100vw - 24px));
+/* Match the app-shell content width (1560px, set by Layout) — !important so it
+   beats the inline maxWidth: 1450 in accountSourcingShared.ts. */
+.account-sourcing-page > div:not([class]) {
+  max-width: 1560px !important;
   margin-left: auto !important;
   margin-right: auto !important;
 }
 
-/* Hero card */
-.account-sourcing-page .as-hero-card {
-  background: linear-gradient(135deg, #ffffff 0%, #f6fafd 60%, #eef4fb 100%) !important;
-  border: 1px solid var(--as-border) !important;
-  border-radius: 18px !important;
-  box-shadow: var(--as-shadow-md) !important;
-  position: relative;
-  overflow: hidden;
-}
-.account-sourcing-page .as-hero-card::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, var(--as-primary), var(--as-accent));
-  opacity: 0.9;
-}
-
-/* Summary grid — denser KPIs */
-.account-sourcing-page .as-summary-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
-  gap: 10px !important;
-}
+/* Slim KPI strip — 8 small stat blocks on one row, wrapping at narrower
+   widths. Cards style themselves inline (tint only while their filter is
+   active); this only owns the grid tracks + a light hover lift. */
 .account-sourcing-page .as-summary-grid > * {
-  border-radius: 14px !important;
-  border: 1px solid var(--as-border) !important;
-  background: var(--as-surface) !important;
-  box-shadow: var(--as-shadow-sm) !important;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
-  position: relative;
-  overflow: hidden;
+  transition: transform 0.15s ease;
 }
 .account-sourcing-page .as-summary-grid > *:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--as-shadow-md) !important;
-  border-color: #cfdaea !important;
+  transform: translateY(-1px);
+}
+@media (max-width: 1180px) and (min-width: 769px) {
+  .account-sourcing-page .as-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Toolbar "More ⋯" dropdown rows — hover needs !important to beat the inline
+   transparent background on the menu items. */
+.account-sourcing-page .as-more-menu button:hover:not(:disabled) {
+  background: #f4f7fb !important;
+}
+.account-sourcing-page .as-more-menu .as-menu-danger:hover:not(:disabled) {
+  background: #fff2f4 !important;
 }
 
 /* Filter bar — frosted sticky */
@@ -114,13 +101,6 @@
   width: 3px;
   background: var(--as-primary);
   border-radius: 0 3px 3px 0;
-}
-
-/* Chips on cards */
-.account-sourcing-page .as-company-card span[style*="border-radius: 999px"],
-.account-sourcing-page .as-company-card-desktop-chips > * {
-  font-weight: 700 !important;
-  letter-spacing: 0.01em !important;
 }
 
 /* Buttons */
@@ -167,9 +147,9 @@
   padding: 18px 16px 56px !important;
 }
 
-/* Widen wrap */
+/* Match the app-shell content width (1560px) */
 .account-sourcing-detail-page .ascd-wrap {
-  max-width: min(1920px, calc(100vw - 24px)) !important;
+  max-width: min(1560px, calc(100vw - 24px)) !important;
   margin: 0 auto !important;
   gap: 14px !important;
 }
@@ -240,8 +220,8 @@
 .account-sourcing-page .crm-button.soft:hover,
 .account-sourcing-detail-page .crm-button.soft:hover {
   background: var(--as-primary-soft) !important;
-  border-color: #bfdbfe !important;
-  color: var(--as-primary) !important;
+  border-color: #cfe89a !important;
+  color: #4d7c0f !important;
   transform: translateY(-1px);
 }
 
@@ -288,21 +268,24 @@
 .account-sourcing-page .as-company-row,
 .account-sourcing-page .as-company-table-header {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(260px, 300px);
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.5fr) minmax(200px, 236px);
   align-items: center;
-  column-gap: 16px;
+  column-gap: 14px;
 }
 /* Admin multi-select adds a fixed leading checkbox column. Header and rows
    share the same track so the checkboxes line up under each other. */
 .account-sourcing-page .as-company-row.as-selectable,
 .account-sourcing-page .as-company-table-header.as-selectable {
-  grid-template-columns: 28px minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(260px, 300px);
+  grid-template-columns: 28px minmax(0, 1.4fr) minmax(0, 1.5fr) minmax(200px, 236px);
 }
 .account-sourcing-page .as-company-table-header {
   border: 1px solid transparent; /* match the card's 1px border for alignment */
 }
 .account-sourcing-page .as-company-row.as-selected {
-  border-color: #cfe89a;
+  border-color: #cfe89a !important;
+  /* The generic card rule forces a white background with !important, which
+     used to swallow the inline selected tint — restate it here. */
+  background: #f3f9ea !important;
 }
 @media (max-width: 980px) {
   .account-sourcing-page .as-company-table-header { display: none; }

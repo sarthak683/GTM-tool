@@ -71,7 +71,7 @@ function AccountContextBadges({ contact }: { contact: ContactType }) {
               ? "Account is parked (Reach Out Later)"
               : `Account is disabled (${statusOpt.label}) — its prospects are out of the default queue`
           }
-          style={{ fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: statusOpt.color, background: statusOpt.bg, whiteSpace: "nowrap" }}
+          style={{ fontSize: 11, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: statusOpt.color, background: statusOpt.bg, whiteSpace: "nowrap" }}
         >
           {statusOpt.label}
         </span>
@@ -79,7 +79,7 @@ function AccountContextBadges({ contact }: { contact: ContactType }) {
       {contact.account_domain_mismatch && (
         <span
           title="This prospect's email domain doesn't belong to the account's domain — the mapping may be wrong. Fix it from the prospect page or tell an admin."
-          style={{ fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: "#92600a", background: "#fdf3df", whiteSpace: "nowrap" }}
+          style={{ fontSize: 11, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: "#92600a", background: "#fdf3df", whiteSpace: "nowrap" }}
         >
           Check mapping
         </span>
@@ -177,6 +177,20 @@ function defaultFollowupLocalString(): string {
   target.setHours(10, 0, 0, 0);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
+}
+
+// Presentation-only: compact owner label for the AE/SDR chips so a long name
+// never renders as a mid-word ellipsis ("Prava..."). "Pravallika Saripalli" →
+// "Pravallika S."; an email fallback shows just its local part. The full
+// name/email stays available via the wrapping title attribute.
+function shortOwnerName(name?: string | null): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("@")) return trimmed.split("@")[0];
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) return trimmed;
+  return `${parts[0]} ${parts[1][0].toUpperCase()}.`;
 }
 
 const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: boolean }> = [
@@ -455,6 +469,20 @@ export default function Contacts() {
       initParams.get("cla") || initParams.get("clb")
     );
   });
+  // Toolbar overflow menu ("More ⋯") — pure presentation state: it only
+  // reorganizes where the Template / Export / Clear / Aircall triggers live.
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [moreMenuOpen]);
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
   // ACCOUNT-status filter. Server rule: with nothing selected, prospects of
@@ -2151,50 +2179,40 @@ export default function Contacts() {
                 onKeyDown={isInteractive ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); } } : undefined}
                 style={{
                   position: "relative",
-                  display: "flex", flexDirection: "column", gap: 10,
-                  padding: "14px 16px",
+                  display: "flex", flexDirection: "column", gap: 5,
+                  padding: "10px 14px 10px 16px",
                   borderRadius: 14,
-                  border: `1px solid ${isActive ? color : "#e4ebf3"}`,
+                  border: `1px solid ${isActive ? color : "#e3e9f2"}`,
                   background: isActive ? `${color}10` : "#ffffff",
                   boxShadow: isActive ? `0 0 0 2px ${color}33, 0 1px 2px rgba(15,23,42,0.04)` : "0 1px 2px rgba(15,23,42,0.04)",
                   overflow: "hidden",
                   minWidth: 0,
+                  maxHeight: 76,
                   cursor: isInteractive ? "pointer" : "default",
                   transition: "transform 150ms cubic-bezier(0.22, 1, 0.36, 1), border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease",
                 }}
               >
-                {/* top accent strip */}
-                <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, right: 0, height: 3, background: color }} />
-                {/* radial wash in the top-right corner — fills the empty space subtly */}
-                <span aria-hidden="true" style={{
-                  position: "absolute", right: -36, top: -36, width: 120, height: 120, borderRadius: "50%",
-                  background: `radial-gradient(circle, ${color}1a, transparent 70%)`,
-                  pointerEvents: "none",
-                }} />
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                {/* left accent strip — subtle */}
+                <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: color, opacity: isActive ? 1 : 0.55 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  <Icon size={13} style={{ color, flexShrink: 0 }} />
                   <span style={{
-                    display: "inline-flex", alignItems: "center", justifyContent: "center",
-                    width: 32, height: 32, borderRadius: 10,
-                    background: color, color: "#ffffff",
-                    boxShadow: `0 4px 10px ${color}40`,
-                  }}>
-                    <Icon size={15} />
-                  </span>
-                  <span style={{
-                    fontSize: 10, fontWeight: 800, letterSpacing: 0.08, textTransform: "uppercase",
-                    color: "#7d8ea6",
+                    fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+                    color: "#68788d", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {label}
                   </span>
                 </div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
                   <span style={{
-                    fontSize: 28, fontWeight: 800, color: "#0f1f33", lineHeight: 1, letterSpacing: "-0.025em",
+                    fontSize: 21, fontWeight: 800, color: "#142335", lineHeight: 1, letterSpacing: "-0.02em",
+                    fontVariantNumeric: "tabular-nums",
                   }}>
                     {value}
                   </span>
                   <span style={{
                     fontSize: 11, fontWeight: 700, color, opacity: 0.85,
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {sub}
                   </span>
@@ -2204,18 +2222,22 @@ export default function Contacts() {
             })}
           </div>
 
-          {/* Row 2 — contextual action bar */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 10,
+          {/* Row 2 — contextual action bar.
+              LEFT: search (wide, with column scope + match mode) + Filters.
+              RIGHT: Add Prospect (primary) + Upload + "More ⋯" overflow menu
+              holding the low-frequency actions (Template / Export / Clear /
+              Aircall) so the bar stays on one line at 1280px. */}
+          <div className="prospect-toolbar" style={{
+            display: "flex", alignItems: "center", gap: 8,
             background: "#fff", borderRadius: 14,
-            border: "1px solid #e8eef5",
-            padding: "10px 14px",
+            border: "1px solid #e3e9f2",
+            padding: "8px 10px",
             boxShadow: "0 2px 8px rgba(17,34,68,0.04)",
             flexWrap: "wrap",
           }}>
             {tab === "contacts" && (
               <>
-                {/* Search — scope select + auto-growing textarea.
+                {/* Search — auto-growing textarea + column-scope select.
                     When scope != "all", the textarea accepts newline- or
                     comma-separated lists (e.g. paste 30 company names) and
                     backend ORs each entry against the chosen column. The
@@ -2223,7 +2245,7 @@ export default function Contacts() {
                     textarea scrolls. */}
                 {(() => {
                   const lineCount = Math.min(5, Math.max(1, (search.match(/\n/g)?.length ?? 0) + 1));
-                  const minH = 38; // single-row pill height (matches the other action buttons)
+                  const minH = 36; // single-row height (uniform toolbar control height)
                   const rowH = 20;
                   const dynamicHeight = lineCount === 1 ? minH : minH + (lineCount - 1) * rowH;
                   const isScoped = searchScope !== "all";
@@ -2231,37 +2253,23 @@ export default function Contacts() {
                     ? search.split(/[,\n]+/).map((t) => t.trim()).filter(Boolean).length
                     : 0;
                   return (
-                    <div style={{ display: "flex", flex: 1, minWidth: 260, alignItems: "stretch", borderRadius: 10, border: "1px solid #e0eaf4", background: "#f7fbff", overflow: "hidden" }}>
-                      <select
-                        value={searchScope}
-                        onChange={(e) => setSearchScope(e.target.value)}
-                        title="Scope search to a single column. When scoped, the input accepts a comma- or newline-separated list."
-                        style={{
-                          height: minH, alignSelf: "flex-start", border: "none", borderRight: "1px solid #e0eaf4",
-                          background: "#eef5ff", padding: "0 26px 0 10px",
-                          fontSize: 12, fontWeight: 700, color: "#175089", outline: "none",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {SEARCH_SCOPE_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                      <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
-                        <Search size={14} style={{ position: "absolute", left: 11, top: 12, color: "#94a8bc", pointerEvents: "none" }} />
+                    <div style={{ display: "flex", flex: "1 1 320px", minWidth: 260, alignItems: "stretch", borderRadius: 10, border: "1px solid #e0eaf4", background: "#f7fbff", overflow: "hidden" }}>
+                      <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                        <Search size={14} style={{ position: "absolute", left: 11, top: 11, color: "#94a8bc", pointerEvents: "none" }} />
                         <textarea
                           rows={1}
                           spellCheck={false}
+                          className="prospect-search-input"
                           style={{
                             width: "100%", minHeight: minH, height: dynamicHeight,
                             border: "none", background: "transparent",
-                            padding: "10px 12px 8px 32px", resize: "none",
+                            padding: "8px 12px 8px 32px", resize: "none",
                             fontSize: 13, lineHeight: "20px", color: "#1e3a52", outline: "none",
                             fontFamily: "inherit",
                           }}
                           placeholder={
                             isScoped
-                              ? `Search ${SEARCH_SCOPE_OPTIONS.find((o) => o.value === searchScope)?.label ?? ""} — paste a list (comma or newline separated)`
+                              ? `Search ${SEARCH_SCOPE_OPTIONS.find((o) => o.value === searchScope)?.label ?? ""} — paste a list`
                               : "Search people, title, email…"
                           }
                           value={search}
@@ -2270,16 +2278,16 @@ export default function Contacts() {
                         {isScoped && termCount > 1 && (
                           <span style={{
                             position: "absolute", right: 8, top: 8,
-                            fontSize: 10, fontWeight: 800, color: "#175089",
+                            fontSize: 11, fontWeight: 800, color: "#175089",
                             background: "#eaf2ff", border: "1px solid #c7d9f0",
-                            borderRadius: 999, padding: "2px 8px",
+                            borderRadius: 999, padding: "1px 8px",
                           }}>
                             {termCount} terms
                           </span>
                         )}
                       </div>
                       {isScoped && (
-                        <div style={{ display: "flex", alignItems: "flex-start", padding: 4, gap: 2, borderLeft: "1px solid #e0eaf4", background: "#fbfdff" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", padding: 3, gap: 2, borderLeft: "1px solid #e0eaf4", background: "#fbfdff" }}>
                           {(["contains", "exact"] as const).map((mode) => (
                             <button
                               key={mode}
@@ -2300,6 +2308,22 @@ export default function Contacts() {
                           ))}
                         </div>
                       )}
+                      <select
+                        value={searchScope}
+                        onChange={(e) => setSearchScope(e.target.value)}
+                        title="Scope search to a single column. When scoped, the input accepts a comma- or newline-separated list."
+                        style={{
+                          height: minH, alignSelf: "flex-start", border: "none", borderLeft: "1px solid #e0eaf4",
+                          borderRadius: 0,
+                          background: "#eef5ff", padding: "0 26px 0 10px",
+                          fontSize: 12, fontWeight: 700, color: "#175089", outline: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {SEARCH_SCOPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
                     </div>
                   );
                 })()}
@@ -2311,7 +2335,7 @@ export default function Contacts() {
                   title={showFilters ? "Hide filters" : "Show filters"}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
+                    height: 36, padding: "0 13px", borderRadius: 10,
                     border: showFilters ? "1px solid #b8d0f0" : "1px solid #d0dcea",
                     background: showFilters ? "#eef5ff" : "#f7fbff",
                     color: "#175089", fontSize: 13, fontWeight: 700,
@@ -2323,169 +2347,190 @@ export default function Contacts() {
                   {showFilters ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={downloadProspectTemplate}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #d0dcea", background: "#ffffff",
-                    color: "#2c4a63", fontSize: 13, fontWeight: 600,
-                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <Download size={14} />
-                  Template
-                </button>
-
-                <label
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #cfe89a", background: "#f3fbe3",
-                    color: "#4d7c0f", fontSize: 13, fontWeight: 700,
-                    cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                    opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
-                  }}
-                >
-                  {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                  Upload Prospects
-                  <input
-                    type="file"
-                    accept=".csv,.xlsx"
-                    style={{ display: "none" }}
-                    disabled={uploadingProspects || !canMigrateProspects}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        void handleProspectUpload(file);
-                      }
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-
-                <button
-                  type="button"
-                  disabled={exportingSelectedContacts}
-                  onClick={async () => {
-                    setExportingSelectedContacts(true);
-                    const today = new Date().toISOString().slice(0, 10);
-                    try {
-                      let blob: Blob;
-                      let name: string;
-                      let count: number;
-                      if (selectedContactIds.size > 0) {
-                        blob = await accountSourcingApi.exportContactsCsv({ contactIds: Array.from(selectedContactIds) });
-                        name = `prospects-selected-${today}.csv`;
-                        count = selectedContactIds.size;
-                      } else {
-                        // Nothing ticked = export everything matching the current
-                        // filters. The server applies the same filters and streams
-                        // the lot, so a rep no longer has to tick their way through
-                        // 40 pages to export ~1900 prospects.
-                        const res = await contactsApi.exportCsv(buildContactFilterParams());
-                        blob = res.blob;
-                        name = `prospects-${today}.csv`;
-                        count = res.total;
-                      }
-                      const url = URL.createObjectURL(blob);
-                      const anchor = document.createElement("a");
-                      anchor.href = url;
-                      anchor.download = name;
-                      anchor.click();
-                      URL.revokeObjectURL(url);
-                      toast.success(
-                        `Exported ${count.toLocaleString()} prospect${count === 1 ? "" : "s"}.`,
-                        "Export ready",
-                      );
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Failed to export prospects.", "Export failed");
-                    } finally {
-                      setExportingSelectedContacts(false);
-                    }
-                  }}
-                  title={selectedContactIds.size > 0
-                    ? `Export the ${selectedContactIds.size} selected prospect(s)`
-                    : "Export every prospect matching the current filters"}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #b8d0f0", background: "#eef5ff",
-                    color: "#175089", fontSize: 13, fontWeight: 700,
-                    cursor: exportingSelectedContacts ? "not-allowed" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                    opacity: exportingSelectedContacts ? 0.7 : 1,
-                  }}
-                >
-                  {exportingSelectedContacts ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                  {exportingSelectedContacts
-                    ? "Exporting…"
-                    : selectedContactIds.size > 0
-                      ? `Export ${selectedContactIds.size} selected`
-                      : `Export all${contactsTotal ? ` (${contactsTotal.toLocaleString()})` : ""}`}
-                </button>
-
-                {/* Clear — danger, right side */}
-                {isAdmin && (
+                {/* RIGHT — primary actions + overflow menu */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", flexShrink: 0 }}>
                   <button
                     type="button"
-                    disabled={resetting}
-                    onClick={async () => {
-                      if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
-                      setResetting(true);
-                      try {
-                        const result = await accountSourcingApi.resetData("prospecting");
-                        setPage(1);
-                        loadContacts();
-                        window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
-                      } finally {
-                        setResetting(false);
-                      }
-                    }}
+                    className="crm-button primary"
+                    onClick={() => setShowAddProspect(true)}
+                    style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+                  >
+                    <Plus size={14} />
+                    Add Prospect
+                  </button>
+
+                  <label
+                    title="Upload a prospects CSV/XLSX"
                     style={{
                       display: "inline-flex", alignItems: "center", gap: 6,
-                      height: 38, padding: "0 14px", borderRadius: 10,
-                      border: "1px solid #fad2d6", background: "#fff8f8",
-                      color: "#b42336", fontSize: 13, fontWeight: 600,
-                      cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                      opacity: resetting ? 0.6 : 1,
+                      height: 36, padding: "0 13px", borderRadius: 10,
+                      border: "1px solid #cfe89a", background: "#f3fbe3",
+                      color: "#4d7c0f", fontSize: 13, fontWeight: 700,
+                      cursor: uploadingProspects || !canMigrateProspects ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                      opacity: uploadingProspects || !canMigrateProspects ? 0.7 : 1,
                     }}
                   >
-                    {resetting ? <Loader2 size={13} className="animate-spin" /> : <AlertCircle size={13} />}
-                    Clear
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={toggleAircall}
-                  title={aircallEnabled ? "Aircall calling is enabled for this browser." : "Aircall is off by default. Turn it on only when you want to dial through Aircall."}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: aircallEnabled ? "1px solid #d4edda" : "1px solid #f5c6cb",
-                    background: aircallEnabled ? "#eafbf0" : "#fff5f5",
-                    color: aircallEnabled ? "#1f8f5f" : "#b42336",
-                    fontSize: 13, fontWeight: 700,
-                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <PhoneCall size={14} />
-                  {aircallEnabled ? "Aircall: On" : "Aircall: Off"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAddProspect(true)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
-                    border: "1px solid #c7d5e5", background: "#fff",
-                    color: "#175089", fontSize: 13, fontWeight: 700,
-                    cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <Plus size={14} />
-                  Add Prospect
-                </button>
+                    {uploadingProspects ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    Upload
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx"
+                      style={{ display: "none" }}
+                      disabled={uploadingProspects || !canMigrateProspects}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          void handleProspectUpload(file);
+                        }
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+
+                  {/* Overflow menu — Template / Export / Aircall / Clear */}
+                  <div ref={moreMenuRef} style={{ position: "relative", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => setMoreMenuOpen((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={moreMenuOpen}
+                      title="More actions"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        height: 36, padding: "0 12px", borderRadius: 10,
+                        border: moreMenuOpen ? "1px solid #b8d0f0" : "1px solid #d0dcea",
+                        background: moreMenuOpen ? "#eef5ff" : "#ffffff",
+                        color: "#2c4a63", fontSize: 13, fontWeight: 700,
+                        cursor: "pointer", whiteSpace: "nowrap",
+                      }}
+                    >
+                      {exportingSelectedContacts || resetting
+                        ? <Loader2 size={15} className="animate-spin" />
+                        : <MoreHorizontal size={15} />}
+                      More
+                    </button>
+                    {moreMenuOpen && (
+                      <div
+                        role="menu"
+                        style={{
+                          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 60,
+                          minWidth: 240, borderRadius: 12, border: "1px solid #e3e9f2",
+                          background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.14)",
+                          padding: 6, display: "grid", gap: 2,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="prospect-more-item"
+                          onClick={() => { setMoreMenuOpen(false); downloadProspectTemplate(); }}
+                        >
+                          <Download size={14} />
+                          Download template
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="prospect-more-item"
+                          disabled={exportingSelectedContacts}
+                          onClick={async () => {
+                            setMoreMenuOpen(false);
+                            setExportingSelectedContacts(true);
+                            const today = new Date().toISOString().slice(0, 10);
+                            try {
+                              let blob: Blob;
+                              let name: string;
+                              let count: number;
+                              if (selectedContactIds.size > 0) {
+                                blob = await accountSourcingApi.exportContactsCsv({ contactIds: Array.from(selectedContactIds) });
+                                name = `prospects-selected-${today}.csv`;
+                                count = selectedContactIds.size;
+                              } else {
+                                // Nothing ticked = export everything matching the current
+                                // filters. The server applies the same filters and streams
+                                // the lot, so a rep no longer has to tick their way through
+                                // 40 pages to export ~1900 prospects.
+                                const res = await contactsApi.exportCsv(buildContactFilterParams());
+                                blob = res.blob;
+                                name = `prospects-${today}.csv`;
+                                count = res.total;
+                              }
+                              const url = URL.createObjectURL(blob);
+                              const anchor = document.createElement("a");
+                              anchor.href = url;
+                              anchor.download = name;
+                              anchor.click();
+                              URL.revokeObjectURL(url);
+                              toast.success(
+                                `Exported ${count.toLocaleString()} prospect${count === 1 ? "" : "s"}.`,
+                                "Export ready",
+                              );
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : "Failed to export prospects.", "Export failed");
+                            } finally {
+                              setExportingSelectedContacts(false);
+                            }
+                          }}
+                          title={selectedContactIds.size > 0
+                            ? `Export the ${selectedContactIds.size} selected prospect(s)`
+                            : "Export every prospect matching the current filters"}
+                        >
+                          {exportingSelectedContacts ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                          {exportingSelectedContacts
+                            ? "Exporting…"
+                            : selectedContactIds.size > 0
+                              ? `Export ${selectedContactIds.size} selected`
+                              : `Export all${contactsTotal ? ` (${contactsTotal.toLocaleString()})` : ""}`}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="prospect-more-item"
+                          onClick={toggleAircall}
+                          title={aircallEnabled ? "Aircall calling is enabled for this browser." : "Aircall is off by default. Turn it on only when you want to dial through Aircall."}
+                        >
+                          <PhoneCall size={14} />
+                          Aircall calling
+                          <span style={{
+                            marginLeft: "auto",
+                            fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "2px 8px",
+                            border: aircallEnabled ? "1px solid #cfe89a" : "1px solid #f5c6cb",
+                            background: aircallEnabled ? "#f3fbe3" : "#fff5f5",
+                            color: aircallEnabled ? "#4d7c0f" : "#b42336",
+                          }}>
+                            {aircallEnabled ? "On" : "Off"}
+                          </span>
+                        </button>
+                        {/* Clear — destructive, admin only, kept last behind a divider */}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="prospect-more-item danger"
+                            disabled={resetting}
+                            style={{ borderTop: "1px solid #eef2f7", borderRadius: "0 0 8px 8px", marginTop: 2 }}
+                            onClick={async () => {
+                              if (!window.confirm("Clear all Prospecting contacts, outreach sequences, and contact activities while keeping companies?")) return;
+                              setMoreMenuOpen(false);
+                              setResetting(true);
+                              try {
+                                const result = await accountSourcingApi.resetData("prospecting");
+                                setPage(1);
+                                loadContacts();
+                                window.alert(`Prospecting cleared.\n${Object.entries(result.summary).map(([key, value]) => `${key}: ${value}`).join("\n")}`);
+                              } finally {
+                                setResetting(false);
+                              }
+                            }}
+                          >
+                            {resetting ? <Loader2 size={13} className="animate-spin" /> : <AlertCircle size={13} />}
+                            Clear all prospecting data
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </>
             )}
 
@@ -2495,7 +2540,7 @@ export default function Contacts() {
                   <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a8bc", pointerEvents: "none" }} />
                   <input
                     style={{
-                      width: "100%", height: 38, borderRadius: 10,
+                      width: "100%", height: 36, borderRadius: 10,
                       border: "1px solid #e0eaf4", background: "#f7fbff",
                       paddingLeft: 34, paddingRight: 12,
                       fontSize: 13, color: "#1e3a52", outline: "none",
@@ -2509,7 +2554,7 @@ export default function Contacts() {
                   onClick={() => setShowAddInvestor(true)}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
-                    height: 38, padding: "0 14px", borderRadius: 10,
+                    height: 36, padding: "0 13px", borderRadius: 10,
                     border: "1px solid #b2e0dc", background: "#f0faf9",
                     color: "#177b75", fontSize: 13, fontWeight: 600,
                     cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
@@ -2719,7 +2764,7 @@ export default function Contacts() {
                                     checked={selectedContactIds.has(c.id)}
                                     onChange={() => toggleContactSelection(c.id)}
                                     aria-label={`Select ${name}`}
-                                    style={{ marginTop: 13, width: 18, height: 18, accentColor: "#175089", flexShrink: 0 }}
+                                    style={{ marginTop: 13, width: 18, height: 18, accentColor: "#6fae27", flexShrink: 0 }}
                                   />
                                 )}
                                 <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
@@ -2763,28 +2808,44 @@ export default function Contacts() {
                                 </div>
                               </div>
 
-                              <div style={{ border: "1px solid #e5eef7", background: "#f8fbff", borderRadius: 14, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: 10.5, color: "#71839a", fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Phone</div>
-                                  <div style={{ marginTop: 2, color: c.phone ? "#102a43" : "#96a7ba", fontSize: 15, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {phoneLabel}
+                              {c.phone ? (
+                                <>
+                                  <div style={{ border: "1px solid #e5eef7", background: "#f8fbff", borderRadius: 14, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: 11, color: "#71839a", fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.4 }}>Phone</div>
+                                      <div style={{ marginTop: 2, color: "#102a43", fontSize: 15, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {phoneLabel}
+                                      </div>
+                                    </div>
+                                    <span style={{ flexShrink: 1, maxWidth: "52%", overflow: "hidden", textOverflow: "ellipsis", fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
+                                      {callLabel}
+                                    </span>
                                   </div>
-                                </div>
-                                <span style={{ flexShrink: 1, maxWidth: "52%", overflow: "hidden", textOverflow: "ellipsis", fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
-                                  {callLabel}
-                                </span>
-                              </div>
 
-                              <button
-                                type="button"
-                                className="prospect-mobile-call"
-                                disabled={!c.phone}
-                                onClick={() => { if (c.phone) void openCallSidebar(c); }}
-                                title={c.phone ? c.phone : "No phone number"}
-                              >
-                                <Phone size={17} />
-                                Call prospect
-                              </button>
+                                  <button
+                                    type="button"
+                                    className="prospect-mobile-call"
+                                    onClick={() => void openCallSidebar(c)}
+                                    title={c.phone}
+                                  >
+                                    <Phone size={17} />
+                                    Call prospect
+                                  </button>
+                                </>
+                              ) : (
+                                /* No phone: one muted line instead of the tall
+                                   PHONE panel + disabled call button. The call
+                                   outcome chip stays only when it carries info. */
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, color: "#8ea1b4", fontSize: 12.5, fontWeight: 700 }}>
+                                  <Phone size={13} style={{ flexShrink: 0 }} />
+                                  <span style={{ whiteSpace: "nowrap" }}>No phone number</span>
+                                  {callLabel !== "Not called yet" && (
+                                    <span style={{ flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11.5, fontWeight: 800, color: "#536a82", background: "#fff", border: "1px solid #dce8f4", borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
+                                      {callLabel}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
 
                               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                                 <a
@@ -2853,7 +2914,7 @@ export default function Contacts() {
             {/* Quick views — one-click prospecting filters for the common
                 calling workflows; each toggles the underlying filter state. */}
             <div className="prospect-desktop-only" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, fontWeight: 800, color: "#7f8fa5", textTransform: "uppercase", letterSpacing: 0.6, marginRight: 2 }}>Quick views</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: 0.6, marginRight: 2 }}>Quick views</span>
               {(() => {
                 const today = localDateStr(0);
                 const yesterday = localDateStr(-1);
@@ -2888,12 +2949,14 @@ export default function Contacts() {
                       key={v.key}
                       type="button"
                       onClick={() => (v.active ? v.clear() : v.apply())}
+                      aria-pressed={v.active}
                       style={{
                         height: 32, padding: "0 12px", borderRadius: 999,
-                        border: v.active ? "1.5px solid #9ace3d" : "1px solid #dce8f4",
+                        border: v.active ? "1px solid #9ace3d" : "1px solid #e3e9f2",
                         background: v.active ? "#f3fbe3" : "#fff",
-                        color: v.active ? "#4d7c0f" : "#4a6580",
-                        fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                        color: v.active ? "#4d7c0f" : "#68788d",
+                        fontSize: 12.5, fontWeight: v.active ? 800 : 600, cursor: "pointer",
+                        boxShadow: v.active ? "0 0 0 2px rgba(154, 206, 61, 0.22)" : "none",
                         display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
                       }}
                     >
@@ -3190,7 +3253,7 @@ export default function Contacts() {
                       just the visible 50. Ties are broken by contact.id so
                       pagination is stable. */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Sort</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>Sort</span>
                     <select
                       value={prospectSort}
                       onChange={(e) => setProspectSort(e.target.value as ProspectSortKey)}
@@ -3567,7 +3630,7 @@ export default function Contacts() {
                     <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.35 }} />
                     <div style={{ fontSize: 16, fontWeight: 800, color: "#25384d", marginBottom: 8 }}>No prospects found</div>
                     <div style={{ fontSize: 13, color: "#7a8ea4", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
-                      Upload a CSV from the Upload Prospects button above, or add prospects manually with Add Prospect.
+                      Upload a CSV with the Upload button above, or add prospects manually with Add Prospect.
                     </div>
                   </>
                 ) : (
@@ -3585,7 +3648,7 @@ export default function Contacts() {
                   <Pagination page={page} totalPages={Math.max(contactsPages, 1)} total={contactsTotal} pageSize={pageSize} onChange={setPage} />
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="crm-table" style={{ minWidth: 1080 }}>
+                  <table className="crm-table" style={{ minWidth: 980 }}>
                     <thead>
                       <tr>
                         {canSelectProspects && (
@@ -3595,7 +3658,7 @@ export default function Contacts() {
                               checked={allVisibleSelected}
                               onChange={toggleVisibleContactSelection}
                               aria-label="Select all visible prospects"
-                              style={{ width: 16, height: 16, accentColor: "#175089" }}
+                              style={{ width: 16, height: 16, accentColor: "#6fae27" }}
                             />
                           </th>
                         )}
@@ -3614,7 +3677,7 @@ export default function Contacts() {
                                 checked={selectedContactIds.has(c.id)}
                                 onChange={() => toggleContactSelection(c.id)}
                                 aria-label={`Select ${c.first_name} ${c.last_name}`}
-                                style={{ width: 16, height: 16, accentColor: "#175089" }}
+                                style={{ width: 16, height: 16, accentColor: "#6fae27" }}
                               />
                             </td>
                           )}
@@ -3632,18 +3695,18 @@ export default function Contacts() {
                                         {getInitials(`${c.first_name} ${c.last_name}`)}
                                       </div>
                                       <div className="min-w-0" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                                        <p className="font-bold text-[#0f1f33] truncate" style={{ fontSize: 13.5, lineHeight: 1.25 }}>
+                                        <p className="font-bold text-[#0f1f33] truncate" title={`${c.first_name ?? ""} ${c.last_name ?? ""}`.trim()} style={{ fontSize: 13.5, lineHeight: 1.25, maxWidth: 170 }}>
                                           {c.first_name} {c.last_name}
                                         </p>
                                         {c.seniority && (
-                                          <p style={{ fontSize: 11.5, color: "#7d8ea6", fontWeight: 600, lineHeight: 1.2, margin: 0 }}>
+                                          <p title={c.seniority} style={{ fontSize: 11.5, color: "#7d8ea6", fontWeight: 600, lineHeight: 1.2, margin: 0, maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                             {c.seniority}
                                           </p>
                                         )}
                                         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
                                           {persona && (
                                             <span style={{
-                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                               borderRadius: 999, background: persona.bg, color: persona.fg,
                                               border: `1px solid ${persona.border}`, lineHeight: 1.4, whiteSpace: "nowrap",
                                             }}>
@@ -3652,7 +3715,7 @@ export default function Contacts() {
                                           )}
                                           {opens > 0 && (
                                             <span title={`${opens} email opens`} style={{
-                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                               borderRadius: 999, background: "#fef3c7", color: "#92400e",
                                               border: "1px solid #fde68a", lineHeight: 1.4, whiteSpace: "nowrap",
                                             }}>
@@ -3661,7 +3724,7 @@ export default function Contacts() {
                                           )}
                                           {clicks > 0 && (
                                             <span title={`${clicks} email clicks`} style={{
-                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                               borderRadius: 999, background: "#dcfce7", color: "#166534",
                                               border: "1px solid #bbf7d0", lineHeight: 1.4, whiteSpace: "nowrap",
                                             }}>
@@ -3670,7 +3733,7 @@ export default function Contacts() {
                                           )}
                                           {lastTouch && (
                                             <span title={new Date(lastTouch).toLocaleString()} style={{
-                                              fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                                              fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                               borderRadius: 999, background: "#eef2ff", color: "#3730a3",
                                               border: "1px solid #c7d2fe", lineHeight: 1.4, whiteSpace: "nowrap",
                                             }}>
@@ -3694,7 +3757,8 @@ export default function Contacts() {
                                             if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
                                           }}
                                           className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
-                                          style={{ textAlign: "left", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                          title={c.company_name}
+                                          style={{ textAlign: "left", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}
                                         >
                                           {c.company_name}
                                         </button>
@@ -3728,7 +3792,7 @@ export default function Contacts() {
                                       <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
                                         <span title={c.phone ? `Phone: ${c.phone}` : "No phone"} style={{
                                           display: "inline-flex", alignItems: "center", gap: 3,
-                                          fontSize: 10.5, fontWeight: 700, padding: "2px 7px",
+                                          fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                           borderRadius: 999, lineHeight: 1.3,
                                           background: c.phone ? "#ecfeff" : "#f1f5f9",
                                           color: c.phone ? "#0891b2" : "#94a3b8",
@@ -3738,7 +3802,7 @@ export default function Contacts() {
                                         </span>
                                         <span title={c.linkedin_url ? "LinkedIn available" : "No LinkedIn"} style={{
                                           display: "inline-flex", alignItems: "center", gap: 3,
-                                          fontSize: 10.5, fontWeight: 700, padding: "2px 7px",
+                                          fontSize: 11, fontWeight: 700, padding: "2px 7px",
                                           borderRadius: 999, lineHeight: 1.3,
                                           background: c.linkedin_url ? "#eff6ff" : "#f1f5f9",
                                           color: c.linkedin_url ? "#1d4ed8" : "#94a3b8",
@@ -3774,7 +3838,7 @@ export default function Contacts() {
                                           {c.latest_comment}
                                         </span>
                                         {(c.comment_count ?? 0) > 1 && (
-                                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "#6f8297" }}>
+                                          <span style={{ fontSize: 11, fontWeight: 700, color: "#6f8297" }}>
                                             {c.comment_count} comments · view all
                                           </span>
                                         )}
@@ -3860,13 +3924,19 @@ export default function Contacts() {
                               case "ae":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
-                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={c.assigned_to_name || c.assigned_rep_email} onAssigned={() => loadContacts()} role="ae" label="AE" compact />
+                                    {/* Short name in the chip ("Pravallika S."), full name on hover —
+                                        keeps the AE/SDR columns narrow without mid-word truncation. */}
+                                    <span title={c.assigned_to_name || c.assigned_rep_email || "Unassigned AE"} style={{ display: "inline-block" }}>
+                                      <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={shortOwnerName(c.assigned_to_name || c.assigned_rep_email)} onAssigned={() => loadContacts()} role="ae" label="AE" compact />
+                                    </span>
                                   </td>
                                 );
                               case "sdr":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
-                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
+                                    <span title={c.sdr_name || "Unassigned SDR"} style={{ display: "inline-block" }}>
+                                      <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={shortOwnerName(c.sdr_name)} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
+                                    </span>
                                   </td>
                                 );
                               case "action":
@@ -3885,7 +3955,7 @@ export default function Contacts() {
                                             overflow: "hidden",
                                             textOverflow: "ellipsis",
                                             whiteSpace: "nowrap",
-                                            fontSize: 10.5,
+                                            fontSize: 11,
                                             fontWeight: 700,
                                             lineHeight: 1.15,
                                             textAlign: "center",
@@ -3897,7 +3967,7 @@ export default function Contacts() {
                                         <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
                                           <Phone size={13} /> Call
                                         </button>
-                                        <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.15, textAlign: "center", whiteSpace: "nowrap", color: (c.call_attempt_count ?? 0) > 0 ? "#5b6b7d" : "#9fb0c0" }}>
+                                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.15, textAlign: "center", whiteSpace: "nowrap", color: (c.call_attempt_count ?? 0) > 0 ? "#5b6b7d" : "#9fb0c0" }}>
                                           {(c.call_attempt_count ?? 0) > 0
                                             ? `${c.call_attempt_count} call${c.call_attempt_count === 1 ? "" : "s"}${c.call_last_at ? ` · ${relativeTimeShort(c.call_last_at)}` : ""}`
                                             : "No calls yet"}
@@ -4816,7 +4886,7 @@ export default function Contacts() {
                 }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #9ace3d, #6fae27)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: callDisposition ? "#4d7c0f" : "#5e7290", display: "inline-flex", alignItems: "center", gap: 7 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: callDisposition ? "#4d7c0f" : "#5e7290", display: "inline-flex", alignItems: "center", gap: 7 }}>
                       <span style={{ width: 8, height: 8, borderRadius: 999, background: callDisposition ? "#16a34a" : "#9ace3d", boxShadow: `0 0 0 3px ${callDisposition ? "#dcfce7" : "#e3f4c6"}`, animation: "callpulse 1.6s ease-in-out infinite" }} />
                       {callDisposition ? "Ready to log" : "Call in progress"}
                     </span>
@@ -5091,7 +5161,7 @@ export default function Contacts() {
                                   gap: 6,
                                 }}>
                                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: g.tone.fg, flexShrink: 0 }} />
-                                  <span style={{ fontSize: 10.5, fontWeight: 900, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                                  <span style={{ fontSize: 11, fontWeight: 900, color: g.tone.fg, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                                     {g.title}
                                   </span>
                                 </div>
@@ -5154,7 +5224,7 @@ export default function Contacts() {
                         <label style={{ fontSize: 11.5, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em", display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <Clock size={12} /> Follow-up <span style={{ color: "#dc2626" }}>*</span>
                         </label>
-                        <span style={{ fontSize: 10.5, color: "#92400e", fontWeight: 600 }}>Reminder created on save</span>
+                        <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600 }}>Reminder created on save</span>
                       </div>
                       <input
                         type="datetime-local"
@@ -5271,7 +5341,7 @@ export default function Contacts() {
                                     {act.type}
                                   </span>
                                   {act.isSession && (
-                                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>
+                                    <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>
                                       Just saved
                                     </span>
                                   )}

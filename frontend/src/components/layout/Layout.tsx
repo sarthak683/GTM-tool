@@ -119,17 +119,17 @@ function Layout() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 8,
-                  height: 44,
+                  gap: 7,
+                  height: 38,
                   padding: "0 14px",
-                  borderRadius: 14,
-                  border: "1px solid #ffcab8",
-                  background: "linear-gradient(135deg, #a4d64a 0%, #7fb52f 100%)",
+                  borderRadius: 10,
+                  border: "1px solid rgba(111, 174, 39, 0.45)",
+                  background: "linear-gradient(180deg, #9ace3d 0%, #6fae27 100%)",
                   color: "#fff",
                   fontSize: 13,
                   fontWeight: 800,
                   cursor: "pointer",
-                  boxShadow: "0 14px 28px rgba(154, 206, 61,0.18)",
+                  boxShadow: "0 6px 16px rgba(154, 206, 61, 0.28)",
                 }}
               >
                 <Plus size={15} />
@@ -213,8 +213,8 @@ function Layout() {
                   background: "rgba(255,255,255,0.94)",
                   border: "1px solid #dbe4ef",
                   cursor: "pointer",
-                  padding: "6px 10px",
-                  borderRadius: "14px",
+                  padding: "3px 8px",
+                  borderRadius: "10px",
                   boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
                 }}
               >

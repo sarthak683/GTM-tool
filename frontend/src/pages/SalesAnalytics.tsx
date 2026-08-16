@@ -178,6 +178,12 @@ const exportBtnStyle: React.CSSProperties = {
   borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer",
 };
 
+// 11px uppercase group labels for the compact filter bar.
+const saFilterLabelStyle: React.CSSProperties = {
+  fontSize: 11, fontWeight: 700, color: "#68788d",
+  textTransform: "uppercase", letterSpacing: "0.06em",
+};
+
 type MeetingBucketKey = "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled";
 
 export interface MeetingBucketCard {
@@ -1161,12 +1167,12 @@ function ActivityDrilldownModal({
 }
 
 const thSty: React.CSSProperties = {
-  textAlign: "left", fontSize: 10, fontWeight: 800, letterSpacing: "0.1em",
-  color: "#8a9cb2", textTransform: "uppercase", padding: "10px 22px 8px",
+  textAlign: "left", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em",
+  color: "#68788d", textTransform: "uppercase", padding: "10px 14px",
   borderBottom: "1px solid #ebeff5",
 };
 const tdSty: React.CSSProperties = {
-  padding: "12px 22px", verticalAlign: "top",
+  padding: "10px 14px", verticalAlign: "top", fontSize: 13,
 };
 
 // Period-over-period badge for window-bound KPIs. Compares the current window
@@ -1223,48 +1229,40 @@ function MetricCard({
 
   return (
     <>
+      {/* Compact KPI tile — the caption sentence moved into the title tooltip
+          so cards stay under 84px tall. */}
       <div
         style={{
           background: palette.bg,
           border: `1px solid ${palette.border}`,
-          borderRadius: 18,
-          padding: 18,
+          borderRadius: 14,
+          padding: "10px 14px",
           display: "flex",
           flexDirection: "column",
-          gap: 14,
-          minHeight: 146,
-          boxShadow: "0 12px 32px rgba(23, 43, 77, 0.06)",
+          gap: 6,
+          boxShadow: "0 1px 2px rgba(23, 43, 77, 0.05)",
           cursor: hasDeals ? "pointer" : "default",
-          transition: "transform 0.12s ease, box-shadow 0.12s ease",
+          transition: "box-shadow 0.12s ease",
         }}
         onClick={() => hasDeals && setModalOpen(true)}
-        onMouseEnter={(e) => { if (hasDeals) e.currentTarget.style.boxShadow = "0 18px 40px rgba(23, 43, 77, 0.10)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 12px 32px rgba(23, 43, 77, 0.06)"; }}
+        onMouseEnter={(e) => { if (hasDeals) e.currentTarget.style.boxShadow = "0 6px 18px rgba(23, 43, 77, 0.10)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(23, 43, 77, 0.05)"; }}
         role={hasDeals ? "button" : undefined}
-        title={hasDeals ? `Click to view ${deals.length} deal${deals.length === 1 ? "" : "s"}` : undefined}
+        title={hasDeals ? `${hint} — click to view ${deals.length} deal${deals.length === 1 ? "" : "s"}` : hint}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: palette.text, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-          <div style={{
-            width: 38, height: 38, borderRadius: 12,
-            background: "#fff", border: `1px solid ${palette.border}`,
-            display: "grid", placeItems: "center", color: palette.icon, flexShrink: 0,
-          }}>
-            <Icon size={17} />
-          </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: palette.text, textTransform: "uppercase", letterSpacing: "0.05em", lineHeight: 1.25, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{label}</span>
+          <Icon size={14} style={{ color: palette.icon, flexShrink: 0 }} />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-            <p style={{ margin: 0, fontSize: 31, lineHeight: 1, fontWeight: 800, color: "#1d2b3a" }}>{value}</p>
-            {trend && <TrendBadge curr={trend.curr} prev={trend.prev} />}
-          </div>
-          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#62748a" }}>{hint}</p>
-          {hasDeals && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
-              View {deals.length} deal{deals.length === 1 ? "" : "s"} →
-            </span>
-          )}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+          <p style={{ margin: 0, fontSize: 21, lineHeight: 1, fontWeight: 800, color: "#1d2b3a", fontVariantNumeric: "tabular-nums" }}>{value}</p>
+          {trend && <TrendBadge curr={trend.curr} prev={trend.prev} />}
         </div>
+        {hasDeals && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: palette.icon }}>
+            View {deals.length} deal{deals.length === 1 ? "" : "s"} →
+          </span>
+        )}
       </div>
       {modalOpen && hasDeals && (
         <MilestoneDealsModal
@@ -1299,18 +1297,18 @@ function SectionCard({
     <section
       className={["crm-panel", classNameProp].filter(Boolean).join(" ")}
       style={{
-        padding: 22,
+        padding: 18,
         display: "flex",
         flexDirection: "column",
-        gap: 18,
+        gap: 14,
         minHeight: 100,
         ...styleProp,
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800, color: "#203244" }}>{title}</h2>
-          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#6d7f93", maxWidth: 700 }}>{subtitle}</p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#142335" }}>{title}</h2>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "#68788d", maxWidth: 700 }}>{subtitle}</p>
         </div>
         {action}
       </div>
@@ -1542,7 +1540,7 @@ function StatPill({
   const content = (
     <>
       <span style={{ fontSize: 16, fontWeight: 800, color: text, lineHeight: 1 }}>{value}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: 0, textAlign: "center", lineHeight: 1.2 }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: text, textTransform: "uppercase", letterSpacing: 0, textAlign: "center", lineHeight: 1.2 }}>{label}</span>
       {sub ? (
         <span
           style={{
@@ -1551,7 +1549,7 @@ function StatPill({
             alignItems: "center",
             gap: 1,
             marginTop: 2,
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: 700,
             color: text,
             opacity: 0.78,
@@ -1567,8 +1565,8 @@ function StatPill({
     flexDirection: "column" as const,
     gap: 4,
     alignItems: "center",
-    padding: "10px 8px",
-    borderRadius: 12,
+    padding: "8px 8px",
+    borderRadius: 10,
     background: tone,
     border: "1px solid transparent",
     cursor: isClickable ? "pointer" : "default",
@@ -1751,19 +1749,19 @@ function RepWeeklyActivityFocus({
   );
 
   return (
-    <div style={{ display: "grid", gap: 18 }}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Input</h2>
+    <div style={{ display: "grid", gap: 16 }}>
+      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", color: "#142335" }}>Input</h2>
       <div
         style={{
-          borderRadius: 22,
-          border: "1px solid #e7edf5",
+          borderRadius: 16,
+          border: "1px solid #e3e9f2",
           background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
-          padding: 20,
+          padding: 16,
           display: "grid",
-          gap: 18,
+          gap: 14,
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#eef4ff", color: "#3856c8", border: "1px solid #d7e2fb", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
@@ -1773,8 +1771,8 @@ function RepWeeklyActivityFocus({
             </div>
 
             <div>
-              <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>{selectedRow.rep_name}</h3>
-              <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.7, color: "#687b92", maxWidth: 720 }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", color: "#142335" }}>{selectedRow.rep_name}</h3>
+              <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.55, color: "#68788d", maxWidth: 720 }}>
                 Spotlighting one rep at a time keeps the weekly story readable. Use the rep buttons to switch context without redrawing a wall of charts.
               </p>
             </div>
@@ -1822,7 +1820,7 @@ function RepWeeklyActivityFocus({
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#f8fafc", padding: 14, display: "grid", gap: 10 }}>
+            <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#f8fafc", padding: 12, display: "grid", gap: 10 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Rep</p>
                 <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by demos scheduled. Ties broken by fewest input touches.</p>
@@ -1861,7 +1859,7 @@ function RepWeeklyActivityFocus({
             </div>
 
             <div
-              style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 14, display: "grid", gap: 10, cursor: selectedRow.pipeline_amount > 0 ? "pointer" : "default", transition: "box-shadow 0.15s ease" }}
+              style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 12, display: "grid", gap: 10, cursor: selectedRow.pipeline_amount > 0 ? "pointer" : "default", transition: "box-shadow 0.15s ease" }}
               onClick={() => selectedRow.pipeline_amount > 0 && onOpenPipeline && onOpenPipeline(selectedRow.user_id, selectedRow.rep_name)}
               onMouseEnter={(e) => { if (selectedRow.pipeline_amount > 0) e.currentTarget.style.boxShadow = "0 4px 18px rgba(23,43,77,0.10)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
@@ -1880,8 +1878,8 @@ function RepWeeklyActivityFocus({
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18 }}>
-          <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+          <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
             <div>
               <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
               <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars make weekly volume comparisons easier than separate mini-charts, while still showing which channel did the work.</p>
@@ -1913,8 +1911,8 @@ function RepWeeklyActivityFocus({
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 18 }}>
-            <div style={{ borderRadius: 18, border: "1px solid #e7edf5", background: "#fff", padding: 18, display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Call Quality</p>
                 <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Grouped bars show whether raw dials are becoming connected calls and real conversations week over week.</p>
@@ -1950,18 +1948,18 @@ function RepWeeklyActivityFocus({
       </div>
 
       {/* ── OUTPUT ──────────────────────────────────────────────────────── */}
-      <h2 style={{ margin: "8px 0 4px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Output</h2>
+      <h2 style={{ margin: "4px 0 0", fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", color: "#142335" }}>Output</h2>
       <div
         style={{
-          borderRadius: 22,
-          border: "1px solid #e7edf5",
+          borderRadius: 16,
+          border: "1px solid #e3e9f2",
           background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
-          padding: 20,
+          padding: 16,
           display: "grid",
-          gap: 14,
+          gap: 12,
         }}
       >
-        <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#1f3144" }}>Meetings Booked</p>
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#142335" }}>Meetings Booked</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
           <StatPill
             label="Next 1 Week"
@@ -2094,7 +2092,7 @@ function ForecastView({ rows }: { rows: SalesForecastRow[] }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
         {totals.map((item) => (
           <div key={item.label} style={{ borderRadius: 14, background: CHART.primarySoft, border: "1px solid #e4f0cd", padding: "12px 14px" }}>
-            <span style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#6f8a4f", textTransform: "uppercase", letterSpacing: "0.06em" }}>{item.label}</span>
+            <span style={{ display: "block", fontSize: 11, fontWeight: 800, color: "#6f8a4f", textTransform: "uppercase", letterSpacing: "0.06em" }}>{item.label}</span>
             <span style={{ display: "block", marginTop: 6, fontSize: 19, fontWeight: 800, color: item.color }}>{item.value}</span>
           </div>
         ))}
@@ -2281,8 +2279,8 @@ function MultiSelectDropdown({
         : `${selected.length} selected`;
 
   return (
-    <div style={{ display: "grid", gap: 8 }} ref={ref}>
-      <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a8ca0" }}>
+    <div style={{ display: "grid", gap: 5 }} ref={ref}>
+      <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#68788d" }}>
         {label}
       </label>
       <div style={{ position: "relative" }}>
@@ -2291,14 +2289,14 @@ function MultiSelectDropdown({
           onClick={() => { setOpen((o) => !o); setQuery(""); }}
           style={{
             width: "100%",
-            height: 46,
-            borderRadius: 12,
-            border: selected.length > 0 ? "1px solid #b8cff7" : "1px solid #d9e3ef",
+            height: 34,
+            borderRadius: 8,
+            border: selected.length > 0 ? "1px solid #b8cff7" : "1px solid #e3e9f2",
             background: selected.length > 0 ? "#eef4ff" : "#fff",
-            color: selected.length > 0 ? "#2948b9" : "#203244",
-            fontSize: 14,
-            fontWeight: 700,
-            padding: "0 36px 0 14px",
+            color: selected.length > 0 ? "#2948b9" : "#142335",
+            fontSize: 13,
+            fontWeight: 600,
+            padding: "0 10px 0 10px",
             textAlign: "left",
             cursor: "pointer",
             display: "flex",
@@ -2335,13 +2333,13 @@ function MultiSelectDropdown({
               zIndex: 50,
               background: "#fff",
               border: "1px solid #dde8f4",
-              borderRadius: 14,
+              borderRadius: 10,
               boxShadow: "0 8px 28px rgba(20,50,80,0.12)",
               overflow: "hidden",
             }}
           >
-            <div style={{ padding: "10px 12px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 10 }}>
-              <Search size={15} style={{ color: "#94a8be", flexShrink: 0 }} />
+            <div style={{ padding: "8px 10px", borderBottom: "1px solid #edf2f8", display: "flex", alignItems: "center", gap: 8 }}>
+              <Search size={14} style={{ color: "#94a8be", flexShrink: 0 }} />
               <input
                 autoFocus
                 value={query}
@@ -2351,15 +2349,15 @@ function MultiSelectDropdown({
                   flex: 1,
                   border: "none",
                   outline: "none",
-                  fontSize: 14,
-                  color: "#203244",
+                  fontSize: 13,
+                  color: "#142335",
                   background: "transparent",
                 }}
               />
             </div>
             <div style={{ maxHeight: 260, overflowY: "auto" }}>
               {filtered.length === 0 ? (
-                <p style={{ margin: 0, padding: "12px 14px", fontSize: 13, color: "#94a8be" }}>No results</p>
+                <p style={{ margin: 0, padding: "10px 12px", fontSize: 13, color: "#94a8be" }}>No results</p>
               ) : (
                 filtered.map((opt) => {
                   const isSelected = selected.includes(opt.value);
@@ -2370,25 +2368,25 @@ function MultiSelectDropdown({
                       onClick={() => toggle(opt.value)}
                       style={{
                         width: "100%",
-                        padding: "12px 16px",
+                        padding: "9px 12px",
                         display: "flex",
                         alignItems: "center",
-                        gap: 12,
+                        gap: 10,
                         border: "none",
                         background: isSelected ? "#f0f5ff" : "transparent",
                         cursor: "pointer",
                         textAlign: "left",
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: isSelected ? 700 : 500,
                         color: isSelected ? "#2948b9" : "#2e4260",
                       }}
                     >
                       <span style={{
-                        width: 20, height: 20, borderRadius: 6, border: isSelected ? "none" : "1.5px solid #c8d8ea",
+                        width: 18, height: 18, borderRadius: 5, border: isSelected ? "none" : "1.5px solid #c8d8ea",
                         background: isSelected ? "#3f5fd4" : "#fff",
                         display: "grid", placeItems: "center", flexShrink: 0,
                       }}>
-                        {isSelected && <Check size={13} style={{ color: "#fff" }} />}
+                        {isSelected && <Check size={12} style={{ color: "#fff" }} />}
                       </span>
                       {opt.label}
                     </button>
@@ -2414,11 +2412,11 @@ function TabStrip({ active }: { active: string }) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 4,
-        padding: 4,
-        borderRadius: 999,
+        gap: 3,
+        padding: 3,
+        borderRadius: 10,
         background: "#f4f7fb",
-        border: "1px solid #e3ebf4",
+        border: "1px solid #e3e9f2",
         width: "fit-content",
         maxWidth: "100%",
         overflowX: "auto",
@@ -2432,14 +2430,18 @@ function TabStrip({ active }: { active: string }) {
             key={t.key}
             to={to}
             style={{
-              padding: "10px 20px",
-              borderRadius: 999,
-              fontSize: 14,
-              fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              height: 30,
+              padding: "0 14px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
               textDecoration: "none",
-              color: isActive ? "#1f3144" : "#66788d",
+              color: isActive ? "#142335" : "#68788d",
               background: isActive ? "#fff" : "transparent",
-              boxShadow: isActive ? "0 2px 8px rgba(32,53,84,0.08)" : "none",
+              border: isActive ? "1px solid #e3e9f2" : "1px solid transparent",
+              boxShadow: isActive ? "0 1px 3px rgba(20, 35, 53, 0.08)" : "none",
               whiteSpace: "nowrap",
               transition: "background 0.12s",
             }}
@@ -3023,168 +3025,143 @@ export default function SalesAnalytics() {
 
   return (
     <div className="sales-analytics-page" style={{ display: "flex", flexDirection: "column", gap: 14, padding: "6px 2px 18px" }}>
-      <style>{`
-        @media (max-width: 768px) {
-          .sales-analytics-hero {
-            flex-direction: column !important;
-          }
-          .sales-analytics-hero > div {
-            width: 100% !important;
-            min-width: 0 !important;
-            max-width: none !important;
-          }
-        }
-      `}</style>
+      {/* Compact filter bar — the Layout topbar already renders the page title,
+          so this panel holds ONLY the dashboard filters. */}
       <section
-        className="crm-panel"
+        className="crm-panel sa-filter-bar"
         style={{
-          padding: 24,
-          background: "radial-gradient(circle at top left, rgba(154, 206, 61, 0.14), transparent 30%), radial-gradient(circle at top right, rgba(76, 107, 230, 0.12), transparent 26%), linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+          padding: "10px 14px 12px",
           display: "flex",
-          flexDirection: "column",
-          gap: 14,
+          alignItems: "flex-end",
+          gap: 16,
+          flexWrap: "wrap",
         }}
       >
-        {/* Title row */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "#687b92" }}>Revenue Intelligence</p>
-          <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Sales Analytics Dashboard</h2>
-        </div>
-        {/* Horizontal filter bar — every group has a label so heights align */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", borderTop: "1px solid #e8eef6", paddingTop: 14, width: "100%", justifyContent: "space-between" }}>
-          {/* Window presets */}
-          <div style={{ display: "grid", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Window</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {WINDOW_PRESETS.map((preset) => (
+        {/* Window presets */}
+        <div style={{ display: "grid", gap: 5 }}>
+          <span style={saFilterLabelStyle}>Window</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {WINDOW_PRESETS.map((preset) => {
+              const active = !usingCustomRange && preset.days === windowDays;
+              return (
                 <button
                   key={preset.days}
                   type="button"
                   onClick={() => { setWindowDays(preset.days); setFromDate(""); setToDate(""); }}
                   style={{
-                    height: 40,
-                    padding: "0 14px",
-                    borderRadius: 999,
-                    border: !usingCustomRange && preset.days === windowDays ? "1px solid #cfe89a" : "1px solid #d9e3ef",
-                    background: !usingCustomRange && preset.days === windowDays ? "#f3fbe3" : "#fff",
-                    color: !usingCustomRange && preset.days === windowDays ? "#4d7c0f" : "#506378",
+                    height: 34,
+                    padding: "0 12px",
+                    borderRadius: 8,
+                    border: active ? "1px solid #cfe89a" : "1px solid #e3e9f2",
+                    background: active ? "#f3fbe3" : "#fff",
+                    color: active ? "#4d7c0f" : "#68788d",
                     fontSize: 13,
-                    fontWeight: 800,
+                    fontWeight: 700,
                     cursor: "pointer",
                   }}
                 >
                   {preset.label}
                 </button>
-              ))}
-            </div>
-          </div>
-          {/* Divider */}
-          <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
-          {/* Date range */}
-          <div style={{ display: "grid", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Custom range</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 12px", height: 40, borderRadius: 12, border: usingCustomRange ? "1.5px solid #a5b4fc" : "1px solid #d9e3ef", background: usingCustomRange ? "#eef2ff" : "#fff" }}>
-              <CalendarRange size={13} style={{ color: usingCustomRange ? "#4f46e5" : "#94a3b8", flexShrink: 0 }} />
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#374151", outline: "none", width: 110 }}
-              />
-              <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#374151", outline: "none", width: 110 }}
-              />
-              {usingCustomRange && (
-                <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
-              )}
-            </div>
-          </div>
-          {/* Mine */}
-          {user?.id && !hideDeveloper && (
-            (() => {
-              const mineActive = repFilter.length === 1 && repFilter[0] === user.id;
-              return (
-                <>
-                  <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0, marginLeft: 12 }} />
-                  <div style={{ display: "grid", gap: 8, marginRight: 12 }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Quick view</span>
-                    <button
-                      type="button"
-                      onClick={() => setRepFilter(mineActive ? [] : [user.id!])}
-                      title={mineActive ? "Showing only your numbers — click to clear" : "Show only your pipeline"}
-                      style={{
-                        height: 40, padding: "0 28px", borderRadius: 12,
-                        border: mineActive ? "1.5px solid #cfe89a" : "1px solid #d7e2fb",
-                        background: mineActive ? "#f3fbe3" : "#fff",
-                        color: mineActive ? "#4d7c0f" : "#3555c4",
-                        fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
-                      }}
-                    >
-                      {mineActive ? "Mine ✓" : "Mine"}
-                    </button>
-                  </div>
-                </>
               );
-            })()
-          )}
-          {/* Pods — labelled like Rep Filter / Geography */}
-          {pods.length > 0 && (
-            <>
-              <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
-              <div style={{ display: "grid", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8ca0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Pod</span>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  {pods.map((pod) => {
-                    const ids = pod.rep_ids;
-                    const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
-                    return (
-                      <button
-                        key={pod.key}
-                        type="button"
-                        onClick={() => setRepFilter(active ? [] : ids)}
-                        title={`${pod.label} — scopes the whole dashboard to: ${pod.reps.map((r) => r.name).join(", ")}`}
-                        style={{
-                          height: 40, padding: "0 16px", borderRadius: 12,
-                          border: active ? "1px solid #3555c4" : "1px solid #d7e2fb",
-                          background: active ? "#3555c4" : "#eef4ff",
-                          color: active ? "#fff" : "#3555c4",
-                          fontSize: 14, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", textTransform: "uppercase",
-                        }}
-                      >
-                        {pod.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            })}
+          </div>
+        </div>
+        {/* Date range */}
+        <div style={{ display: "grid", gap: 5 }}>
+          <span style={saFilterLabelStyle}>Custom range</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 10px", height: 34, borderRadius: 8, border: usingCustomRange ? "1px solid #cfe89a" : "1px solid #e3e9f2", background: usingCustomRange ? "#f3fbe3" : "#fff" }}>
+            <CalendarRange size={13} style={{ color: usingCustomRange ? "#4d7c0f" : "#94a3b8", flexShrink: 0 }} />
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#142335", outline: "none", width: 108 }}
+            />
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#142335", outline: "none", width: 108 }}
+            />
+            {usingCustomRange && (
+              <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#4d7c0f", fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1 }}>✕</button>
+            )}
+          </div>
+        </div>
+        {/* Mine */}
+        {user?.id && !hideDeveloper && (
+          (() => {
+            const mineActive = repFilter.length === 1 && repFilter[0] === user.id;
+            return (
+              <div style={{ display: "grid", gap: 5 }}>
+                <span style={saFilterLabelStyle}>Quick view</span>
+                <button
+                  type="button"
+                  onClick={() => setRepFilter(mineActive ? [] : [user.id!])}
+                  title={mineActive ? "Showing only your numbers — click to clear" : "Show only your pipeline"}
+                  style={{
+                    height: 34, padding: "0 16px", borderRadius: 8,
+                    border: mineActive ? "1px solid #cfe89a" : "1px solid #e3e9f2",
+                    background: mineActive ? "#f3fbe3" : "#fff",
+                    color: mineActive ? "#4d7c0f" : "#68788d",
+                    fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                  }}
+                >
+                  {mineActive ? "Mine ✓" : "Mine"}
+                </button>
               </div>
-            </>
-          )}
-          {/* Divider */}
-          <div style={{ width: 1, height: 52, background: "#d9e3ef", flexShrink: 0 }} />
-          {/* Rep filter */}
-          <div style={{ flex: 1, minWidth: 140 }}>
-            <MultiSelectDropdown
-              label="Rep filter"
-              options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
-              selected={repFilter}
-              onChange={setRepFilter}
-              placeholder="All reps"
-            />
+            );
+          })()
+        )}
+        {/* Pods */}
+        {pods.length > 0 && (
+          <div style={{ display: "grid", gap: 5 }}>
+            <span style={saFilterLabelStyle}>Pod</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              {pods.map((pod) => {
+                const ids = pod.rep_ids;
+                const active = ids.length > 0 && ids.length === repFilter.length && ids.every((id) => repFilter.includes(id));
+                return (
+                  <button
+                    key={pod.key}
+                    type="button"
+                    onClick={() => setRepFilter(active ? [] : ids)}
+                    title={`${pod.label} — scopes the whole dashboard to: ${pod.reps.map((r) => r.name).join(", ")}`}
+                    style={{
+                      height: 34, padding: "0 12px", borderRadius: 8,
+                      border: active ? "1px solid #4d7c0f" : "1px solid #e3e9f2",
+                      background: active ? "#4d7c0f" : "#fff",
+                      color: active ? "#fff" : "#68788d",
+                      fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", textTransform: "uppercase", letterSpacing: "0.03em",
+                    }}
+                  >
+                    {pod.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {/* Geography */}
-          <div style={{ flex: 1, minWidth: 140 }}>
-            <MultiSelectDropdown
-              label="Geography"
-              options={GEO_OPTIONS.filter((o) => o !== "all").map((o) => ({ value: o, label: o }))}
-              selected={geographyFilter}
-              onChange={setGeographyFilter}
-              placeholder="All geographies"
-            />
-          </div>
+        )}
+        {/* Rep filter */}
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <MultiSelectDropdown
+            label="Rep filter"
+            options={visibleTeamUsers.map((u) => ({ value: u.id, label: u.name }))}
+            selected={repFilter}
+            onChange={setRepFilter}
+            placeholder="All reps"
+          />
+        </div>
+        {/* Geography */}
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <MultiSelectDropdown
+            label="Geography"
+            options={GEO_OPTIONS.filter((o) => o !== "all").map((o) => ({ value: o, label: o }))}
+            selected={geographyFilter}
+            onChange={setGeographyFilter}
+            placeholder="All geographies"
+          />
         </div>
       </section>
 
@@ -3218,8 +3195,8 @@ export default function SalesAnalytics() {
           )}
 
 
-          <h2 style={{ margin: "0 0 16px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f3144" }}>Overall Performance</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 18 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", color: "#142335" }}>Overall Performance</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {metricCards.map((card) => (
               <MetricCard
                 key={card.label}
@@ -3230,7 +3207,7 @@ export default function SalesAnalytics() {
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>
             <SectionCard
               title="SDR Leaderboard"
               subtitle="Outbound touches (email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and converted."
