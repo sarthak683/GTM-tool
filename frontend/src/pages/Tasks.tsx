@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Calendar, CheckCircle2, Clock3, ExternalLink, Filter, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { Calendar, CheckCircle2, ChevronDown, ExternalLink, Filter, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { globalSearchApi, tasksApi } from "../lib/api";
@@ -10,9 +10,9 @@ import { getSystemTaskGuidance } from "../components/tasks/systemTaskGuidance";
 import { SkeletonList } from "../components/ui/Skeleton";
 
 const colors = {
-  border: "#d9e1ec",
-  text: "#1d2b3c",
-  sub: "#55657a",
+  border: "#e3e9f2",
+  text: "#142335",
+  sub: "#68788d",
   faint: "#7f8fa5",
   primary: "#1f6feb",
   primarySoft: "#eef5ff",
@@ -297,95 +297,137 @@ function TaskWorkspaceCard({
   const typeStyle = TYPE_STYLE[task.task_type];
   const isOpen = task.status === "open";
   const [showReschedule, setShowReschedule] = useState(false);
+  // Presentation-only: rows render collapsed (≤56px, scannable) and expand in
+  // place to reveal the full workspace — outcome log, comments, guidance,
+  // reschedule/delete. No data flow changes.
+  const [expanded, setExpanded] = useState(false);
   const systemGuidance = getSystemTaskGuidance(task);
   const dueBadge = getDueBadge(task.due_at, task.status);
   const matrixMeta = parseTaskMatrixMeta(task.action_payload);
   const priorityLabelStyle = matrixMeta.priorityLabel ? PRIORITY_LABEL_STYLE[matrixMeta.priorityLabel] : null;
   const templates = getTaskTemplates(task);
 
+  const statusTone = task.status === "completed"
+    ? { bg: colors.greenSoft, border: "#cdeedc", color: colors.green }
+    : task.status === "dismissed"
+      ? { bg: "#eef2f7", border: colors.border, color: colors.sub }
+      : { bg: colors.primarySoft, border: "#d5e5ff", color: colors.primary };
+  const rowPriorityStyle = matrixMeta.priorityLabel && priorityLabelStyle ? priorityLabelStyle : priorityStyle;
+
   return (
-    <div className="crm-panel crm-hover-lift" style={{ padding: 18, boxShadow: "none", display: "grid", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "start" }}>
-          {isOpen && (
+    <div className="crm-panel" style={{ boxShadow: "none" }}>
+      {/* Compact scannable row (≤56px): complete · status · priority · title · due · assignee */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setExpanded((value) => !value);
+          }
+        }}
+        style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 50, maxHeight: 56, padding: "6px 14px", cursor: "pointer", boxSizing: "border-box", overflow: "hidden" }}
+      >
+        {isOpen ? (
+          <input
+            type="checkbox"
+            checked={false}
+            onClick={(event) => event.stopPropagation()}
+            onChange={() => task.task_type === "manual" ? onComplete() : onAccept()}
+            title={task.task_type === "manual" ? "Complete task" : task.recommended_action ? "Accept recommendation" : "Mark reviewed"}
+            style={{ width: 17, height: 17, cursor: "pointer", accentColor: task.task_type === "system" ? "#7c3aed" : colors.green, flexShrink: 0 }}
+          />
+        ) : (
+          <div style={{ width: 17, height: 17, borderRadius: 4, background: task.status === "completed" ? colors.greenSoft : "#eef2f7", border: `2px solid ${task.status === "completed" ? colors.green : "#cbd5e1"}`, display: "grid", placeItems: "center", flexShrink: 0, boxSizing: "border-box" }}>
+            {task.status === "completed" && <CheckCircle2 size={11} color={colors.green} />}
+          </div>
+        )}
+        <span style={{ borderRadius: 999, padding: "3px 8px", background: statusTone.bg, border: `1px solid ${statusTone.border}`, color: statusTone.color, fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+          {task.status}
+        </span>
+        <span style={{ borderRadius: 999, padding: "3px 8px", background: rowPriorityStyle.bg, border: `1px solid ${rowPriorityStyle.border}`, color: rowPriorityStyle.color, fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+          {matrixMeta.priorityLabel ?? task.priority}
+        </span>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700, color: colors.text }}>
+          {task.title}
+          {task.entity_name ? <span style={{ color: colors.faint, fontWeight: 600 }}>{" · "}{task.entity_name}</span> : null}
+        </span>
+        {dueBadge ? (
+          <span style={{ borderRadius: 999, padding: "3px 8px", background: dueBadge.tone.background, border: `1px solid ${dueBadge.tone.border}`, color: dueBadge.tone.color, fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace: "nowrap" }}>
+            {task.status === "completed" ? dueBadge.exactLabel : dueBadge.label}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, fontWeight: 700, color: colors.faint, flexShrink: 0, whiteSpace: "nowrap" }}>No due date</span>
+        )}
+        <span style={{ fontSize: 12, color: colors.sub, fontWeight: 600, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }}>
+          {task.assigned_to_name || "Unassigned"}
+        </span>
+        <ChevronDown size={15} color={colors.faint} style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+      </div>
+
+      {expanded ? (
+      <div style={{ borderTop: `1px solid ${colors.border}`, padding: "14px 16px", display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ borderRadius: 999, padding: "3px 8px", background: typeStyle.bg, border: `1px solid ${typeStyle.border}`, color: typeStyle.color, fontSize: 11, fontWeight: 800 }}>
+          {task.task_type === "system" ? "System" : "Manual"}
+        </span>
+        {matrixMeta.priorityLabel ? (
+          <span style={{ borderRadius: 999, padding: "3px 8px", background: priorityStyle.bg, border: `1px solid ${priorityStyle.border}`, color: priorityStyle.color, fontSize: 11, fontWeight: 800 }}>
+            {task.priority}
+          </span>
+        ) : null}
+        <span className="crm-chip" style={{ background: "#f7f8fc", color: colors.sub, borderColor: colors.border, fontSize: 11, padding: "3px 9px" }}>
+          {task.entity_type}
+        </span>
+        <span className="crm-chip" style={{ background: "#f8fbff", color: colors.sub, borderColor: colors.border, fontSize: 11, padding: "3px 9px" }}>
+          {task.source || (task.task_type === "system" ? "Beacon system" : "Manual task")}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Link to={task.entity_link} style={{ color: colors.primary, fontWeight: 700, fontSize: 13, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {task.entity_name}
+          <ExternalLink size={13} />
+        </Link>
+        {displayEntitySubtitle(task.entity_subtitle) ? <span style={{ color: colors.faint, fontSize: 12 }}>{displayEntitySubtitle(task.entity_subtitle)}</span> : null}
+      </div>
+      {task.description ? <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{task.description}</div> : null}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, rowGap: 6, flexWrap: "wrap", color: colors.faint, fontSize: 12 }}>
+        <span>Updated {formatDate(task.updated_at)}</span>
+        {task.due_at ? <span>Due {dueBadge ? dueBadge.exactLabel : formatDate(task.due_at)}</span> : null}
+        <span>{task.assigned_to_name || "Unassigned"}</span>
+        {matrixMeta.ownerHint ? <span>Owner {matrixMeta.ownerHint}</span> : null}
+        {matrixMeta.slaLabel ? <span>SLA {matrixMeta.slaLabel}</span> : null}
+        <span>{task.created_by_name ? `Created by ${task.created_by_name}` : (task.source || "Beacon")}</span>
+        {isOpen && (
+          showReschedule ? (
             <input
-              type="checkbox"
-              checked={false}
-              onChange={() => task.task_type === "manual" ? onComplete() : onAccept()}
-              title={task.task_type === "manual" ? "Complete task" : task.recommended_action ? "Accept recommendation" : "Mark reviewed"}
-              style={{ width: 20, height: 20, marginTop: 2, cursor: "pointer", accentColor: task.task_type === "system" ? "#7c3aed" : colors.green, flexShrink: 0 }}
+              type="date"
+              autoFocus
+              defaultValue={task.due_at ? task.due_at.slice(0, 10) : ""}
+              onBlur={(e) => { setShowReschedule(false); if (e.target.value) onReschedule(e.target.value); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { setShowReschedule(false); if ((e.target as HTMLInputElement).value) onReschedule((e.target as HTMLInputElement).value); } if (e.key === "Escape") setShowReschedule(false); }}
+              style={{ fontSize: 12, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "3px 6px" }}
             />
-          )}
-          {!isOpen && (
-            <div style={{ width: 20, height: 20, marginTop: 2, borderRadius: 4, background: task.status === "completed" ? colors.greenSoft : "#eef2f7", border: `2px solid ${task.status === "completed" ? colors.green : "#cbd5e1"}`, display: "grid", placeItems: "center", flexShrink: 0 }}>
-              {task.status === "completed" && <CheckCircle2 size={14} color={colors.green} />}
-            </div>
-          )}
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ borderRadius: 999, padding: "4px 9px", background: typeStyle.bg, border: `1px solid ${typeStyle.border}`, color: typeStyle.color, fontSize: 11, fontWeight: 800 }}>
-              {task.task_type === "system" ? "System" : "Manual"}
-            </span>
-            <span style={{ borderRadius: 999, padding: "4px 9px", background: priorityStyle.bg, border: `1px solid ${priorityStyle.border}`, color: priorityStyle.color, fontSize: 11, fontWeight: 800 }}>
-              {task.priority}
-            </span>
-            {matrixMeta.priorityLabel && priorityLabelStyle ? (
-              <span style={{ borderRadius: 999, padding: "4px 9px", background: priorityLabelStyle.bg, border: `1px solid ${priorityLabelStyle.border}`, color: priorityLabelStyle.color, fontSize: 11, fontWeight: 800 }}>
-                {matrixMeta.priorityLabel}
-              </span>
-            ) : null}
-            <span style={{ borderRadius: 999, padding: "4px 9px", background: task.status === "completed" ? colors.greenSoft : task.status === "dismissed" ? "#eef2f7" : "#f8fbff", border: `1px solid ${task.status === "completed" ? "#cdeedc" : colors.border}`, color: task.status === "completed" ? colors.green : colors.sub, fontSize: 11, fontWeight: 800 }}>
-              {task.status}
-            </span>
-            <span className="crm-chip" style={{ background: "#f7f8fc", color: colors.sub, borderColor: colors.border }}>
-              {task.entity_type}
-            </span>
-          </div>
-          <div style={{ fontWeight: 800, fontSize: 16, color: colors.text }}>{task.title}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <Link to={task.entity_link} style={{ color: colors.primary, fontWeight: 700, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
-              {task.entity_name}
-              <ExternalLink size={14} />
-            </Link>
-            {displayEntitySubtitle(task.entity_subtitle) ? <span style={{ color: colors.faint, fontSize: 13 }}>{displayEntitySubtitle(task.entity_subtitle)}</span> : null}
-          </div>
-          {task.description ? <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>{task.description}</div> : null}
-        </div>
-        </div>
-        <div style={{ display: "grid", gap: 4, justifyItems: "end", color: colors.faint, fontSize: 12 }}>
-          <div>{formatDate(task.updated_at)}</div>
-          {task.due_at ? <div>{dueBadge ? dueBadge.exactLabel : `Due ${formatDate(task.due_at)}`}</div> : null}
-          {isOpen && (
-            showReschedule ? (
-              <input
-                type="date"
-                autoFocus
-                defaultValue={task.due_at ? task.due_at.slice(0, 10) : ""}
-                onBlur={(e) => { setShowReschedule(false); if (e.target.value) onReschedule(e.target.value); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { setShowReschedule(false); if ((e.target as HTMLInputElement).value) onReschedule((e.target as HTMLInputElement).value); } if (e.key === "Escape") setShowReschedule(false); }}
-                style={{ fontSize: 12, border: `1px solid ${colors.border}`, borderRadius: 6, padding: "3px 6px" }}
-              />
-            ) : (
-              <button type="button" onClick={() => setShowReschedule(true)} style={{ background: "none", border: `1px solid ${colors.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 700, color: colors.primary, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <Calendar size={11} />Reschedule
-              </button>
-            )
-          )}
-          <div>{task.assigned_to_name || "Unassigned"}</div>
-          {matrixMeta.ownerHint ? <div>Owner {matrixMeta.ownerHint}</div> : null}
-          {matrixMeta.slaLabel ? <div>SLA {matrixMeta.slaLabel}</div> : null}
-          <div>{task.created_by_name ? `Created by ${task.created_by_name}` : (task.source || "Beacon")}</div>
-          {canDelete ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              style={{ marginTop: 4, borderRadius: 8, border: `1px solid #ffd0d8`, background: "#fff5f7", color: colors.red, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              <Trash2 size={13} />
-              Delete
+          ) : (
+            <button type="button" onClick={() => setShowReschedule(true)} style={{ background: "none", border: `1px solid ${colors.border}`, borderRadius: 8, padding: "3px 8px", fontSize: 11, fontWeight: 700, color: colors.primary, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Calendar size={11} />Reschedule
             </button>
-          ) : null}
-        </div>
+          )
+        )}
+        {canDelete ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            style={{ borderRadius: 8, border: `1px solid #ffd0d8`, background: "#fff5f7", color: colors.red, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+          >
+            <Trash2 size={12} />
+            Delete
+          </button>
+        ) : null}
       </div>
 
       {matrixMeta.escalationHint ? (
@@ -447,7 +489,7 @@ function TaskWorkspaceCard({
             value={outcomeDraft}
             onChange={(e) => onOutcomeDraftChange(e.target.value)}
             placeholder="Log the result before completing: what happened, buyer response, and next step..."
-            style={{ width: "100%", minHeight: 76, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", background: "#fff" }}
+            style={{ width: "100%", minHeight: 76, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", background: "#fff" }}
           />
         </div>
       ) : null}
@@ -500,7 +542,7 @@ function TaskWorkspaceCard({
             value={commentDraft}
             onChange={(e) => onCommentDraftChange(e.target.value)}
             placeholder="Add a quick comment or update..."
-            style={{ width: "100%", minHeight: 68, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical" }}
+            style={{ width: "100%", minHeight: 68, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical" }}
           />
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button type="button" onClick={onAddComment} disabled={!commentDraft.trim()} className="crm-button soft">
@@ -510,67 +552,8 @@ function TaskWorkspaceCard({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
-          paddingTop: 8,
-          borderTop: `1px solid ${colors.border}`,
-        }}
-      >
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {dueBadge ? (
-            <span
-              style={{
-                borderRadius: 999,
-                padding: "6px 10px",
-                background: dueBadge.tone.background,
-                border: `1px solid ${dueBadge.tone.border}`,
-                color: dueBadge.tone.color,
-                fontSize: 11.5,
-                fontWeight: 800,
-              }}
-            >
-              {dueBadge.label}
-            </span>
-          ) : (
-            <span
-              style={{
-                borderRadius: 999,
-                padding: "6px 10px",
-                background: "#f6f7fb",
-                border: `1px solid ${colors.border}`,
-                color: colors.faint,
-                fontSize: 11.5,
-                fontWeight: 700,
-              }}
-            >
-              No due date
-            </span>
-          )}
-          <span
-            style={{
-              borderRadius: 999,
-              padding: "6px 10px",
-              background: "#f8fbff",
-              border: `1px solid ${colors.border}`,
-              color: colors.sub,
-              fontSize: 11.5,
-              fontWeight: 700,
-            }}
-          >
-            {task.source || (task.task_type === "system" ? "Beacon system" : "Manual task")}
-          </span>
-        </div>
-        {task.due_at ? (
-          <div style={{ color: colors.faint, fontSize: 12.5 }}>
-            Due on {formatDate(task.due_at)}
-          </div>
-        ) : null}
       </div>
+      ) : null}
     </div>
   );
 }
@@ -990,12 +973,14 @@ export default function TasksPage() {
       </div>
 
       {/* ── Desktop: full task workspace ─────────────────────────────────── */}
-      <div className="tasks-desktop-only crm-page" style={{ display: "grid", gap: 18 }}>
-      <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 16 }}>
+      <div className="tasks-desktop-only crm-page" style={{ display: "grid", gap: 14 }}>
+      <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ fontSize: 28, fontWeight: 800, color: colors.text, marginBottom: 8 }}>Tasks</h2>
-            <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+            {/* Kept small: the topbar currently falls back to the generic
+                workspace title on /tasks (no PAGE_META entry for the route). */}
+            <h2 style={{ fontSize: 15, fontWeight: 700, color: colors.text, margin: "0 0 4px" }}>Tasks</h2>
+            <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6, fontSize: 12.5, margin: 0 }}>
               {user?.role === "admin"
                 ? "Use My Queue for daily execution and Team Queue for coaching. Every task here is created by you or a teammate — assign, prioritise, and drive the right next actions."
                 : `Everything assigned to ${user?.name || "you"} in one place. Triage your follow-ups quickly and then jump into the right company, prospect, or deal.`}
@@ -1024,9 +1009,9 @@ export default function TasksPage() {
             { label: "Overdue", value: summaryValue(summary.overdue), tone: colors.redSoft, color: colors.red },
             { label: "Due today", value: summaryValue(summary.dueToday), tone: colors.amberSoft, color: colors.amber },
           ].map((item) => (
-            <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 16, padding: "16px 18px", background: "#fff" }}>
-              <div style={{ color: colors.faint, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 8 }}>{item.label}</div>
-              <div style={{ color: item.color, fontWeight: 800, fontSize: 28 }}>{item.value}</div>
+            <div key={item.label} style={{ border: `1px solid ${colors.border}`, borderRadius: 14, padding: "12px 14px", background: "#fff" }}>
+              <div style={{ color: colors.faint, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 6 }}>{item.label}</div>
+              <div style={{ color: item.color, fontWeight: 800, fontSize: 22 }}>{item.value}</div>
             </div>
           ))}
         </div>
@@ -1041,9 +1026,9 @@ export default function TasksPage() {
           can escape the card. The explicit zIndex bumps this whole section
           above the task cards section that follows, so the dropdown also
           paints over the cards rather than under them. */}
-      <section className="crm-panel" style={{ padding: 20, display: "grid", gap: 14, overflow: "visible", position: "relative", zIndex: 5 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800 }}>
-          <Filter size={15} />
+      <section className="crm-panel" style={{ padding: 16, display: "grid", gap: 12, overflow: "visible", position: "relative", zIndex: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 700, fontSize: 14 }}>
+          <Filter size={14} />
           <span>Filters</span>
         </div>
         {isAdmin ? (
@@ -1075,19 +1060,19 @@ export default function TasksPage() {
           </div>
         ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12, alignItems: "start" }}>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as TaskStatusFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as TaskStatusFilter)} style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="open">Open only</option>
             <option value="completed">Completed</option>
             <option value="dismissed">Dismissed</option>
             <option value="all">All statuses</option>
           </select>
-          <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value as EntityFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
+          <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value as EntityFilter)} style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="all">All record types</option>
             <option value="deal">Deals</option>
             <option value="contact">Prospects</option>
             <option value="company">Companies</option>
           </select>
-          <select value={dueDateFilter} onChange={(e) => setDueDateFilter(e.target.value as DueDateFilter)} style={{ height: 44, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
+          <select value={dueDateFilter} onChange={(e) => setDueDateFilter(e.target.value as DueDateFilter)} style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="all">All due dates</option>
             <option value="overdue">Overdue</option>
             <option value="today">Due today</option>
@@ -1106,7 +1091,7 @@ export default function TasksPage() {
                   setDealSearch(event.target.value);
                 }}
                 placeholder="Filter by deal"
-                style={{ width: "100%", height: 44, borderRadius: 12, border: `1px solid ${dealFilter ? "#bfe4cf" : colors.border}`, padding: "0 36px 0 12px", fontSize: 13, background: "#fff", boxSizing: "border-box" }}
+                style={{ width: "100%", height: 36, borderRadius: 10, border: `1px solid ${dealFilter ? "#bfe4cf" : colors.border}`, padding: "0 36px 0 12px", fontSize: 13, background: "#fff", boxSizing: "border-box" }}
               />
               {(dealFilter || dealSearch) && (
                 <button
@@ -1140,7 +1125,7 @@ export default function TasksPage() {
         </div>
       </section>
 
-      <section style={{ display: "grid", gap: 14 }}>
+      <section style={{ display: "grid", gap: 10 }}>
         {loading ? (
           <div className="crm-panel" style={{ padding: 18 }}><SkeletonList rows={6} /></div>
         ) : visibleTasks.length === 0 ? (
@@ -1189,7 +1174,7 @@ export default function TasksPage() {
                     className="crm-button soft"
                     onClick={() => setTasksPage(Math.max(1, safeTasksPage - 1))}
                     disabled={safeTasksPage <= 1}
-                    style={{ height: 34, padding: "0 12px", opacity: safeTasksPage <= 1 ? 0.45 : 1 }}
+                    style={{ padding: "0 12px", opacity: safeTasksPage <= 1 ? 0.45 : 1 }}
                   >
                     Previous
                   </button>
@@ -1201,7 +1186,7 @@ export default function TasksPage() {
                     className="crm-button soft"
                     onClick={() => setTasksPage(Math.min(tasksPageCount, safeTasksPage + 1))}
                     disabled={safeTasksPage >= tasksPageCount}
-                    style={{ height: 34, padding: "0 12px", opacity: safeTasksPage >= tasksPageCount ? 0.45 : 1 }}
+                    style={{ padding: "0 12px", opacity: safeTasksPage >= tasksPageCount ? 0.45 : 1 }}
                   >
                     Next
                   </button>
@@ -1217,7 +1202,7 @@ export default function TasksPage() {
           <div className="crm-panel" style={{ width: "min(560px, 100%)", padding: 22, display: "grid", gap: 14 }} onClick={(event) => event.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div>
-                <h3 style={{ margin: 0, color: colors.text, fontSize: 20, fontWeight: 800 }}>New task</h3>
+                <h3 style={{ margin: 0, color: colors.text, fontSize: 16, fontWeight: 700 }}>New task</h3>
                 <p style={{ margin: "4px 0 0", color: colors.sub, fontSize: 13 }}>Fast manual task entry. No AI generation, just a clean follow-up record.</p>
               </div>
               <button type="button" onClick={() => setShowCreateTask(false)} className="crm-button soft" aria-label="Close">
@@ -1230,7 +1215,7 @@ export default function TasksPage() {
                 value={createTaskForm.title}
                 onChange={(event) => setCreateTaskForm((current) => ({ ...current, title: event.target.value }))}
                 placeholder="e.g. Update next step after discovery call"
-                style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14 }}
+                style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13 }}
               />
             </label>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 10 }}>
@@ -1243,7 +1228,7 @@ export default function TasksPage() {
                     setEntitySearch("");
                     setEntityOptions([]);
                   }}
-                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14, background: "#fff" }}
+                  style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}
                 >
                   <option value="deal">Deal</option>
                   <option value="contact">Prospect</option>
@@ -1260,7 +1245,7 @@ export default function TasksPage() {
                       setCreateTaskForm((current) => ({ ...current, entity_id: "" }));
                     }}
                     placeholder={`Search ${createTaskForm.entity_type}`}
-                    style={{ width: "100%", height: 42, borderRadius: 12, border: `1px solid ${createTaskForm.entity_id ? "#bfe4cf" : colors.border}`, padding: "0 12px", fontSize: 14, boxSizing: "border-box" }}
+                    style={{ width: "100%", height: 36, borderRadius: 10, border: `1px solid ${createTaskForm.entity_id ? "#bfe4cf" : colors.border}`, padding: "0 12px", fontSize: 13, boxSizing: "border-box" }}
                   />
                   {(entityOptions.length > 0 || entitySearching) && !createTaskForm.entity_id ? (
                     <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 125, border: `1px solid ${colors.border}`, borderRadius: 12, background: "#fff", boxShadow: "0 14px 30px rgba(15,23,42,0.12)", overflow: "hidden" }}>
@@ -1292,7 +1277,7 @@ export default function TasksPage() {
                 <select
                   value={createTaskForm.priority}
                   onChange={(event) => setCreateTaskForm((current) => ({ ...current, priority: event.target.value as TaskPriority }))}
-                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14, background: "#fff" }}
+                  style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}
                 >
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
@@ -1305,7 +1290,7 @@ export default function TasksPage() {
                   type="date"
                   value={createTaskForm.due_at}
                   onChange={(event) => setCreateTaskForm((current) => ({ ...current, due_at: event.target.value }))}
-                  style={{ height: 42, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 14 }}
+                  style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13 }}
                 />
               </label>
             </div>
@@ -1315,7 +1300,7 @@ export default function TasksPage() {
                 value={createTaskForm.description}
                 onChange={(event) => setCreateTaskForm((current) => ({ ...current, description: event.target.value }))}
                 placeholder="Context, desired outcome, and any next-step note."
-                style={{ minHeight: 96, borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", resize: "vertical" }}
+                style={{ minHeight: 88, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", resize: "vertical" }}
               />
             </label>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

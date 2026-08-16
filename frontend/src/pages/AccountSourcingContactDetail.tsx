@@ -399,8 +399,8 @@ export default function AccountSourcingContactDetail() {
             padding: 10px 10px 88px !important;
           }
           .prospect-detail-hero {
-            border-radius: 18px !important;
-            padding: 14px !important;
+            border-radius: 16px !important;
+            padding: 12px !important;
             box-shadow: 0 10px 26px rgba(16, 42, 67, 0.08) !important;
           }
           .prospect-detail-hero-row {
@@ -412,19 +412,19 @@ export default function AccountSourcingContactDetail() {
             flex-wrap: nowrap !important;
           }
           .prospect-detail-avatar {
-            width: 56px !important;
-            height: 56px !important;
-            border-radius: 16px !important;
-            font-size: 16px !important;
+            width: 44px !important;
+            height: 44px !important;
+            border-radius: 13px !important;
+            font-size: 14px !important;
           }
           .prospect-detail-name {
-            font-size: 25px !important;
-            line-height: 1.1 !important;
+            font-size: 20px !important;
+            line-height: 1.15 !important;
             letter-spacing: 0 !important;
           }
           .prospect-detail-subtitle {
-            margin-top: 6px !important;
-            font-size: 13.5px !important;
+            margin-top: 4px !important;
+            font-size: 13px !important;
             line-height: 1.45 !important;
           }
           .prospect-detail-provenance,
@@ -531,8 +531,8 @@ export default function AccountSourcingContactDetail() {
       <div className="prospect-detail-page" style={pageStyle}>
         <div className="prospect-detail-wrap" style={wrapStyle}>
           <div className="prospect-detail-hero" style={heroCardStyle}>
-            <div className="prospect-detail-hero-row" style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
-              <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
+            <div className="prospect-detail-hero-row" style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", padding: 0, color: colors.primary, display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer", fontSize: "inherit" }}>
                   <ArrowLeft size={15} /> Back
@@ -544,13 +544,13 @@ export default function AccountSourcingContactDetail() {
                 ) : null}
               </div>
 
-              <div className="prospect-detail-title-row" style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
-                <div className={`prospect-detail-avatar flex h-20 w-20 shrink-0 items-center justify-center rounded-[22px] text-[22px] font-extrabold ${avatarColor(fullName || "Prospect")}`}>
+              <div className="prospect-detail-title-row" style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div className={`prospect-detail-avatar flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] text-[15px] font-extrabold ${avatarColor(fullName || "Prospect")}`}>
                   {getInitials(fullName || "Prospect")}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <h1 className="prospect-detail-name" style={{ margin: 0, color: colors.text, fontSize: 38, letterSpacing: 0.2, lineHeight: 1.05 }}>{fullName || "Unnamed prospect"}</h1>
-                  <div className="prospect-detail-subtitle" style={{ marginTop: 10, color: colors.sub, fontSize: 17, lineHeight: 1.6, maxWidth: 840 }}>
+                  <h1 className="prospect-detail-name" style={{ margin: 0, color: colors.text, fontSize: 23, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.15 }}>{fullName || "Unnamed prospect"}</h1>
+                  <div className="prospect-detail-subtitle" style={{ marginTop: 4, color: colors.sub, fontSize: 13, lineHeight: 1.5 }}>
                     {contact.title || "No title yet"} {company ? `at ${company.name}` : ""}. This view combines uploaded prospecting context, company research, and the saved prospect-level outreach sequence.
                   </div>
                   <div className="prospect-detail-provenance">
@@ -569,23 +569,22 @@ export default function AccountSourcingContactDetail() {
                   <div
                     className="prospect-detail-progress"
                     style={{
-                      marginTop: 14,
-                      maxWidth: 840,
-                      padding: "14px 16px",
-                      borderRadius: 16,
+                      marginTop: 10,
+                      padding: "10px 12px",
+                      borderRadius: 12,
                       background: trackingTone.soft,
                       border: `1px solid ${trackingTone.border}`,
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ color: trackingTone.color, fontWeight: 800, fontSize: 13 }}>
+                      <span style={{ color: trackingTone.color, fontWeight: 800, fontSize: 12.5 }}>
                         Automated progress
                       </span>
-                      <span style={{ color: trackingTone.color, fontWeight: 900, fontSize: 13 }}>
+                      <span style={{ color: trackingTone.color, fontWeight: 900, fontSize: 12.5 }}>
                         {getProspectTrackingScore(contact)}
                       </span>
                     </div>
-                    <div style={{ marginTop: 6, color: colors.sub, fontSize: 13.5, lineHeight: 1.6 }}>
+                    <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.5 }}>
                       {getProspectTrackingSummary(contact)}
                     </div>
                   </div>
@@ -593,10 +592,9 @@ export default function AccountSourcingContactDetail() {
                     <div
                       className="prospect-detail-enrichment"
                       style={{
-                        marginTop: 14,
-                        maxWidth: 840,
-                        padding: "14px 16px",
-                        borderRadius: 16,
+                        marginTop: 10,
+                        padding: "12px 14px",
+                        borderRadius: 12,
                         background: "#fff8e8",
                         border: "1px solid #f5ddaa",
                         display: "flex",
@@ -607,10 +605,10 @@ export default function AccountSourcingContactDetail() {
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ color: "#8a5b00", fontWeight: 800, fontSize: 12, letterSpacing: 0.35 }}>
+                        <div style={{ color: "#8a5b00", fontWeight: 800, fontSize: 11, letterSpacing: 0.35 }}>
                           COMPANY ENRICHMENT
                         </div>
-                        <div style={{ marginTop: 6, color: "#6c5a2f", fontSize: 13.5, lineHeight: 1.6 }}>
+                        <div style={{ marginTop: 4, color: "#6c5a2f", fontSize: 13, lineHeight: 1.55 }}>
                           {company
                             ? `${company.name} is attached to this prospect, but its account research is still incomplete. Enrich it now to unlock full account context here.`
                             : `${suggestedCompanyName} is not mapped to an account yet. Add this company in Account Sourcing first, then map this prospect to that account so future research, deal creation, and outreach use the right company context.`}
@@ -624,12 +622,14 @@ export default function AccountSourcingContactDetail() {
                           border: "1px solid #e5c980",
                           background: "#fff",
                           color: "#8a5b00",
-                          borderRadius: 12,
-                          padding: "10px 14px",
+                          borderRadius: 10,
+                          minHeight: 36,
+                          padding: "7px 12px",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 8,
                           fontWeight: 700,
+                          fontSize: 13,
                           cursor: companyEnriching ? "default" : "pointer",
                           opacity: companyEnriching ? 0.75 : 1,
                         }}
@@ -639,7 +639,7 @@ export default function AccountSourcingContactDetail() {
                       </button>
                     </div>
                   ) : null}
-                  <div className="prospect-detail-primary-actions" style={{ marginTop: 16, display: "flex", gap: 14, flexWrap: "wrap", color: colors.sub, fontSize: 13.5 }}>
+                  <div className="prospect-detail-primary-actions" style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", color: colors.sub, fontSize: 13 }}>
                     {company ? <span className="prospect-detail-company-inline" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Building2 size={14} />{company.name}</span> : null}
                     {editingEmail ? (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -652,11 +652,11 @@ export default function AccountSourcingContactDetail() {
                           style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
                         />
                         <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           {emailSaving ? "Saving..." : "Save"}
                         </button>
                         <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           Cancel
                         </button>
                       </span>
@@ -671,7 +671,7 @@ export default function AccountSourcingContactDetail() {
                     ) : (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
                         <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
-                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 12, padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                           <Plus size={14} /> Add email
                         </button>
                       </span>
@@ -687,11 +687,11 @@ export default function AccountSourcingContactDetail() {
                           style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
                         />
                         <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           {phoneSaving ? "Saving..." : "Save"}
                         </button>
                         <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           Cancel
                         </button>
                       </span>
@@ -711,7 +711,7 @@ export default function AccountSourcingContactDetail() {
                     ) : (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
                         <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
-                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 12, padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                           <Plus size={14} /> Add phone
                         </button>
                       </span>
@@ -725,7 +725,7 @@ export default function AccountSourcingContactDetail() {
                       type="button"
                       className="prospect-detail-secondary-action"
                       onClick={() => setShowTasksModal(true)}
-                      style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+                      style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
                     >
                       <CheckCircle2 size={14} />
                       Tasks
@@ -736,7 +736,7 @@ export default function AccountSourcingContactDetail() {
                       onClick={handleOpenLinkedinLogger}
                       disabled={!contact.linkedin_url}
                       title={contact.linkedin_url ? "Log a LinkedIn touch" : "Add a LinkedIn URL first to log a LinkedIn touch"}
-                      style={{ border: `1px solid ${contact.linkedin_url ? "#ddd6fe" : "#e2e8f0"}`, background: contact.linkedin_url ? "#f5f3ff" : "#f6f8fb", color: contact.linkedin_url ? "#6d28d9" : "#9aa8b7", borderRadius: 12, padding: "8px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: contact.linkedin_url ? "pointer" : "default", opacity: contact.linkedin_url ? 1 : 0.85 }}
+                      style={{ border: `1px solid ${contact.linkedin_url ? "#ddd6fe" : "#e2e8f0"}`, background: contact.linkedin_url ? "#f5f3ff" : "#f6f8fb", color: contact.linkedin_url ? "#6d28d9" : "#9aa8b7", borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: contact.linkedin_url ? "pointer" : "default", opacity: contact.linkedin_url ? 1 : 0.85 }}
                     >
                       <Link2 size={14} />
                       Log LinkedIn
@@ -754,13 +754,13 @@ export default function AccountSourcingContactDetail() {
                             <input autoFocus value={emailInput} onChange={(e) => setEmailInput(e.target.value)}
                               onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
                               placeholder="email@example.com"
-                              style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
+                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
                             <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
-                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               {emailSaving ? "..." : "Save"}
                             </button>
                             <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               Cancel
                             </button>
                           </div>
@@ -786,13 +786,13 @@ export default function AccountSourcingContactDetail() {
                             <input autoFocus value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)}
                               onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
                               placeholder="+1 555-123-4567"
-                              style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
+                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
                             <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
-                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               {phoneSaving ? "..." : "Save"}
                             </button>
                             <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                              style={{ height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               Cancel
                             </button>
                           </div>
@@ -823,11 +823,11 @@ export default function AccountSourcingContactDetail() {
               </div>
             </div>
 
-            <div className="prospect-detail-actions-desktop" style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+            <div className="prospect-detail-actions-desktop" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
             <button
               type="button"
               onClick={() => setShowTasksModal(true)}
-              style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+              style={{ border: `1px solid #cfe89a`, background: colors.primarySoft, color: colors.primary, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
             >
               <CheckCircle2 size={14} />
               Tasks
@@ -836,7 +836,7 @@ export default function AccountSourcingContactDetail() {
               <button
                 onClick={handleConvertToDeal}
                 disabled={convertingDeal}
-                style={{ border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: convertingDeal ? "wait" : "pointer", opacity: convertingDeal ? 0.8 : 1 }}
+                style={{ border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: convertingDeal ? "wait" : "pointer", opacity: convertingDeal ? 0.8 : 1 }}
               >
                 {convertingDeal ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 {convertingDeal ? "Converting..." : "Convert to Deal"}
@@ -858,7 +858,7 @@ export default function AccountSourcingContactDetail() {
                   }
                 }}
                 disabled={reEnriching}
-                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: reEnriching ? "not-allowed" : "pointer", opacity: reEnriching ? 0.7 : 1 }}
+                style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: reEnriching ? "not-allowed" : "pointer", opacity: reEnriching ? 0.7 : 1 }}
               >
                 {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {reEnriching ? "Queuing..." : "Re-enrich"}
@@ -873,7 +873,7 @@ export default function AccountSourcingContactDetail() {
             <button
               type="button"
               onClick={() => setShowEngagementTimeline((v) => !v)}
-              style={{ border: `1px solid ${showEngagementTimeline ? colors.primary : colors.border}`, background: showEngagementTimeline ? colors.primarySoft : "#fff", color: showEngagementTimeline ? colors.primary : colors.text, borderRadius: 12, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}
+              style={{ border: `1px solid ${showEngagementTimeline ? colors.primary : colors.border}`, background: showEngagementTimeline ? colors.primarySoft : "#fff", color: showEngagementTimeline ? colors.primary : colors.text, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
             >
               <MessageSquare size={14} />
               Engagement ({commsLog.length})
@@ -1026,12 +1026,12 @@ export default function AccountSourcingContactDetail() {
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{
-                              fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6,
+                              fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6,
                               background: sourceTone.bg, color: sourceTone.color, textTransform: "capitalize", border: `1px solid ${sourceTone.border}`,
                             }}>
                               {sourceTone.label}
                             </span>
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#f1f5f9", color: colors.faint, textTransform: "capitalize" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#f1f5f9", color: colors.faint, textTransform: "capitalize" }}>
                               {mediumLabel}
                             </span>
                           </div>
@@ -1105,7 +1105,7 @@ export default function AccountSourcingContactDetail() {
                     cursor: noteInput.trim() ? "pointer" : "not-allowed",
                     background: noteInput.trim() ? colors.primary : colors.border,
                     color: noteInput.trim() ? "#fff" : colors.faint,
-                    fontWeight: 700, fontSize: 13, alignSelf: "flex-end", height: 38, flexShrink: 0,
+                    fontWeight: 700, fontSize: 13, alignSelf: "flex-end", height: 36, flexShrink: 0,
                   }}
                 >
                   {noteSaving ? "..." : "Save"}
@@ -1123,7 +1123,7 @@ export default function AccountSourcingContactDetail() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {notesLog.map((entry, idx) => (
                       <div key={idx} style={{ border: `1px solid #d0e8ff`, background: "#f0f7ff", borderRadius: 12, padding: "10px 14px" }}>
-                        <div style={{ color: colors.text, fontSize: 13.5, lineHeight: 1.55 }}>{String(entry.message || "")}</div>
+                        <div style={{ color: colors.text, fontSize: 13, lineHeight: 1.55 }}>{String(entry.message || "")}</div>
                         <div style={{ color: colors.sub, fontSize: 12, marginTop: 4 }}>
                           {entry.actor_name ? `Note by ${String(entry.actor_name)}` : "By system"}
                           {entry.at ? ` · ${new Date(String(entry.at)).toLocaleString()}` : ""}
@@ -1167,9 +1167,9 @@ export default function AccountSourcingContactDetail() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {Object.entries(displayRawRow).map(([key, value]) => (
-                    <div className="prospect-detail-raw-row" key={key} style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 10, borderRadius: 14, border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", padding: "11px 13px" }}>
+                    <div className="prospect-detail-raw-row" key={key} style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 10, borderRadius: 10, border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", padding: "10px 12px" }}>
                       <div style={{ color: colors.faint, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.35 }}>{key}</div>
-                      <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.55 }}>{String(value)}</div>
+                      <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>{String(value)}</div>
                     </div>
                   ))}
                 </div>
@@ -1193,14 +1193,14 @@ export default function AccountSourcingContactDetail() {
                       onChange={(e) => setEmailInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
                       placeholder="email@example.com"
-                      style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
                     />
                     <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
-                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {emailSaving ? "Saving..." : "Save"}
                     </button>
                     <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       Cancel
                     </button>
                   </div>
@@ -1229,14 +1229,14 @@ export default function AccountSourcingContactDetail() {
                       onChange={(e) => setPhoneInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
                       placeholder="+1 555-123-4567"
-                      style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
                     />
                     <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
-                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {phoneSaving ? "Saving..." : "Save"}
                     </button>
                     <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                      style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       Cancel
                     </button>
                   </div>
@@ -1275,16 +1275,16 @@ export default function AccountSourcingContactDetail() {
                                 value={row.number}
                                 onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, number: e.target.value } : p)))}
                                 placeholder="+1 555-123-4567"
-                                style={{ flex: "1 1 160px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                                style={{ flex: "1 1 160px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
                               />
                               <input
                                 value={row.label || ""}
                                 onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, label: e.target.value } : p)))}
                                 placeholder="mobile / office"
-                                style={{ flex: "1 1 100px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                                style={{ flex: "1 1 100px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
                               />
                               <button type="button" aria-label="Remove number" onClick={() => setPhonesDraft((prev) => prev.filter((_, i) => i !== idx))}
-                                style={{ height: 30, width: 30, flexShrink: 0, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                                style={{ height: 36, width: 36, flexShrink: 0, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                                 <Trash2 size={13} />
                               </button>
                             </div>
@@ -1296,11 +1296,11 @@ export default function AccountSourcingContactDetail() {
                             <Plus size={12} /> Add number
                           </button>
                           <button type="button" disabled={phonesSaving} onClick={() => handleSaveAdditionalPhones()}
-                            style={{ height: 30, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            style={{ height: 36, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                             {phonesSaving ? "Saving…" : "Save"}
                           </button>
                           <button type="button" onClick={() => setEditingPhones(false)}
-                            style={{ height: 30, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            style={{ height: 36, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                             Cancel
                           </button>
                         </div>
@@ -1344,12 +1344,12 @@ value={editingLinkedIn ? (
       onKeyDown={(event) => { if (event.key === "Enter") void handleSaveLinkedIn(); if (event.key === "Escape") cancelLinkedInEdit(); }}
       placeholder="linkedin.com/in/profile"
       aria-label="LinkedIn URL"
-      style={{ flex: "1 1 210px", minWidth: 0, height: 30, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+      style={{ flex: "1 1 210px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
     />
-    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 30, padding: "0 10px" }}>
+    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 36, padding: "0 12px" }}>
       {linkedInSaving ? "Saving..." : "Save"}
     </button>
-    <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 30, padding: "0 10px" }}>Cancel</button>
+    <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 36, padding: "0 12px" }}>Cancel</button>
   </div>
 ) : contact.linkedin_url ? (
   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -1422,14 +1422,14 @@ value={editingLinkedIn ? (
                           onChange={(e) => setDomainInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") handleSaveDomain(); if (e.key === "Escape") setEditingDomain(false); }}
                           placeholder="e.g. acme.com"
-                          style={{ height: 28, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                          style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
                         />
                         <button type="button" disabled={domainSaving} onClick={handleSaveDomain}
-                          style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                           {domainSaving ? "Saving…" : "Save"}
                         </button>
                         <button type="button" onClick={() => setEditingDomain(false)}
-                          style={{ height: 28, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                           Cancel
                         </button>
                       </div>

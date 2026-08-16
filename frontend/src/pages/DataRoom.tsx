@@ -9,9 +9,9 @@ import PreviewModal from "./data-room/PreviewModal";
 const DATA_ROOM_PATH = "/data-room/index.html";
 
 const ACCENT = "#4d7c0f";
-const BORDER = "#e8eef5";
-const TEXT = "#0f2744";
-const MUTED = "#6c8097";
+const BORDER = "#e3e9f2";
+const TEXT = "#142335";
+const MUTED = "#68788d";
 
 type TabKey = "sales_lifecycle" | DataRoomCategory;
 
@@ -112,13 +112,12 @@ export default function DataRoomPage() {
   );
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto", width: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16 }}>
-        <div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 800, color: ACCENT, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            <Database size={14} /> Data Room
-          </div>
-        </div>
+    <div style={{ maxWidth: 1200, margin: "0 auto", width: "100%" }}>
+      {/* Small eyebrow only — the shell topbar owns page-title rendering.
+          (/data-room currently falls back to the generic topbar title, so this
+          stays as the page identity until PAGE_META covers the route.) */}
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, fontWeight: 700, color: ACCENT, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>
+        <Database size={13} /> Data Room
       </div>
 
       <div className="crm-panel" style={{ overflow: "hidden" }}>
@@ -131,9 +130,9 @@ export default function DataRoomPage() {
                 key={tab.key}
                 onClick={() => handleTabClick(tab.key)}
                 style={{
-                  padding: "13px 16px",
+                  padding: "11px 14px",
                   fontSize: 13,
-                  fontWeight: 800,
+                  fontWeight: 700,
                   color: active ? ACCENT : MUTED,
                   background: "transparent",
                   border: "none",
@@ -160,7 +159,7 @@ export default function DataRoomPage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="crm-button soft"
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", minHeight: 34, padding: "0 12px" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", padding: "0 12px" }}
               >
                 <ExternalLink size={14} /> Open in new tab
               </a>
@@ -183,7 +182,7 @@ export default function DataRoomPage() {
               <button
                 onClick={() => setAddingCategory(activeCategory)}
                 className="crm-button primary"
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 36, padding: "0 14px" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 14px" }}
               >
                 <Plus size={15} /> Add File
               </button>

@@ -11,14 +11,14 @@
   --pd-bg-1:        #f6f8fc;
   --pd-bg-2:        #eef3fa;
   --pd-surface:     #ffffff;
-  --pd-border:      #e2eaf5;
+  --pd-border:      #e3e9f2;
   --pd-border-soft: #eef2f8;
-  --pd-ink:         #0f1f33;
+  --pd-ink:         #142335;
   --pd-ink-soft:    #4a5b73;
-  --pd-ink-mute:    #7d8ea6;
-  --pd-primary:     #1d4ed8;
-  --pd-primary-soft:#eaf1ff;
-  --pd-accent:      #06b6d4;
+  --pd-ink-mute:    #68788d;
+  --pd-primary:     #6fae27;
+  --pd-primary-soft:#f3fbe3;
+  --pd-accent:      #9ace3d;
   --pd-success:     #16a34a;
   --pd-warn:        #d97706;
   --pd-danger:      #dc2626;
@@ -28,22 +28,22 @@
 
   /* Override the inline radial gradient with a clean modern surface */
   background:
-    radial-gradient(circle at top right, rgba(29, 78, 216, 0.05), transparent 35%),
-    radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.04), transparent 30%),
+    radial-gradient(circle at top right, rgba(154, 206, 61, 0.06), transparent 35%),
+    radial-gradient(circle at bottom left, rgba(111, 174, 39, 0.04), transparent 30%),
     linear-gradient(180deg, var(--pd-bg-1) 0%, var(--pd-bg-2) 100%) !important;
   padding: 22px 24px 56px !important;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Width — use almost ALL available screen real estate.
- * Earlier value (1680px) still left big margins on 1920+ monitors.
- * Now we let the content fill the viewport up to 1920px, then center.
+ * Width — match the app-shell content width (1560px since the true-scale
+ * design pass). Wider than that and the page drifts out of alignment with
+ * every other route.
  * ─────────────────────────────────────────────────────────────────────── */
 .prospect-detail-page {
   padding: 18px 16px 56px !important;
 }
 .prospect-detail-page .prospect-detail-wrap {
-  max-width: min(1920px, calc(100vw - 24px)) !important;
+  max-width: 1560px !important;
   margin: 0 auto !important;
   gap: 14px !important;
 }
@@ -54,9 +54,9 @@
 .prospect-detail-page .prospect-detail-hero {
   background: linear-gradient(135deg, #ffffff 0%, #f6fafd 60%, #eef4fb 100%) !important;
   border: 1px solid var(--pd-border) !important;
-  border-radius: 18px !important;
+  border-radius: 16px !important;
   box-shadow: var(--pd-shadow-md) !important;
-  padding: 20px 22px !important;
+  padding: 14px 18px !important;
   position: relative;
   overflow: hidden;
 }
@@ -76,29 +76,29 @@
   width: 260px;
   height: 260px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(29, 78, 216, 0.08), transparent 70%);
+  background: radial-gradient(circle, rgba(154, 206, 61, 0.10), transparent 70%);
   pointer-events: none;
 }
 
 /* Avatar */
 .prospect-detail-page .prospect-detail-avatar {
-  width: 64px !important;
-  height: 64px !important;
-  border-radius: 18px !important;
-  font-size: 18px !important;
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 14px !important;
+  font-size: 15px !important;
   box-shadow: 0 0 0 3px var(--pd-surface), 0 6px 16px rgba(15, 23, 42, 0.10);
 }
 
 /* Name */
 .prospect-detail-page .prospect-detail-name {
-  font-size: 26px !important;
+  font-size: 23px !important;
   font-weight: 800 !important;
-  letter-spacing: -0.025em !important;
+  letter-spacing: -0.02em !important;
   color: var(--pd-ink) !important;
   line-height: 1.15 !important;
 }
 .prospect-detail-page .prospect-detail-subtitle {
-  font-size: 14px !important;
+  font-size: 13px !important;
   color: var(--pd-ink-soft) !important;
   margin-top: 4px !important;
   line-height: 1.45 !important;
@@ -135,12 +135,11 @@
   align-items: start !important;
 }
 
-/* Override the hero card's inline maxWidth: 840 — let content breathe on
- * wide screens so the right side of the hero stops looking empty. */
-.prospect-detail-page .prospect-detail-hero [style*="max-width: 840px"],
+/* Hero text blocks fill the hero column. (The old [style*="max-width: 840px"]
+ * attribute hook is gone — the inline maxWidth it matched was removed.) */
 .prospect-detail-page .prospect-detail-hero .prospect-detail-subtitle,
 .prospect-detail-page .prospect-detail-hero .prospect-detail-progress {
-  max-width: min(1280px, 100%) !important;
+  max-width: 100% !important;
 }
 
 /* Hero rows — wrap differently so left column uses more horizontal space */
@@ -244,33 +243,10 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Buttons — modern primary
+ * Buttons — the global .crm-button (36px, 13px, green accent) is correct
+ * since the design pass; the old blue gradient overrides that lived here
+ * were removed so this page stops diverging from the rest of the app.
  * ─────────────────────────────────────────────────────────────────────── */
-.prospect-detail-page .crm-button.primary,
-.prospect-detail-page button[class*="primary"] {
-  background: linear-gradient(135deg, var(--pd-primary) 0%, #2563eb 100%) !important;
-  border-color: transparent !important;
-  color: #fff !important;
-  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.25) !important;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
-}
-.prospect-detail-page .crm-button.primary:hover,
-.prospect-detail-page button[class*="primary"]:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(29, 78, 216, 0.32) !important;
-  filter: brightness(1.04);
-}
-.prospect-detail-page .crm-button.soft {
-  border-color: var(--pd-border) !important;
-  background: var(--pd-surface) !important;
-  transition: all 0.12s ease;
-}
-.prospect-detail-page .crm-button.soft:hover {
-  background: var(--pd-primary-soft) !important;
-  border-color: #bfdbfe !important;
-  color: var(--pd-primary) !important;
-  transform: translateY(-1px);
-}
 
 /* ───────────────────────────────────────────────────────────────────────
  * Timeline — modern look

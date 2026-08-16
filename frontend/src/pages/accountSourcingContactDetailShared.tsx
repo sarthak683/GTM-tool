@@ -6,7 +6,7 @@ import type { Company, Contact } from "../types";
 export const colors = {
   bg: "#f4f7fb",
   card: "#ffffff",
-  border: "#d9e1ec",
+  border: "#e3e9f2",
   text: "#1d2b3c",
   sub: "#55657a",
   faint: "#7f8fa5",
@@ -27,7 +27,8 @@ export const pageStyle: CSSProperties = {
 };
 
 export const wrapStyle: CSSProperties = {
-  maxWidth: 1420,
+  // Matches the app-shell content width set by Layout.
+  maxWidth: 1560,
   margin: "0 auto",
   display: "grid",
   gap: 16,
@@ -42,7 +43,7 @@ export const cardStyle: CSSProperties = {
 
 export const heroCardStyle: CSSProperties = {
   ...cardStyle,
-  padding: "24px 24px 22px",
+  padding: "16px 18px",
   background: "linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(239,245,255,0.96) 58%, rgba(255,247,235,0.95) 100%)",
   borderColor: "#d7e3f3",
   boxShadow: "0 16px 40px rgba(31, 69, 120, 0.10)",
@@ -112,19 +113,19 @@ export function MetricCard({ label, value, hint, tone = "primary" }: {
   }[tone];
 
   return (
-    <div style={{ border: `1px solid ${toneStyle.border}`, background: `linear-gradient(180deg, ${toneStyle.bg} 0%, #ffffff 100%)`, borderRadius: 16, padding: "14px 16px", boxShadow: "0 10px 24px rgba(17,34,68,0.04)" }}>
+    <div style={{ border: `1px solid ${toneStyle.border}`, background: `linear-gradient(180deg, ${toneStyle.bg} 0%, #ffffff 100%)`, borderRadius: 14, padding: "11px 14px", boxShadow: "0 10px 24px rgba(17,34,68,0.04)" }}>
       <div style={{ color: colors.faint, fontWeight: 800, fontSize: 11, letterSpacing: 0.45 }}>{label.toUpperCase()}</div>
-      <div style={{ marginTop: 8, color: toneStyle.accent, fontWeight: 800, fontSize: 24 }}>{value}</div>
-      <div style={{ marginTop: 6, color: colors.sub, fontSize: 13, lineHeight: 1.45 }}>{hint}</div>
+      <div style={{ marginTop: 6, color: toneStyle.accent, fontWeight: 800, fontSize: 20 }}>{value}</div>
+      <div style={{ marginTop: 4, color: colors.sub, fontSize: 12.5, lineHeight: 1.45 }}>{hint}</div>
     </div>
   );
 }
 
 export function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div style={{ ...cardStyle, padding: "18px 20px", background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, color: colors.text, fontWeight: 800, marginBottom: 14 }}>
-        <span style={{ width: 30, height: 30, borderRadius: 10, display: "grid", placeItems: "center", background: colors.primarySoft, color: colors.primary }}>
+    <div style={{ ...cardStyle, padding: "16px 18px", background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.text, fontWeight: 800, fontSize: 14.5, marginBottom: 10 }}>
+        <span style={{ width: 24, height: 24, borderRadius: 8, display: "grid", placeItems: "center", background: colors.primarySoft, color: colors.primary }}>
           {icon}
         </span>
         <span>{title}</span>
@@ -155,11 +156,11 @@ export function Chip({
         display: "inline-flex",
         alignItems: "center",
         borderRadius: 999,
-        padding: "6px 10px",
+        padding: "4px 9px",
         background: style.bg,
         color: style.color,
         border: `1px solid ${style.border}`,
-        fontSize: 12,
+        fontSize: 11.5,
         fontWeight: 800,
         letterSpacing: 0.15,
       }}
@@ -174,23 +175,23 @@ export function KV({ label, value }: { label: string; value?: ReactNode }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr)", gap: 10, alignItems: "start" }}>
       <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>{label.toUpperCase()}</div>
-      <div style={{ color: colors.sub, lineHeight: 1.6 }}>{value}</div>
+      <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>{value}</div>
     </div>
   );
 }
 
 export function ListCard({ title, items, empty }: { title: string; items: string[]; empty: string }) {
   return (
-    <div style={{ border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", borderRadius: 16, padding: "14px 16px" }}>
-      <div style={{ color: colors.text, fontWeight: 800, fontSize: 13, marginBottom: 10 }}>{title}</div>
+    <div style={{ border: `1px solid ${colors.border}`, background: "linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)", borderRadius: 14, padding: "13px 14px" }}>
+      <div style={{ color: colors.text, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>{title}</div>
       {items.length === 0 ? (
         <div style={{ color: colors.faint, fontSize: 13 }}>{empty}</div>
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gap: 7 }}>
           {items.map((item, idx) => (
             <div key={`${title}-${idx}`} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
               <CheckCircle2 size={14} color={colors.primary} style={{ marginTop: 2, flexShrink: 0 }} />
-              <div style={{ color: colors.sub, fontSize: 13.5, lineHeight: 1.55 }}>{item}</div>
+              <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>{item}</div>
             </div>
           ))}
         </div>
@@ -222,11 +223,12 @@ export function ContactActionButton({
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
-    borderRadius: 12,
+    minHeight: 36,
+    borderRadius: 10,
     border: `1px solid ${style.border}`,
     background: style.background,
     color: style.color,
-    padding: "9px 12px",
+    padding: "7px 12px",
     fontSize: 13,
     fontWeight: 700,
     textDecoration: "none",
@@ -266,28 +268,28 @@ export function SequenceStepCard({
       : { bg: colors.violetSoft, border: "#eadbff", text: colors.violet };
 
   return (
-    <div style={{ border: `1px solid ${channelTone.border}`, background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)", borderRadius: 16, padding: "16px 16px 14px", boxShadow: "0 8px 22px rgba(17,34,68,0.04)" }}>
+    <div style={{ border: `1px solid ${channelTone.border}`, background: "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)", borderRadius: 14, padding: "13px 14px 12px", boxShadow: "0 8px 22px rgba(17,34,68,0.04)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ width: 28, height: 28, borderRadius: 10, background: channelTone.bg, color: channelTone.text, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 900 }}>
             {index + 1}
           </span>
-          <div style={{ color: colors.text, fontWeight: 800 }}>
+          <div style={{ color: colors.text, fontWeight: 800, fontSize: 13 }}>
             Day {String(step.day_offset ?? 0)} · {channel.replace(/_/g, " ")}
           </div>
         </div>
         <Chip label={`Step ${index + 1}`} tone={channel.includes("connector") ? "warm" : "primary"} />
       </div>
-      <div style={{ marginTop: 10, color: colors.sub, lineHeight: 1.65, fontSize: 13.5 }}>
+      <div style={{ marginTop: 8, color: colors.sub, lineHeight: 1.6, fontSize: 13 }}>
         <strong style={{ color: colors.text }}>Objective:</strong> {String(step.objective || "No objective")}
       </div>
       {step.angle ? (
-        <div style={{ marginTop: 6, color: colors.sub, lineHeight: 1.65, fontSize: 13.5 }}>
+        <div style={{ marginTop: 5, color: colors.sub, lineHeight: 1.6, fontSize: 13 }}>
           <strong style={{ color: colors.text }}>Angle:</strong> {String(step.angle)}
         </div>
       ) : null}
       {step.cta ? (
-        <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 12, background: channelTone.bg, color: colors.text, fontSize: 13.5, lineHeight: 1.55 }}>
+        <div style={{ marginTop: 8, padding: "9px 12px", borderRadius: 10, background: channelTone.bg, color: colors.text, fontSize: 13, lineHeight: 1.55 }}>
           <strong>CTA:</strong> {String(step.cta)}
         </div>
       ) : null}

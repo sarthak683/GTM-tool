@@ -23,6 +23,8 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/meetings/manage": { title: "Meetings", subtitle: "Schedule calls and maintain meeting records" },
   "/meetings": { title: "Meetings", subtitle: "Prep upcoming calls and review past meeting intel" },
   "/sales-analytics": { title: "Sales Analytics", subtitle: "Rep performance, forecast visibility, and pipeline quality" },
+  "/tasks": { title: "Tasks", subtitle: "Follow-ups, escalations, and system-generated to-dos" },
+  "/data-room": { title: "Data Room", subtitle: "Shared collateral, docs, and account files" },
   "/team": { title: "Team Management", subtitle: "Manage team members, roles, and permissions" },
   "/settings": { title: "Settings", subtitle: "Configure shared workflows, inboxes, and workspace defaults" },
 };

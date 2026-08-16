@@ -3943,35 +3943,18 @@ export default function Contacts() {
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
                                     <div style={{ position: "relative", display: "inline-flex", alignItems: "flex-start", gap: 8 }}>
-                                      {/* Call button + a caption showing how many
-                                          times this prospect was called and how
-                                          recently — so a rep sees touch history
-                                          without opening the drawer. */}
-                                      <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "stretch", gap: 3 }}>
-                                        <span
-                                          title={c.phone || "No phone number saved"}
-                                          style={{
-                                            maxWidth: 140,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                            fontSize: 11,
-                                            fontWeight: 700,
-                                            lineHeight: 1.15,
-                                            textAlign: "center",
-                                            color: c.phone ? "#4a6580" : "#9fb0c0",
-                                          }}
-                                        >
-                                          {c.phone || "No phone saved"}
-                                        </span>
-                                        <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
+                                      {/* Call button — phone number and touch history live in the
+                                          tooltip; a count pill appears only once calls were made,
+                                          keeping the row a single compact line. */}
+                                      <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                        <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 32, borderRadius: 9, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? `Call ${c.phone}${(c.call_attempt_count ?? 0) > 0 ? ` — ${c.call_attempt_count} call${c.call_attempt_count === 1 ? "" : "s"}${c.call_last_at ? `, last ${relativeTimeShort(c.call_last_at)}` : ""}` : " — no calls yet"}` : "No phone number saved"}>
                                           <Phone size={13} /> Call
                                         </button>
-                                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.15, textAlign: "center", whiteSpace: "nowrap", color: (c.call_attempt_count ?? 0) > 0 ? "#5b6b7d" : "#9fb0c0" }}>
-                                          {(c.call_attempt_count ?? 0) > 0
-                                            ? `${c.call_attempt_count} call${c.call_attempt_count === 1 ? "" : "s"}${c.call_last_at ? ` · ${relativeTimeShort(c.call_last_at)}` : ""}`
-                                            : "No calls yet"}
-                                        </span>
+                                        {(c.call_attempt_count ?? 0) > 0 && (
+                                          <span style={{ fontSize: 11, fontWeight: 700, color: "#5b6b7d", background: "#eef3f9", border: "1px solid #dce6f2", borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" }} title={c.call_last_at ? `Last call ${relativeTimeShort(c.call_last_at)}` : undefined}>
+                                            {c.call_attempt_count}{c.call_last_at ? ` · ${relativeTimeShort(c.call_last_at)}` : ""}
+                                          </span>
+                                        )}
                                       </div>
                                       <a href={c.email ? gmailComposeUrl(c.email) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.email) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: c.email ? "#ecfdf3" : "#f6f8fb", color: c.email ? "#1f7a4d" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.email ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.email ? `Email ${c.email} in Gmail` : "No email saved"}>
                                         <Mail size={13} /> Email

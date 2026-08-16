@@ -8,7 +8,6 @@ import {
   GripVertical,
   Link2,
   Mail,
-  Palette,
   Plus,
   RefreshCw,
   Shield,
@@ -85,26 +84,26 @@ function ReportDaySelector({
   onToggle: (day: string) => void;
 }) {
   return (
-    <fieldset style={{ display: "grid", gap: 10, border: 0, padding: 0, margin: 0 }}>
-      <legend style={{ fontSize: 13, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Send days</legend>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))", gap: 8 }}>
+    <fieldset style={{ display: "grid", gap: 8, border: 0, padding: 0, margin: 0 }}>
+      <legend style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", marginBottom: 6 }}>Send days</legend>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8 }}>
         {REPORT_DAYS.map(({ key, label }) => {
           const checked = selectedDays.includes(key);
           return (
             <label
               key={key}
               style={{
-                minHeight: 42,
-                border: `1px solid ${checked ? "#b8d96a" : "#dfe4ef"}`,
+                minHeight: 36,
+                border: `1px solid ${checked ? "#9ace3d" : "#e3e9f2"}`,
                 borderRadius: 8,
-                background: checked ? "#f3fadf" : "#fff",
-                color: checked ? "#476c12" : "#65718a",
+                background: checked ? "#f3fbe3" : "#fff",
+                color: checked ? "#4d7c0f" : "#68788d",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 7,
-                fontSize: 13,
-                fontWeight: 800,
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 700,
                 cursor: disabled ? "default" : "pointer",
                 opacity: disabled ? 0.65 : 1,
               }}
@@ -1359,17 +1358,8 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="crm-page" style={{ maxWidth: 1160, display: "grid", gap: 20, paddingBottom: 80 }}>
-      <section className="crm-panel" style={{ padding: 28, display: "grid", gap: 18 }}>
-        <div>
-          <h2 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Workspace settings</h2>
-          <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-            Keep shared workflows centralized here. Gmail sync controls how Beacon captures customer emails automatically,
-            and Outreach AI controls the playbook Beacon follows when it generates new sequences.
-          </p>
-        </div>
-
-        <div className="settings-layout">
+    <div className="crm-page" style={{ maxWidth: 1160, display: "grid", gap: 16, paddingBottom: 64 }}>
+      <div className="settings-layout">
           <aside className="crm-panel settings-nav-panel" style={{ boxShadow: "none" }}>
             <div className="settings-nav-list">
               {tabButton("email-sync", "Email Sync", <Mail size={15} />)}
@@ -1386,7 +1376,7 @@ export default function SettingsPage() {
             </div>
           </aside>
 
-          <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
+          <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
 
         {message && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#eaf8ef", border: "1px solid #cbe8d5", color: "#1f7a47" }}>
@@ -1417,25 +1407,25 @@ export default function SettingsPage() {
                   <Mail size={14} />
                   Email Sync
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Shared inbox tracking</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Shared inbox tracking</h3>
                 <p className="crm-muted" style={{ maxWidth: 700, lineHeight: 1.7 }}>
                   Connect one shared mailbox once as an admin, then Beacon will keep pulling CC'd customer emails into deal activity automatically.
                   Reps should CC <strong>{ccPattern}</strong> on customer threads so Beacon can map the email straight to the right deal.
                 </p>
               </div>
-              <div style={{ padding: "10px 14px", borderRadius: 12, background: statusTone.bg, color: statusTone.color, fontWeight: 700, minWidth: 150, textAlign: "center" }}>
+              <div style={{ padding: "6px 14px", borderRadius: 999, background: statusTone.bg, color: statusTone.color, fontSize: 12, fontWeight: 700, minWidth: 120, textAlign: "center" }}>
                 {statusTone.label}
               </div>
             </div>
 
             {isAdmin && (
-              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", border: "1px solid #d8def8", background: "#f7f9ff" }}>
+              <div className="crm-panel" style={{ padding: 16, borderRadius: 14, boxShadow: "none", border: "1px solid #d8def8", background: "#f7f9ff" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
                   <div style={{ maxWidth: 660 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 4 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>
                       Zippy-only email tracking
                     </div>
-                    <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+                    <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6, margin: 0 }}>
                       When ON, Beacon tracks an email <strong>only</strong> if it's CC'd to an alias like <strong>{ccPattern}</strong>.
                       The broad contact-match fallback and per-rep inbox bulk sync pause — existing activity is untouched, and turning
                       this OFF resumes normal sync immediately.
@@ -1449,7 +1439,7 @@ export default function SettingsPage() {
                       onChange={(event) => void handleToggleZippyOnly(event.target.checked)}
                       style={{ width: 18, height: 18 }}
                     />
-                    <span style={{ fontWeight: 800, color: syncSchedule?.zippy_only_email_sync ? "#1f7a47" : "#7c86a6" }}>
+                    <span style={{ fontWeight: 700, color: syncSchedule?.zippy_only_email_sync ? "#1f7a47" : "#68788d" }}>
                       {syncSchedule?.zippy_only_email_sync ? "ON" : "OFF"}
                     </span>
                   </label>
@@ -1457,21 +1447,21 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(320px, 0.75fr)", gap: 18 }}>
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(320px, 0.75fr)", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none" }}>
                 <div style={{ display: "grid", gap: 14 }}>
                   <div>
-                    <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                       Shared mailbox
                     </div>
                     <input
                       value={inbox}
                       onChange={(event) => setInbox(event.target.value)}
                       placeholder="zippy@beacon.li"
-                      style={{ width: "100%", height: 48, padding: "0 14px", fontSize: 14 }}
+                      style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                       disabled={!isAdmin}
                     />
-                    <p className="crm-muted" style={{ marginTop: 8, fontSize: 13 }}>
+                    <p className="crm-muted" style={{ marginTop: 6, fontSize: 12 }}>
                       This is the base mailbox Beacon watches. Reps should CC aliases like <strong>{ccPattern}</strong>.
                     </p>
                   </div>
@@ -1486,7 +1476,7 @@ export default function SettingsPage() {
                         {connecting ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
                         Connect Gmail
                       </button>
-                      <button className="crm-button soft" onClick={handleDisconnect} disabled={disconnecting || !gmail?.configured}>
+                      <button className="crm-button soft" onClick={handleDisconnect} disabled={disconnecting || !gmail?.configured} style={{ marginLeft: 6, color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}>
                         {disconnecting ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
                         Disconnect
                       </button>
@@ -1496,64 +1486,64 @@ export default function SettingsPage() {
                       </button>
                     </div>
                   ) : (
-                    <p className="crm-muted" style={{ fontSize: 13 }}>
+                    <p className="crm-muted" style={{ fontSize: 12 }}>
                       Only admins can change the inbox connection. Everyone can view sync status here.
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                     Connection status
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: "#182042" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#142335" }}>
                     {loading ? "Loading..." : (gmail?.configured ? "Auto-sync active" : "Needs setup")}
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Connected mailbox</span>
-                    <strong style={{ color: "#182042" }}>{gmail?.connected_email || "Not connected"}</strong>
+                    <strong style={{ color: "#142335" }}>{gmail?.connected_email || "Not connected"}</strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Connected at</span>
-                    <strong style={{ color: "#182042" }}>{formatDate(gmail?.connected_at)}</strong>
+                    <strong style={{ color: "#142335" }}>{formatDate(gmail?.connected_at)}</strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Last sync</span>
-                    <strong style={{ color: "#182042" }}>{formatTimestamp(gmail?.last_sync_epoch)}</strong>
+                    <strong style={{ color: "#142335" }}>{formatTimestamp(gmail?.last_sync_epoch)}</strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Polling interval</span>
-                    <strong style={{ color: "#182042" }}>{gmail ? `${Math.round(gmail.interval_seconds / 60)} min` : "--"}</strong>
+                    <strong style={{ color: "#142335" }}>{gmail ? `${Math.round(gmail.interval_seconds / 60)} min` : "--"}</strong>
                   </div>
                 </div>
               </div>
             </div>
 
-            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 18 }}>
+            <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
                 <div>
                   <div className="crm-chip" style={{ marginBottom: 10, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" }}>
                     <Mail size={13} />
                     Report Sender
                   </div>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>
                     Daily report Gmail sender
                   </h3>
-                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.7, fontSize: 14 }}>
+                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6, fontSize: 13 }}>
                     Beacon sends the US pod daily call report from this mailbox. Use your email now, then switch to a dedicated reports mailbox later without code changes.
                   </p>
                 </div>
                 <div style={{
-                  padding: "9px 13px",
+                  padding: "6px 12px",
                   borderRadius: 999,
                   background: reportSender?.configured ? "#e8f8ee" : reportSender?.sender_email ? "#fff6df" : "#f3f5fc",
                   color: reportSender?.configured ? "#217a49" : reportSender?.sender_email ? "#a26a00" : "#66748f",
-                  fontSize: 13,
-                  fontWeight: 800,
+                  fontSize: 12,
+                  fontWeight: 700,
                 }}>
                   {reportSender?.configured ? "Ready to send" : reportSender?.sender_email ? "Needs Gmail connect" : "Not set up"}
                 </div>
@@ -1562,14 +1552,14 @@ export default function SettingsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: 16 }}>
                 <div style={{ display: "grid", gap: 12 }}>
                   <div>
-                    <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                       Sender mailbox
                     </div>
                     <input
                       value={reportSenderEmail}
                       onChange={(event) => setReportSenderEmail(event.target.value)}
                       placeholder="sarthak@beacon.li"
-                      style={{ width: "100%", height: 46, padding: "0 14px", fontSize: 14 }}
+                      style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                       disabled={!isAdmin}
                     />
                   </div>
@@ -1583,13 +1573,13 @@ export default function SettingsPage() {
                         {connectingReportSender ? <RefreshCw size={15} className="animate-spin" /> : <Link2 size={15} />}
                         Connect Gmail send
                       </button>
-                      <button className="crm-button soft" onClick={handleDisconnectReportSender} disabled={disconnectingReportSender || !reportSender?.connected_email}>
+                      <button className="crm-button soft" onClick={handleDisconnectReportSender} disabled={disconnectingReportSender || !reportSender?.connected_email} style={{ marginLeft: 6, color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}>
                         {disconnectingReportSender ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
                         Disconnect sender
                       </button>
                     </div>
                   ) : (
-                    <p className="crm-muted" style={{ fontSize: 13 }}>Only admins can change the report sender.</p>
+                    <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change the report sender.</p>
                   )}
                   {reportSender?.last_error && (
                     <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", fontSize: 13 }}>
@@ -1598,14 +1588,14 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Configured sender</span>
-                    <strong style={{ color: "#182042" }}>{reportSender?.sender_email || "Not set"}</strong>
+                    <strong style={{ color: "#142335" }}>{reportSender?.sender_email || "Not set"}</strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Connected Gmail</span>
-                    <strong style={{ color: "#182042" }}>{reportSender?.connected_email || "Not connected"}</strong>
+                    <strong style={{ color: "#142335" }}>{reportSender?.connected_email || "Not connected"}</strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Send permission</span>
@@ -1613,14 +1603,14 @@ export default function SettingsPage() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                     <span className="crm-muted">Connected at</span>
-                    <strong style={{ color: "#182042" }}>{formatDate(reportSender?.connected_at)}</strong>
+                    <strong style={{ color: "#142335" }}>{formatDate(reportSender?.connected_at)}</strong>
                   </div>
                 </div>
               </div>
             </section>
 
-            <section className="crm-panel" style={{ padding: 24 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 14 }}>How it works</h3>
+            <section className="crm-panel" style={{ padding: 18 }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 10 }}>How it works</h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
                 {[
                   {
@@ -1636,26 +1626,26 @@ export default function SettingsPage() {
                     body: "Synced emails land in deal activity with AI summaries, so the CRM stays current without reps rewriting notes.",
                   },
                 ].map((item) => (
-                  <div key={item.title} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 18, background: "#fff" }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 8 }}>{item.title}</div>
-                    <p className="crm-muted" style={{ fontSize: 14, lineHeight: 1.7 }}>{item.body}</p>
+                  <div key={item.title} style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 8 }}>{item.title}</div>
+                    <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6 }}>{item.body}</p>
                   </div>
                 ))}
               </div>
             </section>
 
             {/* ── Personal Gmail Sync ─────────���───────────────────────── */}
-            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 20 }}>
+            <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
                 <div>
                   <div className="crm-chip" style={{ marginBottom: 10, background: "#f0f4ff", color: "#3b4dc8", borderColor: "#d4dcf8" }}>
                     <Mail size={13} />
                     Personal Inbox + Calendar Sync
                   </div>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>
                     Connect your personal Gmail &amp; Calendar
                   </h3>
-                  <p className="crm-muted" style={{ maxWidth: 600, lineHeight: 1.7, fontSize: 14 }}>
+                  <p className="crm-muted" style={{ maxWidth: 600, lineHeight: 1.6, fontSize: 13 }}>
                     Beacon scans your past emails and upcoming calendar events. Emails are matched to deals and
                     contacts. Calendar events with external attendees are auto-created as meetings — complete with
                     scheduled time, Meet link, and pre-meeting intel 12 hours before the call.
@@ -1684,8 +1674,8 @@ export default function SettingsPage() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                     Status
                   </div>
                   <div style={{
@@ -1698,29 +1688,29 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                     Connected email
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>
                     {personalEmail?.email_address || "—"}
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                     Last synced
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>
                     {formatTimestamp(personalEmail?.last_sync_epoch)}
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                  <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                  <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                     Historical backfill
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.backfill_completed ? "#217a49" : "#a26a00" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: personalEmail?.backfill_completed ? "#217a49" : "#a26a00" }}>
                     {personalEmail?.backfill_completed ? "Complete" : personalEmail?.connected ? "In progress…" : "—"}
                   </div>
                 </div>
@@ -1770,9 +1760,9 @@ export default function SettingsPage() {
                   { title: "AI task generation", body: "Detects key moments — POC agreed, pricing asked, meeting requested — and creates tasks automatically." },
                   { title: "Historical backfill", body: "On first connect, scans the last 90 days of your inbox to surface past conversations." },
                 ].map((item) => (
-                  <div key={item.title} style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#fff" }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: "#182042", marginBottom: 6 }}>{item.title}</div>
-                    <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.65 }}>{item.body}</p>
+                  <div key={item.title} style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#fff" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 6 }}>{item.title}</div>
+                    <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>{item.body}</p>
                   </div>
                 ))}
               </div>
@@ -1798,14 +1788,14 @@ export default function SettingsPage() {
                   <Wand2 size={14} />
                   Outreach AI
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Shared outreach playbook</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Shared outreach playbook</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   This is the shared writing system Beacon uses when it generates outreach. Sequence timing controls <strong>when</strong> each touch
                   goes out, and these prompts plus templates control <strong>how</strong> each touch sounds.
                 </p>
               </div>
-              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", minWidth: 320 }}>
-                <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 10 }}>
+              <div className="crm-panel" style={{ padding: 16, borderRadius: 14, boxShadow: "none", minWidth: 300 }}>
+                <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 8 }}>
                   Current sequence timing
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -1815,16 +1805,16 @@ export default function SettingsPage() {
                     </span>
                   ))}
                 </div>
-                <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
+                <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                   Timing now supports mixed touches too, so the shared playbook can combine email, LinkedIn, and call steps without needing separate workflows.
                 </p>
               </div>
             </div>
 
-            <div style={{ display: "grid", gap: 18 }}>
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                     General AI prompt
                   </div>
                   <textarea
@@ -1835,13 +1825,13 @@ export default function SettingsPage() {
                     placeholder="Tell Beacon the shared writing rules, tone, and constraints to follow across all emails."
                     style={{ width: "100%", resize: "vertical", minHeight: 120 }}
                   />
-                  <p className="crm-muted" style={{ marginTop: 8, fontSize: 13 }}>
+                  <p className="crm-muted" style={{ marginTop: 6, fontSize: 12 }}>
                     Use this for shared rules like tone, CTA style, banned phrasing, compliance guardrails, or how personalized you want the emails to feel.
                   </p>
                 </div>
 
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                     LinkedIn prompt
                   </div>
                   <textarea
@@ -1855,10 +1845,10 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>Touch templates</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Touch templates</div>
                     <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                       Each touch has a goal, optional subject hint, writing cue, and reference template. Beacon will adapt these to the actual contact instead of copying them verbatim.
                     </p>
@@ -1880,19 +1870,19 @@ export default function SettingsPage() {
 
                 <div style={{ display: "grid", gap: 14 }}>
                   {(outreachContent?.step_templates ?? []).map((template, index) => (
-                    <div key={template.step_number} className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                    <div key={template.step_number} className="crm-panel" style={{ padding: 16, borderRadius: 14, boxShadow: "none", display: "grid", gap: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <span className="crm-chip" style={{ background: "#eef2ff", color: "#4958d8", borderColor: "#d8def8" }}>
                             Step {index + 1}
                           </span>
                           {outreachTimingSteps[index] && (
-                            <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>
+                            <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e3e9f2" }}>
                               {outreachTimingSteps[index].channel === "linkedin" ? "LinkedIn" : outreachTimingSteps[index].channel === "call" ? "Call" : "Email"} · Day {outreachTimingSteps[index].day}
                             </span>
                           )}
                         </div>
-                        <button className="crm-button soft" type="button" onClick={() => handleRemoveTemplate(index)} disabled={(outreachContent?.step_templates.length ?? 0) <= 1}>
+                        <button className="crm-button soft" type="button" onClick={() => handleRemoveTemplate(index)} disabled={(outreachContent?.step_templates.length ?? 0) <= 1} style={{ color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}>
                           <Trash2 size={15} />
                           Remove
                         </button>
@@ -1900,14 +1890,14 @@ export default function SettingsPage() {
 
                       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.55fr) minmax(0, 1fr)", gap: 14 }}>
                         <div>
-                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                             Channel
                           </div>
                           <select
                             value={template.channel}
                             onChange={(event) => updateTemplate(index, "channel", event.target.value)}
                             disabled={!outreachContent}
-                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                            style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                           >
                             <option value="email">Email</option>
                             <option value="call">Call</option>
@@ -1915,7 +1905,7 @@ export default function SettingsPage() {
                           </select>
                         </div>
                         <div>
-                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                             Template label
                           </div>
                           <input
@@ -1923,11 +1913,11 @@ export default function SettingsPage() {
                             onChange={(event) => updateTemplate(index, "label", event.target.value)}
                             disabled={!outreachContent}
                             placeholder="Initial email"
-                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                            style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                           />
                         </div>
                         <div>
-                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                             Goal
                           </div>
                           <input
@@ -1935,14 +1925,14 @@ export default function SettingsPage() {
                             onChange={(event) => updateTemplate(index, "goal", event.target.value)}
                             disabled={!outreachContent}
                             placeholder="What should this touch accomplish?"
-                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                            style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                           />
                         </div>
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.95fr) minmax(0, 1.05fr)", gap: 14 }}>
                         <div>
-                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                             Subject hint
                           </div>
                           <input
@@ -1950,11 +1940,11 @@ export default function SettingsPage() {
                             onChange={(event) => updateTemplate(index, "subject_hint", event.target.value)}
                             disabled={!outreachContent}
                             placeholder="Quick question about {{company_name}}"
-                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                            style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                           />
                         </div>
                         <div>
-                          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                             Prompt hint
                           </div>
                           <input
@@ -1962,13 +1952,13 @@ export default function SettingsPage() {
                             onChange={(event) => updateTemplate(index, "prompt_hint", event.target.value)}
                             disabled={!outreachContent}
                             placeholder="Tell Beacon how this touch should feel."
-                            style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                            style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                           Reference template
                         </div>
                         <textarea
@@ -1979,7 +1969,7 @@ export default function SettingsPage() {
                           placeholder="Use placeholders like {{first_name}} and {{company_name}} if you want to give Beacon a reusable pattern."
                           style={{ width: "100%", resize: "vertical", minHeight: 150 }}
                         />
-                        <p className="crm-muted" style={{ marginTop: 8, fontSize: 13 }}>
+                        <p className="crm-muted" style={{ marginTop: 6, fontSize: 12 }}>
                           Supported placeholders include <strong>{"{{first_name}}"}</strong> and <strong>{"{{company_name}}"}</strong>. Beacon treats this as a reference pattern, not a hard-coded script.
                         </p>
                       </div>
@@ -1988,7 +1978,7 @@ export default function SettingsPage() {
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     These settings apply to new outreach generation and regeneration. Existing launched sequences keep their current copy.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSaveOutreach} disabled={savingOutreach || !outreachContent}>
@@ -2000,21 +1990,21 @@ export default function SettingsPage() {
             </div>
           </>
         ) : activeTab === "permissions" ? (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div>
                 <div className="crm-chip" style={{ marginBottom: 12, background: "#f4efff", color: "#6f46d9", borderColor: "#e4d8ff" }}>
                   <Users size={14} />
                   Permissions
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Role permissions</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Role permissions</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Admins always keep full access. Use these switches to decide what <strong>AEs</strong> and <strong>SDRs</strong> can do in Beacon without making them admins.
                 </p>
               </div>
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
               {([
                 {
                   key: "crm_import" as const,
@@ -2037,16 +2027,16 @@ export default function SettingsPage() {
                   help: "Lets this role trigger meeting research, pre-briefs, and demo strategy generation manually.",
                 },
               ]).map((permission) => (
-                <div key={permission.key} style={{ border: "1px solid #e7eaf5", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1.25fr) repeat(2, minmax(180px, 1fr))", gap: 14, padding: 18, alignItems: "center" }}>
+                <div key={permission.key} style={{ border: "1px solid #e3e9f2", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1.25fr) repeat(2, minmax(180px, 1fr))", gap: 14, padding: 16, alignItems: "center" }}>
                     <div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 6 }}>{permission.label}</div>
-                      <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{permission.help}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 6 }}>{permission.label}</div>
+                      <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>{permission.help}</div>
                     </div>
                     {(["ae", "sdr"] as const).map((role) => (
-                      <label key={role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "12px 14px", background: "#fbfdff" }}>
+                      <label key={role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e3e9f2", borderRadius: 10, padding: "10px 12px", background: "#fbfdff" }}>
                         <div>
-                          <div style={{ fontSize: 12, fontWeight: 800, color: "#182042", textTransform: "uppercase", letterSpacing: "0.08em" }}>{role}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#142335", textTransform: "uppercase", letterSpacing: "0.08em" }}>{role}</div>
                           <div className="crm-muted" style={{ fontSize: 12 }}>{rolePermissions?.[role]?.[permission.key] ? "Allowed" : "Blocked"}</div>
                         </div>
                         <input
@@ -2063,7 +2053,7 @@ export default function SettingsPage() {
 
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     Admins always keep full access. These switches only control what AEs and SDRs can do.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSavePermissions} disabled={savingPermissions || !rolePermissions}>
@@ -2072,16 +2062,16 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can change workspace permissions. Everyone else can review the current guardrails here.
                 </p>
               )}
             </div>
 
             {isAdmin && (
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>Prospect visibility</h3>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Prospect visibility</h3>
                   <p className="crm-muted" style={{ maxWidth: 760, fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
                     By default everyone sees only <strong>their own</strong> prospects plus <strong>unassigned</strong> ones; admins see all.
                     Turn someone on here to let them see <strong>every</strong> prospect.
@@ -2091,9 +2081,9 @@ export default function SettingsPage() {
                   {allUsers.filter((u) => u.role !== "admin").map((u) => {
                     const on = prospectViewAll.includes(u.id);
                     return (
-                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "11px 14px", background: "#fbfdff" }}>
+                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e3e9f2", borderRadius: 10, padding: "8px 12px", background: "#fbfdff" }}>
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>{u.name || u.email || u.id}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{u.name || u.email || u.id}</div>
                           <div className="crm-muted" style={{ fontSize: 12 }}>
                             {(u.role || "").toUpperCase()} · {on ? "Sees all prospects" : "Own + unassigned"}
                           </div>
@@ -2108,16 +2098,16 @@ export default function SettingsPage() {
                     );
                   })}
                   {allUsers.filter((u) => u.role !== "admin").length === 0 && (
-                    <p className="crm-muted" style={{ fontSize: 13 }}>No non-admin teammates to configure yet.</p>
+                    <p className="crm-muted" style={{ fontSize: 12 }}>No non-admin teammates to configure yet.</p>
                   )}
                 </div>
               </div>
             )}
 
             {isAdmin && (
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>Sales Analytics roster</h3>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Sales Analytics roster</h3>
                   <p className="crm-muted" style={{ maxWidth: 760, fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
                     AEs and SDRs appear automatically. Turn someone on here when they should also show in Sales Analytics activity rows and drilldowns.
                   </p>
@@ -2129,9 +2119,9 @@ export default function SettingsPage() {
                     const explicitlyIncluded = Boolean(salesAnalyticsRoster?.user_ids?.includes(u.id));
                     const on = autoIncluded || explicitlyIncluded;
                     return (
-                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e7eaf5", borderRadius: 12, padding: "11px 14px", background: "#fbfdff" }}>
+                      <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e3e9f2", borderRadius: 10, padding: "8px 12px", background: "#fbfdff" }}>
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>{u.name || u.email || u.id}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{u.name || u.email || u.id}</div>
                           <div className="crm-muted" style={{ fontSize: 12 }}>
                             {(u.role || "").toUpperCase()} · {autoIncluded ? "Included by role" : on ? "Included in Sales Analytics" : "Hidden from Sales Analytics"}
                           </div>
@@ -2146,35 +2136,35 @@ export default function SettingsPage() {
                     );
                   })}
                   {allUsers.length === 0 && (
-                    <p className="crm-muted" style={{ fontSize: 13 }}>No teammates to configure yet.</p>
+                    <p className="crm-muted" style={{ fontSize: 12 }}>No teammates to configure yet.</p>
                   )}
                 </div>
               </div>
             )}
           </div>
         ) : activeTab === "reports" ? (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div>
               <div className="crm-chip" style={{ marginBottom: 12, background: "#eef8ff", color: "#145d97", borderColor: "#d7ebfb" }}>
                 <CalendarDays size={14} />
                 Reports
               </div>
-              <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Daily sales report settings</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Daily sales report settings</h3>
               <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                 Control which days the US and India pod reports are sent. Sunday is disabled by default for both schedules.
               </p>
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
-              <h4 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>US pod report</h4>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>US pod report</h4>
               <div style={{ border: "1px solid #d8e7f8", borderRadius: 14, padding: 16, background: "#f7fbff", color: "#34516d", fontSize: 13, lineHeight: 1.7 }}>
                 The normal setup is <strong>7:00 AM Asia/Kolkata</strong> with a <strong>6:00 AM Asia/Kolkata</strong> cutoff. That means the report is sent after the US team's working day ends. In staging, scheduled and test sends are restricted to the non-production allowlist below, so production recipients do not get test emails.
               </div>
 
-              <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+              <label style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable scheduled call reports</div>
-                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>When off, manual preview/send endpoints still work, but the scheduled report will skip.</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Enable scheduled call reports</div>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>When off, manual preview/send endpoints still work, but the scheduled report will skip.</div>
                 </div>
                 <input
                   type="checkbox"
@@ -2186,36 +2176,36 @@ export default function SettingsPage() {
 
               <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send timezone</span>
-                  <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send timezone</span>
+                  <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>IANA timezone used for the send clock, e.g. Asia/Kolkata or America/Chicago.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send hour</span>
-                  <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send hour</span>
+                  <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>24-hour local hour in the send timezone. Use 7 for 7 AM.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Send minute</span>
-                  <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send minute</span>
+                  <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Minute after the hour. Use 0 for exactly 7:00.</span>
                 </label>
               </div>
 
               <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Business-day cutoff timezone</span>
-                  <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Business-day cutoff timezone</span>
+                  <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used to decide which calls belong to a sales day.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Cutoff hour</span>
-                  <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Cutoff hour</span>
+                  <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Hour when the sales day ends. Use 6 for 6 AM IST.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Report label timezone</span>
-                  <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Report label timezone</span>
+                  <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used for the date printed in the report subject/title.</span>
                 </label>
               </div>
@@ -2228,39 +2218,39 @@ export default function SettingsPage() {
 
               <div className="report-settings-grid-two">
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Weekly report day</span>
-                  <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 44, padding: "0 12px" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Weekly report day</span>
+                  <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }}>
                     {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => <option key={day} value={day}>{day.toUpperCase()}</option>)}
                   </select>
                   <span className="crm-muted" style={{ fontSize: 12 }}>On this send day, Beacon sends the weekly report instead of the daily report.</span>
                 </label>
-                <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e7eaf5", borderRadius: 14, padding: 14 }}>
+                <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e3e9f2", borderRadius: 14, padding: 14 }}>
                   <input type="checkbox" checked={Boolean(salesReportSettings?.skip_weekends)} onChange={(e) => updateSalesReportField("skip_weekends", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Skip weekend report periods</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Skip weekend report periods</span>
                 </label>
               </div>
 
               <label style={{ display: "grid", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Production recipients</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Production recipients</span>
                 <textarea value={(salesReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
                 <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails for production scheduled reports. Staging does not send to this full list.</span>
               </label>
 
-              <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Staging safety</div>
+              <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Staging safety</div>
                 <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <input type="checkbox" checked={Boolean(salesReportSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateSalesReportField("nonprod_scheduled_enabled", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
-                  <span className="crm-muted" style={{ fontSize: 13 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#182042" }}>Non-production allowed recipients</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Non-production allowed recipients</span>
                   <textarea value={(salesReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Only these addresses can receive staging report emails. Keep this as your email while testing.</span>
                 </label>
               </div>
 
               {salesReportSettings?.last_scheduled_send_at && (
-                <div className="crm-muted" style={{ fontSize: 13 }}>
+                <div className="crm-muted" style={{ fontSize: 12 }}>
                   Last scheduled send: {new Date(salesReportSettings.last_scheduled_send_at).toLocaleString()} ({salesReportSettings.last_scheduled_send_key})
                 </div>
               )}
@@ -2277,17 +2267,17 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>Only admins can change report settings.</p>
+                <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change report settings.</p>
               )}
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
                 <div>
-                  <h4 style={{ fontSize: 18, fontWeight: 800, color: "#182042", margin: 0 }}>India pod report</h4>
-                  <p className="crm-muted" style={{ fontSize: 13, margin: "6px 0 0" }}>Configure the India pod daily report schedule independently.</p>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>India pod report</h4>
+                  <p className="crm-muted" style={{ fontSize: 12, margin: "4px 0 0" }}>Configure the India pod daily report schedule independently.</p>
                 </div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: "#182042" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, color: "#142335" }}>
                   <input
                     type="checkbox"
                     checked={Boolean(indiaSalesReportSettings?.enabled)}
@@ -2320,26 +2310,26 @@ export default function SettingsPage() {
             </div>
           </div>
         ) : activeTab === "sync-schedule" ? (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div>
               <div className="crm-chip" style={{ marginBottom: 12, background: "#fef3e2", color: "#9a5c10", borderColor: "#fcd9a8" }}>
                 <Clock size={14} />
                 Sync Schedule
               </div>
-              <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Background sync configuration</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Background sync configuration</h3>
               <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                 Control how often Beacon runs background sync jobs — tl;dv meeting import, email ingestion, and deal health recalculation.
               </p>
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
               {/* TLDV section */}
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#182042" }}>tl;dv Meeting Sync</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>tl;dv Meeting Sync</div>
 
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
-                <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                <label style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable tl;dv sync</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Enable tl;dv sync</div>
                     <input
                       type="checkbox"
                       checked={Boolean(syncSchedule?.tldv_sync_enabled)}
@@ -2347,7 +2337,7 @@ export default function SettingsPage() {
                       disabled={!isAdmin || !syncSchedule}
                     />
                   </div>
-                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                     When disabled, the tl;dv sync task will skip execution entirely.
                   </div>
                   {syncSchedule?.tldv_last_synced_at ? (
@@ -2359,8 +2349,8 @@ export default function SettingsPage() {
                   )}
                 </label>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Sync interval (minutes)</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Sync interval (minutes)</div>
                   <input
                     type="number"
                     min={1}
@@ -2368,15 +2358,15 @@ export default function SettingsPage() {
                     value={syncSchedule?.tldv_sync_interval_minutes ?? 5}
                     onChange={(e) => updateSyncField("tldv_sync_interval_minutes", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>How often to check for new meetings (1–60 min). Default: <strong>5</strong>. Only new meetings since the last run are fetched — very low API cost.</div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>How often to check for new meetings (1–60 min). Default: <strong>5</strong>. Only new meetings since the last run are fetched — very low API cost.</div>
                 </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Page size</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Page size</div>
                   <input
                     type="number"
                     min={5}
@@ -2384,13 +2374,13 @@ export default function SettingsPage() {
                     value={syncSchedule?.tldv_page_size ?? 10}
                     onChange={(e) => updateSyncField("tldv_page_size", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Meetings per API page (5–50). Default: <strong>10</strong>. With incremental sync, 1–2 pages is enough per run.</div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>Meetings per API page (5–50). Default: <strong>10</strong>. With incremental sync, 1–2 pages is enough per run.</div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Max pages per run</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Max pages per run</div>
                   <input
                     type="number"
                     min={1}
@@ -2398,21 +2388,21 @@ export default function SettingsPage() {
                     value={syncSchedule?.tldv_max_pages ?? 2}
                     onChange={(e) => updateSyncField("tldv_max_pages", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Max pages to fetch per run (1–10). Default: <strong>2</strong>. Incremental runs stop early when they reach already-synced meetings.</div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>Max pages to fetch per run (1–10). Default: <strong>2</strong>. Incremental runs stop early when they reach already-synced meetings.</div>
                 </div>
               </div>
 
               {/* Divider */}
-              <hr style={{ border: "none", borderTop: "1px solid #e7eaf5", margin: "4px 0" }} />
+              <hr style={{ border: "none", borderTop: "1px solid #e3e9f2", margin: "4px 0" }} />
 
               {/* Other sync settings */}
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#182042" }}>Other Sync Jobs</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Other Sync Jobs</div>
 
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Email sync interval (seconds)</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Email sync interval (seconds)</div>
                   <input
                     type="number"
                     min={60}
@@ -2420,13 +2410,13 @@ export default function SettingsPage() {
                     value={syncSchedule?.email_sync_interval_seconds ?? 180}
                     onChange={(e) => updateSyncField("email_sync_interval_seconds", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>How often Beacon checks for new emails (60–3600s). Default: <strong>180</strong></div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>How often Beacon checks for new emails (60–3600s). Default: <strong>180</strong></div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Deal health hour (UTC)</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Deal health hour (UTC)</div>
                   <input
                     type="number"
                     min={0}
@@ -2434,9 +2424,9 @@ export default function SettingsPage() {
                     value={syncSchedule?.deal_health_hour ?? 2}
                     onChange={(e) => updateSyncField("deal_health_hour", Number(e.target.value))}
                     disabled={!isAdmin || !syncSchedule}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13 }}>Hour of the day (0–23 UTC) for deal health recalc. Default: <strong>2</strong></div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>Hour of the day (0–23 UTC) for deal health recalc. Default: <strong>2</strong></div>
                 </div>
               </div>
 
@@ -2459,7 +2449,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can change sync schedule settings.
                 </p>
               )}
@@ -2473,36 +2463,36 @@ export default function SettingsPage() {
                   <Bot size={14} />
                   Zippy AI Assistant
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Your knowledge-powered copilot</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Your knowledge-powered copilot</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Zippy answers questions from your Drive files, generates MOMs, NDAs, ROI analyses, PoC documents, proposals, and LinkedIn drafts.
                   Connect your personal Gmail below to give Zippy access to your Drive files for RAG (retrieval-augmented generation).
                 </p>
               </div>
-              <div style={{ padding: "10px 14px", borderRadius: 12, background: "#f3f0ff", color: "#6b3fc7", fontWeight: 700, minWidth: 150, textAlign: "center" }}>
+              <div style={{ padding: "6px 14px", borderRadius: 999, background: "#f3f0ff", color: "#6b3fc7", fontSize: 12, fontWeight: 700, minWidth: 120, textAlign: "center" }}>
                 {personalEmail?.connected ? "Connected" : "Setup needed"}
               </div>
             </div>
 
             {/* ── Personal email connection ──── */}
-            <section className="crm-panel" style={{ padding: 24, display: "grid", gap: 18 }}>
+            <section className="crm-panel" style={{ padding: 18, display: "grid", gap: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
                 <div>
                   <div className="crm-chip" style={{ marginBottom: 10, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" }}>
                     <Mail size={13} />
                     Drive Access
                   </div>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#182042", marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>
                     Connect your Gmail to enable Drive
                   </h3>
-                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.7, fontSize: 14 }}>
+                  <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6, fontSize: 13 }}>
                     Zippy reads your selected Drive folder to answer questions. Connecting Gmail grants <code>drive.readonly</code> + <code>drive.file</code> scopes so Zippy can search your files and upload generated documents.
                   </p>
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
                   {personalEmail?.connected ? (
                     <>
-                      <button className="crm-button soft" onClick={handleDisconnectPersonalEmail} disabled={disconnectingPersonal}>
+                      <button className="crm-button soft" onClick={handleDisconnectPersonalEmail} disabled={disconnectingPersonal} style={{ color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}>
                         {disconnectingPersonal ? <RefreshCw size={15} className="animate-spin" /> : <Unplug size={15} />}
                         Disconnect
                       </button>
@@ -2522,43 +2512,43 @@ export default function SettingsPage() {
 
               {personalEmail?.connected && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                  <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                       Connected email
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>
                       {personalEmail?.email_address || "—"}
                     </div>
                   </div>
-                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                  <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                       Last synced
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#182042" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>
                       {formatTimestamp(personalEmail?.last_sync_epoch)}
                     </div>
                   </div>
-                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                  <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                       Calendar scope
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_calendar_scope ? "#217a49" : "#a26a00" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: personalEmail?.has_calendar_scope ? "#217a49" : "#a26a00" }}>
                       {personalEmail?.has_calendar_scope ? "Granted" : "Missing"}
                     </div>
                   </div>
-                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                  <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                       Drive scope
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_drive_scope ? "#217a49" : "#a26a00" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: personalEmail?.has_drive_scope ? "#217a49" : "#a26a00" }}>
                       {personalEmail?.has_drive_scope ? "Granted" : "Missing"}
                     </div>
                   </div>
-                  <div style={{ border: "1px solid #e7eaf5", borderRadius: 12, padding: 16, background: "#f8faff" }}>
-                    <div style={{ fontSize: 12, color: "#7c86a6", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+                  <div style={{ border: "1px solid #e3e9f2", borderRadius: 12, padding: 16, background: "#f8faff" }}>
+                    <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
                       Send scope
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: personalEmail?.has_send_scope ? "#217a49" : "#a26a00" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: personalEmail?.has_send_scope ? "#217a49" : "#a26a00" }}>
                       {personalEmail?.has_send_scope ? "Granted" : "Missing"}
                     </div>
                   </div>
@@ -2591,9 +2581,9 @@ export default function SettingsPage() {
             />
           </>
         ) : activeTab === "notifications" ? (
-          <section style={{ display: "grid", gap: 18 }}>
+          <section style={{ display: "grid", gap: 14 }}>
             <div>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: "#0f2744", marginBottom: 6 }}>Mobile call notifications</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Mobile call notifications</h3>
               <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6 }}>
                 When you click <strong>Call</strong> on a prospect from your desktop, Beacon can push a notification to this device. Tapping the notification opens your phone's dialer with the prospect's number pre-filled — no copy-paste, no hunting for it.
               </p>
@@ -2604,8 +2594,8 @@ export default function SettingsPage() {
                 pointer to mobile and hide the actual toggle; the real
                 enable/disable control is mobile-only below. */}
             <div className="desktop-only">
-              <div className="crm-panel" style={{ padding: "18px 18px" }}>
-                <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+              <div className="crm-panel" style={{ padding: 16 }}>
+                <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6, margin: 0 }}>
                   📱 Call notifications ring your <strong>phone</strong>. Open Beacon on your mobile (add it to the Home Screen on iOS 16.4+ / Chrome on Android), then come to this screen there to enable them. There's nothing to turn on here on desktop.
                 </p>
               </div>
@@ -2614,14 +2604,14 @@ export default function SettingsPage() {
             {/* Status panel — what does this browser actually support / have?
                 Mobile-only: the enable toggle belongs where the feature works. */}
             <div className="mobile-only">
-            <div className="crm-panel" style={{ padding: "18px 18px", display: "grid", gap: 12 }}>
+            <div className="crm-panel" style={{ padding: 16, display: "grid", gap: 12 }}>
               {/* Per-device toggle row. The toggle itself is the source of
                   truth; the chips below explain what's blocking when it
                   can't enable (no SW support, server has no VAPID keys,
                   notification permission denied, etc.). */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0f2744" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>
                     {pushState?.subscribed ? "Notifications enabled on this device" : "Enable notifications on this device"}
                   </div>
                   <div className="crm-muted" style={{ fontSize: 12, marginTop: 4 }}>
@@ -2642,15 +2632,9 @@ export default function SettingsPage() {
                   type="button"
                   disabled={pushBusy || !pushState?.supported || !pushState?.configured}
                   onClick={togglePushNotifications}
-                  className="crm-button"
+                  className={`crm-button ${pushState?.subscribed ? "soft" : "primary"}`}
                   style={{
-                    minWidth: 140,
-                    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
-                    height: 40, borderRadius: 10,
-                    border: pushState?.subscribed ? "1px solid #d5e3ef" : "1px solid #175089",
-                    background: pushState?.subscribed ? "#fff" : "#175089",
-                    color: pushState?.subscribed ? "#0f2744" : "#fff",
-                    fontWeight: 700,
+                    minWidth: 120,
                     cursor: (pushBusy || !pushState?.supported || !pushState?.configured) ? "not-allowed" : "pointer",
                     opacity: (!pushState?.supported || !pushState?.configured) ? 0.55 : 1,
                   }}
@@ -2663,14 +2647,8 @@ export default function SettingsPage() {
                     type="button"
                     disabled={pushTesting}
                     onClick={sendTestNotification}
-                    className="crm-button"
-                    style={{
-                      minWidth: 140,
-                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
-                      height: 40, borderRadius: 10, marginLeft: 8,
-                      border: "1px solid #d5e3ef", background: "#fff", color: "#0f2744",
-                      fontWeight: 700, cursor: pushTesting ? "not-allowed" : "pointer",
-                    }}
+                    className="crm-button soft"
+                    style={{ minWidth: 120, cursor: pushTesting ? "not-allowed" : "pointer" }}
                   >
                     {pushTesting ? <Loader2 size={15} className="animate-spin" /> : <PhoneCall size={15} />}
                     Send test
@@ -2698,20 +2676,20 @@ export default function SettingsPage() {
           </section>
         ) : activeTab === "zippy-prompt" ? (
           isAdmin ? (
-            <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "grid", gap: 14 }}>
               <div>
                 <div className="crm-chip" style={{ marginBottom: 12, background: "#f3eaff", color: "#5b2ea3", borderColor: "#e0d0fb" }}>
                   <Bot size={14} />
                   Zippy Prompt
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Global system prompt</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Global system prompt</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   This is the exact system prompt Zippy runs under for every conversation. Edits take effect on the next user turn — no redeploy needed.
                   Leave it blank and save to reset to the built-in default. <strong>Admin-only.</strong>
                 </p>
               </div>
 
-              <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ fontSize: 13, color: "#5b6685" }}>
                     Status:{" "}
@@ -2736,10 +2714,10 @@ export default function SettingsPage() {
                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                     fontSize: 13,
                     lineHeight: 1.55,
-                    border: "1px solid #e7eaf5",
+                    border: "1px solid #e3e9f2",
                     borderRadius: 12,
                     background: "#fafbfe",
-                    color: "#182042",
+                    color: "#142335",
                     resize: "vertical",
                   }}
                 />
@@ -2780,25 +2758,25 @@ export default function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="crm-muted" style={{ fontSize: 13 }}>
+            <p className="crm-muted" style={{ fontSize: 12 }}>
               Admin access required to view or edit Zippy's system prompt.
             </p>
           )
         ) : activeTab === "pre-meeting" ? (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div>
                 <div className="crm-chip" style={{ marginBottom: 12, background: "#eef8ff", color: "#145d97", borderColor: "#d7ebfb" }}>
                   <Shield size={14} />
                   Pre-Meeting
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Pre-meeting automation</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Pre-meeting automation</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Beacon watches scheduled meetings already in the CRM. Before the meeting starts, it can generate missing research, build the prep page, and email the meeting intel link to the assigned team.
                 </p>
               </div>
-              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", minWidth: 320 }}>
-                <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>
+              <div className="crm-panel" style={{ padding: 16, borderRadius: 14, boxShadow: "none", minWidth: 300 }}>
+                <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>
                   Delivery flow
                 </div>
                 <p className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 0 }}>
@@ -2807,11 +2785,11 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) repeat(2, minmax(220px, 0.35fr))", gap: 16 }}>
-                <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                <label style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Enable automatic pre-meeting sends</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Enable automatic pre-meeting sends</div>
                     <input
                       type="checkbox"
                       checked={Boolean(preMeetingSettings?.enabled)}
@@ -2819,13 +2797,13 @@ export default function SettingsPage() {
                       disabled={!isAdmin || !preMeetingSettings}
                     />
                   </div>
-                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                     When enabled, Beacon checks scheduled meetings in the background and sends prep intel automatically before the meeting.
                   </div>
                 </label>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Send window</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Send window</div>
                   <input
                     type="number"
                     min={1}
@@ -2833,15 +2811,15 @@ export default function SettingsPage() {
                     value={preMeetingSettings?.send_hours_before ?? 12}
                     onChange={(event) => updatePreMeetingField("send_hours_before", Number(event.target.value))}
                     disabled={!isAdmin || !preMeetingSettings}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                     Default is <strong>12 hours</strong> before the scheduled meeting start. Use 1-168 hours.
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Prep generation window</div>
+                <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Prep generation window</div>
                   <input
                     type="number"
                     min={1}
@@ -2849,16 +2827,16 @@ export default function SettingsPage() {
                     value={preMeetingSettings?.generate_hours_before ?? 48}
                     onChange={(event) => updatePreMeetingField("generate_hours_before", Number(event.target.value))}
                     disabled={!isAdmin || !preMeetingSettings}
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
-                  <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                     Generate missing prep earlier, then send at the send window. Must be at least the send window.
                   </div>
                 </div>
               </div>
 
-              <div style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>When to send</div>
+              <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>When to send</div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   {([
                     { key: "hours_before", label: "Hours before each meeting", desc: "Send each brief a set number of hours ahead of that meeting." },
@@ -2873,13 +2851,13 @@ export default function SettingsPage() {
                         onClick={() => updatePreMeetingField("send_mode", opt.key)}
                         style={{
                           flex: "1 1 240px", textAlign: "left", borderRadius: 12, padding: 14, display: "grid", gap: 6,
-                          border: active ? "2px solid #9ace3d" : "1px solid #e7eaf5",
+                          border: active ? "2px solid #9ace3d" : "1px solid #e3e9f2",
                           background: active ? "#f3fbe3" : "#fff",
                           cursor: isAdmin && preMeetingSettings ? "pointer" : "default",
                         }}
                       >
-                        <span style={{ fontSize: 14, fontWeight: 800, color: "#182042" }}>{opt.label}</span>
-                        <span className="crm-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>{opt.desc}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{opt.label}</span>
+                        <span className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>{opt.desc}</span>
                       </button>
                     );
                   })}
@@ -2887,43 +2865,43 @@ export default function SettingsPage() {
                 {preMeetingSettings?.send_mode === "daily_time" && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginTop: 2 }}>
                     <div style={{ display: "grid", gap: 6 }}>
-                      <label style={{ fontSize: 13, fontWeight: 700, color: "#3a4566" }}>Send time</label>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send time</label>
                       <input
                         type="time"
                         value={preMeetingSettings?.send_time ?? "07:00"}
                         onChange={(event) => updatePreMeetingField("send_time", event.target.value)}
                         disabled={!isAdmin}
-                        style={{ height: 44, padding: "0 14px", fontSize: 14 }}
+                        style={{ height: 36, padding: "0 12px", fontSize: 13 }}
                       />
-                      <span className="crm-muted" style={{ fontSize: 12.5 }}>Briefs go out once a day at this time.</span>
+                      <span className="crm-muted" style={{ fontSize: 12 }}>Briefs go out once a day at this time.</span>
                     </div>
                     <div style={{ display: "grid", gap: 6 }}>
-                      <label style={{ fontSize: 13, fontWeight: 700, color: "#3a4566" }}>Timezone</label>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Timezone</label>
                       <select
                         value={preMeetingSettings?.timezone ?? "UTC"}
                         onChange={(event) => updatePreMeetingField("timezone", event.target.value)}
                         disabled={!isAdmin}
-                        style={{ height: 44, padding: "0 14px", fontSize: 14 }}
+                        style={{ height: 36, padding: "0 12px", fontSize: 13 }}
                       >
                         {PRE_MEETING_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                         {preMeetingSettings?.timezone && !PRE_MEETING_TIMEZONES.includes(preMeetingSettings.timezone) && (
                           <option value={preMeetingSettings.timezone}>{preMeetingSettings.timezone}</option>
                         )}
                       </select>
-                      <span className="crm-muted" style={{ fontSize: 12.5 }}>Send time is interpreted in this timezone.</span>
+                      <span className="crm-muted" style={{ fontSize: 12 }}>Send time is interpreted in this timezone.</span>
                     </div>
                   </div>
                 )}
-                <div className="crm-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                   {preMeetingSettings?.send_mode === "daily_time"
                     ? "At the send time, Beacon emails briefs for meetings starting within the “Send window” hours above (it doubles as the daily look-ahead)."
                     : "Each brief is sent the “Send window” hours before its meeting starts."}
                 </div>
               </div>
 
-              <label style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
+              <label style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042" }}>Generate missing research automatically</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Generate missing research automatically</div>
                   <input
                     type="checkbox"
                     checked={Boolean(preMeetingSettings?.auto_generate_if_missing)}
@@ -2931,14 +2909,14 @@ export default function SettingsPage() {
                     disabled={!isAdmin || !preMeetingSettings}
                   />
                 </div>
-                <div className="crm-muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
                   If the account has no fresh meeting research yet, Beacon will run account research and demo-strategy generation before sending the prep email instead of waiting for a rep to do it manually.
                 </div>
               </label>
 
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     This automation runs off scheduled meeting records already in Beacon. Calendar ingestion can feed those records later without changing this workflow.
                   </p>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -2953,21 +2931,21 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can change pre-meeting automation. Everyone else can review the current timing and behavior here.
                 </p>
               )}
             </div>
           </div>
         ) : activeTab === "system-health" ? (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div>
                 <div className="crm-chip" style={{ marginBottom: 12, background: "#eef5ff", color: "#175089", borderColor: "#d8e6fb" }}>
                   <RefreshCw size={14} />
                   System Health
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Scheduled jobs</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Scheduled jobs</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Last run and status for every scheduled background job. A red or amber badge means a job failed or hasn't run on time — catch a silent scheduler problem here before it affects reports, syncs, or reminders.
                 </p>
@@ -2984,15 +2962,13 @@ export default function SettingsPage() {
             ) : !jobHealth || jobHealth.length === 0 ? (
               <div className="crm-muted" style={{ padding: 16, fontSize: 13 }}>No scheduled-job data recorded yet. Jobs appear here after their next run.</div>
             ) : (
-              <div style={{ overflowX: "auto", border: "1px solid #e7eaf5", borderRadius: 14, background: "#fff" }}>
+              <div style={{ overflowX: "auto", border: "1px solid #e3e9f2", borderRadius: 14, background: "#fff" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
-                    <tr style={{ textAlign: "left", color: "#6b7794", background: "#f6f8fc" }}>
-                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Job</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Schedule</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Last run</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Status</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 700 }}>Runs</th>
+                    <tr style={{ textAlign: "left", color: "#68788d", background: "#f7f9fc" }}>
+                      {["Job", "Schedule", "Last run", "Status", "Runs"].map((h) => (
+                        <th key={h} style={{ padding: "10px 14px", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: "1px solid #e3e9f2" }}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -3011,12 +2987,12 @@ export default function SettingsPage() {
                       const lastRun = fmt(j.last_run_at);
                       return (
                         <tr key={j.beat_name} style={{ borderTop: "1px solid #eef1f6" }}>
-                          <td style={{ padding: "10px 14px" }}>
+                          <td style={{ padding: "11px 14px" }}>
                             <div style={{ fontWeight: 700, color: "#25384d" }}>{j.beat_name}</div>
                             <div style={{ fontSize: 11, color: "#9fb0c0" }}>{j.task}</div>
                           </td>
-                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{j.schedule}</td>
-                          <td style={{ padding: "10px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{j.schedule}</td>
+                          <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>
                             {lastRun}
                             {/* "Last run" alone can't tell a working job from one
                                 that runs every 3 minutes and does nothing, which
@@ -3026,8 +3002,8 @@ export default function SettingsPage() {
                               did work: {fmt(j.last_effective_at)}
                             </div>
                           </td>
-                          <td style={{ padding: "10px 14px" }}>
-                            <span style={{ background: tone.bg, color: tone.fg, padding: "3px 9px", borderRadius: 999, fontWeight: 700, fontSize: 11.5 }}>{tone.label}</span>
+                          <td style={{ padding: "11px 14px" }}>
+                            <span style={{ background: tone.bg, color: tone.fg, padding: "3px 9px", borderRadius: 999, fontWeight: 700, fontSize: 11 }}>{tone.label}</span>
                             {j.last_error ? <div style={{ fontSize: 11, color: "#b42336", marginTop: 4, maxWidth: 320, lineHeight: 1.4 }}>{j.last_error}</div> : null}
                             {!j.last_error && j.last_skip_reason ? (
                               <div style={{ fontSize: 11, color: "#175089", marginTop: 4, maxWidth: 320, lineHeight: 1.4 }}>
@@ -3035,7 +3011,7 @@ export default function SettingsPage() {
                               </div>
                             ) : null}
                           </td>
-                          <td style={{ padding: "10px 14px", color: "#5b6b7d" }}>
+                          <td style={{ padding: "11px 14px", color: "#5b6b7d" }}>
                             {j.runs_total}
                             {j.failures_total > 0 ? <span style={{ color: "#b42336", fontWeight: 600 }}> · {j.failures_total} failed</span> : null}
                             {j.skips_total > 0 ? <span style={{ color: "#175089", fontWeight: 600 }}> · {j.skips_total} skipped</span> : null}
@@ -3049,14 +3025,14 @@ export default function SettingsPage() {
             )}
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div>
                 <div className="crm-chip" style={{ marginBottom: 12, background: "#eef5ff", color: "#175089", borderColor: "#d8e6fb" }}>
                   <GripVertical size={14} />
                   Pipeline
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Deal lanes</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Deal lanes</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Control the shared deal board lanes here. Admins can rename, reorder, add, or remove lanes, and the Pipeline page will use this exact layout.
                 </p>
@@ -3069,60 +3045,51 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 8 }}>
               {(dealStages?.stages ?? []).map((stage, index) => (
-                <div key={stage.id} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: stage.color }} />
-                      <strong style={{ color: "#182042" }}>Lane {index + 1}</strong>
-                      <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>{stage.id}</span>
+                <div key={stage.id} style={{ border: "1px solid #e3e9f2", borderRadius: 10, padding: "5px 10px", background: "#fff", minHeight: 48, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ width: 18, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#68788d", flexShrink: 0 }}>{index + 1}</span>
+                  <input
+                    type="color"
+                    value={stage.color}
+                    onChange={(event) => updateStage(index, "color", event.target.value)}
+                    disabled={!isAdmin}
+                    title={`Lane color ${stage.color}`}
+                    aria-label={`Lane ${index + 1} color`}
+                    style={{ width: 36, height: 32, border: "1px solid #e3e9f2", borderRadius: 8, background: "#fff", padding: 2, flexShrink: 0 }}
+                  />
+                  <input
+                    value={stage.label}
+                    onChange={(event) => updateStage(index, "label", event.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="Lane name"
+                    aria-label={`Lane ${index + 1} name`}
+                    style={{ flex: "1 1 200px", minWidth: 160, height: 36, padding: "0 12px", fontSize: 13, fontWeight: 600 }}
+                  />
+                  <span title={`Stage id: ${stage.id}`} style={{ fontSize: 11, fontWeight: 600, color: "#68788d", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.id}</span>
+                  <select
+                    value={stage.group}
+                    onChange={(event) => updateStage(index, "group", event.target.value)}
+                    disabled={!isAdmin}
+                    aria-label={`Lane ${index + 1} group`}
+                    style={{ width: 110, height: 36, padding: "0 8px", fontSize: 13, flexShrink: 0 }}
+                  >
+                    <option value="active">Active</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                  {isAdmin && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <button className="crm-button soft" type="button" title="Move up" aria-label={`Move lane ${index + 1} up`} onClick={() => moveStage(index, -1)} disabled={index === 0} style={{ minHeight: 32, padding: "0 9px" }}><ArrowUp size={14} /></button>
+                      <button className="crm-button soft" type="button" title="Move down" aria-label={`Move lane ${index + 1} down`} onClick={() => moveStage(index, 1)} disabled={index === (dealStages?.stages.length ?? 0) - 1} style={{ minHeight: 32, padding: "0 9px" }}><ArrowDown size={14} /></button>
+                      <button className="crm-button soft" type="button" title="Delete lane" aria-label={`Delete lane ${index + 1}`} onClick={() => removeStage(index)} disabled={(dealStages?.stages.length ?? 0) <= 1} style={{ minHeight: 32, padding: "0 9px", marginLeft: 6, color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}><Trash2 size={14} /></button>
                     </div>
-                    {isAdmin && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button className="crm-button soft" type="button" onClick={() => moveStage(index, -1)} disabled={index === 0}><ArrowUp size={15} />Up</button>
-                        <button className="crm-button soft" type="button" onClick={() => moveStage(index, 1)} disabled={index === (dealStages?.stages.length ?? 0) - 1}><ArrowDown size={15} />Down</button>
-                        <button className="crm-button soft" type="button" onClick={() => removeStage(index)} disabled={(dealStages?.stages.length ?? 0) <= 1}><Trash2 size={15} />Delete</button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 180px 160px", gap: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Lane name</div>
-                      <input
-                        value={stage.label}
-                        onChange={(event) => updateStage(index, "label", event.target.value)}
-                        disabled={!isAdmin}
-                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Group</div>
-                      <select
-                        value={stage.group}
-                        onChange={(event) => updateStage(index, "group", event.target.value)}
-                        disabled={!isAdmin}
-                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
-                      >
-                        <option value="active">Active</option>
-                        <option value="closed">Closed</option>
-                      </select>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Color</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <input type="color" value={stage.color} onChange={(event) => updateStage(index, "color", event.target.value)} disabled={!isAdmin} style={{ width: 52, height: 44, border: "1px solid #d8e2ef", borderRadius: 10, background: "#fff" }} />
-                        <span className="crm-chip" style={{ background: "#f8fafc", color: "#55657a", borderColor: "#e7eaf5" }}><Palette size={13} />{stage.color}</span>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               ))}
 
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     These lanes define the shared deal board order and names across Beacon, including the ClickUp CRM import flow.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSaveStages} disabled={savingStages || !dealStages}>
@@ -3131,7 +3098,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can update the shared deal lanes. Everyone else sees the same board layout in Pipeline.
                 </p>
               )}
@@ -3144,7 +3111,7 @@ export default function SettingsPage() {
                   <Target size={14} />
                   Prospecting
                 </div>
-                <h3 style={{ fontSize: 24, fontWeight: 800, color: "#182042", marginBottom: 8 }}>Prospect lanes</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Prospect lanes</h3>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Control the shared prospect board lanes here. The Pipeline prospect tab will use this exact layout for sorting contacts into stages.
                 </p>
@@ -3157,60 +3124,51 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 8 }}>
               {(prospectStages?.stages ?? []).map((stage, index) => (
-                <div key={stage.id} style={{ border: "1px solid #e7eaf5", borderRadius: 14, padding: 16, background: "#fff", display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: stage.color }} />
-                      <strong style={{ color: "#182042" }}>Lane {index + 1}</strong>
-                      <span className="crm-chip" style={{ background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>{stage.id}</span>
+                <div key={stage.id} style={{ border: "1px solid #e3e9f2", borderRadius: 10, padding: "5px 10px", background: "#fff", minHeight: 48, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ width: 18, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#68788d", flexShrink: 0 }}>{index + 1}</span>
+                  <input
+                    type="color"
+                    value={stage.color}
+                    onChange={(event) => updateProspectStage(index, "color", event.target.value)}
+                    disabled={!isAdmin}
+                    title={`Lane color ${stage.color}`}
+                    aria-label={`Prospect lane ${index + 1} color`}
+                    style={{ width: 36, height: 32, border: "1px solid #e3e9f2", borderRadius: 8, background: "#fff", padding: 2, flexShrink: 0 }}
+                  />
+                  <input
+                    value={stage.label}
+                    onChange={(event) => updateProspectStage(index, "label", event.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="Lane name"
+                    aria-label={`Prospect lane ${index + 1} name`}
+                    style={{ flex: "1 1 200px", minWidth: 160, height: 36, padding: "0 12px", fontSize: 13, fontWeight: 600 }}
+                  />
+                  <span title={`Stage id: ${stage.id}`} style={{ fontSize: 11, fontWeight: 600, color: "#68788d", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage.id}</span>
+                  <select
+                    value={stage.group}
+                    onChange={(event) => updateProspectStage(index, "group", event.target.value)}
+                    disabled={!isAdmin}
+                    aria-label={`Prospect lane ${index + 1} group`}
+                    style={{ width: 110, height: 36, padding: "0 8px", fontSize: 13, flexShrink: 0 }}
+                  >
+                    <option value="active">Active</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                  {isAdmin && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <button className="crm-button soft" type="button" title="Move up" aria-label={`Move prospect lane ${index + 1} up`} onClick={() => moveProspectStage(index, -1)} disabled={index === 0} style={{ minHeight: 32, padding: "0 9px" }}><ArrowUp size={14} /></button>
+                      <button className="crm-button soft" type="button" title="Move down" aria-label={`Move prospect lane ${index + 1} down`} onClick={() => moveProspectStage(index, 1)} disabled={index === (prospectStages?.stages.length ?? 0) - 1} style={{ minHeight: 32, padding: "0 9px" }}><ArrowDown size={14} /></button>
+                      <button className="crm-button soft" type="button" title="Delete lane" aria-label={`Delete prospect lane ${index + 1}`} onClick={() => removeProspectStage(index)} disabled={(prospectStages?.stages.length ?? 0) <= 1} style={{ minHeight: 32, padding: "0 9px", marginLeft: 6, color: "#b42336", borderColor: "#f0c1c8", background: "#fff" }}><Trash2 size={14} /></button>
                     </div>
-                    {isAdmin && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button className="crm-button soft" type="button" onClick={() => moveProspectStage(index, -1)} disabled={index === 0}><ArrowUp size={15} />Up</button>
-                        <button className="crm-button soft" type="button" onClick={() => moveProspectStage(index, 1)} disabled={index === (prospectStages?.stages.length ?? 0) - 1}><ArrowDown size={15} />Down</button>
-                        <button className="crm-button soft" type="button" onClick={() => removeProspectStage(index)} disabled={(prospectStages?.stages.length ?? 0) <= 1}><Trash2 size={15} />Delete</button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 180px 160px", gap: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Lane name</div>
-                      <input
-                        value={stage.label}
-                        onChange={(event) => updateProspectStage(index, "label", event.target.value)}
-                        disabled={!isAdmin}
-                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Group</div>
-                      <select
-                        value={stage.group}
-                        onChange={(event) => updateProspectStage(index, "group", event.target.value)}
-                        disabled={!isAdmin}
-                        style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
-                      >
-                        <option value="active">Active</option>
-                        <option value="closed">Closed</option>
-                      </select>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Color</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <input type="color" value={stage.color} onChange={(event) => updateProspectStage(index, "color", event.target.value)} disabled={!isAdmin} style={{ width: 52, height: 44, border: "1px solid #d8e2ef", borderRadius: 10, background: "#fff" }} />
-                        <span className="crm-chip" style={{ background: "#f8fafc", color: "#55657a", borderColor: "#e7eaf5" }}><Palette size={13} />{stage.color}</span>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               ))}
 
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     These lanes define the shared prospect board order and names across Beacon.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSaveProspectStages} disabled={savingProspectStages || !prospectStages}>
@@ -3219,19 +3177,19 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can update the shared prospect lanes. Everyone else sees the same board layout in Pipeline.
                 </p>
               )}
             </div>
 
-            <div className="crm-panel" style={{ padding: 22, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
               <div>
-                <div className="crm-chip" style={{ marginBottom: 12, background: "#f7f8fc", color: "#5b6685", borderColor: "#e7eaf5" }}>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f7f8fc", color: "#5b6685", borderColor: "#e3e9f2" }}>
                   <Link2 size={14} />
                   ClickUp CRM import
                 </div>
-                <h4 style={{ fontSize: 20, fontWeight: 800, color: "#182042", marginBottom: 8 }}>ClickUp source IDs</h4>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 4 }}>ClickUp source IDs</h4>
                 <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
                   Beacon still uses the ClickUp API token from env, but admins can override the Sales CRM workspace IDs here instead of hardcoding them in deployment.
                 </p>
@@ -3239,40 +3197,40 @@ export default function SettingsPage() {
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Team ID</div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>Team ID</div>
                   <input
                     value={clickupCrmSettings?.team_id ?? ""}
                     onChange={(event) => updateClickUpCrmField("team_id", event.target.value)}
                     disabled={!isAdmin}
                     placeholder="9016838025"
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Space ID</div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>Space ID</div>
                   <input
                     value={clickupCrmSettings?.space_id ?? ""}
                     onChange={(event) => updateClickUpCrmField("space_id", event.target.value)}
                     disabled={!isAdmin}
                     placeholder="90166384157"
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7c86a6", fontWeight: 700, marginBottom: 8 }}>Deals List ID</div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#68788d", fontWeight: 700, marginBottom: 6 }}>Deals List ID</div>
                   <input
                     value={clickupCrmSettings?.deals_list_id ?? ""}
                     onChange={(event) => updateClickUpCrmField("deals_list_id", event.target.value)}
                     disabled={!isAdmin}
                     placeholder="901613645185"
-                    style={{ width: "100%", height: 44, padding: "0 14px", fontSize: 14 }}
+                    style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13 }}
                   />
                 </div>
               </div>
 
               {isAdmin ? (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <p className="crm-muted" style={{ fontSize: 13 }}>
+                  <p className="crm-muted" style={{ fontSize: 12 }}>
                     Leave a field blank to fall back to the current env default. This only changes which ClickUp Sales CRM board Beacon imports from.
                   </p>
                   <button className="crm-button primary" type="button" onClick={handleSaveClickUpCrm} disabled={savingClickUpCrm || !clickupCrmSettings}>
@@ -3281,7 +3239,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 13 }}>
+                <p className="crm-muted" style={{ fontSize: 12 }}>
                   Only admins can change the ClickUp import source. Everyone else uses the shared Sales CRM configuration.
                 </p>
               )}
@@ -3289,8 +3247,7 @@ export default function SettingsPage() {
           </div>
         )}
           </div>
-        </div>
-      </section>
+      </div>
 
       <DriveFolderPicker
         open={drivePickerMode !== null}
