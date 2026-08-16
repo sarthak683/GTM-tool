@@ -81,7 +81,9 @@ const ALL_TIME_DAYS = 36500;
 // quarters. Longer ranges go through the custom date pickers next to these.
 const WINDOW_PRESETS = [
   { days: 1, label: "Today" },
+  { days: 2, label: "2D" },
   { days: 3, label: "3D" },
+  { days: 5, label: "5D" },
   { days: 7, label: "1W" },
   { days: 14, label: "2W" },
   { days: 28, label: "4W" },
