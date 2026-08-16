@@ -56,3 +56,6 @@ deploy/**/values-*.local.yaml
 # permission rules that have historically embedded live credentials.
 .claude/settings.local.json
 .codex/
+
+# Prod-repair review exports contain live prospect PII — never commit
+scripts/prod-repair/review-*/
