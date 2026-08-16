@@ -77,11 +77,14 @@ import {
 // "All time" is modeled as a very large day-window so the existing
 // window_days → date-range math on the backend keeps working unchanged.
 const ALL_TIME_DAYS = 36500;
+// Short windows only — day-to-day rep coaching happens on days/weeks, not
+// quarters. Longer ranges go through the custom date pickers next to these.
 const WINDOW_PRESETS = [
+  { days: 1, label: "Today" },
+  { days: 3, label: "3D" },
   { days: 7, label: "1W" },
-  { days: 30, label: "1M" },
-  { days: 90, label: "3M" },
-  { days: 180, label: "6M" },
+  { days: 14, label: "2W" },
+  { days: 28, label: "4W" },
   { days: ALL_TIME_DAYS, label: "All" },
 ] as const;
 const windowPresetLabel = (days: number): string =>

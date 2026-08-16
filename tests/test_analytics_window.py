@@ -44,12 +44,19 @@ class ResolveAnalyticsWindowTests(unittest.TestCase):
         # window_end is "now" (to-date semantics, partial current day included).
         self.assertGreaterEqual(end, before)
         self.assertLessEqual(end, after)
-        # window_start is MIDNIGHT UTC of (now - window_days): the quick "Last
-        # 7 days" pick must cover the same span as an explicit 7-day from_date
-        # range, which parses to midnight. The old rolling-instant boundary
-        # made the two disagree by the time elapsed since midnight.
+        # window_start is MIDNIGHT UTC of (now - (window_days - 1)): today
+        # counts as day one, so the quick "Last 7 days" pick covers the same
+        # 7 calendar days as an explicit 7-day range ending today, and
+        # window_days=1 is exactly "today so far" (the Today preset).
         self.assertEqual(start.time().isoformat(), "00:00:00")
-        self.assertEqual(start.date(), (before - timedelta(days=7)).date())
+        self.assertEqual(start.date(), (before - timedelta(days=6)).date())
+
+    def test_one_day_window_is_today_only(self) -> None:
+        before = datetime.utcnow()
+        start, end = _resolve_analytics_window(1, None, None)
+        self.assertEqual(start.time().isoformat(), "00:00:00")
+        self.assertEqual(start.date(), before.date())
+        self.assertGreaterEqual(end, start)
 
     def test_rolling_period_starts_returns_daily_buckets_for_1_week_window(self) -> None:
         start = datetime(2026, 1, 1, 10, 30)

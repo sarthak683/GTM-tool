@@ -559,10 +559,12 @@ def _resolve_analytics_window(
             window_start = local_midnight_utc(_parse_day(from_date), tz)
         else:
             # Midnight-aligned in the workspace zone, matching the explicit
-            # from_date branch — "Last 30 days" and an explicit 30-day range
-            # must cover the same span.
+            # from_date branch. "N days" counts TODAY as day one — so
+            # window_days=1 is exactly "today so far", and "Last 7 days"
+            # covers the same 7 calendar days as an explicit 7-day range
+            # ending today (the old -window_days form silently spanned 8).
             today_local = workspace_today(tz, now)
-            window_start = local_midnight_utc(today_local - timedelta(days=window_days), tz)
+            window_start = local_midnight_utc(today_local - timedelta(days=window_days - 1), tz)
         if to_date:
             window_end = local_midnight_utc(_parse_day(to_date) + timedelta(days=1), tz)
         else:
