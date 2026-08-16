@@ -40,6 +40,7 @@ async def send_due_next_step_reminders() -> dict[str, int]:
         rows = (
             await session.execute(
                 select(Deal).where(
+                    Deal.deleted_at.is_(None),
                     Deal.next_step_due_at.is_not(None),
                     Deal.next_step_due_at <= now,
                     Deal.next_step_due_at >= window_start,

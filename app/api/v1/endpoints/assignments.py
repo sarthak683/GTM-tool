@@ -10,7 +10,12 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+
+# Shared filter contract with the prospects list + CSV export — importing it
+# (instead of re-declaring params) is what guarantees "assign all matching"
+# operates on EXACTLY the set the rep is looking at.
+from app.api.v1.endpoints.contacts import ContactFilters
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -31,6 +36,54 @@ from app.services.sdr_reassignment import (
     sync_company_ae_assignment_to_contacts,
     sync_company_sdr_assignment_to_contacts,
 )
+
+
+async def _apply_contact_assignment(
+    session,
+    contact: Contact,
+    user,  # User | None — None = unassign
+    *,
+    is_sdr: bool,
+    current_assigned_id,
+    company_cache: dict,
+) -> bool:
+    """Apply one contact assignment with the FULL shared semantics: set/clear
+    the slot, reset outreach progress on an SDR handoff, and backfill an empty
+    company slot. Both the id-based bulk endpoint and the filter-wide endpoint
+    run every contact through here so the two can never drift. Returns whether
+    a company slot was backfilled."""
+    if user:
+        if is_sdr:
+            contact.sdr_id = user.id
+            contact.sdr_name = user.name
+        else:
+            contact.assigned_to_id = user.id
+            contact.assigned_rep_email = user.email
+    else:
+        if is_sdr:
+            contact.sdr_id = None
+            contact.sdr_name = None
+        else:
+            contact.assigned_to_id = None
+            contact.assigned_rep_email = None
+    # A bulk SDR change is still a handoff: the incoming rep starts from zero.
+    if is_sdr and contact.sdr_id != current_assigned_id:
+        reset_contact_outreach_progress(contact)
+    backfilled = False
+    if user and contact.company_id:
+        company = company_cache.get(contact.company_id)
+        if company is None and contact.company_id not in company_cache:
+            company = (
+                await session.execute(select(Company).where(Company.id == contact.company_id))
+            ).scalar_one_or_none()
+            company_cache[contact.company_id] = company
+        if _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
+            backfilled = True
+            company.updated_at = datetime.utcnow()
+            session.add(company)
+    contact.updated_at = datetime.utcnow()
+    session.add(contact)
+    return backfilled
 
 
 def _backfill_company_owner_from_contact(company, user, *, is_sdr: bool) -> bool:
@@ -447,39 +500,11 @@ async def bulk_assign_contacts(
         ):
             skipped += 1
             continue
-        if user:
-            if is_sdr:
-                contact.sdr_id = user.id
-                contact.sdr_name = user.name
-            else:
-                contact.assigned_to_id = user.id
-                contact.assigned_rep_email = user.email
-        else:
-            if is_sdr:
-                contact.sdr_id = None
-                contact.sdr_name = None
-            else:
-                contact.assigned_to_id = None
-                contact.assigned_rep_email = None
-        # Same handoff semantics as the single-contact endpoint: a bulk SDR
-        # change is still a handoff, so the incoming rep starts from zero.
-        # (Bulk previously skipped this reset, so aggregates credited the old
-        # SDR's calls/opens to the new one — the two paths must not differ.)
-        if is_sdr and contact.sdr_id != current_assigned_id:
-            reset_contact_outreach_progress(contact)
-        if user and contact.company_id:
-            company = company_cache.get(contact.company_id)
-            if company is None and contact.company_id not in company_cache:
-                company = (
-                    await session.execute(select(Company).where(Company.id == contact.company_id))
-                ).scalar_one_or_none()
-                company_cache[contact.company_id] = company
-            if _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
-                companies_backfilled += 1
-                company.updated_at = datetime.utcnow()
-                session.add(company)
-        contact.updated_at = datetime.utcnow()
-        session.add(contact)
+        if await _apply_contact_assignment(
+            session, contact, user, is_sdr=is_sdr,
+            current_assigned_id=current_assigned_id, company_cache=company_cache,
+        ):
+            companies_backfilled += 1
         updated += 1
 
     await session.commit()
@@ -491,6 +516,123 @@ async def bulk_assign_contacts(
         # Accounts whose empty owner slot now follows these assignments (see
         # _backfill_company_owner_from_contact).
         "companies_backfilled": companies_backfilled,
+    }
+
+
+class FilterAssignRequest(BaseModel):
+    user_id: Optional[UUID] = None  # None = unassign
+    role: Optional[str] = None      # "ae" (default) or "sdr"
+    # The total the rep SAW when confirming ("Assign all 312 matching"). If
+    # the matching set changed size by the time the request lands, refuse
+    # instead of silently assigning a different population.
+    expected_total: Optional[int] = None
+
+
+# One request must not pin a worker forever; past this, the rep should narrow
+# the filters (mirrors the export ceiling philosophy in contacts.py).
+FILTER_ASSIGN_MAX_ROWS = 5_000
+
+
+@router.patch("/contacts/by-filter")
+async def bulk_assign_contacts_by_filter(
+    body: FilterAssignRequest,
+    session: DBSession,
+    actor: CurrentUser,
+    filters: ContactFilters = Depends(),
+):
+    """Assign EVERY prospect matching the current filters — the assignment
+    twin of the filter-wide CSV export.
+
+    Selection was page-scoped only, so "assign these 300 to Mahesh" meant
+    tick-selecting across 6 pages. This shares ``ContactFilters`` with the
+    list/export (the filters can't drift), applies the same hard visibility
+    gate (a non-admin can only mass-assign what they can already see), the
+    same admin-or-self-claim permission rule as the id-based bulk endpoint,
+    and runs every contact through the same assignment semantics (SDR handoff
+    reset + empty-company-slot backfill).
+    """
+    is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
+    user = None
+    if body.user_id:
+        user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
+        if not user:
+            raise NotFoundError("User not found")
+        _validate_assignment_user(user, role=role_key)
+    if actor.role != "admin" and not (
+        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
+    ):
+        raise ForbiddenError(
+            "Only admins can bulk reassign. You can bulk claim unassigned "
+            f"{role_key.upper()} slots or release your own assignments."
+        )
+
+    from app.repositories.contact import ContactRepository
+    from app.services.permissions import can_view_all_prospects
+
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, actor) else str(actor.id)
+    )
+    repo = ContactRepository(session)
+    items, total = await repo.list_with_company_name(
+        restrict_to_role=actor.role,
+        restrict_to_owner_id=restrict_to_owner_id,
+        skip=0,
+        limit=FILTER_ASSIGN_MAX_ROWS,
+        **filters.as_repo_kwargs(),
+    )
+    if total > FILTER_ASSIGN_MAX_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{total} prospects match — more than the {FILTER_ASSIGN_MAX_ROWS} "
+                "this endpoint will assign in one request. Narrow the filters."
+            ),
+        )
+    if body.expected_total is not None and total != body.expected_total:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The matching set changed: you confirmed {body.expected_total} "
+                f"prospects but {total} match now. Re-check and try again."
+            ),
+        )
+
+    updated = 0
+    skipped = 0
+    companies_backfilled = 0
+    company_cache: dict[UUID, Company | None] = {}
+    for item in items:
+        contact = (
+            await session.execute(select(Contact).where(Contact.id == item.id))
+        ).scalar_one_or_none()
+        if not contact:
+            skipped += 1
+            continue
+        current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
+        if actor.role != "admin" and not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            skipped += 1
+            continue
+        if await _apply_contact_assignment(
+            session, contact, user, is_sdr=is_sdr,
+            current_assigned_id=current_assigned_id, company_cache=company_cache,
+        ):
+            companies_backfilled += 1
+        updated += 1
+
+    await session.commit()
+    return {
+        "matched": total,
+        "updated": updated,
+        "skipped": skipped,
+        "companies_backfilled": companies_backfilled,
+        "user_id": str(body.user_id) if body.user_id else None,
+        "role": role_key,
     }
 
 

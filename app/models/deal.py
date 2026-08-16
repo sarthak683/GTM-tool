@@ -86,6 +86,11 @@ class Deal(DealBase, table=True):
     # Originating SDR, stamped from the contact at conversion so SDR-sourced
     # pipeline credit survives. Mirrors Contact.sdr_id (no hard FK, just an index).
     sdr_id: Optional[UUID] = Field(default=None, index=True)
+    # Soft-delete: the deal leaves every current-state surface (board, lists,
+    # pipeline value) but its activities + stage history keep counting in
+    # historical outcome metrics — deleting a deal must not rewrite last
+    # quarter's scorecard. Set only via the DELETE endpoint.
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
     email_cc_alias: Optional[str] = Field(default=None, index=True)
     external_source: Optional[str] = Field(default=None, index=True)
     external_source_id: Optional[str] = Field(default=None, index=True)
@@ -162,6 +167,7 @@ class DealRead(DealBase):
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None
     sdr_id: Optional[UUID] = None
+    deleted_at: Optional[datetime] = None
     email_cc_alias: Optional[str] = None
     value: Optional[Decimal] = None
     qualification: Optional[Any] = None

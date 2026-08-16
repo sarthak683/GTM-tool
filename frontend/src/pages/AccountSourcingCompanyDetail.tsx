@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -1181,6 +1182,55 @@ export default function AccountSourcingCompanyDetail() {
 
   // Manual account status. Clicking the active status clears it. Optimistic
   // update with rollback so the segmented control feels instant.
+  // ── Alias domains + merge (admin) ─────────────────────────────────────────
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [savingAliases, setSavingAliases] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState("");
+  const [merging, setMerging] = useState(false);
+
+  const saveAliasDomains = async (next: string[]) => {
+    if (!company || savingAliases) return;
+    setSavingAliases(true);
+    try {
+      const saved = await accountSourcingApi.updateCompany(company.id, { additional_domains: next });
+      setCompany((prev) => (prev ? { ...prev, additional_domains: saved.additional_domains ?? [] } : prev));
+      setAliasDraft("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save alias domains.", "Aliases not saved");
+    } finally {
+      setSavingAliases(false);
+    }
+  };
+
+  const addAliasDomain = async () => {
+    const value = aliasDraft.trim().toLowerCase();
+    if (!value || !company) return;
+    const current = company.additional_domains ?? [];
+    if (current.includes(value)) { setAliasDraft(""); return; }
+    await saveAliasDomains([...current, value]);
+  };
+
+  const runMerge = async () => {
+    if (!company || !mergeSourceId || merging) return;
+    if (!window.confirm("Merge the selected account into this one? Its prospects, deals, meetings and history move here; its domain becomes an alias; the empty account is removed from lists (kept for audit). This cannot be un-merged from the UI.")) return;
+    setMerging(true);
+    try {
+      const result = await accountSourcingApi.mergeCompany(company.id, mergeSourceId);
+      const moved = result.moved || {};
+      toast.success(
+        `${moved.contacts ?? 0} prospects, ${moved.deals ?? 0} deals and ${moved.meetings ?? 0} meetings moved here. ` +
+          (result.alias_domains?.length ? `Alias domains: ${result.alias_domains.join(", ")}.` : ""),
+        "Accounts merged",
+      );
+      setMergeSourceId("");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Merge failed.", "Merge failed");
+    } finally {
+      setMerging(false);
+    }
+  };
+
   const handleStatusChange = async (value: string) => {
     if (!company || statusSaving) return;
     const next = company.account_status === value ? null : value;
@@ -1784,7 +1834,7 @@ export default function AccountSourcingCompanyDetail() {
                 <button
                   type="button"
                   onClick={async () => {
-                    if (!window.confirm(`Delete account "${company.name}" and all its data? This cannot be undone.`)) return;
+                    if (!window.confirm(`Delete account "${company.name}"? It disappears from every list (prospects included), but nothing is destroyed — history and past metrics stay intact, and an admin can restore it later.`)) return;
                     try {
                       await companiesApi.delete(company.id);
                       nav("/account-sourcing");
@@ -1796,6 +1846,73 @@ export default function AccountSourcingCompanyDetail() {
                 </button>
               )}
               </div>
+
+              <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 10 }}>
+                <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>DOMAINS</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "#1d2b3c", border: "1px solid #cfe0f1", background: "#f2f8ff", borderRadius: 999, padding: "3px 10px" }}>{company.domain}</span>
+                  {(company.additional_domains ?? []).map((alias) => (
+                    <span key={alias} style={{ fontSize: 12, fontWeight: 700, color: "#5b4a86", border: "1px solid #ded4f3", background: "#f7f3ff", borderRadius: 999, padding: "3px 10px", display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      {alias}
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          title="Remove alias domain"
+                          onClick={() => void saveAliasDomains((company.additional_domains ?? []).filter((d) => d !== alias))}
+                          style={{ border: "none", background: "transparent", color: "#8b7bb5", cursor: "pointer", padding: 0, fontWeight: 900 }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+                {isAdmin && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={aliasDraft}
+                      onChange={(e) => setAliasDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") void addAliasDomain(); }}
+                      placeholder="Add alias domain (e.g. ceridian.com)"
+                      style={{ flex: 1, height: 32, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 10px", fontSize: 12.5 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void addAliasDomain()}
+                      disabled={!aliasDraft.trim() || savingAliases}
+                      style={{ height: 32, border: "1px solid #bfd6ee", background: "#fff", color: "#175089", borderRadius: 10, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+                <div style={{ color: colors.faint, fontSize: 11.5, lineHeight: 1.45 }}>
+                  Alias domains (rebrands, regional domains) count as this account's own — prospect matching and the "Check mapping" badge honor them.
+                </div>
+              </div>
+
+              {isAdmin && (
+                <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 10 }}>
+                  <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>MERGE ANOTHER ACCOUNT INTO THIS ONE</div>
+                  <SearchableCompanySelect
+                    value={mergeSourceId || undefined}
+                    onChange={(companyId) => setMergeSourceId(companyId ?? "")}
+                    placeholder="Pick the duplicate account…"
+                    allowNone={false}
+                  />
+                  <button
+                    type="button"
+                    disabled={!mergeSourceId || mergeSourceId === company.id || merging}
+                    onClick={() => void runMerge()}
+                    style={{ height: 34, border: "1px solid #d8c7a8", background: "#fdf8ef", color: "#8a5b00", borderRadius: 10, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: !mergeSourceId || merging ? "default" : "pointer" }}
+                  >
+                    {merging ? "Merging…" : "Merge into this account"}
+                  </button>
+                  <div style={{ color: colors.faint, fontSize: 11.5, lineHeight: 1.45 }}>
+                    Moves the other account's prospects, deals, meetings and history here; its domain becomes an alias; the empty shell is soft-deleted with an audit entry.
+                  </div>
+                </div>
+              )}
 
               <div style={{ ...cardStyle, padding: "12px 14px", display: "grid", gap: 10 }}>
                 <div style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ACCOUNT TEAM</div>

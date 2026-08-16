@@ -8,7 +8,8 @@ import re
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, true
+from sqlalchemy import and_, cast as sa_cast, func, or_, select, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,15 +86,19 @@ def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: b
       re-enabling impossible for non-admins). Single-object guards
       (``_can_see_company``) key on ownership only, for the same reason.
     """
+    # Soft-deleted accounts are gone from every surface for everyone — admins
+    # included (there is no "trash" view yet; restoring is a manual UPDATE).
+    live = Company.deleted_at.is_(None)
     if is_admin:
-        return true()
+        return live
     owns = or_(
         Company.assigned_to_id == user_id,
         Company.sdr_id == user_id,
     )
     if include_disabled:
-        return owns
+        return and_(live, owns)
     return and_(
+        live,
         owns,
         or_(
             Company.account_status.is_(None),
@@ -146,10 +151,24 @@ async def get_or_create_company_by_domain(
     fields = {k: v for k, v in (defaults or {}).items() if k != "domain"}
 
     async def _fetch() -> Optional[Company]:
+        # Alias-aware + live-only, mirroring CompanyRepository.get_by_domain:
+        # an alias hit must return the existing account, not mint a duplicate
+        # under a domain the account already legitimately owns.
         res = await session.execute(
-            select(Company).where(func.lower(Company.domain) == normalized).limit(1)
+            select(Company)
+            .where(
+                Company.deleted_at.is_(None),
+                or_(
+                    func.lower(Company.domain) == normalized,
+                    func.coalesce(
+                        Company.additional_domains, sa_cast("[]", JSONB)
+                    ).op("@>")(func.jsonb_build_array(normalized)),
+                ),
+            )
+            .order_by((func.lower(Company.domain) == normalized).desc())
+            .limit(1)
         )
-        return res.scalar_one_or_none()
+        return res.scalars().first()
 
     existing = await _fetch()
     if existing is not None:
@@ -175,10 +194,26 @@ class CompanyRepository(BaseRepository[Company]):
     async def get_by_domain(self, domain: str) -> Optional[Company]:
         # lower() on both sides: the unique index is on lower(domain), so an
         # exact-case miss here followed by an insert dies on IntegrityError.
+        # Alias-aware: a domain that is another live account's alias
+        # (additional_domains) resolves to that account — rebrands keep
+        # matching (ceridian.com finds the Dayforce account). Primary-domain
+        # match wins over an alias match. Soft-deleted rows never match.
+        normalized = (domain or "").strip().lower()
         result = await self.session.execute(
-            select(Company).where(func.lower(Company.domain) == (domain or "").lower())
+            select(Company)
+            .where(
+                Company.deleted_at.is_(None),
+                or_(
+                    func.lower(Company.domain) == normalized,
+                    func.coalesce(
+                        Company.additional_domains, sa_cast("[]", JSONB)
+                    ).op("@>")(func.jsonb_build_array(normalized)),
+                ),
+            )
+            .order_by((func.lower(Company.domain) == normalized).desc())
+            .limit(1)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def get_by_name(self, name: str) -> Optional[Company]:
         """Case-insensitive, whitespace-trimmed name lookup."""

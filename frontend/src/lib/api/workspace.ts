@@ -908,6 +908,24 @@ export const assignmentsApi = {
       method: "PATCH",
       body: JSON.stringify({ ids, user_id: userId, role }),
     }),
+  // Assign EVERY prospect matching the given filter query string (the same
+  // params buildContactQuery produces for the list/export). expectedTotal is
+  // the count the rep confirmed — the server 409s if the set changed size.
+  assignContactsByFilter: (
+    filterQuery: URLSearchParams,
+    userId: string | null,
+    role: "ae" | "sdr",
+    expectedTotal: number,
+  ) =>
+    request<{
+      matched: number;
+      updated: number;
+      skipped: number;
+      companies_backfilled: number;
+    }>(`/api/v1/assignments/contacts/by-filter?${filterQuery.toString()}`, {
+      method: "PATCH",
+      body: JSON.stringify({ user_id: userId, role, expected_total: expectedTotal }),
+    }),
   // The SAME file is posted for the preview and the apply, so the server always
   // re-derives the plan instead of trusting one sent back by the browser.
   bulkAssignUpload: (file: File, dryRun: boolean) => {

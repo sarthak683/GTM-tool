@@ -2,6 +2,10 @@ export interface Company {
   id: string;
   name: string;
   domain: string;
+  // Alias domains (rebrands/merged accounts) — all matching honors these.
+  additional_domains?: string[] | null;
+  // Soft-deleted accounts are hidden everywhere; kept for audit.
+  deleted_at?: string | null;
   industry?: string;
   vertical?: string;
   employee_count?: number;

@@ -25,13 +25,16 @@ from app.services.deal_flags import compute_deal_flags
 
 
 def deal_visibility_filter(user_id: UUID, is_admin: bool):
-    """Pipeline is workspace-wide (Jul 1): every user sees ALL deals. Returns true() unconditionally.
+    """Pipeline is workspace-wide (Jul 1): every user sees ALL LIVE deals.
 
-    Signature kept (callers still pass ``user_id``/``is_admin``) but both args are
-    now ignored — visibility scoping was removed by product decision. Audit trail
-    on each edit captures who changed what instead.
+    Signature kept (callers still pass ``user_id``/``is_admin``) but both args
+    are ignored — per-user scoping was removed by product decision. The one
+    thing this filter now enforces is soft-delete: deleted deals leave every
+    current-state surface that goes through here (board, lists), while their
+    stage history keeps counting in outcome metrics BY DESIGN — those queries
+    read deal_stage_history and must NOT apply this filter.
     """
-    return true()
+    return Deal.deleted_at.is_(None)
 
 
 # Local-part tokens that mark a non-human / marketing / transactional sender.

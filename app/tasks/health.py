@@ -60,7 +60,7 @@ async def _async_recalculate() -> int:
 
         closed_stage_ids = await get_closed_deal_stage_ids(session) or _CLOSED_STAGES
         result = await session.execute(
-            select(Deal).where(Deal.stage.notin_(closed_stage_ids))
+            select(Deal).where(Deal.stage.notin_(closed_stage_ids), Deal.deleted_at.is_(None))
         )
         deals = result.scalars().all()
 
@@ -164,6 +164,7 @@ async def _async_reconcile_recent_deal_tasks() -> int:
                 )
                 .where(
                     Deal.stage.notin_(closed_stage_ids),
+                    Deal.deleted_at.is_(None),
                     Task.task_type == "system",
                     Task.status == "open",
                     Task.system_key.like("deal_%"),

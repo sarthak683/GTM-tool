@@ -135,6 +135,8 @@ def _can_see_company(company: Company, user) -> bool:
     accounts by default; direct access never dead-ends. Keep in lockstep with
     the copy in ``app/api/v1/endpoints/companies.py``.
     """
+    if company.deleted_at is not None:
+        return False  # soft-deleted: gone for everyone (404, no trash view yet)
     if user.role == "admin":
         return True
     return company.assigned_to_id == user.id or company.sdr_id == user.id
@@ -1826,6 +1828,18 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
         raise HTTPException(status_code=404, detail="Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "additional_domains" in update_data:
+        # Alias domains are normalized + checked for cross-account collisions
+        # before they can influence any matcher.
+        from app.services.company_lifecycle import validate_alias_domains
+
+        try:
+            update_data["additional_domains"] = (
+                await validate_alias_domains(session, company, update_data.get("additional_domains"))
+                or None
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     previous_sdr_id = company.sdr_id
     previous_account_status = company.account_status
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
@@ -1919,6 +1933,74 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     company.updated_at = datetime.utcnow()
     company.icp_score, company.icp_tier = score_company(company)
     return await repo.save(company)
+
+
+class CompanyMergeRequest(BaseModel):
+    # The account to merge FROM (it will be soft-deleted). The path company is
+    # the survivor.
+    source_company_id: UUID
+
+
+@router.post("/companies/{company_id}/merge")
+async def merge_sourced_company(
+    company_id: UUID,
+    payload: CompanyMergeRequest,
+    _admin: AdminUser,
+    session: DBSession = None,
+):
+    """Merge another account into this one (admin).
+
+    First-class replacement for the manual SQL the IRIS/Dayforce-class cases
+    needed: every record of the source account moves to this one, the source's
+    domain(s) become alias domains here (so matching keeps resolving old
+    addresses), empty fields inherit, and the source is soft-deleted with the
+    merge recorded in this account's activity log.
+    """
+    from app.services.company_lifecycle import company_domain_family, merge_companies
+
+    repo = CompanyRepository(session)
+    winner = await repo.get_or_raise(company_id)
+    loser = await repo.get_or_raise(payload.source_company_id)
+    loser_name = loser.name
+    loser_domains = sorted(company_domain_family(loser))
+
+    try:
+        moved = await merge_companies(session, winner, loser)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    moved_total = sum(moved.values())
+    append_company_activity_log(
+        winner,
+        action="company_merged",
+        actor_name=_admin.name,
+        actor_email=_admin.email,
+        message=(
+            f"Merged account '{loser_name}' into this one: {moved_total} record(s) moved "
+            f"({moved.get('contacts', 0)} prospects, {moved.get('deals', 0)} deals, "
+            f"{moved.get('meetings', 0)} meetings). "
+            + (f"Domains now aliased here: {', '.join(loser_domains)}." if loser_domains else "")
+        ),
+        metadata={"moved": moved, "source_company_id": str(payload.source_company_id)},
+    )
+
+    # Refresh the winner's denormalized prospecting fields against its new,
+    # larger contact set.
+    winner_contacts = (
+        await session.execute(select(Contact).where(Contact.company_id == winner.id))
+    ).scalars().all()
+    refresh_company_prospecting_fields(winner, winner_contacts)
+    winner.icp_score, winner.icp_tier = score_company(winner)
+    session.add(winner)
+    await session.commit()
+    await session.refresh(winner)
+
+    return {
+        "merged_into": str(winner.id),
+        "source_company_id": str(payload.source_company_id),
+        "moved": moved,
+        "alias_domains": winner.additional_domains or [],
+    }
 
 
 @router.get("/export")

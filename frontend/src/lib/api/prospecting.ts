@@ -465,6 +465,19 @@ export const accountSourcingApi = {
       body: JSON.stringify(data),
     }),
 
+  // Merge sourceCompanyId INTO companyId (the survivor). Admin-only; the
+  // source is soft-deleted and its domains become alias domains here.
+  mergeCompany: (companyId: string, sourceCompanyId: string) =>
+    request<{
+      merged_into: string;
+      source_company_id: string;
+      moved: Record<string, number>;
+      alias_domains: string[];
+    }>(`/api/v1/account-sourcing/companies/${companyId}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ source_company_id: sourceCompanyId }),
+    }),
+
   reEnrichCompany: (companyId: string) =>
     request<{ company_id: string; task_id: string; status: string; message: string }>(
       `/api/v1/account-sourcing/companies/${companyId}/re-enrich`,

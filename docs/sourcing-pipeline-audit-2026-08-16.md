@@ -118,22 +118,29 @@ candidates, real-domain corrections, same-name/different-domain merges.
   companies) — human judgment, CSVs provided.
 - Re-enabling an account does NOT auto-resume paused Instantly campaigns.
 
-## Roadmap (highest value first)
+## Roadmap — updated after the second release (same day)
+
+DONE in v0.260816b (see the follow-up sections in the release commit):
+metric-definition unification (shared `app/services/metric_definitions.py`
+module both engines consume — emails, replies, call units, meeting dedupe/
+attribution/happened-inference), workspace timezone driving every analytics/
+scorecard window (`workspace_timezone` setting, IANA, DST-correct), soft-delete
+for companies + deals (migration 114 `deleted_at`; history and past scorecards
+never rewrite; delete = leave current-state surfaces), company merge + alias
+domains (migration 114 `additional_domains`; merge endpoint + admin UI; every
+domain matcher and the mismatch badge honor aliases), and filter-wide bulk
+assign on Prospecting ("Assign all N matching", stale-count 409 guard, same
+handoff/backfill semantics as id-based assignment).
+
+Remaining:
 
 1. Aircall reconciliation poller (webhook gaps still silently lower call
-   counts) — carried from 08-15.
-2. Unify the two metric engines (`performance_metrics` vs `analytics`) —
-   remaining definitional drift documented in code comments (meetings source,
-   attribution-to-current-owner, cohort vs occupancy conversion).
-3. Apply `workspace_timezone` to analytics windows (currently display-only;
-   windows are UTC).
-4. Soft-delete for deals/companies: deleting a company hard-deletes its
-   activities + deals' stage history, retroactively changing historical
-   scorecards.
-5. Company merge tool (pick winner, move contacts/deals/history, alias the
-   loser's domain).
-6. Multi-domain accounts (alias domains like ceridian.com→dayforce.com) so the
-   mismatch badge can go quiet on legitimate rebrands.
-7. Filter-wide bulk assign on Prospecting ("apply to all N matching"), matching
-   the filter-wide export.
-8. Business-day stuck thresholds (currently calendar days, ~40% over-flagging).
+   counts) — carried from 08-15; now the top item.
+2. Literal single-engine merge: definitions are unified, but the scorecard and
+   dashboard still run separate query engines (per-rep vs bulk). Collapse when
+   convenient; the shared dictionary keeps them agreeing meanwhile.
+3. Point-in-time deal ownership (attribution currently follows the CURRENT
+   assignee in BOTH engines — consistent, but reassignment moves history).
+4. Trash/restore UI for soft-deleted companies/deals (restore is a manual
+   UPDATE today).
+5. Business-day stuck thresholds (currently calendar days, ~40% over-flagging).

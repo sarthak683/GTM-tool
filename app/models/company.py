@@ -97,6 +97,16 @@ class Company(CompanyBase, table=True):
     # seed) leave these null.
     created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     created_by_name: Optional[str] = None
+    # Alias domains (rebrands, regional domains, merged accounts). Normalized
+    # lowercase list; every domain matcher honors these alongside `domain`, and
+    # the mismatch badge goes quiet for contacts on any alias. Cross-account
+    # uniqueness is enforced in the update/merge endpoints.
+    additional_domains: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    # Soft-delete: current-state surfaces exclude the row; history (activities,
+    # deals' stage history) survives so past scorecards never rewrite. The
+    # lower(domain) unique index is partial on deleted_at IS NULL (migration
+    # 114) so the domain can be reused by a new account.
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -147,6 +157,8 @@ class CompanyCreate(CompanyBase):
 
 class CompanyRead(CompanyBase):
     id: UUID
+    additional_domains: Optional[Any] = None
+    deleted_at: Optional[datetime] = None
     tech_stack: Optional[Any] = None
     icp_score: Optional[int] = None
     icp_tier: Optional[str] = None
@@ -247,6 +259,10 @@ class CompanySourcingSummary(SQLModel):
 class CompanyUpdate(SQLModel):
     name: Optional[str] = None
     domain: Optional[str] = None
+    # Alias domains; normalized + cross-account-uniqueness-checked in the
+    # update endpoints (never written raw). deleted_at is NOT accepted here —
+    # soft-delete goes through the DELETE endpoints only.
+    additional_domains: Optional[list[str]] = None
     industry: Optional[str] = None
     vertical: Optional[str] = None
     employee_count: Optional[int] = None

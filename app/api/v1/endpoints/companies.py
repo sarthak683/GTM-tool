@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -30,6 +30,8 @@ def _can_see_company(company: Company, user) -> bool:
     detail/update routes to 404 a company the caller can't see (so existence
     isn't leaked).
     """
+    if company.deleted_at is not None:
+        return False  # soft-deleted: gone for everyone (404, no trash view yet)
     if user.role == "admin":
         return True
     return company.assigned_to_id == user.id or company.sdr_id == user.id
@@ -39,14 +41,29 @@ def _visible_company_selector_filter():
     # Global company selectors should only show source-of-truth accounts that
     # came through Account Sourcing/manual add, plus imported shells that are
     # already linked to deals. Deal-linked accounts need to stay searchable for
-    # meeting/company mapping and prospect mapping.
-    return or_(
-        Company.sourcing_batch_id.isnot(None),
-        select(Deal.id).where(Deal.company_id == Company.id).exists(),
+    # meeting/company mapping and prospect mapping. Soft-deleted accounts are
+    # never valid selector targets.
+    return and_(
+        Company.deleted_at.is_(None),
+        or_(
+            Company.sourcing_batch_id.isnot(None),
+            select(Deal.id).where(Deal.company_id == Company.id).exists(),
+        ),
     )
 
 
 async def _apply_company_update(session, company: Company, update_data: dict) -> None:
+    if "additional_domains" in update_data:
+        # Same alias validation as the account-sourcing update path.
+        from app.services.company_lifecycle import validate_alias_domains
+
+        try:
+            update_data["additional_domains"] = (
+                await validate_alias_domains(session, company, update_data.get("additional_domains"))
+                or None
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     previous_sdr_id = company.sdr_id
     previous_account_status = company.account_status
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
@@ -199,9 +216,23 @@ async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSes
 
 @router.delete("/{company_id}", status_code=204)
 async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser):
+    """SOFT-delete an account (admin).
+
+    The old hard cascade destroyed the company's activities and its deals'
+    stage history — deleting one account silently rewrote last quarter's
+    demos/closed-won scorecards. Now: the company and its live deals get
+    ``deleted_at``; contacts keep their rows and links (hidden from prospecting
+    by the deleted-account gate); every activity and history row survives, so
+    historical metrics never change. Restoring is a manual UPDATE (deleted_at
+    = NULL) until a trash view exists.
+    """
+    from app.services.company_lifecycle import soft_delete_company
+
     repo = CompanyRepository(session)
-    await repo.get_or_raise(company_id)  # 404 if not found
-    await repo.delete_with_cascade(company_id)
+    company = await repo.get_or_raise(company_id)  # 404 if not found
+    if company.deleted_at is None:
+        await soft_delete_company(session, company)
+        await session.commit()
 
 
 @router.get("/{company_id}/deals", response_model=List[DealRead])

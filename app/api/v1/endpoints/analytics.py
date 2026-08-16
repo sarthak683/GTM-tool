@@ -3,7 +3,10 @@ from __future__ import annotations
 import time
 import re
 from collections import defaultdict
-from datetime import date, datetime, time, timezone, timedelta
+# NOTE: never `from datetime import time` here — it shadows the stdlib `time`
+# module imported above, and the dashboard cache's time.monotonic() then 500s
+# every uncached request (bit us on 2026-08-16; caught in pre-deploy smoke).
+from datetime import date, datetime, timezone, timedelta
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
@@ -162,82 +165,19 @@ def _is_rep(rep_id, rep_user_ids) -> bool:
     """
     return rep_id is None or rep_id in rep_user_ids
 
-# tl;dv and Google Calendar both ingest the SAME real-world meeting as separate
-# Meeting rows (different external_source). When both exist we must count it
-# once. We prefer tl;dv (only fires on calls that actually happened) over
-# google_calendar (can include rescheduled/no-show events) over manual.
-_MEETING_SOURCE_PRIORITY = {"tldv": 0, "google_calendar": 1, "manual": 2, "": 3}
+# Meeting dedupe/attribution definitions are SHARED with the performance
+# scorecard — one metric dictionary, two query engines. Never redefine them
+# here; both surfaces must agree on what a meeting IS.
+from zoneinfo import ZoneInfo  # noqa: E402
 
-# Cross-source clock skew: tl;dv stamps `happenedAt` (real start) while Google
-# Calendar stamps the scheduled time, so the "same" meeting can differ by a
-# minute or two (e.g. 4:30 vs 4:31). Match within this window rather than on an
-# exact-minute key, which silently double-counted skewed pairs.
-_MEETING_DEDUP_TOLERANCE_SECONDS = 5 * 60
-
-
-def _meeting_entity_key(row):
-    """Entity a meeting belongs to, for cross-source grouping.
-
-    Prefer company_id; fall back to deal_id. Deliberately does NOT use owner —
-    tl;dv resolves a rep owner while the Google Calendar row of the SAME meeting
-    often has owner=None, so keying on owner splits true duplicates. Nor deal_id
-    when a company exists: one source may map the deal and the other only the
-    company. Company + time-proximity is the reliable shared signal.
-    """
-    if row.company_id is not None:
-        return ("company", row.company_id)
-    if row.deal_id is not None:
-        return ("deal", row.deal_id)
-    # No company/deal anchor — never cluster these with each other (they share
-    # no entity). Callers already exclude such meetings, but key on the row's
-    # own id so an unanchored row can only ever be its own singleton group.
-    return ("meeting", row.id)
-
-
-def _dedupe_meetings_across_sources(rows) -> list:
-    """Collapse cross-source duplicates of the same real meeting to one row.
-
-    Groups by entity (company, falling back to deal) and, within each group,
-    clusters rows whose scheduled_at falls within the tolerance window — so a
-    tl;dv row and a Google Calendar row a minute apart count once even when
-    their owners differ. The tl;dv row wins via `_MEETING_SOURCE_PRIORITY`.
-    Returns one row per real meeting; order is not guaranteed (callers sort).
-    """
-    groups: dict[tuple, list] = defaultdict(list)
-    for row in rows:
-        groups[_meeting_entity_key(row)].append(row)
-
-    kept: list = []
-    for group in groups.values():
-        # Sort by time (None last) so within-tolerance rows sit adjacent.
-        group.sort(key=lambda r: (r.scheduled_at is None, r.scheduled_at or datetime.min))
-        clusters: list[dict] = []
-        for row in group:
-            t = row.scheduled_at
-            placed = False
-            for cluster in clusters:
-                anchor = cluster["anchor"]
-                if t is not None and anchor is not None:
-                    if abs((t - anchor).total_seconds()) <= _MEETING_DEDUP_TOLERANCE_SECONDS:
-                        cluster["rows"].append(row)
-                        placed = True
-                        break
-                elif t is None and anchor is None:
-                    cluster["rows"].append(row)
-                    placed = True
-                    break
-            if not placed:
-                clusters.append({"anchor": t, "rows": [row]})
-        for cluster in clusters:
-            kept.append(
-                min(
-                    cluster["rows"],
-                    key=lambda r: _MEETING_SOURCE_PRIORITY.get(
-                        str(r.external_source or "").strip().lower(), 99
-                    ),
-                )
-            )
-    return kept
+from app.services.metric_definitions import (  # noqa: E402
+    dedupe_meetings_across_sources as _dedupe_meetings_across_sources,
+    local_midnight_utc,
+    meeting_attendee_rep_ids as _meeting_attendee_rep_ids,
+    meeting_rep_ids as _meeting_rep_ids,
+    workspace_today,
+    workspace_zoneinfo,
+)
 
 
 class MilestoneDealRow(BaseModel):
@@ -573,21 +513,42 @@ def _rolling_period_starts(start: datetime, end: datetime, *, daily: bool, bucke
     return _rolling_week_starts(start, end)
 
 
-def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
+def _resolve_analytics_window(
+    window_days: int,
+    from_date: Optional[str],
+    to_date: Optional[str],
+    tz: Optional[ZoneInfo] = None,
+) -> tuple[datetime, datetime]:
+    """Window boundaries as naive-UTC instants, with DAYS meaning days in the
+    WORKSPACE timezone.
+
+    Storage stays UTC; only the boundaries are computed in the workspace zone
+    (analytics settings ``workspace_timezone``) and converted back. Before
+    this, every boundary was a UTC midnight, so activity between 00:00 and
+    05:30 IST landed on the previous reporting day for an IST workspace.
+    """
     now = _utcnow()
+    tz = tz or ZoneInfo("UTC")
+
+    def _parse_day(value: str) -> date:
+        # Accept plain dates AND full datetimes (older clients sent either);
+        # either way the DAY in the workspace zone is what defines the window.
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return datetime.fromisoformat(value).date()
+
     try:
         if from_date:
-            window_start = datetime.fromisoformat(from_date)
+            window_start = local_midnight_utc(_parse_day(from_date), tz)
         else:
-            # Midnight-aligned, matching the explicit from_date branch. The old
-            # rolling-instant boundary meant "Last 30 days" and an explicit
-            # 30-day range covered DIFFERENT spans (one cut mid-day), so the
-            # same dashboard produced two numbers for the same question.
-            window_start = datetime.combine(
-                (now - timedelta(days=window_days)).date(), time.min
-            )
+            # Midnight-aligned in the workspace zone, matching the explicit
+            # from_date branch — "Last 30 days" and an explicit 30-day range
+            # must cover the same span.
+            today_local = workspace_today(tz, now)
+            window_start = local_midnight_utc(today_local - timedelta(days=window_days), tz)
         if to_date:
-            window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
+            window_end = local_midnight_utc(_parse_day(to_date) + timedelta(days=1), tz)
         else:
             window_end = now
     except ValueError:
@@ -886,40 +847,6 @@ def _meeting_reporting_timestamp(row, *, window_end: datetime) -> datetime:
     return row.created_at or row.scheduled_at
 
 
-def _meeting_attendee_rep_ids(row, *, user_ids_by_email: dict[str, UUID]) -> list[UUID]:
-    attendees = row.attendees if isinstance(row.attendees, list) else []
-    rep_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for attendee in attendees:
-        if not isinstance(attendee, dict):
-            continue
-        email = str(attendee.get("email") or "").strip().lower()
-        rep_id = user_ids_by_email.get(email)
-        if rep_id and rep_id not in seen:
-            seen.add(rep_id)
-            rep_ids.append(rep_id)
-    return rep_ids
-
-
-def _meeting_rep_ids(
-    row,
-    *,
-    deal_owner: dict[UUID, UUID | None],
-    user_ids_by_email: dict[str, UUID],
-) -> list[UUID | None]:
-    rep_ids: list[UUID | None] = []
-    seen: set[UUID] = set()
-    primary_id = row.owner_user_id or deal_owner.get(row.deal_id)
-    if primary_id:
-        rep_ids.append(primary_id)
-        seen.add(primary_id)
-    for attendee_rep_id in _meeting_attendee_rep_ids(row, user_ids_by_email=user_ids_by_email):
-        if attendee_rep_id not in seen:
-            seen.add(attendee_rep_id)
-            rep_ids.append(attendee_rep_id)
-    return rep_ids or [None]
-
-
 async def _build_meeting_stage_gate(session, stage_settings):
     """Return a predicate `gate(meeting_row) -> bool` keeping only early-funnel
     meetings (deal at or before `demo_done`).
@@ -1190,10 +1117,11 @@ async def sales_activity_drilldown(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
-    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
-
     analytics_settings = await get_analytics_settings(session)
+    window_start, window_end = _resolve_analytics_window(
+        window_days, from_date, to_date, tz=workspace_zoneinfo(analytics_settings)
+    )
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
     user_rows = (await session.execute(select(User.id, User.name, User.email, User.role, User.is_active))).all()
     users = {row.id: row.name for row in user_rows}
     user_emails = {row.id: str(row.email or "").strip().lower() for row in user_rows}
@@ -2077,12 +2005,13 @@ async def sales_dashboard(
         return cached
 
     now = _utcnow()
-    # UTC date, matching `now` — date.today() is server-local, so near midnight
-    # the overdue/forecast day boundary disagreed with every other timestamp
-    # in the same response.
-    today = now.date()
+    # "Today" in the WORKSPACE timezone — it decides overdue/forecast day
+    # boundaries. (Was server-local date.today(), then UTC; both put IST
+    # mornings on the previous reporting day.)
+    _tz = workspace_zoneinfo(await get_analytics_settings(session))
+    today = workspace_today(_tz, now)
 
-    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
+    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date, tz=_tz)
     monthly_unique_funnel = await _load_monthly_unique_funnel(
         session,
         months=12,
@@ -2122,10 +2051,13 @@ async def sales_dashboard(
         Deal.geography,
     ).where(
         # Same population as the board and the performance scorecard: real
-        # deals only. Without this, prospect-pipeline rows leaked into
+        # LIVE deals only. Without this, prospect-pipeline rows leaked into
         # pipeline value here while every other surface excluded them — the
-        # same "pipeline" number differed page to page.
-        Deal.pipeline_type == "deal"
+        # same "pipeline" number differed page to page. Soft-deleted deals are
+        # out of every current-state number (their stage HISTORY still counts
+        # in outcome metrics by design).
+        Deal.pipeline_type == "deal",
+        Deal.deleted_at.is_(None),
     )
     if filter_rep_ids:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
@@ -4195,8 +4127,9 @@ async def pipeline_deals(
         .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
         .where(
             Deal.stage.in_(list(active_stage_ids)),
-            # Same population rule as the dashboard scan/board: deals only.
+            # Same population rule as the dashboard scan/board: live deals only.
             Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
         )
     )
     if user_id is not None:

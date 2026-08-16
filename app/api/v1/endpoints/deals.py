@@ -572,9 +572,31 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
 
 @router.delete("/{deal_id}", status_code=204)
 async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
+    """SOFT-delete a deal (admin).
+
+    The old hard cascade removed the deal's activities and (via FK CASCADE) its
+    stage-history rows, so deleting a test/dead deal retroactively changed
+    every historical outcome metric built on that history. Now the deal just
+    leaves current-state surfaces via deleted_at; open system tasks on it are
+    dismissed so they don't nag about an invisible deal.
+    """
     repo = DealRepository(session)
-    await repo.get_or_raise(deal_id)
-    await repo.delete_with_cascade(deal_id)
+    deal = await repo.get_or_raise(deal_id)
+    if deal.deleted_at is None:
+        deal.deleted_at = datetime.utcnow()
+        deal.updated_at = deal.deleted_at
+        session.add(deal)
+        from sqlalchemy import update as sa_update
+
+        from app.models.task import Task
+
+        await session.execute(
+            sa_update(Task)
+            .where(Task.entity_type == "deal", Task.entity_id == deal_id, Task.status == "open")
+            .values(status="dismissed", updated_at=datetime.utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
 
 
 # ── Deal Contacts ────────────────────────────────────────────────────────────

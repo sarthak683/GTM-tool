@@ -13,10 +13,11 @@ Rules:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, timezone as dt_timezone
 from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import String, and_, case, cast, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,14 @@ from app.models.activity import Activity
 from app.models.deal import Deal
 from app.models.deal_stage_history import DealStageHistory
 from app.models.meeting import Meeting
+from app.services.metric_definitions import (
+    call_unit as _call_unit,
+    dedupe_meetings_across_sources,
+    meeting_happened,
+    meeting_rep_ids,
+    outbound_email_filter,
+    reply_email_filter,
+)
 
 
 # ── Period resolver ──────────────────────────────────────────────────────────
@@ -46,13 +55,31 @@ def resolve_period(
     tz_offset_hours: int = 0,
     custom_start: Optional[date] = None,
     custom_end: Optional[date] = None,
+    tz_name: Optional[str] = None,
 ) -> Period:
     """
     Turn a granularity + anchor date into an explicit [start, end) window in
-    UTC. Workspace timezone is expressed as a simple offset for now; the
-    admin UI can evolve to IANA names later.
+    UTC.
+
+    ``tz_name`` (IANA, e.g. "Asia/Kolkata" — normally the workspace_timezone
+    analytics setting) makes boundaries fall on LOCAL midnights, DST-correct
+    per boundary. It wins over ``tz_offset_hours``, which is kept for callers
+    that still pass a plain offset. The anchor "what week/month is it right
+    now" question is also answered in that zone — at 2am IST on the 1st, UTC
+    is still last month, and the scorecard used to show the wrong period.
     """
-    anchor = anchor or datetime.utcnow().date()
+    zone: Optional[ZoneInfo] = None
+    if tz_name:
+        try:
+            zone = ZoneInfo(tz_name)
+        except Exception:
+            zone = None
+    if anchor is None:
+        anchor = (
+            datetime.now(dt_timezone.utc).astimezone(zone).date()
+            if zone
+            else datetime.utcnow().date()
+        )
 
     if granularity == "custom":
         if not (custom_start and custom_end):
@@ -88,6 +115,11 @@ def resolve_period(
         label = f"Q{(q_start_month - 1)//3 + 1} {first.year}"
     else:
         raise ValueError(f"unknown granularity: {granularity}")
+
+    if zone is not None:
+        start_utc = start_local.replace(tzinfo=zone).astimezone(dt_timezone.utc).replace(tzinfo=None)
+        end_utc = end_local.replace(tzinfo=zone).astimezone(dt_timezone.utc).replace(tzinfo=None)
+        return Period(start=start_utc, end=end_utc, granularity=granularity, label=label)
 
     offset = timedelta(hours=tz_offset_hours)
     return Period(
@@ -191,17 +223,6 @@ async def calls_made(
     return (await session.execute(stmt)).scalar_one() or 0
 
 
-def _call_unit():
-    """The unit a "call" is counted in: one PHONE CALL, not one activity row.
-
-    An Aircall call emits several rows sharing one call_id (call.created,
-    call.answered, call.ended, transcript) — counting rows made one connected
-    dial read as 3-4 calls. Manual call logs have no call_id and fall back to
-    their own row id, i.e. one row = one call.
-    """
-    return func.coalesce(Activity.call_id, cast(Activity.id, String))
-
-
 async def calls_connected(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
@@ -238,47 +259,16 @@ async def contacts_dialed(
     return (await session.execute(stmt)).scalar_one() or 0
 
 
-def _email_event_type():
-    """The Instantly event type stored in Activity.event_metadata.
-
-    Rows written before the webhook stamped event_type (and manual UI-logged
-    emails) have none — those are sends, hence the 'email_sent' coalesce.
-    """
-    return func.coalesce(
-        func.jsonb_extract_path_text(Activity.event_metadata, "event_type"),
-        "email_sent",
-    )
-
-
 async def emails_sent(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
     """Outbound emails a rep actually SENT.
 
-    Two producer families, matched by construction (see app/tasks/email_sync.py
-    and app/api/v1/endpoints/webhooks.py):
-      * Instantly/webhook + manual rows: medium="email" — but the webhook also
-        logs replies/opens/clicks under type="email", so gate on
-        event_type == 'email_sent' (old rows without one are sends).
-      * Gmail-synced sends: NO medium, source="gmail_sync"; rep sends carry
-        created_by_id (resolved from the sender address). Deal-thread rows
-        without created_by_id include the PROSPECT's inbound mail — excluded.
-    The old filter (medium == "email" alone) missed every Gmail send and
-    counted webhook replies as sends — wrong in both directions.
+    Definition lives in app.services.metric_definitions.outbound_email_filter —
+    SHARED with SalesAnalytics so the two surfaces cannot drift apart again.
     """
     stmt = select(func.count(Activity.id)).where(
-        Activity.type == "email",
-        or_(
-            and_(
-                Activity.medium == "email",
-                Activity.source.is_distinct_from("email_reply"),
-                _email_event_type() == "email_sent",
-            ),
-            and_(
-                Activity.source == "gmail_sync",
-                Activity.created_by_id.is_not(None),
-            ),
-        ),
+        outbound_email_filter(),
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),
@@ -289,23 +279,10 @@ async def emails_sent(
 async def emails_replied_to(
     session: AsyncSession, rep_id: Optional[UUID], period: Period, lookback_days: int = 1
 ) -> int:
-    """
-    Prospect replies received in the period.
-
-    Counts what the system ACTUALLY writes for replies: Instantly webhook/sync
-    rows with event_metadata.event_type == 'reply_received' (plus the legacy
-    source='email_reply' marker, kept for old rows). The old filter matched
-    ONLY source='email_reply', which no code path has ever written — so
-    reply_rate was structurally 0 on every scorecard while SalesAnalytics
-    (which reads event_type) showed real replies for the same rep.
-    """
+    """Prospect replies received in the period (shared definition —
+    metric_definitions.reply_email_filter)."""
     stmt = select(func.count(Activity.id)).where(
-        Activity.type == "email",
-        or_(
-            Activity.source == "email_reply",
-            func.jsonb_extract_path_text(Activity.event_metadata, "event_type")
-            == "reply_received",
-        ),
+        reply_email_filter(),
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),
@@ -328,15 +305,58 @@ async def linkedin_whatsapp_touches(
 async def meetings_done(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
-    """Calendar events marked as held (not cancelled / no-show)."""
-    stmt = select(func.count(Meeting.id)).where(
-        Meeting.scheduled_at >= period.start,
-        Meeting.scheduled_at < period.end,
-        Meeting.status.in_(["held", "completed", "done"]),
+    """Meetings that actually HAPPENED in the period.
+
+    Uses the SHARED definitions (metric_definitions): cross-source dedupe (a
+    tl;dv row and its Google Calendar twin count once), happened-inference
+    (explicit held status OR past + not cancelled — reps rarely flip the
+    status by hand), and owner/deal-owner/attendee attribution. The old
+    version required status in (held, completed, done) on raw rows, so it
+    undercounted vs the dashboard for the same rep and label.
+    """
+    rows = (
+        await session.execute(
+            select(
+                Meeting.id,
+                Meeting.scheduled_at,
+                Meeting.status,
+                Meeting.company_id,
+                Meeting.deal_id,
+                Meeting.external_source,
+                Meeting.owner_user_id,
+                Meeting.attendees,
+            ).where(
+                Meeting.scheduled_at >= period.start,
+                Meeting.scheduled_at < period.end,
+            )
+        )
+    ).all()
+    happened = [row for row in rows if meeting_happened(row)]
+    deduped = dedupe_meetings_across_sources(happened)
+    if rep_id is None:
+        return len(deduped)
+
+    deal_ids = {row.deal_id for row in deduped if row.deal_id}
+    deal_owner: dict = {}
+    if deal_ids:
+        deal_owner = dict(
+            (
+                await session.execute(
+                    select(Deal.id, Deal.assigned_to_id).where(Deal.id.in_(deal_ids))
+                )
+            ).all()
+        )
+    from app.models.user import User
+
+    rep_email = (
+        await session.execute(select(User.email).where(User.id == rep_id))
+    ).scalar_one_or_none()
+    user_ids_by_email = {rep_email.strip().lower(): rep_id} if rep_email else {}
+    return sum(
+        1
+        for row in deduped
+        if rep_id in meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email)
     )
-    if rep_id is not None:
-        stmt = stmt.where(Meeting.owner_user_id == rep_id)
-    return (await session.execute(stmt)).scalar_one() or 0
 
 
 async def total_touchpoints(
@@ -671,6 +691,7 @@ async def stuck_deals(
         .outerjoin(latest, latest.c.deal_id == Deal.id)
         .where(
             Deal.stage.in_(list(stuck_thresholds_days.keys())),
+            Deal.deleted_at.is_(None),
             _deal_rep_filter(rep_id),
         )
     )

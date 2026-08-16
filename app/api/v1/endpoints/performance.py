@@ -141,8 +141,7 @@ async def get_scorecard(
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
     settings = await get_analytics_settings(session)
-    tz_offset = 0
-    p = pm.resolve_period(period, anchor=anchor, tz_offset_hours=tz_offset)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
     targets = _targets_for(settings, rep.role if rep else None, period)
     bands = settings["rag_bands"]
 
@@ -290,7 +289,7 @@ async def get_funnel(
     from sqlalchemy import func, select, or_
 
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
 
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
@@ -602,7 +601,7 @@ async def get_forecast(
     rep_uuid = rep.id if rep else None
     settings = await get_analytics_settings(session)
     probs = settings.get("stage_probabilities", {})
-    p = pm.resolve_period(period, anchor=anchor)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
 
     # Booked (closed_won in period)
     booked_stmt = (
@@ -710,7 +709,8 @@ async def get_leaderboard(
     period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
 ):
-    p = pm.resolve_period(period, anchor=anchor)
+    settings = await get_analytics_settings(session)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
     fn = LEADERBOARD_METRICS[metric]
     stmt = select(User).where(User.is_active == True, User.role.in_(["ae", "sdr"]))  # noqa: E712
     users = (await session.execute(stmt)).scalars().all()
@@ -766,8 +766,8 @@ async def get_incentives(
     from app.models.deal_stage_history import DealStageHistory
     from app.models.meeting import Meeting
 
-    p = pm.resolve_period("month", anchor=anchor)
     settings = await get_analytics_settings(session)
+    p = pm.resolve_period("month", anchor=anchor, tz_name=settings.get("workspace_timezone"))
     target = float(settings.get("monthly_targets", {}).get("sdr", {}).get("qualified_leads", 7) or 7)
 
     sdr_users = (await session.execute(

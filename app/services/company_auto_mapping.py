@@ -92,10 +92,17 @@ async def backfill_orphans_for_company(
             "shadow_companies_absorbed": shadow_companies_absorbed,
         }
 
+    # Alias-aware: orphans whose email domain is ANY of the account's
+    # legitimate domains (primary + additional_domains) link here.
+    from app.services.company_lifecycle import company_domain_family
+
+    family = sorted(
+        d for d in company_domain_family(company) if d and d not in _NON_COMPANY_DOMAINS
+    )
     contacts_stmt = select(Contact).where(
         Contact.company_id.is_(None),
         Contact.email.is_not(None),
-        func.lower(func.split_part(Contact.email, "@", 2)) == domain,
+        func.lower(func.split_part(Contact.email, "@", 2)).in_(family),
     )
     contacts = (await session.execute(contacts_stmt)).scalars().all()
 

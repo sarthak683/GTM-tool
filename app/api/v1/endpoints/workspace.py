@@ -248,6 +248,7 @@ async def _compute_alerts(
         select(Deal.id, Deal.name, Deal.stage, Deal.days_in_stage, Deal.health)
         .where(
             ~Deal.stage.in_(CLOSED_STAGES),
+            Deal.deleted_at.is_(None),
             Deal.days_in_stage > 14,
         )
         .order_by(Deal.days_in_stage.desc())
@@ -271,7 +272,7 @@ async def _compute_alerts(
     # 2. At-risk deals — health = red
     atrisk_rows = (await session.execute(
         select(Deal.id, Deal.name, Deal.stage)
-        .where(Deal.health == "red", ~Deal.stage.in_(CLOSED_STAGES))
+        .where(Deal.health == "red", ~Deal.stage.in_(CLOSED_STAGES), Deal.deleted_at.is_(None))
         .limit(10)
     )).all()
 

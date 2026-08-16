@@ -99,7 +99,9 @@ export type ContactSearchParams = {
  * from the list it claims to represent — the backend shares a matching
  * ContactFilters dependency for the same reason.
  */
-const buildContactQuery = (params: ContactSearchParams): URLSearchParams => {
+// Exported so filter-wide operations (CSV export, assign-all-matching) send
+// EXACTLY the query the list is showing — one builder, no drift.
+export const buildContactQuery = (params: ContactSearchParams): URLSearchParams => {
   const search = new URLSearchParams();
     if (params.companyId) search.set("company_id", params.companyId);
     if (params.q) search.set("q", params.q);

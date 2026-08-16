@@ -10,6 +10,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import String, and_, case, cast, false, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -203,7 +204,8 @@ def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
 
 
 def active_account_contact_filter():
-    """Predicate: the contact's ACCOUNT is not disabled (not_a_fit/dnd).
+    """Predicate: the contact's ACCOUNT is not disabled (not_a_fit/dnd) or
+    soft-deleted.
 
     Contacts with no account pass — they are their own problem (mapping), not a
     disabled-account one. Subquery form so callers that don't join Company can
@@ -216,7 +218,12 @@ def active_account_contact_filter():
     return or_(
         Contact.company_id.is_(None),
         Contact.company_id.not_in(
-            select(Company.id).where(Company.account_status.in_(INACTIVE_ACCOUNT_STATUSES))
+            select(Company.id).where(
+                or_(
+                    Company.account_status.in_(INACTIVE_ACCOUNT_STATUSES),
+                    Company.deleted_at.is_not(None),
+                )
+            )
         ),
     )
 
@@ -340,6 +347,14 @@ class ContactRepository(BaseRepository[Contact]):
             email_domain == normalized_company_domain,
             email_domain.like(func.concat("%.", normalized_company_domain)),
             normalized_company_domain.like(func.concat("%.", email_domain)),
+            # Alias domains (rebrands, merged accounts): membership in
+            # additional_domains means the address legitimately belongs to the
+            # account. coalesce keeps the arm boolean (NULL @> x is NULL, and a
+            # NULL arm would poison the whole OR into NULL → badge silently
+            # stuck off).
+            func.coalesce(Company.additional_domains, cast("[]", JSONB)).op("@>")(
+                func.jsonb_build_array(email_domain)
+            ),
         )
         account_domain_mismatch_expr = case(
             (
@@ -419,6 +434,13 @@ class ContactRepository(BaseRepository[Contact]):
             )
             base_stmt = base_stmt.where(active_account_gate)
             count_stmt = count_stmt.where(active_account_gate)
+
+        # Soft-deleted accounts are stronger than disabled: their prospects are
+        # out UNCONDITIONALLY (no filter reveals them — the account itself 404s
+        # everywhere, so surfacing its prospects would be a dead end).
+        not_deleted_gate = or_(Contact.company_id.is_(None), Company.deleted_at.is_(None))
+        base_stmt = base_stmt.where(not_deleted_gate)
+        count_stmt = count_stmt.where(not_deleted_gate)
 
         if prospect_only:
             # Always surface contacts that a rep explicitly added through the UI

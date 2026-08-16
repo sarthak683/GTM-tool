@@ -1,7 +1,7 @@
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
@@ -644,6 +644,41 @@ export default function Contacts() {
   const [timezoneDraft, setTimezoneDraft] = useState("");
   const [savingTimezoneId, setSavingTimezoneId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
+  // Filter-wide assignment ("Assign all N matching") — the assignment twin of
+  // the filter-wide CSV export.
+  const [showAssignAllModal, setShowAssignAllModal] = useState(false);
+  const [assignAllRole, setAssignAllRole] = useState<"sdr" | "ae">("sdr");
+  const [assignAllUserId, setAssignAllUserId] = useState<string>("");
+  const [assignAllBusy, setAssignAllBusy] = useState(false);
+
+  const runAssignAllMatching = async () => {
+    if (!assignAllUserId || assignAllBusy) return;
+    setAssignAllBusy(true);
+    try {
+      const query = buildContactQuery(buildContactFilterParams());
+      const result = await assignmentsApi.assignContactsByFilter(
+        query,
+        assignAllUserId,
+        assignAllRole,
+        contactsTotal,
+      );
+      toast.success(
+        `${result.updated} prospect(s) assigned` +
+          (result.skipped ? `, ${result.skipped} skipped (permissions)` : "") +
+          (result.companies_backfilled
+            ? `; ${result.companies_backfilled} account owner slot(s) backfilled`
+            : "") +
+          ".",
+        "Assigned all matching",
+      );
+      setShowAssignAllModal(false);
+      loadContacts({ silent: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Assignment failed.", "Assign failed");
+    } finally {
+      setAssignAllBusy(false);
+    }
+  };
   const [creatingMissingCompanies, setCreatingMissingCompanies] = useState(false);
   const [enrichingMissingKey, setEnrichingMissingKey] = useState<string | null>(null);
 
@@ -3360,6 +3395,26 @@ export default function Contacts() {
                       <option key={company.id} value={company.id}>{company.name} ({company.count})</option>
                     ))}
                   </select>
+                  {contactsTotal > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAssignAllModal(true)}
+                      title="Assign every prospect matching the current filters — not just this page"
+                      style={{
+                        height: 34,
+                        border: "1px solid #bfd6ee",
+                        background: "#ffffff",
+                        color: "#175089",
+                        borderRadius: 10,
+                        padding: "0 12px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Assign all {contactsTotal}…
+                    </button>
+                  )}
                   {selectedContactIds.size > 0 && (
                     <button
                       type="button"
@@ -4338,6 +4393,63 @@ export default function Contacts() {
                 }}
               >
                 Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAssignAllModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowAssignAllModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md border border-[#d9e1ec]" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-[16px] font-bold text-[#1d2b3c] mb-1">Assign all matching prospects</h2>
+            <p className="text-[13px] text-[#6b7e92] mb-4">
+              This assigns <strong>all {contactsTotal}</strong> prospects matching the current filters — every page, not just this one. The same rules as normal assignment apply (SDR handoffs reset outreach progress; ownerless accounts inherit the owner).
+            </p>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+              {(["sdr", "ae"] as const).map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => setAssignAllRole(role)}
+                  style={{
+                    flex: 1, height: 34, borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
+                    border: assignAllRole === role ? "1px solid #2467a8" : "1px solid #d9e1ec",
+                    background: assignAllRole === role ? "#e8f1fb" : "#fff",
+                    color: assignAllRole === role ? "#175089" : "#5f7390",
+                  }}
+                >
+                  {role.toUpperCase()} slot
+                </button>
+              ))}
+            </div>
+            <select
+              value={assignAllUserId}
+              onChange={(e) => setAssignAllUserId(e.target.value)}
+              style={{ width: "100%", height: 38, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 10px", fontSize: 13, fontWeight: 700, color: "#24455f", marginBottom: 16 }}
+            >
+              <option value="">Pick a teammate…</option>
+              {teamUsers.map((teammate) => (
+                <option key={teammate.id} value={teammate.id}>
+                  {teammate.name || teammate.email}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setShowAssignAllModal(false)}
+                style={{ height: 36, border: "1px solid #d9e1ec", background: "#fff", color: "#5f7390", borderRadius: 10, padding: "0 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!assignAllUserId || assignAllBusy}
+                onClick={() => void runAssignAllMatching()}
+                style={{ height: 36, border: "none", background: !assignAllUserId || assignAllBusy ? "#9fb9d4" : "#175089", color: "#fff", borderRadius: 10, padding: "0 16px", fontSize: 12.5, fontWeight: 800, cursor: !assignAllUserId || assignAllBusy ? "default" : "pointer" }}
+              >
+                {assignAllBusy ? "Assigning…" : `Assign ${contactsTotal} prospects`}
               </button>
             </div>
           </div>
