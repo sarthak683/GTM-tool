@@ -685,9 +685,26 @@ class DealRepository(BaseRepository[Deal]):
             ))
         return result
 
+    async def _refresh_stakeholder_count(self, deal_id: UUID) -> None:
+        """Keep the denormalized counter true to deal_contacts IN THE SAME
+        transaction as the link change. deal_health and Zippy score off this
+        column; it drifted on 151/689 prod deals because link writers skipped
+        it (migration 113 repaired the data once — this stops the re-drift)."""
+        count = (
+            await self.session.execute(
+                select(func.count(DealContact.contact_id)).where(DealContact.deal_id == deal_id)
+            )
+        ).scalar_one() or 0
+        deal = await self.session.get(Deal, deal_id)
+        if deal is not None and deal.stakeholder_count != count:
+            deal.stakeholder_count = count
+            self.session.add(deal)
+
     async def add_contact(self, deal_id: UUID, contact_id: UUID, role: Optional[str] = None) -> DealContact:
         dc = DealContact(deal_id=deal_id, contact_id=contact_id, role=role, added_at=datetime.utcnow())
         self.session.add(dc)
+        await self.session.flush()
+        await self._refresh_stakeholder_count(deal_id)
         await self.session.commit()
         await self.session.refresh(dc)
         return dc
@@ -701,6 +718,8 @@ class DealRepository(BaseRepository[Deal]):
         if not dc:
             return False
         await self.session.delete(dc)
+        await self.session.flush()
+        await self._refresh_stakeholder_count(deal_id)
         await self.session.commit()
         return True
 

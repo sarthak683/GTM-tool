@@ -28,8 +28,39 @@ from app.services.assignment_upload import (
 )
 from app.services.sdr_reassignment import (
     reset_contact_outreach_progress,
+    sync_company_ae_assignment_to_contacts,
     sync_company_sdr_assignment_to_contacts,
 )
+
+
+def _backfill_company_owner_from_contact(company, user, *, is_sdr: bool) -> bool:
+    """Give an ownerless account the owner its prospect just received.
+
+    Prod had 25 accounts whose contacts were assigned to an SDR while the
+    account itself showed Unassigned — invisible to that SDR's account list
+    (non-admins only see accounts they own), so the rep worked prospects of an
+    account they could not open. Backfills ONLY an empty slot; a differing
+    existing owner is a deliberate split and stays. Returns True if backfilled.
+    Deliberately does not cascade to sibling contacts — assigning one prospect
+    shouldn't silently reassign its neighbors.
+    """
+    if company is None or user is None:
+        return False
+    if is_sdr:
+        if company.sdr_id is not None:
+            return False
+        company.sdr_id = user.id
+        company.sdr_name = user.name
+        company.sdr_email = user.email
+        company.sdr_assigned_at = datetime.utcnow()
+        return True
+    if company.assigned_to_id is not None:
+        return False
+    company.assigned_to_id = user.id
+    company.assigned_rep = user.name
+    company.assigned_rep_name = user.name
+    company.assigned_rep_email = user.email
+    return True
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -150,18 +181,9 @@ async def assign_company(
             company.assigned_rep_name = None
 
     if is_sdr:
-        await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
+        cascade = await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
     else:
-        contacts = (
-            await session.execute(select(Contact).where(Contact.company_id == company.id))
-        ).scalars().all()
-        for contact in contacts:
-            if contact.assigned_to_id not in (None, current_assigned_id):
-                continue
-            contact.assigned_to_id = company.assigned_to_id
-            contact.assigned_rep_email = company.assigned_rep_email
-            contact.updated_at = datetime.utcnow()
-            session.add(contact)
+        cascade = await sync_company_ae_assignment_to_contacts(session, company, current_assigned_id)
 
     next_name = (
         company.sdr_name or company.sdr_email
@@ -169,16 +191,29 @@ async def assign_company(
         else company.assigned_rep_name or company.assigned_rep_email
     )
 
+    # Divergence must be VISIBLE: prospects held by a third rep are deliberately
+    # not moved, but silently skipping them is how account and prospect
+    # ownership drifted apart (206 conflicting prospects in prod). Name it in
+    # the account log so the assigner can decide to move them explicitly.
+    divergent_note = ""
+    if cascade.kept_divergent:
+        divergent_note = (
+            f" ({len(cascade.kept_divergent)} prospect(s) kept their individual "
+            f"{'SDR' if is_sdr else 'AE'} — reassign them from the Prospects page if that split is not intended)"
+        )
+
     append_company_activity_log(
         company,
         action="company_assignment_updated",
         actor_name=actor.name,
         actor_email=actor.email,
-        message=f"{'SDR' if is_sdr else 'AE'} updated from {previous_name or 'Unassigned'} to {next_name or 'Unassigned'}",
+        message=f"{'SDR' if is_sdr else 'AE'} updated from {previous_name or 'Unassigned'} to {next_name or 'Unassigned'}{divergent_note}",
         metadata={
             "role": "sdr" if is_sdr else "ae",
             "before": previous_name,
             "after": next_name,
+            "prospects_moved": len(cascade.moved),
+            "prospects_kept_divergent": len(cascade.kept_divergent),
         },
     )
 
@@ -243,19 +278,28 @@ async def assign_contact(
     if contact.company_id:
         company = (await session.execute(select(Company).where(Company.id == contact.company_id))).scalar_one_or_none()
         if company:
+            backfilled = False
+            if body.user_id:
+                backfilled = _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr)
             next_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
+            backfill_note = (
+                f" — account {'SDR' if is_sdr else 'AE'} was empty and now follows this assignment"
+                if backfilled
+                else ""
+            )
             append_company_activity_log(
                 company,
                 action="contact_assignment_updated",
                 actor_name=actor.name,
                 actor_email=actor.email,
-                message=f"{'SDR' if is_sdr else 'AE'} updated to {next_name or 'Unassigned'} for {contact.first_name} {contact.last_name}",
+                message=f"{'SDR' if is_sdr else 'AE'} updated to {next_name or 'Unassigned'} for {contact.first_name} {contact.last_name}{backfill_note}",
                 metadata={
                     "role": "sdr" if is_sdr else "ae",
                     "contact_id": str(contact.id),
                     "contact_name": f"{contact.first_name} {contact.last_name}".strip(),
                     "before": previous_name,
                     "after": next_name,
+                    "company_owner_backfilled": backfilled,
                 },
             )
             company.updated_at = datetime.utcnow()
@@ -297,6 +341,7 @@ async def bulk_assign_companies(
 
     updated = 0
     skipped = 0
+    prospects_kept_divergent = 0
     for cid in body.ids:
         company = (
             await session.execute(select(Company).where(Company.id == cid))
@@ -335,24 +380,24 @@ async def bulk_assign_companies(
                 company.assigned_rep_name = None
 
         if is_sdr:
-            await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
+            cascade = await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
         else:
-            contacts = (
-                await session.execute(select(Contact).where(Contact.company_id == company.id))
-            ).scalars().all()
-            for contact in contacts:
-                if contact.assigned_to_id not in (None, current_assigned_id):
-                    continue
-                contact.assigned_to_id = company.assigned_to_id
-                contact.assigned_rep_email = company.assigned_rep_email
-                contact.updated_at = datetime.utcnow()
-                session.add(contact)
+            cascade = await sync_company_ae_assignment_to_contacts(session, company, current_assigned_id)
+        prospects_kept_divergent += len(cascade.kept_divergent)
         company.updated_at = datetime.utcnow()
         session.add(company)
         updated += 1
 
     await session.commit()
-    return {"updated": updated, "skipped": skipped, "user_id": str(body.user_id) if body.user_id else None, "role": role_key}
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "user_id": str(body.user_id) if body.user_id else None,
+        "role": role_key,
+        # Prospects on these accounts held by a third rep — deliberately not
+        # moved; surfaced so the UI can tell the assigner about the split.
+        "prospects_kept_divergent": prospects_kept_divergent,
+    }
 
 
 @router.patch("/bulk-contacts")
@@ -384,6 +429,8 @@ async def bulk_assign_contacts(
 
     updated = 0
     skipped = 0
+    companies_backfilled = 0
+    company_cache: dict[UUID, Company | None] = {}
     for cid in body.ids:
         contact = (
             await session.execute(select(Contact).where(Contact.id == cid))
@@ -414,12 +461,37 @@ async def bulk_assign_contacts(
             else:
                 contact.assigned_to_id = None
                 contact.assigned_rep_email = None
+        # Same handoff semantics as the single-contact endpoint: a bulk SDR
+        # change is still a handoff, so the incoming rep starts from zero.
+        # (Bulk previously skipped this reset, so aggregates credited the old
+        # SDR's calls/opens to the new one — the two paths must not differ.)
+        if is_sdr and contact.sdr_id != current_assigned_id:
+            reset_contact_outreach_progress(contact)
+        if user and contact.company_id:
+            company = company_cache.get(contact.company_id)
+            if company is None and contact.company_id not in company_cache:
+                company = (
+                    await session.execute(select(Company).where(Company.id == contact.company_id))
+                ).scalar_one_or_none()
+                company_cache[contact.company_id] = company
+            if _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
+                companies_backfilled += 1
+                company.updated_at = datetime.utcnow()
+                session.add(company)
         contact.updated_at = datetime.utcnow()
         session.add(contact)
         updated += 1
 
     await session.commit()
-    return {"updated": updated, "skipped": skipped, "user_id": str(body.user_id) if body.user_id else None, "role": role_key}
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "user_id": str(body.user_id) if body.user_id else None,
+        "role": role_key,
+        # Accounts whose empty owner slot now follows these assignments (see
+        # _backfill_company_owner_from_contact).
+        "companies_backfilled": companies_backfilled,
+    }
 
 
 # ── Bulk reassignment from an uploaded file ──────────────────────────────────

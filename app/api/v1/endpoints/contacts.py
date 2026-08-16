@@ -78,6 +78,11 @@ class ProspectImportResponse(SQLModel):
     missing_companies: list[ProspectImportMissingCompany]
     created_company_count: int = 0
     created_companies: list[ProspectImportCreatedCompany] = []
+    # Rows whose email already belongs to a DIFFERENT account than the sheet
+    # says. Never auto-moved; listed (capped at 50) so the uploader resolves
+    # each mapping deliberately instead of the import hiding the disagreement.
+    conflict_count: int = 0
+    conflict_details: list[str] = []
     message: str
 
 
@@ -90,8 +95,13 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
 
     company: Company | None = None
     if domain and not domain.endswith(".unknown"):
+        # lower() on BOTH sides — the dedup key (and unique index) is
+        # lower(domain); a case mismatch here used to fall through to the
+        # fuzzy name matcher, which is exactly where wrong links come from.
         company = (
-            await session.execute(select(Company).where(Company.domain == domain).limit(1))
+            await session.execute(
+                select(Company).where(func.lower(Company.domain) == domain).limit(1)
+            )
         ).scalars().first()
     if not company and name:
         company = (
@@ -102,7 +112,12 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
     if not company and name:
         # Looser dedupe so "OpenGov Inc." matches "OpenGov" and prevents
         # the placeholder-domain fallback from creating a shadow record.
-        company = await CompanyRepository(session).get_by_normalized_name(name)
+        # incoming_domain lets the matcher REJECT a candidate whose real
+        # domain contradicts the sheet's ("Apex Systems" apexsystems.com is
+        # not "Apex Solutions" apexsolutions.io, however similar the names).
+        company = await CompanyRepository(session).get_by_normalized_name(
+            name, incoming_domain=domain or None
+        )
     return company
 
 
@@ -206,6 +221,8 @@ class ContactFilters:
     owner_id: Optional[str] = Query(default=None, description="Filter by one or more user IDs across AE or SDR ownership")
     scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter")
     prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches")
+    company_account_status: Optional[str] = Query(default=None, description="Filter by the ACCOUNT's status (comma-separated, e.g. 'in_progress,meeting_booked'; 'none' = account has no status yet)")
+    include_disabled_accounts: bool = Query(default=False, description="Include prospects of disabled (not_a_fit/dnd) accounts. Default false: disabled accounts' prospects are out of the queue everywhere.")
     timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')")
     call_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by call-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
     email_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
@@ -303,53 +320,7 @@ async def list_contacts(
     session: DBSession,
     pagination: Pagination,
     current_user: CurrentUser,
-    company_id: Optional[UUID] = Query(default=None),
-    q: Optional[str] = Query(default=None, description="Search by name, email, title, or company"),
-    q_field: Optional[str] = Query(default=None, description="Scope `q` to a single column: name | email | company | title | phone | linkedin. Defaults to multi-field."),
-    q_match: Optional[str] = Query(default=None, description="When scoped: 'exact' for whole-cell case-insensitive equality, 'contains' (default) for substring LIKE. Only honored alongside q_field."),
-    persona: Optional[str] = Query(default=None),
-    sequence_status: Optional[str] = Query(default=None),
-    call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions"),
-    email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified"),
-    linkedin_status: Optional[str] = Query(default=None, description="Filter by one or more LinkedIn statuses: sent | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted"),
-    sort_by: Optional[str] = Query(default=None, description="Sort key: name | first_name | last_name | company | email | title | created_at."),
-    sort_dir: Optional[str] = Query(default=None, description="Sort direction: asc | desc. Defaults to asc."),
-    ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs"),
-    sdr_id: Optional[str] = Query(default=None, description="Filter by one or more assigned SDR user IDs"),
-    owner_id: Optional[str] = Query(default=None, description="Filter by one or more user IDs across AE or SDR ownership"),
-    scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter"),
-    prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches"),
-    timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')"),
-    call_outcome_color: Optional[list[str]] = Query(
-        default=None,
-        description="Filter by call-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.",
-    ),
-    email_outcome_color: Optional[list[str]] = Query(
-        default=None,
-        description="Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.",
-    ),
-    call_attempts_bucket: Optional[list[str]] = Query(
-        default=None,
-        description="Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together.",
-    ),
-    call_attempt_min: Optional[int] = Query(
-        default=None, ge=0, description="Follow-up count lower bound (inclusive): minimum number of logged calls."
-    ),
-    call_attempt_max: Optional[int] = Query(
-        default=None, ge=0, description="Follow-up count upper bound (inclusive): maximum number of logged calls."
-    ),
-    next_followup_after: Optional[datetime] = Query(
-        default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/after this UTC datetime."
-    ),
-    next_followup_before: Optional[datetime] = Query(
-        default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/before this UTC datetime."
-    ),
-    call_last_after: Optional[datetime] = Query(
-        default=None, description="Only contacts last called (call_last_at) at/after this UTC datetime."
-    ),
-    call_last_before: Optional[datetime] = Query(
-        default=None, description="Only contacts last called (call_last_at) at/before this UTC datetime."
-    ),
+    filters: ContactFilters = Depends(),
 ):
     """
     Returns contacts with company_name populated via a single SQL JOIN.
@@ -359,6 +330,11 @@ async def list_contacts(
     empty). Admins see every prospect (needed to reassign and audit). This is a
     hard server-side gate: query params like `owner_id` can only narrow within
     what the caller may already see, never widen it.
+
+    Filters come from ``ContactFilters`` — the SAME dependency the CSV export
+    uses, so the export can never drift from the list again. (This endpoint
+    used to re-declare all ~25 filter params by hand; adding a filter to one
+    place and not the other was a recurring inconsistency source.)
     """
     repo = ContactRepository(session)
     # Hard visibility gate. None = full visibility (admins + admin-granted
@@ -368,35 +344,10 @@ async def list_contacts(
     )
     items, total = await repo.list_with_company_name(
         restrict_to_role=current_user.role,
-        company_id=company_id,
-        q=q,
-        q_field=q_field,
-        q_match=q_match,
-        persona=persona,
-        sequence_status=sequence_status,
-        call_disposition=call_disposition,
-        email_state=email_state,
-        linkedin_status=linkedin_status,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        ae_id=ae_id,
-        sdr_id=sdr_id,
-        owner_id=owner_id,
         restrict_to_owner_id=restrict_to_owner_id,
-        scope_any_match=scope_any_match,
-        prospect_only=prospect_only,
-        timezone=timezone,
-        call_outcome_color=call_outcome_color,
-        email_outcome_color=email_outcome_color,
-        call_attempts_bucket=call_attempts_bucket,
-        call_attempt_min=call_attempt_min,
-        call_attempt_max=call_attempt_max,
-        next_followup_after=next_followup_after,
-        next_followup_before=next_followup_before,
-        call_last_after=call_last_after,
-        call_last_before=call_last_before,
         skip=pagination.skip,
         limit=pagination.limit,
+        **filters.as_repo_kwargs(),
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
@@ -872,6 +823,8 @@ async def import_contacts_csv(
     updated_count = 0
     skipped_count = 0
     warning_count = 0
+    conflict_count = 0
+    conflict_details: list[str] = []
     touched_company_ids: set[UUID] = set()
     missing_companies: dict[str, ProspectImportMissingCompany] = {}
     # Track companies the importer just created (only populated when
@@ -1032,19 +985,48 @@ async def import_contacts_csv(
                     )
                 ).scalars().first()
         if not existing and first_name and last_name:
+            # Case-insensitive name equality ("john"/"John" used to make two
+            # rows). Name-only matching is inherently risky, so two guards:
+            # scoped to the SAME account (or, for unmapped rows, other unmapped
+            # rows), and never onto a row whose email CONTRADICTS the sheet's —
+            # two different John Smiths must not be merged into one person.
             name_match_filters = [
-                Contact.first_name == first_name,
-                Contact.last_name == last_name,
+                func.lower(Contact.first_name) == first_name.lower(),
+                func.lower(Contact.last_name) == last_name.lower(),
             ]
             if company:
                 name_match_filters.append(Contact.company_id == company.id)
             else:
                 name_match_filters.append(Contact.company_id.is_(None))
+            if email:
+                name_match_filters.append(
+                    or_(
+                        Contact.email.is_(None),
+                        Contact.email == "",
+                        func.lower(Contact.email) == email,
+                    )
+                )
             existing = (
                 await session.execute(select(Contact).where(*name_match_filters).limit(1))
             ).scalars().first()
 
         if existing and company and existing.company_id and existing.company_id != company.id:
+            # The sheet maps this person to `company`, but the row already
+            # belongs to another account. Not silently correctable — report it
+            # so the uploader can fix the mapping deliberately (the old
+            # behavior counted it as a generic "skipped", which is how wrong
+            # links survived every re-import unnoticed).
+            if len(conflict_details) < 50:
+                other_company_name = (
+                    await session.execute(
+                        select(Company.name).where(Company.id == existing.company_id).limit(1)
+                    )
+                ).scalar_one_or_none()
+                conflict_details.append(
+                    f"{email or f'{first_name} {last_name}'.strip()}: already on "
+                    f"'{other_company_name or existing.company_id}', sheet says '{company.name}'"
+                )
+            conflict_count += 1
             skipped_count += 1
             continue
 
@@ -1100,19 +1082,14 @@ async def import_contacts_csv(
             # unassigned (per the agreed rule).
             sdr_user = file_sdr or (current_user if uploader_role == "sdr" else None)
             ae_user = file_ae or (current_user if uploader_role == "ae" else None)
-            # MIRROR — a prospect must never be left half-owned. If exactly one
-            # role resolved to a real rep AND nothing else (file/uploader/the
-            # company) will fill the other slot, that same rep covers both until
-            # someone reassigns: an SDR who sources an account is its interim AE,
-            # and vice-versa. This only fills a slot that would otherwise be
-            # orphaned — it never overrides a company's real SDR/AE, and a
-            # both-empty admin bulk upload still stays fully unassigned.
-            company_has_sdr = bool(company and company.sdr_id)
-            company_has_ae = bool(company and company.assigned_to_id)
-            if sdr_user and not ae_user and not company_has_ae:
-                ae_user = sdr_user
-            elif ae_user and not sdr_user and not company_has_sdr:
-                sdr_user = ae_user
+            # NO mirror rule. Copying the SDR into an empty AE slot (or vice
+            # versa) fabricated ownership that then BLOCKED every future
+            # account-level cascade — the cascade deliberately skips contacts
+            # whose slot holds "someone else", and the mirrored rep is exactly
+            # that. An empty slot stays empty: it remains claimable, inherits
+            # from the company below, and follows the next account-level
+            # assignment. (Prod audit 2026-08-16: 206 contact/account owner
+            # conflicts, a chunk traced to mirrored imports.)
             if sdr_user:
                 contact_fields["sdr_id"] = sdr_user.id
                 contact_fields["sdr_name"] = sdr_user.name
@@ -1244,6 +1221,8 @@ async def import_contacts_csv(
         missing_companies=missing_rows,
         created_company_count=len(created_rows),
         created_companies=created_rows,
+        conflict_count=conflict_count,
+        conflict_details=conflict_details,
         message=" ".join(message_parts),
     )
 

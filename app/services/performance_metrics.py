@@ -238,13 +238,47 @@ async def contacts_dialed(
     return (await session.execute(stmt)).scalar_one() or 0
 
 
+def _email_event_type():
+    """The Instantly event type stored in Activity.event_metadata.
+
+    Rows written before the webhook stamped event_type (and manual UI-logged
+    emails) have none — those are sends, hence the 'email_sent' coalesce.
+    """
+    return func.coalesce(
+        func.jsonb_extract_path_text(Activity.event_metadata, "event_type"),
+        "email_sent",
+    )
+
+
 async def emails_sent(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> int:
-    """Outbound emails logged against a deal."""
+    """Outbound emails a rep actually SENT.
+
+    Two producer families, matched by construction (see app/tasks/email_sync.py
+    and app/api/v1/endpoints/webhooks.py):
+      * Instantly/webhook + manual rows: medium="email" — but the webhook also
+        logs replies/opens/clicks under type="email", so gate on
+        event_type == 'email_sent' (old rows without one are sends).
+      * Gmail-synced sends: NO medium, source="gmail_sync"; rep sends carry
+        created_by_id (resolved from the sender address). Deal-thread rows
+        without created_by_id include the PROSPECT's inbound mail — excluded.
+    The old filter (medium == "email" alone) missed every Gmail send and
+    counted webhook replies as sends — wrong in both directions.
+    """
     stmt = select(func.count(Activity.id)).where(
         Activity.type == "email",
-        Activity.medium == "email",
+        or_(
+            and_(
+                Activity.medium == "email",
+                Activity.source.is_distinct_from("email_reply"),
+                _email_event_type() == "email_sent",
+            ),
+            and_(
+                Activity.source == "gmail_sync",
+                Activity.created_by_id.is_not(None),
+            ),
+        ),
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),
@@ -256,14 +290,22 @@ async def emails_replied_to(
     session: AsyncSession, rep_id: Optional[UUID], period: Period, lookback_days: int = 1
 ) -> int:
     """
-    Emails where the prospect replied within `lookback_days` days.
-    Approximation: count activities tagged with source='email_reply'
-    (the Gmail inbox sync already marks these). Dictionary default is
-    1 day; configurable via analytics_settings.email_reply_lookback_days.
+    Prospect replies received in the period.
+
+    Counts what the system ACTUALLY writes for replies: Instantly webhook/sync
+    rows with event_metadata.event_type == 'reply_received' (plus the legacy
+    source='email_reply' marker, kept for old rows). The old filter matched
+    ONLY source='email_reply', which no code path has ever written — so
+    reply_rate was structurally 0 on every scorecard while SalesAnalytics
+    (which reads event_type) showed real replies for the same rep.
     """
     stmt = select(func.count(Activity.id)).where(
         Activity.type == "email",
-        Activity.source == "email_reply",
+        or_(
+            Activity.source == "email_reply",
+            func.jsonb_extract_path_text(Activity.event_metadata, "event_type")
+            == "reply_received",
+        ),
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),
@@ -392,15 +434,22 @@ async def disqualified(session, rep_id, period):
 async def closed_won_value(
     session: AsyncSession, rep_id: Optional[UUID], period: Period
 ) -> Decimal:
-    stmt = (
-        select(func.coalesce(func.sum(Deal.value), 0))
-        .join(DealStageHistory, DealStageHistory.deal_id == Deal.id)
+    # Distinct-deal subquery, NOT a join: a deal that re-entered closed_won
+    # within the window has multiple history rows, and the old join summed its
+    # value once per row. Keeps the count (closed_won) and the value on the
+    # same dedupe rule.
+    won_deal_ids = (
+        select(DealStageHistory.deal_id)
         .where(
             DealStageHistory.to_stage == "closed_won",
             DealStageHistory.changed_at >= period.start,
             DealStageHistory.changed_at < period.end,
-            _deal_rep_filter(rep_id),
         )
+        .distinct()
+    )
+    stmt = select(func.coalesce(func.sum(Deal.value), 0)).where(
+        Deal.id.in_(won_deal_ids),
+        _deal_rep_filter(rep_id),
     )
     return Decimal((await session.execute(stmt)).scalar_one() or 0)
 
@@ -593,8 +642,14 @@ async def stuck_deals(
 ) -> list[dict]:
     """
     Open deals whose current stage dwell exceeds the workspace threshold.
-    Uses the most-recent `deal_stage_history` row per deal as stage-entry
-    timestamp (always available because the migration backfilled one).
+
+    Dwell is measured from ``Deal.stage_entered_at`` — the same field the
+    board computes "days in stage" from — with the latest stage-history row
+    only as a fallback for legacy deals. The old version used ONLY
+    ``max(history.changed_at)``, which diverged from the board exactly on
+    deals moved by paths that skipped history (now instrumented, but the
+    historical rows remain), so a deal could be "stuck" on the scorecard and
+    fresh on the board at the same time.
     """
     now = now or datetime.utcnow()
     latest = (
@@ -610,10 +665,10 @@ async def stuck_deals(
             Deal.id,
             Deal.name,
             Deal.stage,
-            latest.c.entered_at,
+            func.coalesce(Deal.stage_entered_at, latest.c.entered_at, Deal.created_at).label("entered_at"),
         )
         .select_from(Deal)
-        .join(latest, latest.c.deal_id == Deal.id)
+        .outerjoin(latest, latest.c.deal_id == Deal.id)
         .where(
             Deal.stage.in_(list(stuck_thresholds_days.keys())),
             _deal_rep_filter(rep_id),
@@ -624,6 +679,8 @@ async def stuck_deals(
     for r in rows:
         threshold = stuck_thresholds_days.get(r.stage)
         if threshold is None:
+            continue
+        if r.entered_at is None:
             continue
         dwell_days = (now - r.entered_at).days
         if dwell_days > threshold:

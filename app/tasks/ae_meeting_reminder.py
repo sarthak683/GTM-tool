@@ -44,7 +44,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -156,7 +156,7 @@ async def _match_company(
         for domain in external_domains:
             company = (
                 await session.execute(
-                    select(Company).where(Company.domain == domain)
+                    select(Company).where(func.lower(Company.domain) == (domain or "").lower())
                 )
             ).scalar_one_or_none()
             if company:

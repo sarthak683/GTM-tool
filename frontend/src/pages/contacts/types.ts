@@ -23,6 +23,10 @@ export type ProspectImportSummary = {
   missing_companies: ProspectImportMissingCompany[];
   created_company_count?: number;
   created_companies?: ProspectImportCreatedCompany[];
+  // Rows whose email already belongs to a DIFFERENT account than the sheet
+  // says — never auto-moved; listed so the uploader resolves each mapping.
+  conflict_count?: number;
+  conflict_details?: string[];
   message: string;
 };
 

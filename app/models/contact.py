@@ -105,6 +105,13 @@ class ContactRead(ContactBase):
     id: UUID
     company_id: Optional[UUID] = None
     company_name: Optional[str] = None  # populated via SQL JOIN in ContactRepository
+    # Account context for the prospects table, populated by
+    # list_with_company_name (never client-written): the ACCOUNT's status (so a
+    # reach_out_later/parked account is labeled on its prospects) and the
+    # domain-mismatch flag (email domain doesn't belong to the account's domain
+    # family — a "check this mapping" badge, not a filter).
+    company_account_status: Optional[str] = None
+    account_domain_mismatch: Optional[bool] = None
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     additional_phones: Optional[Any] = None

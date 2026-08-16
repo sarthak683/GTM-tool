@@ -26,7 +26,6 @@ import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
-from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import func, update as sa_update
@@ -121,7 +120,12 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "sdr":            ["sdr", "sdr name", "sdr rep"],
     "ae":             ["ae", "ae name", "account executive",
                        "owner", "account owner", "assigned to", "rep", "sales rep"],
-    "contact_name":   ["contact", "prospect name", "full name", "name"],
+    # NOTE: deliberately NO bare "name" alias here — "name" belongs to the
+    # COMPANY name field above. When it aliased both, a company-only sheet
+    # minted a phantom prospect named after the company, and a person-only
+    # sheet minted a company named after the person (which then got a
+    # "<person>.unknown" placeholder domain). Person columns must be explicit.
+    "contact_name":   ["contact", "contact name", "prospect name", "full name", "person name"],
     "contact_first_name": ["first", "first name"],
     "contact_last_name": ["last", "last name"],
     "contact_title":  ["title", "job title", "job", "role"],
@@ -248,15 +252,42 @@ def _normalize_phone(value: Optional[str]) -> Optional[str]:
     return cleaned
 
 
+# Domains that can never identify a COMPANY. A sheet whose "website" column
+# holds a LinkedIn page or a personal mailbox used to mint a company keyed on
+# linkedin.com/gmail.com — and the orphan auto-mapper would then sweep every
+# contact with that email domain under it (wrong-account root cause). Keep in
+# lockstep with FREE_EMAIL_PROVIDERS in app/repositories/contact.py.
+_NON_COMPANY_DOMAINS = frozenset({
+    "linkedin.com", "facebook.com", "twitter.com", "x.com", "instagram.com",
+    "youtube.com", "crunchbase.com", "wikipedia.org", "google.com",
+    "apollo.io", "angel.co", "wellfound.com",
+    "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com",
+    "aol.com", "protonmail.com", "me.com", "live.com",
+})
+
+
 def _clean_domain(raw: str) -> str:
-    raw = raw.strip().lower()
+    """Normalize a pasted website/domain cell to a bare registrable-ish domain.
+
+    Handles scheme, path, query, fragment, port, a pasted email address, and a
+    leading www. Returns "" (caller falls back to the .unknown placeholder)
+    when nothing company-identifying remains — including aggregator/free-mail
+    domains, which must never become a company's dedup key.
+    """
+    raw = (raw or "").strip().lower()
     if not raw:
         return ""
-    if raw.startswith("http"):
-        parsed = urlparse(raw)
-        raw = parsed.netloc.removeprefix("www.")
-    raw = raw.removeprefix("www.")
-    return raw.split("/")[0]
+    raw = raw.split("://", 1)[-1]           # scheme, if any
+    raw = raw.split("/", 1)[0]              # path
+    raw = raw.split("?", 1)[0].split("#", 1)[0]
+    raw = raw.split("@", 1)[-1]             # "info@acme.com" -> "acme.com"
+    raw = raw.split(":", 1)[0]              # port
+    raw = raw.removeprefix("www.").strip().rstrip(".")
+    if not raw or "." not in raw or any(ch.isspace() for ch in raw):
+        return ""
+    if raw in _NON_COMPANY_DOMAINS:
+        return ""
+    return raw
 
 
 def _slugify(name: str) -> str:
@@ -1312,8 +1343,22 @@ def merge_company_from_upload(company: Company, fields: dict[str, Any]) -> Compa
     ]
     for key in source_of_truth_fields:
         incoming = fields.get(key)
-        if incoming not in (None, "", [], {}):
-            setattr(company, key, incoming)
+        if incoming in (None, "", [], {}):
+            continue
+        if key == "domain":
+            # A real domain may only ever REPLACE a placeholder (*.unknown) or
+            # fill an empty slot; never swap one real domain for another. The
+            # row was matched to this company by name/domain — if the sheet's
+            # domain contradicts an existing real one, rewriting it would
+            # silently re-key the account (and every domain-based match after
+            # it) to a different business. A placeholder never overwrites.
+            current_domain = (company.domain or "").strip().lower()
+            incoming_domain = str(incoming).strip().lower()
+            if incoming_domain.endswith(".unknown"):
+                continue
+            if current_domain and not current_domain.endswith(".unknown") and current_domain != incoming_domain:
+                continue
+        setattr(company, key, incoming)
 
     simple_fields = [
         "industry",

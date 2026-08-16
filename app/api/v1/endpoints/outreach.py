@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity
+from app.models.company import Company, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact
 from app.models.outreach import (
     OutreachSequence,
@@ -38,6 +39,25 @@ from app.services.sdr_reassignment import (
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 logger = logging.getLogger(__name__)
+
+
+async def _assert_account_active(session, company_id, *, context: str) -> None:
+    """Refuse to launch outreach for a prospect whose ACCOUNT is disabled.
+
+    Disabled (not_a_fit/dnd) accounts are out of the prospecting queue; letting
+    a launch path enroll their prospects anyway would silently restart the very
+    outreach the disable was supposed to stop. Contacts without an account
+    pass — that's a mapping problem, not a disabled-account one.
+    """
+    if not company_id:
+        return
+    company = await session.get(Company, company_id)
+    if company is not None and company.account_status in INACTIVE_ACCOUNT_STATUSES:
+        raise ValidationError(
+            f"{context}: account '{company.name}' is disabled "
+            f"({company.account_status}). Re-enable it in Account Sourcing "
+            "before launching outreach."
+        )
 
 
 async def _get_sequence_for_user(session, user, sequence_id: UUID, *, edit: bool = False):
@@ -99,10 +119,9 @@ async def bulk_add_to_instantly_campaign(
     the Prospects page, pick a campaign, and we bulk-add them as leads via
     Instantly's add_leads_bulk (≤1000/call). The campaign already owns its email
     steps in Instantly, so we don't create/activate anything here — we just enroll
-    leads. Contacts without an email are skipped and reported.
+    leads. Contacts without an email — and contacts of disabled (not_a_fit/dnd)
+    accounts — are skipped and reported.
     """
-    from app.models.company import Company
-
     ids = [cid for cid in contact_ids if cid]
     if not ids:
         raise ValidationError("Select at least one prospect.")
@@ -129,13 +148,18 @@ async def bulk_add_to_instantly_campaign(
         await session.execute(select(Company).where(Company.id.in_(company_ids)))
     ).scalars().all() if company_ids else []
     company_name_by_id = {str(co.id): co.name for co in companies}
+    disabled_company_ids = {co.id for co in companies if co.account_status in INACTIVE_ACCOUNT_STATUSES}
 
     leads: list[dict] = []
     enrolled = []
     skipped_no_email = 0
+    skipped_disabled_account = 0
     for contact in contacts:
         if not (contact.email or "").strip():
             skipped_no_email += 1
+            continue
+        if contact.company_id in disabled_company_ids:
+            skipped_disabled_account += 1
             continue
         leads.append({
             "email": contact.email,
@@ -148,6 +172,12 @@ async def bulk_add_to_instantly_campaign(
         enrolled.append(contact)
 
     if not leads:
+        if skipped_disabled_account:
+            raise ValidationError(
+                "Nothing to enroll: "
+                f"{skipped_disabled_account} prospect(s) belong to disabled accounts "
+                f"and {skipped_no_email} have no email address."
+            )
         raise ValidationError("None of the selected prospects have an email address.")
 
     client = InstantlyClient()
@@ -176,6 +206,7 @@ async def bulk_add_to_instantly_campaign(
         "requested": len(set(ids)),
         "enrolled": len(enrolled),
         "skipped_no_email": skipped_no_email,
+        "skipped_disabled_account": skipped_disabled_account,
     }
 
 
@@ -444,6 +475,8 @@ async def launch_sequence(
     if not contact:
         raise NotFoundError("Contact not found")
 
+    await _assert_account_active(session, contact.company_id, context="Cannot launch")
+
     if not contact.email:
         raise ValidationError("Contact has no email address — cannot launch sequence")
 
@@ -594,11 +627,14 @@ async def launch_company_campaign(
     The first sequence's steps serve as the campaign template — all prospects
     get the same email cadence.
     """
-    from app.models.company import Company
-
     company = await session.get(Company, company_id)
     if not company:
         raise NotFoundError("Company not found")
+    if company.account_status in INACTIVE_ACCOUNT_STATUSES:
+        raise ValidationError(
+            f"Account '{company.name}' is disabled ({company.account_status}). "
+            "Re-enable it in Account Sourcing before launching outreach."
+        )
 
     # Find all unlaunched sequences for this company that have contacts with emails
     seq_result = await session.execute(
@@ -774,6 +810,37 @@ async def launch_contacts_campaign(
     contacts_with_email = [c for c in contacts if c.email]
     if not contacts_with_email:
         raise ValidationError("None of the selected contacts have an email address")
+    # Snapshot before the disabled-account filter below mutates the list, so
+    # the response can't misattribute disabled-account skips to "no email".
+    skipped_no_email = len(contacts) - len(contacts_with_email)
+
+    # Refuse prospects of disabled accounts up front (before sequence
+    # generation spends AI calls on them).
+    linked_company_ids = list({c.company_id for c in contacts_with_email if c.company_id})
+    disabled_company_ids: set = set()
+    if linked_company_ids:
+        disabled_company_ids = set(
+            (
+                await session.execute(
+                    select(Company.id).where(
+                        Company.id.in_(linked_company_ids),
+                        Company.account_status.in_(INACTIVE_ACCOUNT_STATUSES),
+                    )
+                )
+            ).scalars().all()
+        )
+    skipped_disabled_account = sum(
+        1 for c in contacts_with_email if c.company_id in disabled_company_ids
+    )
+    contacts_with_email = [
+        c for c in contacts_with_email if c.company_id not in disabled_company_ids
+    ]
+    if not contacts_with_email:
+        raise ValidationError(
+            f"All {skipped_disabled_account} selected prospect(s) belong to disabled "
+            "accounts (not_a_fit/dnd). Re-enable the account(s) in Account Sourcing "
+            "before launching outreach."
+        )
 
     # ── Ensure each contact has a sequence (generate if missing) ──────────────
     seq_by_contact: dict[UUID, OutreachSequence] = {}
@@ -902,7 +969,8 @@ async def launch_contacts_campaign(
         "campaign_name": name,
         "selected_contacts": len(contact_ids),
         "launched_pairs": len(pairs),
-        "skipped_no_email": len(contacts) - len(contacts_with_email),
+        "skipped_no_email": skipped_no_email,
+        "skipped_disabled_account": skipped_disabled_account,
         "skipped_already_launched": len(contacts_with_email) - len(pairs),
         "sequences_generated": generated_count,
         "pushed": sum(1 for r in results if r["status"] == "pushed"),

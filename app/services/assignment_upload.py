@@ -348,17 +348,12 @@ async def apply_assignment_plan(
                 # Carries the reassignment watermark that resets outreach
                 # counters. Reused rather than reimplemented so an uploaded
                 # reassignment resets exactly what a clicked one resets.
-                #
-                # It returns every contact on the account, including the ones it
-                # deliberately skipped (a per-contact SDR override). Re-apply its
-                # own skip rule here so the reported figure is contacts actually
-                # moved, not contacts looked at.
-                touched = await sync_company_sdr_assignment_to_contacts(
+                # `moved` is the contacts that actually changed hands (deliberate
+                # per-contact overrides are reported in kept_divergent).
+                cascade = await sync_company_sdr_assignment_to_contacts(
                     session, company, previous_sdr_id
                 )
-                for contact in touched:
-                    if contact.sdr_id == company.sdr_id:
-                        touched_contact_ids.add(contact.id)
+                touched_contact_ids.update(contact.id for contact in cascade.moved)
                 sdr_changed += 1
                 row_sdr_changed = True
 

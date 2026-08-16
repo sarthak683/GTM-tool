@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.models.company import Company
@@ -429,7 +430,7 @@ async def resolve_and_update_domain(company: Company, session: AsyncSession) -> 
         return False
 
     existing = await session.execute(
-        select(Company).where(Company.domain == resolved, Company.id != company.id)
+        select(Company).where(func.lower(Company.domain) == (resolved or "").lower(), Company.id != company.id)
     )
     if existing.scalar_one_or_none():
         logger.warning(

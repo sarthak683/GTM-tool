@@ -29,7 +29,7 @@ from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.models.angel import AngelInvestor, AngelMapping
-from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate
+from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
@@ -113,7 +113,10 @@ def _account_sourcing_visibility_filter():
         {"clickup_import": {"hidden_from_account_sourcing": True}}
     )
     return and_(
-        ~hidden_clickup_import,
+        # NULL-safe negation: `NULL @> x` is NULL and `NOT NULL` is still NULL,
+        # which fails the WHERE — so a company with no enrichment_sources at
+        # all silently vanished from Account Sourcing. IS NULL must pass.
+        or_(Company.enrichment_sources.is_(None), ~hidden_clickup_import),
         or_(
             Company.sourcing_batch_id.isnot(None),
             Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
@@ -125,15 +128,16 @@ def _account_sourcing_visibility_filter():
 def _can_see_company(company: Company, user) -> bool:
     """Python mirror of ``company_visibility_filter`` for single-object guards.
 
-    Admins see every company (including ``not_a_fit``); a non-admin only sees a
-    company they own (AE or SDR) that is not flagged ``not_a_fit``. Use on
-    single-company detail/update routes to 404 a company the caller can't see
-    (so existence isn't leaked).
+    Admins see every company; a non-admin sees a company they own (AE or SDR).
+    Ownership is the ONLY gate — deliberately NOT the disabled-status check the
+    list filter applies: an owner must be able to OPEN their parked
+    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
+    accounts by default; direct access never dead-ends. Keep in lockstep with
+    the copy in ``app/api/v1/endpoints/companies.py``.
     """
     if user.role == "admin":
         return True
-    owns = company.assigned_to_id == user.id or company.sdr_id == user.id
-    return owns and company.account_status != "not_a_fit"
+    return company.assigned_to_id == user.id or company.sdr_id == user.id
 
 
 async def _auto_create_angel_records(
@@ -742,12 +746,15 @@ async def _process_uploaded_rows(
 
         try:
             company = None
-            if not domain.endswith(".unknown"):
-                company = await repo.get_by_domain(domain)
+            real_domain = domain if not domain.endswith(".unknown") else None
+            if real_domain:
+                company = await repo.get_by_domain(real_domain)
             if not company:
                 company = await repo.get_by_name(name)
             if not company:
-                company = await repo.get_by_normalized_name(name)
+                # incoming_domain rejects same-name-different-domain companies
+                # (they are different businesses, not duplicates).
+                company = await repo.get_by_normalized_name(name, incoming_domain=real_domain)
 
             if company:
                 already_in_batch = company.sourcing_batch_id == batch_id
@@ -847,17 +854,38 @@ async def _process_uploaded_rows(
                         )
                     ).scalars().first()
                 if not existing_contact:
+                    # Case-insensitive name fallback ("john"/"John" used to
+                    # create two rows on the same account).
                     existing_contact = (
                         await session.execute(
                             select(Contact).where(
                                 Contact.company_id == company.id,
-                                Contact.first_name == contact_fields.get("first_name"),
-                                Contact.last_name == contact_fields.get("last_name"),
+                                func.lower(func.coalesce(Contact.first_name, ""))
+                                == str(contact_fields.get("first_name") or "").lower(),
+                                func.lower(func.coalesce(Contact.last_name, ""))
+                                == str(contact_fields.get("last_name") or "").lower(),
                             ).limit(1)
                         )
                     ).scalars().first()
 
                 if existing_contact:
+                    # The sheet says this person belongs to THIS account. An
+                    # unmapped existing row gets linked; a row already linked to
+                    # a DIFFERENT account is a conflict the uploader must see —
+                    # the old fill-only merge silently left wrong links in
+                    # place forever (confirmed wrong-account source in prod).
+                    if existing_contact.company_id is None:
+                        existing_contact.company_id = company.id
+                    elif existing_contact.company_id != company.id:
+                        other = await session.get(Company, existing_contact.company_id)
+                        errors.append({
+                            "name": name,
+                            "error": (
+                                f"conflict: {contact_fields.get('email') or contact_fields.get('first_name')} "
+                                f"already belongs to account '{other.name if other else existing_contact.company_id}' — "
+                                "not moved; fix the mapping from the prospect page if the sheet is right"
+                            ),
+                        })
                     for key, value in contact_fields.items():
                         if value and not getattr(existing_contact, key, None):
                             setattr(existing_contact, key, value)
@@ -1228,10 +1256,24 @@ async def list_sourced_companies(
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
+    # Parse the status filter up front: explicitly asking for a disabled status
+    # (not_a_fit/dnd) means the caller is reviewing parked accounts, so the
+    # visibility filter must not hide them (owners could otherwise never see —
+    # or re-enable — their own parked accounts).
+    status_tokens = (
+        [t.strip().lower() for t in str(account_status).split(",") if t.strip()]
+        if account_status
+        else []
+    )
+    include_disabled = any(t in INACTIVE_ACCOUNT_STATUSES for t in status_tokens)
     stmt = (
         select(Company)
         .where(_account_sourcing_visibility_filter())
-        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+        .where(
+            company_visibility_filter(
+                _user.id, _user.role == "admin", include_disabled=include_disabled
+            )
+        )
     )
     search_term = (q or "").strip()
     if search_term:
@@ -1249,8 +1291,7 @@ async def list_sourced_companies(
         )
     stmt = _apply_text_multi_filter(stmt, Company.icp_tier, icp_tier)
     stmt = _apply_text_multi_filter(stmt, Company.disposition, disposition)
-    if account_status:
-        status_tokens = [t.strip().lower() for t in str(account_status).split(",") if t.strip()]
+    if status_tokens:
         status_clauses = []
         real_statuses = [t for t in status_tokens if t != "unset"]
         if real_statuses:
@@ -1451,7 +1492,6 @@ async def get_sourced_company_summary(
     target_verdict_count = 0
     watch_verdict_count = 0
     enriched_count = 0
-    total_contacts = 0
 
     for company in companies:
         if company.icp_tier == "hot":
@@ -1478,8 +1518,18 @@ async def get_sourced_company_summary(
         if classification == "watch":
             watch_verdict_count += 1
 
-        outreach_plan = company.outreach_plan if isinstance(company.outreach_plan, dict) else {}
-        total_contacts += int(outreach_plan.get("contact_count") or 0)
+    # LIVE prospect count over the same visible-company set. The old source —
+    # summing the denormalized outreach_plan["contact_count"] JSON — went stale
+    # whenever contacts changed outside refresh_company_prospecting_fields, so
+    # the Account Sourcing badge disagreed with the actual prospect list.
+    company_ids = [company.id for company in companies]
+    total_contacts = 0
+    if company_ids:
+        total_contacts = (
+            await session.execute(
+                select(func.count(Contact.id)).where(Contact.company_id.in_(company_ids))
+            )
+        ).scalar_one() or 0
 
     return CompanySourcingSummary(
         total_companies=len(companies),
@@ -1556,11 +1606,15 @@ async def create_manual_company(
         # Looser dedupe: catches the "added 'zywave', then added 'zywave.com'"
         # case where the first row has a placeholder *.unknown domain and the
         # second row's name (or domain) wouldn't otherwise match.
-        existing = await repo.get_by_normalized_name(fields["name"])
+        existing = await repo.get_by_normalized_name(
+            fields["name"], incoming_domain=normalized_domain or None
+        )
     # Also try the raw domain root as a name match (handles "added zywave.com
     # as a name" by stripping ".com" and looking for "zywave").
     if not existing and normalized_domain:
-        existing = await repo.get_by_normalized_name(normalized_domain)
+        existing = await repo.get_by_normalized_name(
+            normalized_domain, incoming_domain=normalized_domain
+        )
 
     if existing:
         company = merge_company_from_upload(existing, fields)
@@ -1773,6 +1827,7 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
 
     update_data = payload.model_dump(exclude_unset=True)
     previous_sdr_id = company.sdr_id
+    previous_account_status = company.account_status
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     changed_fields = {
         key: {"before": getattr(company, key, None), "after": value}
@@ -1814,6 +1869,40 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
         session.add(contact)
 
     refresh_company_prospecting_fields(company, contacts)
+
+    # Disable cascade: parking the account (not_a_fit/dnd) removes its
+    # prospects from the prospecting queue via query gating, but running
+    # Instantly campaigns keep sending unless paused HERE. Log the cascade on
+    # the account so reps can see what the flip actually did.
+    became_disabled = (
+        company.account_status in INACTIVE_ACCOUNT_STATUSES
+        and previous_account_status not in INACTIVE_ACCOUNT_STATUSES
+    )
+    if became_disabled:
+        from app.services.account_status import apply_account_disable_effects
+
+        disable_summary = await apply_account_disable_effects(
+            session, company, reason=f"account_status={company.account_status}"
+        )
+        append_company_activity_log(
+            company,
+            action="account_disabled",
+            actor_name=current_user.name,
+            actor_email=current_user.email,
+            message=(
+                f"Account parked ({company.account_status}). "
+                f"{disable_summary['contacts']} prospect(s) removed from the prospecting queue; "
+                f"{disable_summary['campaigns_paused']} Instantly campaign(s) paused"
+                + (
+                    f", {disable_summary['campaigns_skipped_shared']} shared campaign(s) left running"
+                    if disable_summary["campaigns_skipped_shared"]
+                    else ""
+                )
+                + "."
+            ),
+            metadata=disable_summary,
+        )
+
     if changed_fields:
         summary = ", ".join(
             f"{field.replace('_', ' ')} -> {str(change['after'])[:60]}"
@@ -1994,8 +2083,15 @@ async def bulk_icp_research_companies(
     Uses existing DB contacts + web research + Claude analysis.
     """
     stmt = select(Company).where(
-        ~Company.enrichment_sources.contains({"clickup_import": {}}),
-        ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+        # NULL-safe: NULL enrichment_sources must PASS these exclusions
+        # (`NOT (NULL @> x)` is NULL and silently drops the row).
+        or_(
+            Company.enrichment_sources.is_(None),
+            and_(
+                ~Company.enrichment_sources.contains({"clickup_import": {}}),
+                ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+            ),
+        ),
     )
     if unenriched_only:
         stmt = stmt.where(Company.enriched_at.is_(None))
@@ -2035,8 +2131,15 @@ async def bulk_enrich_companies(
     Returns counts of how many tasks were queued and skipped.
     """
     stmt = select(Company).where(
-        ~Company.enrichment_sources.contains({"clickup_import": {}}),
-        ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+        # NULL-safe: NULL enrichment_sources must PASS these exclusions
+        # (`NOT (NULL @> x)` is NULL and silently drops the row).
+        or_(
+            Company.enrichment_sources.is_(None),
+            and_(
+                ~Company.enrichment_sources.contains({"clickup_import": {}}),
+                ~Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
+            ),
+        ),
     )
     if unenriched_only:
         stmt = stmt.where(Company.enriched_at.is_(None))
@@ -2274,6 +2377,14 @@ async def push_to_instantly(
     company = await session.get(Company, company_id)
     if not company or not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
+    if company.account_status in INACTIVE_ACCOUNT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Account '{company.name}' is disabled ({company.account_status}). "
+                "Re-enable it before pushing contacts to Instantly."
+            ),
+        )
 
     # Get contacts with emails
     result = await session.execute(

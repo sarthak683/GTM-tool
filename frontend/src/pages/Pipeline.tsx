@@ -5,6 +5,7 @@ import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, D
 import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { useAuth } from "../lib/AuthContext";
+import { useToast } from "../lib/ToastContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
@@ -1689,6 +1690,7 @@ export default function Pipeline() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin, user } = useAuth();
+  const toast = useToast();
   const [tab, setTab] = useState<PipelineTab>("deal");
   const [mobileStage, setMobileStage] = useState<string>("all");
   // Bulk selection (deal tab only) — set of selected deal ids + a pending tag input.
@@ -2060,15 +2062,18 @@ export default function Pipeline() {
 
   const stageForecast = useMemo(() => {
     return FORECAST_STAGES.map((stage, index) => {
-      const items = dealBoard[stage.id] ?? [];
+      // filteredDealBoard, NOT dealBoard: the forecast panel must describe the
+      // same deals the columns show. Reading the unfiltered board meant any
+      // active filter made the two panels disagree on the same screen.
+      const items = filteredDealBoard[stage.id] ?? [];
       const count = items.length;
       const value = items.reduce((sum, d) => sum + Number(d.value ?? 0), 0);
       const prevStage = index > 0 ? FORECAST_STAGES[index - 1] : null;
-      const prevCount = prevStage ? (dealBoard[prevStage.id] ?? []).length : null;
+      const prevCount = prevStage ? (filteredDealBoard[prevStage.id] ?? []).length : null;
       const conversionPct = prevCount != null && prevCount > 0 ? Math.round((count / prevCount) * 100) : null;
       return { ...stage, count, value, conversionPct };
     });
-  }, [dealBoard]);
+  }, [filteredDealBoard]);
 
   const dealSummary = useMemo(() => {
     const visible = Object.values(filteredDealBoard).flat();
@@ -2492,6 +2497,13 @@ export default function Pipeline() {
       await dealsApi.moveStage(pendingDealMove.dealId, pendingDealMove.targetStage);
       // Deals-only mutation — don't re-download the 500-row prospect list.
       await loadDealBoard();
+    } catch (error) {
+      // A rejected move (invalid stage, permission, network) previously closed
+      // the modal and did NOTHING visible — the card stayed put and the rep
+      // had no idea the drop failed. Say so, and reload so the board shows
+      // the server's truth rather than half-applied drag state.
+      toast.error(error instanceof Error ? error.message : "Stage move failed.", "Move failed");
+      await loadDealBoard().catch(() => undefined);
     } finally {
       setBusyStage(null);
       setPendingDealMove(null);
@@ -2518,6 +2530,11 @@ export default function Pipeline() {
           tracking_stage: "meeting_booked",
         } as Contact);
       }
+    } catch (error) {
+      // Same rule as confirmPendingDealMove: a failed drop must SAY so and
+      // resync, not silently leave the card where the drag put it.
+      toast.error(error instanceof Error ? error.message : "Stage move failed.", "Move failed");
+      await loadProspectBoard().catch(() => undefined);
     } finally {
       setBusyStage(null);
       clearDragState();
@@ -3041,7 +3058,12 @@ export default function Pipeline() {
       )}
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
-      {selectedDeal && <DealDetailDrawer key={selectedDeal.id} deal={selectedDeal} companies={companies} users={users} stages={effectiveDealStages} onClose={() => {
+      {/* The drawer's stage menu offers only CONFIGURED stages as move targets.
+          effectiveDealStages also contains synthesized "ghost" columns (board
+          keys not in settings — e.g. a stage deleted while deals sat in it);
+          those render on the board for visibility but the backend validator
+          rejects moving a deal INTO them, so offering them silently failed. */}
+      {selectedDeal && <DealDetailDrawer key={selectedDeal.id} deal={selectedDeal} companies={companies} users={users} stages={dealStages.length ? dealStages : DEFAULT_DEAL_STAGES} onClose={() => {
         setSelectedDeal(null);
         setSearchParams((current) => {
           const next = new URLSearchParams(current);

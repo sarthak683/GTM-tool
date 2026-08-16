@@ -58,7 +58,7 @@ def _normalize_company_name(name: str) -> str:
 
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
-from app.models.company import Company
+from app.models.company import Company, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.outreach import OutreachSequence
@@ -67,29 +67,37 @@ from app.models.task import Task, TaskComment
 from app.repositories.base import BaseRepository
 
 
-def company_visibility_filter(user_id: UUID, is_admin: bool):
+def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: bool = False):
     """SQLAlchemy predicate enforcing company (account) visibility for ONE user.
 
     SINGLE SOURCE OF TRUTH for the account-level visibility rule — reuse it on
     EVERY company-browse surface so access can never diverge between endpoints.
 
-    - Admins (``is_admin``) see ALL companies, including ``not_a_fit`` ones, so
-      they can manage/reverse them. Returns ``true()`` — a no-op in ``.where()``.
+    - Admins (``is_admin``) see ALL companies, including disabled ones, so they
+      can manage/reverse them. Returns ``true()`` — a no-op in ``.where()``.
     - A non-admin sees a company ONLY if they own it in either slot
-      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR) AND the account is not
-      flagged ``not_a_fit`` (``not_a_fit`` accounts are hidden from non-admins
-      even from their owner). Unassigned accounts are NOT visible to non-admins.
+      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR). Unassigned accounts are
+      NOT visible to non-admins.
+    - Disabled accounts (``INACTIVE_ACCOUNT_STATUSES`` — not_a_fit/dnd) are
+      hidden from default lists, but a caller may pass ``include_disabled=True``
+      when the request EXPLICITLY filters for a disabled status (an owner
+      reviewing their parked accounts is legitimate — hiding them outright made
+      re-enabling impossible for non-admins). Single-object guards
+      (``_can_see_company``) key on ownership only, for the same reason.
     """
     if is_admin:
         return true()
+    owns = or_(
+        Company.assigned_to_id == user_id,
+        Company.sdr_id == user_id,
+    )
+    if include_disabled:
+        return owns
     return and_(
-        or_(
-            Company.assigned_to_id == user_id,
-            Company.sdr_id == user_id,
-        ),
+        owns,
         or_(
             Company.account_status.is_(None),
-            Company.account_status != "not_a_fit",
+            Company.account_status.not_in(INACTIVE_ACCOUNT_STATUSES),
         ),
     )
 
@@ -179,25 +187,51 @@ class CompanyRepository(BaseRepository[Company]):
         )
         return result.scalars().first()
 
-    async def get_by_normalized_name(self, name: str) -> Optional[Company]:
+    async def get_by_normalized_name(
+        self, name: str, *, incoming_domain: Optional[str] = None
+    ) -> Optional[Company]:
         """
         Looser fallback used by importers to prevent placeholder-domain duplicates.
         Compares names with corporate suffixes / TLDs / punctuation stripped, so
         "zywave.com" matches "zywave", "OpenGov" matches "OpenGov Inc.", etc.
         Only call AFTER get_by_domain and get_by_name miss.
+
+        Two guards keep fuzziness from becoming wrong-account links (both are
+        confirmed prod failure modes of the old first-match-wins version):
+
+        - ``incoming_domain``: when the caller KNOWS the record's domain, a
+          candidate whose real (non-placeholder) domain differs is a DIFFERENT
+          company no matter how similar the normalized names are — skip it.
+        - Ambiguity: if more than one distinct company normalizes to the same
+          key ("Apex Solutions" / "Apex Systems" / "Apex" all normalize to
+          "apex"), there is no safe pick — return None and let the caller
+          create/leave-unlinked rather than guess.
         """
         target = _normalize_company_name(name)
         if not target:
             return None
+        normalized_incoming = _normalize_domain(incoming_domain or "")
         # Pull a small candidate set by first 3 normalized chars to keep it cheap;
         # then normalize in Python for the equality check.
         prefix = target[:3]
         result = await self.session.execute(
             select(Company).where(func.lower(Company.name).like(f"{prefix}%"))
         )
+        matches: list[Company] = []
         for candidate in result.scalars().all():
-            if _normalize_company_name(candidate.name or "") == target:
-                return candidate
+            if _normalize_company_name(candidate.name or "") != target:
+                continue
+            candidate_domain = _normalize_domain(candidate.domain or "")
+            if (
+                normalized_incoming
+                and candidate_domain
+                and not candidate_domain.endswith(".unknown")
+                and candidate_domain != normalized_incoming
+            ):
+                continue
+            matches.append(candidate)
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     async def delete_with_cascade(self, company_id: UUID) -> None:

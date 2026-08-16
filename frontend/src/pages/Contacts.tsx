@@ -42,6 +42,51 @@ import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } 
 import { PreCallIntelPanel } from "./contacts/PreCallIntelPanel";
 import { ProspectingTabButton } from "./contacts/ProspectingTabButton";
 import { AngelOverviewCard, SnapshotRow, StrengthBadge } from "./contacts/AngelOverviewCard";
+import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
+import type { Contact as ContactType } from "../types";
+
+// ACCOUNT status filter for the prospect list ("none" = account has no status
+// yet). Selecting Not a Fit / DND explicitly opts into seeing prospects of
+// disabled accounts — the server hides them by default.
+const ACCOUNT_STATUS_FILTER_OPTIONS = [
+  ...ACCOUNT_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+  { value: "none", label: "No status" },
+];
+
+// Statuses worth flagging on a prospect ROW (positive lifecycle statuses would
+// be noise on every line; the parked/disabled ones change how the rep should
+// treat the prospect).
+const FLAGGED_ACCOUNT_STATUSES = new Set(["not_a_fit", "dnd", "reach_out_later"]);
+
+function AccountContextBadges({ contact }: { contact: ContactType }) {
+  const status = contact.company_account_status;
+  const statusOpt = status && FLAGGED_ACCOUNT_STATUSES.has(status) ? accountStatusOption(status) : null;
+  if (!statusOpt && !contact.account_domain_mismatch) return null;
+  return (
+    <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+      {statusOpt && (
+        <span
+          title={
+            status === "reach_out_later"
+              ? "Account is parked (Reach Out Later)"
+              : `Account is disabled (${statusOpt.label}) — its prospects are out of the default queue`
+          }
+          style={{ fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: statusOpt.color, background: statusOpt.bg, whiteSpace: "nowrap" }}
+        >
+          {statusOpt.label}
+        </span>
+      )}
+      {contact.account_domain_mismatch && (
+        <span
+          title="This prospect's email domain doesn't belong to the account's domain — the mapping may be wrong. Fix it from the prospect page or tell an admin."
+          style={{ fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: "#92600a", background: "#fdf3df", whiteSpace: "nowrap" }}
+        >
+          Check mapping
+        </span>
+      )}
+    </span>
+  );
+}
 
 const PERSONA_FILTER_OPTIONS = [
   { value: "economic_buyer", label: "Economic Buyer" },
@@ -344,7 +389,7 @@ export default function Contacts() {
   // (which land on the BARE path with no query string) restores the view
   // instead of resetting everything. Computed once at mount.
   const initParams = useMemo(() => {
-    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "call", "li", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
+    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
     const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
     if (hasAny) return searchParams;
     try {
@@ -401,7 +446,7 @@ export default function Contacts() {
     // filters — otherwise users would have to hunt for the toggle to discover
     // why the list is narrowed.
     return Boolean(
-      initParams.get("seq") || initParams.get("call") || initParams.get("ae") ||
+      initParams.get("seq") || initParams.get("acct") || initParams.get("call") || initParams.get("ae") ||
       initParams.get("sdr") || initParams.get("own") || initParams.get("tz") ||
       initParams.get("co") || initParams.get("owner") === "mine" ||
       initParams.get("cc") || initParams.get("ec") || initParams.get("ca") ||
@@ -412,6 +457,10 @@ export default function Contacts() {
   });
   const [personaFilter, setPersonaFilter] = useState<string[]>([]);
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
+  // ACCOUNT-status filter. Server rule: with nothing selected, prospects of
+  // disabled (not_a_fit/dnd) accounts are hidden; explicitly selecting a
+  // disabled status shows them (reviewing parked accounts is legitimate).
+  const [accountStatusFilter, setAccountStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("acct")));
   const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("call")));
   const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("li")));
   // Progress-dot color filters. Map 1:1 to the dot colors rendered by
@@ -769,6 +818,7 @@ export default function Contacts() {
         ? user?.id
         : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
+      companyAccountStatus: accountStatusFilter.length ? accountStatusFilter : undefined,
       prospectOnly: true,
   });
 
@@ -988,6 +1038,7 @@ export default function Contacts() {
       prospectSort !== "recent" ? next.set("sb", prospectSort) : next.delete("sb");
       ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
       sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
+      accountStatusFilter.length ? next.set("acct", accountStatusFilter.join(",")) : next.delete("acct");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       linkedinStatusFilter.length ? next.set("li", linkedinStatusFilter.join(",")) : next.delete("li");
       callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
@@ -1017,7 +1068,7 @@ export default function Contacts() {
       }
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -1035,7 +1086,7 @@ export default function Contacts() {
       return;
     }
     setPage(1);
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -1048,7 +1099,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   // Clear the selection when the FILTERS change — the selected prospects may no
   // longer be in the result set, so acting on them would be surprising.
@@ -1070,7 +1121,7 @@ export default function Contacts() {
     emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax,
     nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to,
     companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter,
-    timezoneFilter, tab, searchScope, searchMatch,
+    accountStatusFilter, timezoneFilter, tab, searchScope, searchMatch,
   ]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
@@ -2667,6 +2718,7 @@ export default function Contacts() {
                                     ) : (
                                       <span style={{ color: "#9aaabd", fontSize: 13, fontWeight: 700 }}>No company mapped</span>
                                     )}
+                                    <AccountContextBadges contact={c} />
                                   </div>
                                   {c.title && (
                                     <div style={{ color: "#71839a", fontSize: 12.5, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2927,6 +2979,15 @@ export default function Contacts() {
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Engagement</span>
                     <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
+                  <MultiSelectFilter
+                    hideLabel
+                    label="Account status"
+                    values={accountStatusFilter}
+                    onChange={setAccountStatusFilter}
+                    options={ACCOUNT_STATUS_FILTER_OPTIONS}
+                    allLabel="Account: Active"
+                    minWidth={175}
+                  />
                   <MultiSelectFilter
                     hideLabel
                     label="Sequence"
@@ -3209,6 +3270,7 @@ export default function Contacts() {
                         // SDRs stay locked to their own prospects on reset.
                         setOwnerScope(isSdrLocked ? "mine" : "all");
                         setSequenceFilter([]); setCallDispositionFilter([]);
+                        setAccountStatusFilter([]);
                         setLinkedinStatusFilter([]);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
                         setCallAttemptsBucketFilter([]);
@@ -3582,8 +3644,9 @@ export default function Contacts() {
                                           {c.company_name}
                                         </button>
                                       ) : (
-                                        <span className="text-[#96a7ba]">-</span>
+                                        <span className="text-[#96a7ba]" title="No account mapped — this prospect only appears in unscoped views">No account</span>
                                       )}
+                                      <AccountContextBadges contact={c} />
                                     </div>
                                   </td>
                                 );
@@ -4321,6 +4384,26 @@ export default function Contacts() {
                 <div style={{ color: "#6b4a00", fontSize: 13, lineHeight: 1.5 }}>
                   {importSummary.warning_count} row{importSummary.warning_count === 1 ? "" : "s"} look{importSummary.warning_count === 1 ? "s" : ""} like a role mailbox (e.g. support@, info@) or placeholder name. We imported them anyway — review and clean them up in Prospecting if needed.
                 </div>
+              </div>
+            )}
+
+            {(importSummary.conflict_count ?? 0) > 0 && (
+              <div style={{ marginTop: 14, border: "1px solid #f3c1c1", background: "#fdf0f0", borderRadius: 14, padding: "12px 14px" }}>
+                <div style={{ color: "#9f1239", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 6 }}>
+                  Account conflicts — not imported
+                </div>
+                <div style={{ color: "#7a2434", fontSize: 13, lineHeight: 1.5 }}>
+                  {importSummary.conflict_count} prospect{importSummary.conflict_count === 1 ? "" : "s"} already belong{importSummary.conflict_count === 1 ? "s" : ""} to a different account than this sheet says. Nothing was moved — fix each mapping from the prospect page if the sheet is right.
+                </div>
+                {(importSummary.conflict_details?.length ?? 0) > 0 && (
+                  <div style={{ display: "grid", gap: 4, marginTop: 10, maxHeight: 160, overflowY: "auto" }}>
+                    {(importSummary.conflict_details ?? []).map((line, index) => (
+                      <div key={index} style={{ color: "#7a2434", fontSize: 12, fontFamily: "ui-monospace, monospace", background: "#fff", border: "1px solid #f3d5d5", borderRadius: 8, padding: "6px 8px" }}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

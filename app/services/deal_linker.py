@@ -113,6 +113,14 @@ async def reconcile_deal_stakeholders(
         existing_links.add(contact_id)
         linked += 1
 
+    def _sync_stakeholder_count() -> None:
+        # Keep the denormalized counter true to the links we just made, in the
+        # SAME session — this writer previously skipped it, which is one of the
+        # three paths that drifted stakeholder_count on 151/689 prod deals.
+        if deal.stakeholder_count != len(existing_links):
+            deal.stakeholder_count = len(existing_links)
+            session.add(deal)
+
     # 1) The account's existing contacts — link any not already on the deal.
     # Only id + email are used downstream, so don't load full Contact rows.
     by_email: dict[str, UUID] = {}
@@ -127,6 +135,7 @@ async def reconcile_deal_stakeholders(
         await _link(contact_id)
 
     if not create_from_signals:
+        _sync_stakeholder_count()
         return {"linked": linked, "created": created}
 
     # Only mint a stakeholder when their email domain MATCHES the deal's account
@@ -137,6 +146,7 @@ async def reconcile_deal_stakeholders(
     company = await session.get(Company, deal.company_id)
     company_domain = (getattr(company, "domain", "") or "").strip().lower()
     if not company_domain or company_domain.endswith(".unknown"):
+        _sync_stakeholder_count()
         return {"linked": linked, "created": created}
 
     if internal_domains is None:
@@ -198,4 +208,5 @@ async def reconcile_deal_stakeholders(
         await _link(contact.id)
         created += 1
 
+    _sync_stakeholder_count()
     return {"linked": linked, "created": created}

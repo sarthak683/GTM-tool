@@ -14,7 +14,11 @@ from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Closed/terminal stages that should NOT be health-checked.
+# Closed/terminal stages that should NOT be health-checked. Fallback ONLY —
+# the live set comes from the settings closed group via
+# get_closed_deal_stage_ids(). This hardcoded 4-stage set silently disagreed
+# with settings (9 closed stages), so cold/nurture/on_hold/backlog deals were
+# health-checked and stuck-flagged forever.
 _CLOSED_STAGES = frozenset([
     "closed_won", "closed_lost", "not_a_fit", "churned",
 ])
@@ -52,8 +56,11 @@ async def _async_recalculate() -> int:
     contacts_linked = 0
     contacts_created = 0
     async with task_session() as session:
+        from app.services.deal_stages import get_closed_deal_stage_ids
+
+        closed_stage_ids = await get_closed_deal_stage_ids(session) or _CLOSED_STAGES
         result = await session.execute(
-            select(Deal).where(Deal.stage.notin_(_CLOSED_STAGES))
+            select(Deal).where(Deal.stage.notin_(closed_stage_ids))
         )
         deals = result.scalars().all()
 
@@ -142,6 +149,9 @@ async def _async_reconcile_recent_deal_tasks() -> int:
     lookback_start = now - timedelta(days=DEAL_TASK_RECONCILE_LOOKBACK_DAYS)
 
     async with task_session() as session:
+        from app.services.deal_stages import get_closed_deal_stage_ids
+
+        closed_stage_ids = await get_closed_deal_stage_ids(session) or _CLOSED_STAGES
         candidate_ids = (
             await session.execute(
                 select(Deal.id)
@@ -153,7 +163,7 @@ async def _async_reconcile_recent_deal_tasks() -> int:
                     ),
                 )
                 .where(
-                    Deal.stage.notin_(_CLOSED_STAGES),
+                    Deal.stage.notin_(closed_stage_ids),
                     Task.task_type == "system",
                     Task.status == "open",
                     Task.system_key.like("deal_%"),

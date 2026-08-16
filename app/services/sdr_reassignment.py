@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import NamedTuple
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +7,20 @@ from sqlmodel import select
 
 from app.models.company import Company
 from app.models.contact import Contact
+
+
+class CascadeResult(NamedTuple):
+    """Outcome of cascading a company-level owner change to its contacts.
+
+    ``kept_divergent`` are deliberate per-contact overrides (a third rep holds
+    the prospect) that the cascade leaves alone — callers MUST surface the
+    count to the user instead of letting the divergence stay invisible; silent
+    skips are how account and prospect ownership drifted apart in prod.
+    """
+
+    contacts: list[Contact]
+    moved: list[Contact]
+    kept_divergent: list[Contact]
 
 
 def reset_contact_outreach_progress(contact: Contact) -> None:
@@ -106,13 +121,15 @@ async def sync_company_sdr_assignment_to_contacts(
     session: AsyncSession,
     company: Company,
     previous_sdr_id: UUID | None,
-) -> list[Contact]:
+) -> CascadeResult:
     """Cascade company SDR changes to contacts that followed the old account SDR.
 
     Contacts pointed at a DIFFERENT SDR (a deliberate per-contact split, e.g. a
     timezone handoff) are left entirely alone — both their owner and their
     progress. Because the watermark lives on the contact, skipping them here is
-    enough: their aggregates keep reading their own full history.
+    enough: their aggregates keep reading their own full history. The skipped
+    contacts come back in ``kept_divergent`` so every caller can SHOW the split
+    instead of silently leaving account and prospect ownership to drift.
     """
     sdr_changed = company.sdr_id != previous_sdr_id
     if sdr_changed:
@@ -121,8 +138,11 @@ async def sync_company_sdr_assignment_to_contacts(
     contacts = (
         await session.execute(select(Contact).where(Contact.company_id == company.id))
     ).scalars().all()
+    moved: list[Contact] = []
+    kept_divergent: list[Contact] = []
     for contact in contacts:
         if contact.sdr_id not in (None, previous_sdr_id):
+            kept_divergent.append(contact)
             continue
         contact.sdr_id = company.sdr_id
         contact.sdr_name = company.sdr_name
@@ -130,5 +150,35 @@ async def sync_company_sdr_assignment_to_contacts(
             reset_contact_outreach_progress(contact)
         contact.updated_at = datetime.utcnow()
         session.add(contact)
+        moved.append(contact)
 
-    return contacts
+    return CascadeResult(contacts=list(contacts), moved=moved, kept_divergent=kept_divergent)
+
+
+async def sync_company_ae_assignment_to_contacts(
+    session: AsyncSession,
+    company: Company,
+    previous_ae_id: UUID | None,
+) -> CascadeResult:
+    """AE mirror of the SDR cascade, with the same skip-and-report semantics.
+
+    Previously this logic was copy-pasted inline in both assignment endpoints
+    (single + bulk), which is exactly how the two drifted. AE moves never reset
+    outreach progress — the cadence belongs to the SDR motion.
+    """
+    contacts = (
+        await session.execute(select(Contact).where(Contact.company_id == company.id))
+    ).scalars().all()
+    moved: list[Contact] = []
+    kept_divergent: list[Contact] = []
+    for contact in contacts:
+        if contact.assigned_to_id not in (None, previous_ae_id):
+            kept_divergent.append(contact)
+            continue
+        contact.assigned_to_id = company.assigned_to_id
+        contact.assigned_rep_email = company.assigned_rep_email
+        contact.updated_at = datetime.utcnow()
+        session.add(contact)
+        moved.append(contact)
+
+    return CascadeResult(contacts=list(contacts), moved=moved, kept_divergent=kept_divergent)

@@ -142,7 +142,9 @@ class DealCreate(SQLModel):
     tags: list[str] = []
     qualification: Optional[Any] = None
     health: str = "green"
-    owner_id: Optional[str] = None
+    # NOTE: owner_id is intentionally NOT accepted here. It is a dead free-text
+    # column (0 rows in prod, no FK, read by nothing) — real ownership is
+    # assigned_to_id. Accepting it just let API callers write junk.
     email_cc_alias: Optional[str] = None
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
@@ -231,7 +233,7 @@ class DealUpdate(SQLModel):
     stage_entered_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None
     stakeholder_count: Optional[int] = None
-    owner_id: Optional[str] = None
+    # owner_id removed — dead free-text column; see DealCreate note.
     email_cc_alias: Optional[str] = None
     commit_to_deal: Optional[bool] = None
 

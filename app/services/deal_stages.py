@@ -87,6 +87,42 @@ async def get_configured_deal_stage_ids(session) -> list[str]:
     return [stage["id"] for stage in await get_configured_deal_stages(session)]
 
 
+# Stage ids that older automation/tooling still emits but that are not (or are
+# no longer) configured stages. Resolved BEFORE validation so historical
+# payloads keep working without letting unconfigured ids reach deals.stage.
+LEGACY_STAGE_ALIASES: dict[str, str] = {
+    "workshop": "msa_review",  # settings label is "WORKSHOP/MSA"; id was never "workshop"
+    "open": "reprospect",
+}
+
+
+async def resolve_valid_deal_stage(session, stage: Any, *, default: str | None = None) -> str | None:
+    """THE validator for every ``deals.stage`` write.
+
+    Normalizes (trim/lower + legacy aliases) and returns the stage id only if
+    it exists in the CONFIGURED stage list; otherwise ``default``. deals.stage
+    is an unconstrained varchar, so any write path that skips this check can
+    invent a stage — those deals then render as ghost board columns and are
+    excluded from stage-driven analytics. Callers choose the failure mode:
+    endpoints pass default=None and 422 on None; automation passes a safe
+    default stage.
+    """
+    candidate = str(stage or "").strip().lower()
+    candidate = LEGACY_STAGE_ALIASES.get(candidate, candidate)
+    if not candidate:
+        return default
+    if candidate in set(await get_configured_deal_stage_ids(session)):
+        return candidate
+    return default
+
+
+async def get_closed_deal_stage_ids(session) -> set[str]:
+    """Stage ids whose settings group is "closed" — the ONE definition of a
+    finished deal. Three hardcoded, mutually disagreeing "closed" sets used to
+    live in health checks, ClickUp import, and stale-deal notifications."""
+    return {s["id"] for s in await get_configured_deal_stages(session) if s["group"] == "closed"}
+
+
 async def get_configured_default_deal_stage(session) -> str:
     stages = await get_configured_deal_stages(session)
     first_active = next((stage["id"] for stage in stages if stage["group"] == "active"), None)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import re
 from collections import defaultdict
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
@@ -579,7 +579,13 @@ def _resolve_analytics_window(window_days: int, from_date: Optional[str], to_dat
         if from_date:
             window_start = datetime.fromisoformat(from_date)
         else:
-            window_start = now - timedelta(days=window_days)
+            # Midnight-aligned, matching the explicit from_date branch. The old
+            # rolling-instant boundary meant "Last 30 days" and an explicit
+            # 30-day range covered DIFFERENT spans (one cut mid-day), so the
+            # same dashboard produced two numbers for the same question.
+            window_start = datetime.combine(
+                (now - timedelta(days=window_days)).date(), time.min
+            )
         if to_date:
             window_end = datetime.fromisoformat(to_date) + timedelta(days=1)
         else:
@@ -2071,7 +2077,10 @@ async def sales_dashboard(
         return cached
 
     now = _utcnow()
-    today = date.today()
+    # UTC date, matching `now` — date.today() is server-local, so near midnight
+    # the overdue/forecast day boundary disagreed with every other timestamp
+    # in the same response.
+    today = now.date()
 
     window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date)
     monthly_unique_funnel = await _load_monthly_unique_funnel(
@@ -2111,6 +2120,12 @@ async def sales_dashboard(
         Deal.created_at,
         Deal.updated_at,
         Deal.geography,
+    ).where(
+        # Same population as the board and the performance scorecard: real
+        # deals only. Without this, prospect-pipeline rows leaked into
+        # pipeline value here while every other surface excluded them — the
+        # same "pipeline" number differed page to page.
+        Deal.pipeline_type == "deal"
     )
     if filter_rep_ids:
         deal_stmt = deal_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
@@ -2317,7 +2332,10 @@ async def sales_dashboard(
         else:
             if row.close_date_est < today:
                 overdue_close_count += 1
-            if row.close_date_est <= today + timedelta(days=window_days):
+            # Forecast horizon is capped: reusing the LOOKBACK window as the
+            # FORWARD horizon meant "All time" (36,500 days) made forecast
+            # equal total weighted pipeline — a number with no meaning.
+            if row.close_date_est <= today + timedelta(days=min(window_days, 365)):
                 forecast_amount += weighted_amount
             month_key = row.close_date_est.strftime("%Y-%m")
             month_bucket = forecast_by_month.setdefault(
@@ -2353,7 +2371,15 @@ async def sales_dashboard(
             week_bucket["amount"] += amount
             week_bucket["weighted_amount"] += weighted_amount
 
-        if (row.days_in_stage or 0) >= 30:
+        # LIVE days-in-stage, same as the board computes it. The stored
+        # days_in_stage column is refreshed nightly and only for open stages,
+        # so reading it here showed different staleness than the board for the
+        # same deal on the same screen.
+        if row.stage_entered_at:
+            live_days_in_stage = max(0, (now - row.stage_entered_at).days)
+        else:
+            live_days_in_stage = int(row.days_in_stage or 0)
+        if live_days_in_stage >= 30:
             stale_deal_count += 1
 
         stage_info = _stage_meta(stage_map, stage_id)
@@ -2382,8 +2408,8 @@ async def sales_dashboard(
                 "stale_deals": 0,
             },
         )
-        velocity_bucket["days"].append(int(row.days_in_stage or 0))
-        if (row.days_in_stage or 0) >= 30:
+        velocity_bucket["days"].append(live_days_in_stage)
+        if live_days_in_stage >= 30:
             velocity_bucket["stale_deals"] += 1
 
         rep_key, rep_user_id, rep_name = _label_for_rep(row.assigned_to_id, users)
@@ -4167,7 +4193,11 @@ async def pipeline_deals(
             AEUser.name.label("ae_name"),
         )
         .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
-        .where(Deal.stage.in_(list(active_stage_ids)))
+        .where(
+            Deal.stage.in_(list(active_stage_ids)),
+            # Same population rule as the dashboard scan/board: deals only.
+            Deal.pipeline_type == "deal",
+        )
     )
     if user_id is not None:
         stmt = stmt.where(Deal.assigned_to_id == user_id)

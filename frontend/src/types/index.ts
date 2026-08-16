@@ -116,6 +116,12 @@ export interface Contact {
   id: string;
   company_id?: string;
   company_name?: string; // populated via SQL JOIN — no second API call needed
+  // Account context from the same JOIN: the account's status (labels a
+  // parked/disabled account on its prospect rows) and the domain-mismatch
+  // flag ("this prospect's email doesn't belong to the account's domain
+  // family — check the mapping"). Server-computed, never client-written.
+  company_account_status?: string | null;
+  account_domain_mismatch?: boolean | null;
   first_name: string;
   last_name: string;
   email?: string | null;

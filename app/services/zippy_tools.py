@@ -1634,7 +1634,7 @@ async def _execute_update_deal(args: dict, *, user_id: Optional[UUID] = None) ->
     from sqlmodel import select as sm_select
 
     from app.database import AsyncSessionLocal as async_session
-    from app.models.deal import DEAL_STAGES, Deal
+    from app.models.deal import Deal
 
     deal_id = args.get("deal_id", "")
     if not deal_id:
@@ -1658,12 +1658,21 @@ async def _execute_update_deal(args: dict, *, user_id: Optional[UUID] = None) ->
             deal.next_step_due_at = datetime.fromisoformat(args["next_step_due_at"])
             changes.append(f"Next Step Due → {args['next_step_due_at']}")
 
-        if args.get("stage") in DEAL_STAGES:
+        if args.get("stage"):
+            # Validate against the CONFIGURED stages (settings), not the
+            # hardcoded DEAL_STAGES ordering list — the two disagree (e.g.
+            # "workshop"), and unconfigured ids become ghost board columns.
+            from app.services.deal_stages import resolve_valid_deal_stage
+
+            _valid_stage = await resolve_valid_deal_stage(session, args.get("stage"))
+        else:
+            _valid_stage = None
+        if _valid_stage:
             _prev_stage = deal.stage
-            deal.stage = args["stage"]
+            deal.stage = _valid_stage
             deal.stage_entered_at = datetime.utcnow()
             deal.days_in_stage = 0
-            changes.append(f"Stage → {args['stage']}")
+            changes.append(f"Stage → {_valid_stage}")
             # Keep the audit log in lock-step with the stage write (the
             # contract in app/services/deal_stage_history.py) — Zippy stage
             # moves were invisible to every stage-history-driven metric.

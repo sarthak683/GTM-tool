@@ -122,6 +122,7 @@ async def _create_contacts_from_hunter(
     from app.models.contact import Contact
     from app.services.persona_classifier import classify_persona
     from app.services.prospect_hygiene import is_valid_prospect_candidate
+    from sqlalchemy import func
     from sqlmodel import select
 
     for c in contacts:
@@ -130,7 +131,7 @@ async def _create_contacts_from_hunter(
             continue
 
         # Skip if already exists
-        existing = await session.execute(select(Contact).where(Contact.email == email))
+        existing = await session.execute(select(Contact).where(func.lower(Contact.email) == (email or "").lower()))
         if existing.scalar_one_or_none():
             continue
 

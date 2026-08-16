@@ -86,15 +86,20 @@ export const OUTREACH_LANE_OPTIONS = [
   { value: "cold_strategic", label: "Cold Strategic" },
 ];
 
+// Mirror of the backend DEFAULT_DEAL_STAGE_SETTINGS head (app/services/
+// deal_stages.py) — used ONLY when the settings fetch fails. The previous
+// fallback (discovery/evaluation/proposal/negotiation) named stages that have
+// never existed in this backend, so an offline settings call produced deals
+// the stage validator now rejects.
 export const FALLBACK_DEAL_STAGES: DealStageSetting[] = [
-  { id: "discovery", label: "discovery", group: "active", color: "#3b82f6" },
-  { id: "evaluation", label: "evaluation", group: "active", color: "#6fae27" },
-  { id: "proposal", label: "proposal", group: "active", color: "#8b5cf6" },
-  { id: "negotiation", label: "negotiation", group: "active", color: "#f59e0b" },
+  { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
+  { id: "demo_scheduled", label: "DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
+  { id: "demo_done", label: "DEMO DONE", group: "active", color: "#1d4ed8" },
+  { id: "qualified_lead", label: "QUALIFIED LEAD", group: "active", color: "#6d5efc" },
 ];
 
 export function defaultDealStage(stages: DealStageSetting[]): string {
-  return stages.find((stage) => stage.group === "active")?.id ?? stages[0]?.id ?? "discovery";
+  return stages.find((stage) => stage.group === "active")?.id ?? stages[0]?.id ?? "reprospect";
 }
 
 export const pageStyle: CSSProperties = {

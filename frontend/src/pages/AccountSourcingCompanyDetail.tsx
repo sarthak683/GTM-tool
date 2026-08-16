@@ -1189,6 +1189,22 @@ export default function AccountSourcingCompanyDetail() {
     setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
     try {
       await accountSourcingApi.updateCompany(company.id, { account_status: next });
+      const wasDisabled = previous === "not_a_fit" || previous === "dnd";
+      const nowDisabled = next === "not_a_fit" || next === "dnd";
+      if (nowDisabled && !wasDisabled) {
+        // The server cascade (apply_account_disable_effects) just ran — tell
+        // the rep what actually happened so the prospects "disappearing" from
+        // Prospecting reads as intended behavior, not a bug.
+        toast.success(
+          "Account disabled: its prospects are hidden from Prospecting and running Instantly campaigns for this account were paused. Re-enable the account to bring them back.",
+          "Prospects hidden",
+        );
+      } else if (wasDisabled && !nowDisabled) {
+        toast.success(
+          "Account re-enabled: its prospects are back in Prospecting. Paused Instantly campaigns stay paused — relaunch outreach deliberately when ready.",
+          "Prospects restored",
+        );
+      }
     } catch {
       setCompany((prev) => (prev ? { ...prev, account_status: previous ?? undefined } : prev));
       toast.error("Could not update status. Please try again.", "Update failed");

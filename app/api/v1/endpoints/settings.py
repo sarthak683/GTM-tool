@@ -425,6 +425,37 @@ async def update_deal_stage_settings(body: DealStageSettingsUpdate, session: DBS
 
     stage_ids = [stage["id"] for stage in stages]
     row = await _get_or_create(session)
+
+    # Removing a stage that still HOLDS deals would orphan them: deals.stage is
+    # an unconstrained varchar, so the rows silently keep the deleted id, render
+    # as a ghost board column, and drop out of stage-driven analytics. Refuse
+    # with the counts so the admin migrates the deals first (this is exactly how
+    # the "new_stage_18 looks invalid" incident happened).
+    previous_ids = {
+        stage["id"] for stage in normalize_deal_stage_settings(row.deal_stage_settings)
+    }
+    removed_ids = previous_ids - set(stage_ids)
+    if removed_ids:
+        from app.models.deal import Deal
+
+        from sqlalchemy import func, select
+
+        occupied = (
+            await session.execute(
+                select(Deal.stage, func.count(Deal.id))
+                .where(Deal.stage.in_(removed_ids))
+                .group_by(Deal.stage)
+            )
+        ).all()
+        if occupied:
+            detail = ", ".join(f"'{stage}' has {count} deal(s)" for stage, count in occupied)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot remove stages that still contain deals: {detail}. "
+                    "Move those deals to another stage first."
+                ),
+            )
     row.deal_stage_settings = stages
     row.deal_funnel_config = filter_funnel_config_to_stage_ids(row.deal_funnel_config, stage_ids, _DEFAULT_DEAL_FUNNEL)
     session.add(row)

@@ -9,6 +9,7 @@ from app.core.dependencies import CurrentUser, DBSession
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.repositories.company import company_visibility_filter
 from app.repositories.contact import visible_contact_restriction
 from app.models.meeting import Meeting
 from app.models.sales_resource import SalesResource
@@ -72,7 +73,14 @@ async def global_search(
                     Company.domain.ilike(pattern),
                     Company.industry.ilike(pattern),
                     Company.description.ilike(pattern),
-                )
+                ),
+                # Same account gate as every company list: non-admins only find
+                # accounts they own. include_disabled=True because search is an
+                # explicit lookup — an owner must be able to FIND their parked
+                # (not_a_fit/dnd) account to review or re-enable it.
+                company_visibility_filter(
+                    current_user.id, current_user.role == "admin", include_disabled=True
+                ),
             )
             .order_by(Company.updated_at.desc())
             .limit(5)

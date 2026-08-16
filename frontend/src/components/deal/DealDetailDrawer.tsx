@@ -11,6 +11,7 @@ import { accountSourcingApi, dealsApi, contactsApi, personalEmailSyncApi, tasksA
 import { getCachedGmailSync } from "../../lib/cachedFetch";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
+import { useToast } from "../../lib/ToastContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials } from "../../lib/utils";
 import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
@@ -512,6 +513,7 @@ function BeaconSuggestions({ dealId, onChanged }: { dealId: string; onChanged: (
 }
 
 function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdated, onDealDeleted, onConvert }: Props) {
+  const toast = useToast();
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -690,9 +692,16 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   // ── Field updates ─────────────────────────────────────────────────────────
 
   const patchDeal = async (data: Partial<Deal>) => {
-    const updated = await dealsApi.patch(deal.id, data);
-    onDealUpdated(updated);
-    dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+    // Every inline field edit funnels through here — a rejected write (422,
+    // permission, network) must SAY so, or the drawer keeps showing the value
+    // the rep typed while the server still has the old one.
+    try {
+      const updated = await dealsApi.patch(deal.id, data);
+      onDealUpdated(updated);
+      dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Update failed.", "Deal not saved");
+    }
   };
 
   const handleMoveStage = async (newStage: string) => {
@@ -704,9 +713,13 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
       setCloseStagePrompt(newStage);
       return;
     }
-    const updated = await dealsApi.moveStage(deal.id, newStage);
-    onDealUpdated(updated);
-    dealsApi.getActivities(deal.id).then(setActivities);
+    try {
+      const updated = await dealsApi.moveStage(deal.id, newStage);
+      onDealUpdated(updated);
+      dealsApi.getActivities(deal.id).then(setActivities);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Stage move failed.", "Move failed");
+    }
   };
 
   const confirmCloseMove = async () => {
@@ -1322,12 +1335,23 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               />
             </FieldRow>
 
-            {/* Close date */}
+            {/* Close date. Commit on BLUR (or Enter), not per keystroke — the
+                date input fires onChange for every segment the rep types, so
+                typing "2026-03-15" used to send three PATCHes with partial
+                dates, each one a stage-history-adjacent write and a re-render. */}
             <FieldRow label="Date of Meeting" icon={<CalendarDays size={13} />}>
               <input
                 type="date"
                 defaultValue={deal.close_date_est ?? ""}
-                onChange={(e) => patchDeal({ close_date_est: e.target.value || null } as Partial<Deal>)}
+                onBlur={(e) => {
+                  const next = e.target.value || null;
+                  if ((next ?? "") !== (deal.close_date_est ?? "")) {
+                    void patchDeal({ close_date_est: next } as Partial<Deal>);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
                 style={{ ...fieldInputStyle }}
               />
             </FieldRow>

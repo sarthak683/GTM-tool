@@ -22,6 +22,15 @@ ACCOUNT_STATUS_VALUES = {
     "reach_out_later",
 }
 
+# Statuses that take an account OUT of active prospecting ("disabled" in the
+# UI). This is THE definition every surface must share: the account list hides
+# these from default views, the prospecting list hides their contacts, outreach
+# launch refuses their contacts, and reminder jobs skip them. Rows are never
+# deleted — flipping the status back restores everything. reach_out_later is
+# deliberately NOT here: it parks the account with intent to return, so its
+# prospects stay visible (labeled) in the queue.
+INACTIVE_ACCOUNT_STATUSES = ("not_a_fit", "dnd")
+
 
 class CompanyBase(SQLModel):
     name: str

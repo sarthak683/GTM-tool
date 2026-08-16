@@ -233,7 +233,16 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _parse_clickup_status(raw_status: str | None) -> str:
-    return STATUS_MAP.get(_normalize_text(raw_status), "reprospect")
+    normalized = _normalize_text(raw_status)
+    mapped = STATUS_MAP.get(normalized)
+    if mapped is None and normalized:
+        # Silent collapse to reprospect hid every unmapped ClickUp status —
+        # deals quietly "moved" backwards on re-import with no trace.
+        logger.warning(
+            "ClickUp import: unmapped status %r — defaulting to 'reprospect'",
+            raw_status,
+        )
+    return mapped or "reprospect"
 
 
 def _parse_priority(raw_priority: str | None) -> str:
@@ -452,8 +461,27 @@ async def _upsert_deal(
         payload["close_date_est"] = payload["close_date_est"].date()
 
     if existing:
+        previous_stage = existing.stage
+        new_stage = payload.get("stage")
+        if previous_stage == new_stage:
+            # Unchanged stage keeps its real entry time — overwriting it with
+            # ClickUp's date_updated reset days_in_stage on every re-import.
+            payload.pop("stage_entered_at", None)
         for key, value in payload.items():
             setattr(existing, key, value)
+        if new_stage and previous_stage != new_stage:
+            # Same contract as every other stage write: a re-import that moves
+            # a deal must leave an audit row, or the transition is invisible
+            # to stage-history analytics (and undebuggable afterwards).
+            from app.services.deal_stage_history import record_stage_transition
+
+            await record_stage_transition(
+                session,
+                deal_id=existing.id,
+                from_stage=previous_stage,
+                to_stage=new_stage,
+                source="clickup_import",
+            )
         session.add(existing)
         await session.flush()
         stats.deals_updated += 1

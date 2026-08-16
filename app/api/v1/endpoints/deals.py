@@ -116,7 +116,9 @@ async def list_deals(
         *filters,
         skip=pagination.skip,
         limit=pagination.limit,
-        order_by=Deal.created_at.desc(),
+        # id tiebreaker: created_at alone is non-unique, and OFFSET pagination
+        # over a non-unique sort repeats/drops rows across pages.
+        order_by=(Deal.created_at.desc(), Deal.id.desc()),
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
 
@@ -397,6 +399,32 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         changes.append(_summarize_text_change("Description", update_data["description"]))
 
     update_data["updated_at"] = datetime.utcnow()
+
+    # Stage audit rows are added BEFORE repo.update — which commits internally —
+    # so the deal row and its history/activity land in ONE transaction. The old
+    # order (update-commit, then history, then a second commit) could crash in
+    # between and leave a moved deal with no audit row, which is exactly the
+    # drift stage-history analytics cannot detect.
+    if stage_changed:
+        session.add(
+            Activity(
+                deal_id=deal_id,
+                type="stage_change",
+                source="system",
+                content=f"Stage moved from {previous_stage} to {update_data['stage']}",
+                created_by_id=_user.id,
+            )
+        )
+        await record_stage_transition(
+            session,
+            deal_id=deal_id,
+            from_stage=previous_stage,
+            to_stage=update_data["stage"],
+            changed_by_id=_user.id,
+            source="deal_update",
+            changed_at=update_data.get("stage_entered_at"),
+        )
+
     updated = await repo.update(deal, update_data)
 
     # Re-link the account's contacts when the deal is pointed at a (new) company.
@@ -409,30 +437,12 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
             logger.exception("deal update: stakeholder link failed for %s", deal_id)
 
     if stage_changed:
-        session.add(
-            Activity(
-                deal_id=deal_id,
-                type="stage_change",
-                source="system",
-                content=f"Stage moved from {previous_stage} to {updated.stage}",
-                created_by_id=_user.id,
-            )
-        )
         await record_deal_stage_milestone(
             session,
             deal=updated,
             stage=updated.stage,
             reached_at=updated.stage_entered_at or updated.updated_at,
             source="deal_update",
-        )
-        await record_stage_transition(
-            session,
-            deal_id=deal_id,
-            from_stage=previous_stage,
-            to_stage=updated.stage,
-            changed_by_id=_user.id,
-            source="deal_update",
-            changed_at=updated.stage_entered_at,
         )
 
     if changes:
@@ -519,28 +529,16 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         return await repo.get_with_joins(deal_id)
 
     transition_at = datetime.utcnow()
-    await repo.update(deal, {
-        "stage": new_stage,
-        "stage_entered_at": transition_at,
-        "days_in_stage": 0,
-        "updated_at": transition_at,
-    })
-
-    # Auto-log stage change
-    activity = Activity(
-        deal_id=deal_id,
-        type="stage_change",
-        source="system",
-        content=f"Stage moved from {old_stage} to {new_stage}",
-        created_by_id=_user.id,
-    )
-    session.add(activity)
-    await record_deal_stage_milestone(
-        session,
-        deal=deal,
-        stage=new_stage,
-        reached_at=deal.stage_entered_at or deal.updated_at,
-        source="stage_move",
+    # Audit rows FIRST, then repo.update (which commits) — one transaction, so
+    # a crash can never leave a moved deal without its history row.
+    session.add(
+        Activity(
+            deal_id=deal_id,
+            type="stage_change",
+            source="system",
+            content=f"Stage moved from {old_stage} to {new_stage}",
+            created_by_id=_user.id,
+        )
     )
     await record_stage_transition(
         session,
@@ -550,6 +548,20 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         changed_by_id=_user.id,
         source="stage_move",
         changed_at=transition_at,
+    )
+    await repo.update(deal, {
+        "stage": new_stage,
+        "stage_entered_at": transition_at,
+        "days_in_stage": 0,
+        "updated_at": transition_at,
+    })
+
+    await record_deal_stage_milestone(
+        session,
+        deal=deal,
+        stage=new_stage,
+        reached_at=deal.stage_entered_at or deal.updated_at,
+        source="stage_move",
     )
     await session.commit()
 

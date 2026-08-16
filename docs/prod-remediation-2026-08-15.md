@@ -75,11 +75,12 @@ Fix via the admin UI (roles drive permissions; a human should pick):
 ids `85e237eb-…`, `ed22ca5f-…`, `da06e7db-…` (role=''), `c73b02b0-…`
 (role='agency').
 
-### B4. `new_stage_18` deals (3 rows)
+### B4. `new_stage_18` deals (3 rows) — RESOLVED, NO ACTION (2026-08-16)
 
-Human decision — deal ids `f6d8ee4f-…`, `e2dede4b-…`, `b008a7ca-…`. Either
-rename the stage in stage settings or move the deals to a real stage in the
-UI (which also writes stage history correctly now).
+False alarm: `new_stage_18` is a **valid configured stage** in
+`workspace_settings.deal_stage_settings`, labeled "Marketing Lead (MQL)",
+group `active`. The 3 deals are legitimate. Residual improvement (roadmap):
+settings-created stages should get readable slugs, not `new_stage_NN` ids.
 
 ### B5. Per-rep duplicate email activities (1,731 surplus rows)
 

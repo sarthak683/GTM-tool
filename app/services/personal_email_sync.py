@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.google_docs import fetch_google_doc_context
@@ -492,7 +492,7 @@ async def _get_or_create_company_by_domain(
         return None
 
     result = await session.execute(
-        select(Company).where(Company.domain == domain)
+        select(Company).where(func.lower(Company.domain) == (domain or "").lower())
     )
     return result.scalar_one_or_none()
 
@@ -513,7 +513,7 @@ async def _get_or_create_contact_by_email(
     admin UI.
     """
     result = await session.execute(
-        select(Contact).where(Contact.email == email_addr)
+        select(Contact).where(func.lower(Contact.email) == (email_addr or "").lower())
     )
     return result.scalar_one_or_none()
 
@@ -1157,7 +1157,7 @@ async def _gap_fill_contacts(
             continue
 
         contact_result = await session.execute(
-            select(Contact.id).where(Contact.email == addr)
+            select(Contact.id).where(func.lower(Contact.email) == (addr or "").lower())
         )
         if contact_result.scalar_one_or_none():
             continue

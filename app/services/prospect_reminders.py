@@ -33,12 +33,18 @@ async def send_due_prospect_followup_reminders() -> dict[str, int]:
         now = datetime.utcnow()
         window_start = now - timedelta(days=LOOKBACK_DAYS)
 
+        from app.repositories.contact import active_account_contact_filter
+
         rows = (
             await session.execute(
                 select(Contact).where(
                     Contact.next_followup_at.is_not(None),
                     Contact.next_followup_at <= now,
                     Contact.next_followup_at >= window_start,
+                    # No nudges for prospects of disabled (not_a_fit/dnd)
+                    # accounts — they are out of the queue; their follow-up
+                    # dates are kept and become actionable again on re-enable.
+                    active_account_contact_filter(),
                 )
             )
         ).scalars().all()

@@ -25,6 +25,7 @@ from app.services.activity_signal_classifier import ActivitySignal, classify_act
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import record_stage_transition
+from app.services.deal_stages import resolve_valid_deal_stage
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
 from app.services.deal_activity import deal_activity_condition, engagement_only
 from app.services.deal_activity_interpreter import DealActivityInterpretation, interpret_deal_activity
@@ -3780,19 +3781,19 @@ async def apply_task_action(
 
     if action == "move_deal_stage":
         deal_id = UUID(str(payload["deal_id"]))
-        stage = str(payload["stage"])
+        # deals.stage is an unconstrained varchar — every write path must
+        # validate against the CONFIGURED stage list or invented ids end up as
+        # ghost board columns invisible to analytics.
+        stage = await resolve_valid_deal_stage(session, payload.get("stage"))
+        if stage is None:
+            raise ValueError(f"Invalid deal stage: {payload.get('stage')!r}")
         repo = DealRepository(session)
         deal = await repo.get_or_raise(deal_id)
         previous_stage = deal.stage
-        await repo.update(
-            deal,
-            {
-                "stage": stage,
-                "stage_entered_at": datetime.utcnow(),
-                "days_in_stage": 0,
-                "updated_at": datetime.utcnow(),
-            },
-        )
+        # Audit rows BEFORE repo.update (which commits): the stage write and
+        # its history land in one transaction. deal_stage_history is the ONLY
+        # input to demos/win-rate/cycle-time scorecards — a stage write without
+        # it makes the transition invisible to every outcome metric.
         session.add(
             Activity(
                 deal_id=deal_id,
@@ -3802,9 +3803,6 @@ async def apply_task_action(
                 created_by_id=actor_id,
             )
         )
-        # deal_stage_history is the ONLY input to demos/win-rate/cycle-time
-        # scorecards — a stage write without it makes the transition invisible
-        # to every outcome metric.
         await record_stage_transition(
             session,
             deal_id=deal_id,
@@ -3812,6 +3810,15 @@ async def apply_task_action(
             to_stage=stage,
             changed_by_id=actor_id,
             source="system_task",
+        )
+        await repo.update(
+            deal,
+            {
+                "stage": stage,
+                "stage_entered_at": datetime.utcnow(),
+                "days_in_stage": 0,
+                "updated_at": datetime.utcnow(),
+            },
         )
         await record_deal_stage_milestone(
             session,
@@ -3833,7 +3840,10 @@ async def apply_task_action(
             {
                 "name": f"{company_name} - {contact.first_name} {contact.last_name}".strip(),
                 "pipeline_type": "deal",
-                "stage": str(payload.get("stage") or "demo_done"),
+                # Validated: an arbitrary payload string must not mint a stage.
+                "stage": await resolve_valid_deal_stage(
+                    session, payload.get("stage"), default="demo_done"
+                ),
                 "company_id": contact.company_id,
                 "assigned_to_id": contact.assigned_to_id,
                 # Preserve SDR-sourced pipeline credit through conversion.
@@ -4005,13 +4015,27 @@ async def apply_task_action(
             raise ValueError("Workshop booking actions are gated until commercials are underway.")
         if action == "send_pricing_package" and not _stage_reached(deal.stage, "commercial_negotiation"):
             stage_update = "commercial_negotiation"
-        elif action == "book_workshop_session" and not _stage_reached(deal.stage, "workshop"):
-            stage_update = "workshop"
+        elif action == "book_workshop_session" and not _stage_reached(deal.stage, "msa_review"):
+            # "workshop" was never a configured stage id (the configured stage
+            # is msa_review, labeled "WORKSHOP/MSA") — writing it stranded
+            # deals in a ghost column excluded from stage analytics.
+            stage_update = "msa_review"
 
         if stage_update:
+            previous_stage = deal.stage
             deal.stage = stage_update
             deal.stage_entered_at = datetime.utcnow()
             deal.days_in_stage = 0
+            # Without the history row this transition is invisible to every
+            # outcome metric (same rule as move_deal_stage above).
+            await record_stage_transition(
+                session,
+                deal_id=deal.id,
+                from_stage=previous_stage,
+                to_stage=stage_update,
+                changed_by_id=actor_id,
+                source="system_task_follow_up_action",
+            )
             await record_deal_stage_milestone(
                 session,
                 deal=deal,
@@ -4137,21 +4161,17 @@ async def apply_task_action(
     # ── AI task emitter actions (the 6 codes) ────────────────────────────────
     if action == "t_stage_apply":
         deal_id = UUID(str(payload["deal_id"]))
-        target_stage = str(payload.get("target_stage") or "").strip()
-        if target_stage not in DEAL_STAGES:
-            raise ValueError(f"Invalid target_stage: {target_stage}")
+        # Validate against the CONFIGURED stages (not the hardcoded ordering
+        # list, which still carries legacy ids like "workshop" for comparison
+        # purposes) — the alias map converts those legacy ids instead.
+        target_stage = await resolve_valid_deal_stage(session, payload.get("target_stage"))
+        if target_stage is None:
+            raise ValueError(f"Invalid target_stage: {payload.get('target_stage')!r}")
         repo = DealRepository(session)
         deal = await repo.get_or_raise(deal_id)
         previous_stage = deal.stage
-        await repo.update(
-            deal,
-            {
-                "stage": target_stage,
-                "stage_entered_at": datetime.utcnow(),
-                "days_in_stage": 0,
-                "updated_at": datetime.utcnow(),
-            },
-        )
+        # Audit rows BEFORE repo.update (which commits) — same one-transaction
+        # rule as every stage write: no history row, no outcome metrics.
         session.add(
             Activity(
                 deal_id=deal_id,
@@ -4160,6 +4180,23 @@ async def apply_task_action(
                 content=f"Stage moved from {previous_stage} to {target_stage} via T-STAGE (AI)",
                 created_by_id=actor_id,
             )
+        )
+        await record_stage_transition(
+            session,
+            deal_id=deal_id,
+            from_stage=previous_stage,
+            to_stage=target_stage,
+            changed_by_id=actor_id,
+            source="t_stage_apply",
+        )
+        await repo.update(
+            deal,
+            {
+                "stage": target_stage,
+                "stage_entered_at": datetime.utcnow(),
+                "days_in_stage": 0,
+                "updated_at": datetime.utcnow(),
+            },
         )
         await record_deal_stage_milestone(
             session,

@@ -82,6 +82,11 @@ export type ContactSearchParams = {
     ownerId?: string | string[];
     scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
+    // Filter by the ACCOUNT's status ("none" = account has no status yet).
+    companyAccountStatus?: string[];
+    // Disabled (not_a_fit/dnd) accounts' prospects are excluded by default;
+    // opt in to review them.
+    includeDisabledAccounts?: boolean;
     timezone?: string[];
     sortBy?: "name" | "first_name" | "last_name" | "company" | "email" | "title" | "created_at";
     sortDir?: "asc" | "desc";
@@ -122,6 +127,8 @@ const buildContactQuery = (params: ContactSearchParams): URLSearchParams => {
     }
     if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
+    if (params.companyAccountStatus?.length) search.set("company_account_status", params.companyAccountStatus.join(","));
+    if (params.includeDisabledAccounts) search.set("include_disabled_accounts", "true");
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
     if (params.sortBy) search.set("sort_by", params.sortBy);
     if (params.sortDir) search.set("sort_dir", params.sortDir);

@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
-from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate
+from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
 from app.models.deal import Deal, DealRead
 from app.repositories.company import CompanyRepository, company_visibility_filter
 from app.schemas.common import PaginatedResponse
@@ -22,15 +22,17 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 def _can_see_company(company: Company, user) -> bool:
     """Python mirror of ``company_visibility_filter`` for single-object guards.
 
-    Admins see every company (including ``not_a_fit``); a non-admin only sees a
-    company they own (AE or SDR) that is not flagged ``not_a_fit``. Use on
-    single-company detail/update routes to 404 a company the caller can't see
-    (so existence isn't leaked).
+    Admins see every company; a non-admin sees a company they own (AE or SDR).
+    Ownership is the ONLY gate here — deliberately NOT the disabled-status
+    check the list filter applies: an owner must be able to OPEN their parked
+    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
+    accounts by default; direct access never dead-ends. Use on single-company
+    detail/update routes to 404 a company the caller can't see (so existence
+    isn't leaked).
     """
     if user.role == "admin":
         return True
-    owns = company.assigned_to_id == user.id or company.sdr_id == user.id
-    return owns and company.account_status != "not_a_fit"
+    return company.assigned_to_id == user.id or company.sdr_id == user.id
 
 
 def _visible_company_selector_filter():
@@ -46,11 +48,23 @@ def _visible_company_selector_filter():
 
 async def _apply_company_update(session, company: Company, update_data: dict) -> None:
     previous_sdr_id = company.sdr_id
+    previous_account_status = company.account_status
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     for key, value in update_data.items():
         setattr(company, key, value)
     if sdr_update_requested:
         await sync_company_sdr_assignment_to_contacts(session, company, previous_sdr_id)
+    # Keep the disable cascade identical to the account-sourcing update path:
+    # both routes can park an account, so both must pause its outreach.
+    if (
+        company.account_status in INACTIVE_ACCOUNT_STATUSES
+        and previous_account_status not in INACTIVE_ACCOUNT_STATUSES
+    ):
+        from app.services.account_status import apply_account_disable_effects
+
+        await apply_account_disable_effects(
+            session, company, reason=f"account_status={company.account_status}"
+        )
 
 
 class DuplicateCheckRequest(BaseModel):

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models.activity import Activity
-from app.models.company import Company
+from app.models.company import Company, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact, ContactRead
 from app.models.outreach import OutreachSequence
 from app.models.user import User
@@ -202,6 +202,25 @@ def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
     )
 
 
+def active_account_contact_filter():
+    """Predicate: the contact's ACCOUNT is not disabled (not_a_fit/dnd).
+
+    Contacts with no account pass — they are their own problem (mapping), not a
+    disabled-account one. Subquery form so callers that don't join Company can
+    use it (reminder jobs, outreach launch guards). The prospects list applies
+    the same rule join-based inside ``list_with_company_name``; keep the two in
+    lockstep. Deliberately NOT part of ``contact_visibility_filter``: direct
+    record access (detail page, links from activity history) must keep working
+    for disabled accounts, otherwise re-enabling and auditing become dead ends.
+    """
+    return or_(
+        Contact.company_id.is_(None),
+        Contact.company_id.not_in(
+            select(Company.id).where(Company.account_status.in_(INACTIVE_ACCOUNT_STATUSES))
+        ),
+    )
+
+
 async def visible_contact_restriction(session: AsyncSession, user):
     """Return the visibility predicate for `user`, or None if they may see ALL
     prospects (admins + users in the view-all grant list).
@@ -240,6 +259,8 @@ class ContactRepository(BaseRepository[Contact]):
         restrict_to_role: Optional[str] = None,
         scope_any_match: bool = False,
         prospect_only: bool = False,
+        company_account_status: Optional[str] = None,
+        include_disabled_accounts: bool = False,
         timezone: Optional[str] = None,
         call_outcome_color: Optional[list[str]] = None,
         email_outcome_color: Optional[list[str]] = None,
@@ -303,10 +324,45 @@ class ContactRepository(BaseRepository[Contact]):
             .correlate(Contact)
             .scalar_subquery()
         )
+        # Domain-mismatch FLAG (not filter): true when the prospect's email
+        # domain neither equals nor is a subdomain (either direction) of the
+        # account's domain. Surfaced as a per-row badge so a mis-linked prospect
+        # is VISIBLE and actionable. This used to be a hard hygiene filter that
+        # silently hid every such prospect from the list — which meant the one
+        # person who could notice the wrong mapping (the owning rep) could never
+        # see the row at all.
+        email_domain = func.lower(func.split_part(Contact.email, "@", 2))
+        normalized_company_domain = case(
+            (func.lower(Company.domain).like("www.%"), func.substr(func.lower(Company.domain), 5)),
+            else_=func.lower(Company.domain),
+        )
+        domains_align = or_(
+            email_domain == normalized_company_domain,
+            email_domain.like(func.concat("%.", normalized_company_domain)),
+            normalized_company_domain.like(func.concat("%.", email_domain)),
+        )
+        account_domain_mismatch_expr = case(
+            (
+                and_(
+                    Contact.email.is_not(None),
+                    Contact.email != "",
+                    Company.domain.is_not(None),
+                    Company.domain != "",
+                    ~Company.domain.ilike("%.unknown"),
+                    ~email_domain.in_(tuple(FREE_EMAIL_PROVIDERS)),
+                    ~domains_align,
+                ),
+                True,
+            ),
+            else_=False,
+        )
+
         base_stmt = (
             select(
                 Contact,
                 Company.name.label("company_name"),
+                Company.account_status.label("company_account_status"),
+                account_domain_mismatch_expr.label("account_domain_mismatch"),
                 ae_user.name.label("assigned_to_name"),
                 sdr_user.name.label("sdr_name"),
                 call_attempt_count_subq.label("call_attempt_count"),
@@ -325,6 +381,45 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(Contact.company_id == company_id)
             count_stmt = count_stmt.where(Contact.company_id == company_id)
 
+        # Optional user-selectable filter on the ACCOUNT's status ("none" =
+        # accounts with no status yet; comma-separated values OR'd together).
+        requested_account_statuses: list[str] = []
+        if company_account_status:
+            requested_account_statuses = [
+                v.strip().lower() for v in company_account_status.split(",") if v.strip()
+            ]
+            named = [v for v in requested_account_statuses if v != "none"]
+            status_clauses = []
+            if named:
+                status_clauses.append(Company.account_status.in_(named))
+            if "none" in requested_account_statuses:
+                status_clauses.append(
+                    and_(Contact.company_id.is_not(None), Company.account_status.is_(None))
+                )
+            if status_clauses:
+                status_filter = or_(*status_clauses) if len(status_clauses) > 1 else status_clauses[0]
+                base_stmt = base_stmt.where(status_filter)
+                count_stmt = count_stmt.where(status_filter)
+
+        # Disabled-account gate (the "single source of truth" rule): prospects
+        # of not_a_fit/dnd accounts are OUT of the default queue — list, count,
+        # export and KPIs all share this statement so they cannot disagree.
+        # Skipped when: the caller explicitly opts in (admin toggle), the view
+        # is scoped to one account (its detail page must show its own
+        # prospects), or the account-status filter explicitly requests a
+        # disabled status (reviewing parked accounts is legitimate).
+        explicitly_requested_disabled = any(
+            v in INACTIVE_ACCOUNT_STATUSES for v in requested_account_statuses
+        )
+        if not include_disabled_accounts and not company_id and not explicitly_requested_disabled:
+            active_account_gate = or_(
+                Contact.company_id.is_(None),
+                Company.account_status.is_(None),
+                Company.account_status.not_in(INACTIVE_ACCOUNT_STATUSES),
+            )
+            base_stmt = base_stmt.where(active_account_gate)
+            count_stmt = count_stmt.where(active_account_gate)
+
         if prospect_only:
             # Always surface contacts that a rep explicitly added through the UI
             # or the prospect CSV import — those are deliberate and must not be
@@ -334,17 +429,6 @@ class ContactRepository(BaseRepository[Contact]):
                 Contact.enrichment_data.contains({"source": "prospect_csv_upload"}),
             )
 
-            email_domain = func.lower(func.split_part(Contact.email, "@", 2))
-            normalized_company_domain = func.lower(func.replace(Company.domain, "www.", ""))
-            business_domain_mismatch = and_(
-                Contact.email.is_not(None),
-                Contact.email != "",
-                Company.domain.is_not(None),
-                Company.domain != "",
-                ~Company.domain.ilike("%.unknown"),
-                ~email_domain.in_(tuple(FREE_EMAIL_PROVIDERS)),
-                email_domain != normalized_company_domain,
-            )
             lower_email = func.lower(Contact.email)
             role_mailbox_filter = and_(
                 Contact.email.is_not(None),
@@ -357,15 +441,27 @@ class ContactRepository(BaseRepository[Contact]):
             )
             # Junk filter: only exclude truly-automated noise (zippy+ test bot,
             # clickup import placeholders, obvious role mailboxes, placeholder
-            # names, domain-mismatch enrichment misses). A rep-created contact
-            # passes via `manual_override` above.
+            # names). A rep-created contact passes via `manual_override` above.
+            # Domain-mismatched prospects are NOT excluded here — they are real
+            # people on a mis-mapped or alias-domain account; hiding them made
+            # prospects "disappear" for the owning rep. They surface with the
+            # account_domain_mismatch badge instead (see the flag column above).
+            #
+            # NULL-safety on the JSONB terms is load-bearing: `NULL @> x` is
+            # NULL in Postgres, and `NOT NULL` is still NULL, which fails the
+            # WHERE — so a contact with no enrichment_data at all silently
+            # vanished from the prospect list. IS NULL must pass explicitly.
             junk_filter_combined = and_(
                 ~func.lower(func.coalesce(Contact.email, "")).like("zippy+%@beacon.li"),
                 ~role_mailbox_filter,
                 ~placeholder_name_filter,
-                ~Contact.enrichment_data.contains({"source": "clickup_import_placeholder"}),
-                ~Contact.enrichment_data.contains({"source": "personal_email_sync"}),
-                ~business_domain_mismatch,
+                or_(
+                    Contact.enrichment_data.is_(None),
+                    and_(
+                        ~Contact.enrichment_data.contains({"source": "clickup_import_placeholder"}),
+                        ~Contact.enrichment_data.contains({"source": "personal_email_sync"}),
+                    ),
+                ),
             )
             combined_filter = or_(manual_override, junk_filter_combined)
             base_stmt = base_stmt.where(combined_filter)
@@ -868,9 +964,21 @@ class ContactRepository(BaseRepository[Contact]):
         ).all()
 
         result: list[ContactRead] = []
-        for contact, company_name, assigned_to_name, sdr_name, call_attempt_count, latest_comment, comment_count in rows:
+        for (
+            contact,
+            company_name,
+            company_account_status_value,
+            account_domain_mismatch,
+            assigned_to_name,
+            sdr_name,
+            call_attempt_count,
+            latest_comment,
+            comment_count,
+        ) in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
+            read.company_account_status = company_account_status_value
+            read.account_domain_mismatch = bool(account_domain_mismatch)
             read.assigned_to_name = assigned_to_name
             read.sdr_name = sdr_name
             read.call_attempt_count = int(call_attempt_count or 0)

@@ -10,7 +10,7 @@ small, deterministic date helper. We assert that
     i.e. ``to_date`` + 1 day; default window is ``window_days`` back from now).
 """
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
 
@@ -36,15 +36,20 @@ class ResolveAnalyticsWindowTests(unittest.TestCase):
         # End is exclusive: to_date + 1 day so the whole 31st is included.
         self.assertEqual(end, datetime(2026, 2, 1))
 
-    def test_default_window_spans_window_days(self) -> None:
+    def test_default_window_is_midnight_aligned(self) -> None:
         # _utcnow() is naive UTC, so this compares cleanly against utcnow().
         before = datetime.utcnow()
         start, end = _resolve_analytics_window(7, None, None)
         after = datetime.utcnow()
-        # window_end is "now"; window_start is window_days earlier than now.
+        # window_end is "now" (to-date semantics, partial current day included).
         self.assertGreaterEqual(end, before)
         self.assertLessEqual(end, after)
-        self.assertAlmostEqual((end - start).total_seconds(), 7 * 86400, delta=5)
+        # window_start is MIDNIGHT UTC of (now - window_days): the quick "Last
+        # 7 days" pick must cover the same span as an explicit 7-day from_date
+        # range, which parses to midnight. The old rolling-instant boundary
+        # made the two disagree by the time elapsed since midnight.
+        self.assertEqual(start.time().isoformat(), "00:00:00")
+        self.assertEqual(start.date(), (before - timedelta(days=7)).date())
 
     def test_rolling_period_starts_returns_daily_buckets_for_1_week_window(self) -> None:
         start = datetime(2026, 1, 1, 10, 30)

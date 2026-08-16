@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -171,6 +171,11 @@ export default function SettingsPage() {
   const [reportSenderEmail, setReportSenderEmail] = useState("sarthak@beacon.li");
   const [outreachContent, setOutreachContent] = useState<OutreachContentSettings | null>(null);
   const [dealStages, setDealStages] = useState<DealStageSettings | null>(null);
+  // Stage ids as they exist ON THE SERVER. Ids in this set are immutable
+  // (deals reference them); ids outside it are drafts added this session and
+  // get re-derived from their final label at save time — this is what stops
+  // new stages from keeping their "new_stage_18"-style placeholder id forever.
+  const savedDealStageIdsRef = useRef<Set<string>>(new Set());
   const [prospectStages, setProspectStages] = useState<ProspectStageSettings | null>(null);
   const [savingProspectStages, setSavingProspectStages] = useState(false);
   const [clickupCrmSettings, setClickupCrmSettings] = useState<ClickUpCrmSettings | null>(null);
@@ -269,6 +274,7 @@ export default function SettingsPage() {
       setOutreachStepDelays(outreachTiming.step_delays);
       setOutreachTimingSteps(outreachTiming.steps);
       setDealStages(dealStageData);
+      savedDealStageIdsRef.current = new Set((dealStageData?.stages ?? []).map((stage) => stage.id));
       setProspectStages(prospectStageData);
       setClickupCrmSettings(clickupCrmData);
       setRolePermissions(rolePermissionData);
@@ -796,11 +802,27 @@ export default function SettingsPage() {
     setError(null);
     setMessage(null);
     try {
+      const usedIds = new Set<string>();
       const normalized = {
         stages: dealStages.stages.map((stage, index) => {
           const label = stage.label.trim() || `Stage ${index + 1}`;
+          // Server-known ids are immutable (deals reference them). A DRAFT
+          // stage added this session gets its final id from its final LABEL,
+          // so "Marketing Lead (MQL)" becomes marketing_lead_mql — not the
+          // opaque new_stage_18 placeholder it was born with.
+          let id = stage.id || slugifyStageId(label);
+          if (!savedDealStageIdsRef.current.has(id)) {
+            id = slugifyStageId(label);
+          }
+          let candidate = id;
+          let suffix = 2;
+          while (usedIds.has(candidate)) {
+            candidate = `${id}_${suffix}`;
+            suffix += 1;
+          }
+          usedIds.add(candidate);
           return {
-            id: stage.id || slugifyStageId(label),
+            id: candidate,
             label,
             group: (stage.group === "closed" ? "closed" : "active") as "closed" | "active",
             color: stage.color || "#64748b",
@@ -809,6 +831,7 @@ export default function SettingsPage() {
       };
       const saved = await settingsApi.updateDealStages(normalized);
       setDealStages(saved);
+      savedDealStageIdsRef.current = new Set(saved.stages.map((stage) => stage.id));
       setMessage("Pipeline lanes saved. The deal board now follows this shared lane configuration.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save deal stages");

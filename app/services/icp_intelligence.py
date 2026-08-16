@@ -132,6 +132,7 @@ async def _resolve_domain(ws, company_name: str) -> str:
 
 async def _safe_apply_resolved_domain(session, company, resolved_domain: str) -> dict[str, Any]:
     """Apply a newly resolved domain unless it collides with another company."""
+    from sqlalchemy import func
     from sqlmodel import select
     from app.models.company import Company
 
@@ -144,7 +145,7 @@ async def _safe_apply_resolved_domain(session, company, resolved_domain: str) ->
 
     existing = (
         await session.execute(
-            select(Company).where(Company.domain == normalized, Company.id != company.id)
+            select(Company).where(func.lower(Company.domain) == (normalized or "").lower(), Company.id != company.id)
         )
     ).scalar_one_or_none()
     if existing:

@@ -47,6 +47,15 @@ async def backfill_orphans_for_company(
         for shadow in shadow_companies:
             if not shadow.id:
                 continue
+            # A same-NAME shadow with a DIFFERENT real domain is a different
+            # company, not a shadow ("IRIS Software Group" iris.co.uk vs "IRIS
+            # Software Inc" irissoftware.com). Absorbing on name alone moved
+            # every contact/deal/meeting of the other company under this one —
+            # a confirmed wrong-account source in prod. Only absorb when the
+            # domains agree or the shadow never had a real one.
+            shadow_domain = (shadow.domain or "").strip().lower()
+            if shadow_domain and not shadow_domain.endswith(".unknown") and shadow_domain != domain:
+                continue
             await session.execute(
                 update(Contact)
                 .where(Contact.company_id == shadow.id)
@@ -68,8 +77,21 @@ async def backfill_orphans_for_company(
         await session.flush()
         return {"contacts_linked": 0, "deals_linked": 0, "shadow_companies_absorbed": shadow_companies_absorbed}
 
-    # 1) Link orphan contacts by email domain. Postgres position() lets us find
-    #    the "@" and take everything after it without a Python roundtrip.
+    # 1) Link orphan contacts by email domain — but never on a domain that
+    #    cannot identify a company. An account whose domain field ended up as
+    #    gmail.com / linkedin.com would sweep up EVERY orphan with that mailbox
+    #    provider (the _clean_domain guard now prevents new ones, but data
+    #    predating it may still carry such a domain).
+    from app.services.account_sourcing import _NON_COMPANY_DOMAINS
+
+    if domain in _NON_COMPANY_DOMAINS:
+        await session.flush()
+        return {
+            "contacts_linked": 0,
+            "deals_linked": 0,
+            "shadow_companies_absorbed": shadow_companies_absorbed,
+        }
+
     contacts_stmt = select(Contact).where(
         Contact.company_id.is_(None),
         Contact.email.is_not(None),

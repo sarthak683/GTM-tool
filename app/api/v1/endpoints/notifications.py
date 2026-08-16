@@ -212,12 +212,20 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
     # deal_id we return.
     target_deal_id = payload.get("deal_id")
     if not target_deal_id:
+        # "Existing deal" must mean an existing OPEN deal. The old hardcoded
+        # exclusion list (["won","lost","closed_won","closed_lost"]) named two
+        # stages that don't exist and missed churned/not_a_fit/cold/nurture/
+        # on_hold/backlog — so a long-dead deal blocked conversion forever.
+        # The settings closed-group is the single source of truth.
+        from app.services.deal_stages import get_closed_deal_stage_ids
+
+        closed_ids = await get_closed_deal_stage_ids(session)
         existing = (await session.execute(
             select(Deal.id)
             .join(DealContact, DealContact.deal_id == Deal.id)
             .where(
                 DealContact.contact_id == contact_id,
-                Deal.stage.notin_(["won", "lost", "closed_won", "closed_lost"]),
+                Deal.stage.notin_(closed_ids),
             )
             .limit(1)
         )).first()
