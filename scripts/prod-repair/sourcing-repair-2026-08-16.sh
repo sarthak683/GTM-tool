@@ -179,17 +179,10 @@ FROM companies co
 WHERE c.company_id IS NULL AND c.email LIKE '%@%'
   AND lower(co.domain)=lower(split_part(c.email,'@',2));
 
--- P4: SDR gap-fill from the account (no watermark reset: gap-fill, not handoff)
-UPDATE contacts c SET sdr_id=co.sdr_id, sdr_name=co.sdr_name, updated_at=NOW()
-FROM companies co
-WHERE co.id=c.company_id AND c.sdr_id IS NULL AND co.sdr_id IS NOT NULL;
-
--- P5: AE gap-fill from the account
-UPDATE contacts c SET assigned_to_id=co.assigned_to_id, assigned_rep_email=co.assigned_rep_email, updated_at=NOW()
-FROM companies co
-WHERE co.id=c.company_id AND c.assigned_to_id IS NULL AND co.assigned_to_id IS NOT NULL;
-
--- P6: ownerless company backfill from unanimous contact SDR
+-- P4: ownerless company backfill from unanimous contact SDR. Runs BEFORE the
+-- contact gap-fills: the first APPLY ran it last, so contacts of the 24
+-- freshly-backfilled companies were left as 49 new "gaps" — filling company
+-- slots first lets one pass converge.
 WITH consensus AS (
   SELECT company_id, min(sdr_id::text)::uuid AS sdr_id FROM contacts
   WHERE sdr_id IS NOT NULL AND company_id IS NOT NULL
@@ -199,6 +192,16 @@ UPDATE companies co
 SET sdr_id=u.id, sdr_name=u.name, sdr_email=u.email, sdr_assigned_at=NOW(), updated_at=NOW()
 FROM consensus x JOIN users u ON u.id=x.sdr_id
 WHERE co.id=x.company_id AND co.sdr_id IS NULL;
+
+-- P5: SDR gap-fill from the account (no watermark reset: gap-fill, not handoff)
+UPDATE contacts c SET sdr_id=co.sdr_id, sdr_name=co.sdr_name, updated_at=NOW()
+FROM companies co
+WHERE co.id=c.company_id AND c.sdr_id IS NULL AND co.sdr_id IS NOT NULL;
+
+-- P6: AE gap-fill from the account
+UPDATE contacts c SET assigned_to_id=co.assigned_to_id, assigned_rep_email=co.assigned_rep_email, updated_at=NOW()
+FROM companies co
+WHERE co.id=c.company_id AND c.assigned_to_id IS NULL AND co.assigned_to_id IS NOT NULL;
 
 COMMIT;
 
