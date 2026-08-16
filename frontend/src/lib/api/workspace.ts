@@ -557,6 +557,13 @@ export type SalesDashboard = {
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
   accounts_by_status?: SalesAccountStatusRow[];
   quota: SalesQuotaState;
+  meeting_bucket_totals?: {
+    meetings_next_1w: number;
+    meetings_next_2w: number;
+    meetings_beyond_2w: number;
+    direct_sql: number;
+    demo_rescheduled: number;
+  };
 };
 
 export type SalesAccountStatusRow = {
@@ -587,6 +594,8 @@ export type SalesActivityDrilldownRow = {
   deal_id?: string | null;
   company_id?: string | null;
   email_body?: string | null;  // full body for expand-in-drilldown (1.2)
+  ae_name?: string | null;     // deal AE assignment (pipeline-backed drilldowns)
+  sdr_name?: string | null;    // deal SDR assignment (pipeline-backed drilldowns)
 };
 
 export type SalesActivityDrilldown = {

@@ -8,7 +8,7 @@ Consumed by:
 Membership is declared by email (stable across display-name edits) and resolved
 to user ids at query time. `ae_emails` is the subset whose deal pipeline the
 forecast section/dashboard should reflect — for an SDR-heavy pod that's the same
-as the reps; for the India pod it's just the AEs (Yashveer, Sandeep, Bhavya).
+as the reps; for the ROW pod it's just the AEs (Yashveer, Sandeep, Bhavya).
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ POD_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "india": {
         "key": "india",
-        "label": "India Pod",
+        "label": "ROW Pod",
         "reps": [
             {"name": "Dyuthith Din", "email": "dyuthith@beacon.li", "aliases": ["dyuthith"]},
             {"name": "Yashveer Singh", "email": "yash@beacon.li", "aliases": ["yashveer", "yash"]},
