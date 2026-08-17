@@ -23,6 +23,7 @@ from app.models.company import Company
 from app.models.deal import Deal
 from app.models.recotap import RECOTAP_JOURNEY_STAGES, RecotapAccount, RecotapAccountRead
 from app.models.settings import WorkspaceSettings
+from app.services.deal_stages import get_configured_deal_stages
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,116 @@ def crm_stage_value(stages: list[str]) -> Optional[str]:
     return _STAGE_TAG.get(top)
 
 
+# The distinct values crm_stage_value() can return — these become the
+# singleSelection options when the field is created, so a value outside this set
+# would be rejected by Recotap.
+CRM_STAGE_FIELD_LABEL = "CRM Stage"
+CRM_STAGE_FIELD_OPTIONS = ["Qualified", "Demo", "POC", "Negotiation", "Customer"]
+_CRM_STAGE_FIELD_SETTING = "recotap_crm_stage_field_key"
+
+
+async def resolve_crm_stage_field_key(
+    session: AsyncSession, client: RecotapClient, *, create: bool = True
+) -> Optional[str]:
+    """The Recotap custom-field key that holds a company's CRM stage.
+
+    Why this exists: the stage was being pushed as a free-text tag ("CRM: POC")
+    because ``RECOTAP_CRM_STAGE_FIELD_KEY`` was never set, and the code's own
+    comment said custom fields are "rejected unless pre-defined". Recotap has an
+    endpoint for exactly that pre-definition — we were working around a problem
+    the API solves. One structured, selectable field beats a tag nobody can
+    filter or group by on their side.
+
+    Resolution order, cheapest first:
+      1. the env override, if an operator pinned one;
+      2. the key cached in workspace settings from a previous run;
+      3. a live lookup of Recotap's field list, matched on label;
+      4. create it (409 == someone else just did, so re-read the list).
+
+    Returns None if it cannot be resolved, and the caller falls back to tags —
+    losing the structure but never the data.
+    """
+    override = (settings.RECOTAP_CRM_STAGE_FIELD_KEY or "").strip()
+    if override:
+        return override
+
+    settings_row = (
+        await session.execute(select(WorkspaceSettings).where(WorkspaceSettings.id == 1))
+    ).scalar_one_or_none()
+    cached = None
+    if settings_row is not None and isinstance(settings_row.sync_schedule_settings, dict):
+        cached = (settings_row.sync_schedule_settings.get(_CRM_STAGE_FIELD_SETTING) or "").strip() or None
+    if cached:
+        return cached
+
+    def _match(fields: list[dict]) -> Optional[str]:
+        for field in fields:
+            if str(field.get("label") or "").strip().lower() == CRM_STAGE_FIELD_LABEL.lower():
+                return str(field.get("key") or "").strip() or None
+        return None
+
+    try:
+        key = _match(await client.list_account_custom_fields())
+        if key is None and create:
+            created = await client.create_account_custom_field(
+                label=CRM_STAGE_FIELD_LABEL,
+                label_type="singleSelection",
+                options=CRM_STAGE_FIELD_OPTIONS,
+                description="Furthest CRM deal stage reached, pushed from Beacon.",
+            )
+            if created:
+                key = str(created.get("key") or "").strip() or None
+            else:
+                # 409 — it exists after all (created concurrently, or by hand
+                # under a label that differs only in case). Re-read rather than
+                # guessing the generated key.
+                key = _match(await client.list_account_custom_fields())
+    except Exception as exc:
+        logger.warning("recotap: could not resolve the CRM stage custom field: %s", str(exc)[:200])
+        return None
+
+    if key and settings_row is not None:
+        # New dict, not in-place — plain JSONB has no mutation tracking.
+        sched = dict(settings_row.sync_schedule_settings or {})
+        sched[_CRM_STAGE_FIELD_SETTING] = key
+        settings_row.sync_schedule_settings = sched
+        session.add(settings_row)
+        await session.commit()
+    return key
+
+
+async def register_deal_stages(session: AsyncSession) -> dict:
+    """Register Beacon's pipeline + stage taxonomy with Recotap (one-time).
+
+    Without this, the ``stageId``/``stageLabel`` we send on every deal are just
+    strings on their side. Registering them lets Recotap render our real stage
+    names instead of bare slugs.
+
+    Create-only and all-or-nothing: if the pipeline id already exists Recotap
+    rejects the entire request with 409 and creates nothing. That is the normal
+    outcome on every run after the first, so it is reported as
+    ``already_registered`` rather than retried.
+    """
+    client = RecotapClient()
+    if not client.configured():
+        return {"status": "skipped", "reason": "recotap_not_configured"}
+
+    stages = await get_configured_deal_stages(session)
+    if not stages:
+        return {"status": "skipped", "reason": "no_configured_stages"}
+
+    pipelines = [{
+        "pipelineId": "deal",
+        "pipelineLabel": "Deal Pipeline",
+        "stages": [{"stageId": s["id"], "stageLabel": s["label"]} for s in stages],
+    }]
+    try:
+        return await client.push_deal_stages(pipelines)
+    except Exception as exc:
+        logger.warning("recotap: deal-stage registration failed: %s", str(exc)[:200])
+        return {"status": "error", "error": str(exc)[:200]}
+
+
 async def _push_one(
     client: RecotapClient,
     session: AsyncSession,
@@ -310,6 +421,7 @@ async def _push_one(
     *,
     tag: Optional[str],
     stage_value: Optional[str],
+    field_key: Optional[str] = None,
     dry_run: bool = False,
 ) -> dict:
     """Upsert one account into Recotap. POST is create-or-update on Recotap's side
@@ -317,7 +429,6 @@ async def _push_one(
     error-string parsing / separate PUT. When RECOTAP_CRM_STAGE_FIELD_KEY is set we
     send the stage as a structured custom field; otherwise we fall back to the
     legacy 'CRM: ...' tag. dry_run builds the payload without calling Recotap."""
-    field_key = (settings.RECOTAP_CRM_STAGE_FIELD_KEY or "").strip()
     acct: dict = {"domain": domain, "name": company.name, "externalId": str(company.id)}
     if field_key and stage_value:
         acct["customFields"] = {field_key: stage_value}
@@ -366,6 +477,12 @@ async def push_crm_status(
     client = RecotapClient()
     if not dry_run and not client.configured():
         return {"configured": 0, "pushed": 0, "results": []}
+    # Resolved ONCE per run, not per company: it is two HTTP calls at worst and
+    # the answer is cached in workspace settings afterwards. None means we could
+    # not resolve it and every account falls back to the legacy tag.
+    field_key = None
+    if not dry_run:
+        field_key = await resolve_crm_stage_field_key(session, client)
     deal_rows = (
         await session.execute(select(Deal.company_id, Deal.stage).where(Deal.company_id.is_not(None)))
     ).all()
@@ -394,7 +511,7 @@ async def push_crm_status(
         try:
             outcome = await _push_one(
                 client, session, company, domain,
-                tag=tag, stage_value=stage_value, dry_run=dry_run,
+                tag=tag, stage_value=stage_value, field_key=field_key, dry_run=dry_run,
             )
         except Exception as exc:  # one account's network/API failure shouldn't abort the batch
             outcome = {"domain": domain, "name": company.name, "status": "error", "error": str(exc)[:160]}
@@ -410,7 +527,10 @@ async def push_crm_status(
         "pushed": pushed,
         "skipped_invalid_domain": skipped_invalid,
         "dry_run": dry_run,
-        "field_key": (settings.RECOTAP_CRM_STAGE_FIELD_KEY or "").strip() or None,
+        "field_key": field_key,
+        # True when the stage went as a structured custom field rather than the
+        # legacy free-text tag — the whole point of resolving the field.
+        "structured": bool(field_key),
         "results": results,
     }
 

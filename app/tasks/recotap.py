@@ -61,8 +61,10 @@ async def _sync(full: bool) -> dict[str, Any]:
     from app.services.recotap import (
         pull_into_db,
         push_crm_status,
+        register_deal_stages,
         sync_crm_journey,
     )
+    from app.services.recotap_activities import push_activities
     from app.services.recotap_deals import push_deals
 
     if not RecotapClient().configured():
@@ -77,8 +79,15 @@ async def _sync(full: bool) -> dict[str, Any]:
     for key, fn in (
         ("pull", lambda s: pull_into_db(s, incremental=not full)),
         ("crm_journey", sync_crm_journey),
+        # Before the account push, because push_crm_status resolves the CRM-stage
+        # custom field and we want the stage taxonomy registered alongside it.
+        # Returns "already_registered" on every run after the first — Recotap
+        # 409s the whole request once the pipeline exists.
+        ("deal_stages", register_deal_stages),
         ("push_accounts", push_crm_status),
         ("push_deals", push_deals),
+        # Calls + emails, so Recotap can read intent against actual rep effort.
+        ("push_activities", lambda s: push_activities(s, dry_run=False)),
     ):
         try:
             async with task_session() as session:

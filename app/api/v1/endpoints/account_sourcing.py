@@ -72,7 +72,11 @@ from app.services.recotap import (
     push_crm_status as recotap_push_status,
     seed_mock_signals as recotap_seed,
     signals_by_domain as recotap_signals,
+    register_deal_stages as recotap_register_deal_stages,
     sync_crm_journey as recotap_crm_sync,
+)
+from app.services.recotap_activities import (
+    push_activities as recotap_push_activities,
 )
 from app.services.recotap_deals import (
     push_deals as recotap_push_deals,
@@ -2067,6 +2071,34 @@ async def push_recotap_deals(
     exact payloads it WOULD send without calling Recotap or writing push state.
     """
     return await recotap_push_deals(session, limit=limit, force=force, dry_run=dry_run)
+
+
+@router.post("/recotap/register-deal-stages")
+async def register_recotap_deal_stages(_admin: AdminUser, session: DBSession = None):
+    """Register Beacon's pipeline + stage taxonomy with Recotap (admin, one-time).
+
+    Without it the stageId/stageLabel on every pushed deal are just strings on
+    their side. Recotap rejects the whole request with 409 once the pipeline
+    exists — that is reported as ``already_registered``, not an error.
+    """
+    return await recotap_register_deal_stages(session)
+
+
+@router.post("/recotap/push-activities")
+async def push_recotap_activities(
+    _user: CurrentUser,
+    session: DBSession = None,
+    limit: int = 500,
+    dry_run: bool = True,
+):
+    """Push calls and emails to Recotap so intent can be read against rep effort.
+
+    Dry-run by DEFAULT — pass ``dry_run=false`` to actually send. Only activities
+    newer than the stored watermark are considered, and only ones carrying an
+    account domain, a rep email and a contact email can be sent at all; the rest
+    are reported under ``unsendable`` rather than silently dropped.
+    """
+    return await recotap_push_activities(session, limit=limit, dry_run=dry_run)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)
