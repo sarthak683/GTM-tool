@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beacon Sales Lifecycle — SOP Flowchart</title>
+<style>
+  :root{
+    --bg:#F6F3EC;
+    --paper:#FFFFFF;
+    --ink:#1E2B36;
+    --ink-soft:#5B6672;
+    --line:#D9D2C0;
+    --brand:#1F5C73;
+    --brand-deep:#123847;
+    --amber:#B8792E;
+    --amber-bg:#FBF0E1;
+    --red:#A8433C;
+    --red-bg:#FBEAE8;
+    --green:#3E7A56;
+    --green-bg:#E8F3EC;
+    --tag-bg:#EEF3F1;
+    --tag-ink:#1F5C73;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:'Georgia',serif;}
+  body{
+    font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+    padding: 48px 20px 120px;
+  }
+  .body-font{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;}
+
+  header.top{
+    max-width: 880px;
+    margin: 0 auto 40px;
+    text-align:center;
+  }
+  header.top .eyebrow{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    text-transform:uppercase;
+    letter-spacing: 0.18em;
+    font-size: 11px;
+    color: var(--brand);
+    font-weight:600;
+    margin-bottom: 10px;
+  }
+  header.top h1{
+    font-size: 40px;
+    margin: 0 0 10px;
+    color: var(--brand-deep);
+    line-height:1.15;
+    font-weight: 600;
+  }
+  header.top p{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    color: var(--ink-soft);
+    font-size: 15px;
+    max-width: 620px;
+    margin: 0 auto;
+    line-height:1.5;
+  }
+
+  .legend{
+    max-width: 880px;
+    margin: 24px auto 0;
+    display:flex;
+    flex-wrap:wrap;
+    gap: 18px;
+    justify-content:center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .legend span{display:flex;align-items:center;gap:6px;}
+  .swatch{width:12px;height:12px;border-radius:3px;display:inline-block;}
+
+  .flow{
+    max-width: 760px;
+    margin: 56px auto 0;
+    position: relative;
+  }
+  .flow::before{
+    content:"";
+    position:absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--line);
+    transform: translateX(-1px);
+    z-index:0;
+    pointer-events:none;
+  }
+
+  .stage{
+    position:relative;
+    z-index:1;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(30,43,54,0.04);
+  }
+  .stage .num{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--brand);
+    font-weight:700;
+    text-transform:uppercase;
+    margin-bottom:6px;
+  }
+  .stage h2{
+    font-size: 21px;
+    margin: 0 0 8px;
+    color: var(--brand-deep);
+    font-weight:600;
+  }
+  .stage .desc{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 14.5px;
+    color: var(--ink);
+    line-height:1.55;
+    margin-bottom: 12px;
+  }
+  .stage .desc b{color:var(--brand-deep);}
+
+  .collapsed-note{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    font-style: italic;
+  }
+
+  .tags{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .tag{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    background: var(--tag-bg);
+    color: var(--tag-ink);
+    padding: 5px 11px;
+    border-radius: 999px;
+    text-decoration:none;
+    border: 1px solid #DCE7E3;
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    transition: background 0.15s ease;
+  }
+  .tag:hover{background:#DDEAE6;}
+  .tag.noLink{cursor:default; opacity:0.85;}
+  .tag svg{width:11px;height:11px;flex-shrink:0;}
+
+  details.branch{
+    margin-top: 14px;
+    border-top: 1px dashed var(--line);
+    padding-top: 12px;
+  }
+  details.branch summary{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    cursor:pointer;
+    font-size: 13.5px;
+    font-weight:600;
+    color: var(--brand);
+    list-style: none;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  details.branch summary::-webkit-details-marker{display:none;}
+  details.branch summary::before{
+    content:"▸";
+    display:inline-block;
+    transition: transform 0.15s ease;
+    color: var(--brand);
+  }
+  details.branch[open] summary::before{transform: rotate(90deg);}
+  .branch-body{padding: 10px 0 2px 4px;}
+
+  .sublevel{
+    border-left: 3px solid var(--brand);
+    padding: 10px 0 10px 16px;
+    margin: 10px 0;
+  }
+  .sublevel.l2{border-left-color:#3E86A0;}
+  .sublevel.l3{border-left-color:#6BA88C;}
+  .sublevel .subtitle{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-weight:700;
+    font-size: 13px;
+    color: var(--brand-deep);
+    margin-bottom:4px;
+  }
+  .sublevel .subtext{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 13.5px;
+    color: var(--ink);
+    line-height:1.5;
+  }
+  .sublevel .subtext .next{color:var(--brand);font-weight:600;}
+
+  .connector{
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding: 6px 0;
+    position:relative;
+    z-index:1;
+  }
+
+  .decision{
+    background: var(--amber-bg);
+    border: 1px solid #E7C89A;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-weight:700;
+    color: var(--amber);
+    text-align:center;
+    max-width: 460px;
+  }
+
+  .branchrow{
+    display:flex;
+    justify-content:center;
+    gap: 10px;
+    margin: 4px auto 0;
+    max-width: 620px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 12px;
+  }
+  .yes,.no{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-weight:700;
+  }
+  .yes{background:var(--green-bg);color:var(--green);}
+  .no{background:var(--red-bg);color:var(--red);}
+
+  .exit{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    color: var(--red);
+    background: var(--red-bg);
+    border: 1px solid #E3C3C0;
+    border-radius: 8px;
+    padding: 6px 14px;
+    text-align:center;
+    max-width: 460px;
+    margin: 2px auto 10px;
+  }
+
+  .closedwon{
+    background: var(--green-bg);
+    border: 1px solid #BFDECB;
+    border-radius: 10px;
+    padding: 26px;
+    text-align:center;
+    margin-top: 4px;
+  }
+  .closedwon h3{
+    font-size:22px;
+    color: var(--green);
+    margin:0;
+  }
+
+  .diamond{
+    width: 280px;
+    min-height: 84px;
+    margin: 6px auto;
+    background: var(--amber-bg);
+    border: 1px solid #E7C89A;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    padding: 8px 54px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-weight:700;
+    color: var(--amber);
+    font-size: 13px;
+    line-height:1.25;
+  }
+  .outcomes{
+    position:relative;
+    z-index:1;
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    gap: 24px;
+    flex-wrap:wrap;
+    margin: 8px auto 16px;
+    max-width: 680px;
+  }
+  .yn-item{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:6px;
+    width: 130px;
+  }
+  .mini-diamond{
+    width: 116px;
+    height: 60px;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-weight:700;
+    font-size:12.5px;
+    text-decoration:none;
+  }
+  .mini-diamond.yes{ background:var(--green-bg); color:var(--green); border:1px solid #BFDECB; }
+  .mini-diamond.no{ background:var(--red-bg); color:var(--red); border:1px solid #E3C3C0; cursor:pointer; }
+  .mini-diamond.no:hover{ background:#F6D9D6; }
+  .mini-diamond.no.dead{ cursor:default; }
+  .mini-diamond.no.dead:hover{ background:var(--red-bg); }
+  .yn-caption{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size:11.5px;
+    color:var(--ink-soft);
+    text-align:center;
+    line-height:1.3;
+  }
+
+  footer.note{
+    max-width: 700px;
+    margin: 50px auto 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: var(--ink-soft);
+    text-align:center;
+    line-height:1.6;
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+  }
+  footer.note a{color:var(--brand);}
+
+  @media (max-width: 640px){
+    header.top h1{font-size:30px;}
+    .stage{padding:18px 18px;}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="eyebrow">Beacon.li · Sales Enablement</div>
+  <h1>Sales Lifecycle SOP</h1>
+  <p>End-to-end flow from account sourcing to close — every decision point, every handoff, and every piece of collateral tagged where it's actually used. Click any arrow (▸) to expand detail.</p>
+</header>
+
+<div class="legend">
+  <span><span class="swatch" style="background:var(--brand);"></span>Stage</span>
+  <span><span class="swatch" style="background:var(--amber);"></span>Decision point</span>
+  <span><span class="swatch" style="background:var(--red);"></span>Exit / gap (RCA-relevant)</span>
+  <span><span class="swatch" style="background:var(--green);"></span>Closed Won</span>
+</div>
+
+<div class="flow">
+
+  <!-- 1. ACCOUNT SELECTION -->
+  <div class="stage" id="sec-account-selection">
+    <div class="num">01 · Sourcing</div>
+    <h2>Account Selection / Sourcing</h2>
+    <div class="collapsed-note">ICP scoring &amp; Target Account List — owned end-to-end by Annie. No further breakdown needed here.</div>
+    <div class="tags" style="margin-top:10px;">
+      <a class="tag" href="https://docs.google.com/document/d/1LHK5CihuSz86wQMohig0QAVW3hJa6p-QD_f8nHYu52A/edit" target="_blank">🚫 ICP Exclusions & Financial Capacity (compiled)</a>
+    </div>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">ICP fit?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-account-selection">✕ No ↩</a>
+      <div class="yn-caption">Re-source a replacement account</div>
+    </div>
+  </div>
+
+  <!-- 2. OUTREACH -->
+  <div class="stage" id="sec-outreach">
+    <div class="num">02 · BDR</div>
+    <h2>Outreach</h2>
+    <div class="desc">Cold call, LinkedIn, and email sequences to secure the first conversation. Objection handling happens live on these touches.</div>
+    <div class="tags">
+      <a class="tag" href="https://drive.google.com/file/d/11Zn3k6G-20G12Yvj8snyLkIUqKJD3Ema/view" target="_blank">📞 Cold Call Playbook (BDR script)</a>
+      <a class="tag" href="https://docs.google.com/document/d/1xHMHPNtAzscZGVw-c5BiGaXb463hCCwbmhBAtXoBu4A/edit" target="_blank">📘 BDR Training Manual (10-Day Ramp Programme)</a>
+      <a class="tag" href="https://drive.google.com/file/d/13vx6wsGE0w96lrAF2-bn3LqvD1X-R260/view" target="_blank">🛡 SDR Objection Handling &amp; FAQ (this workshop's doc)</a>
+      <a class="tag" href="https://drive.google.com/file/d/1cIW6TRuVfXZUOOeKc56ZFiXnMZ2UZIVp/view" target="_blank">📄 Supporting doc 1</a>
+      <a class="tag" href="https://drive.google.com/file/d/1p-qGyy3IcwZHoMlvHbojNk3SPDcoWEsl/view?usp=sharing" target="_blank">📄 Beacon - Product Offering.pdf</a>
+      <a class="tag" href="https://drive.google.com/file/d/1k8_umQFXEfMTY51IOz3S9ZiDL4BM9gmL/view" target="_blank">▶ Beacon Product Video</a>
+    </div>
+    <details class="branch">
+      <summary>What these 3 links are for</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">These are the exact assets an SDR shares <b>with the prospect</b> in the handoff email once a meeting is booked — not internal reference material.</div>
+    </details>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">Meeting booked?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-outreach">✕ No ↩</a>
+      <div class="yn-caption">Nurture cadence (SDR), retry Outreach</div>
+    </div>
+  </div>
+
+  <div style="max-width:680px;margin:8px auto 24px;background:var(--amber-bg);border:1px solid #E7C89A;border-radius:8px;padding:14px 20px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;font-size:13.5px;color:var(--amber);text-align:center;">
+    ⚠ Reminder: once the conversation becomes two-way with the client — any reply, call, or thread — always loop Rakesh in on it, at every stage.
+  </div>
+
+  <!-- 3. HANDOFF EMAIL -->
+  <div class="stage" id="sec-handoff">
+    <div class="num">03 · Handoff</div>
+    <h2>SDR → AE Handoff Email</h2>
+    <div class="desc">SDR loops the AE into the thread, introduces the AE to the prospect, shares the 3 supporting assets above, and asks 1–2 discovery questions upfront to prime the call.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/1VzO7f-LjBGLyDph4-Tug8_2dFiLzA-D4a31OU_AI9MU/edit?tab=t.0" target="_blank">✉ Handoff Email Template</a>
+    </div>
+    <details class="branch" open>
+      <summary>CRM update</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">SDR to mark the same on CRM as meeting booked.</div>
+    </details>
+  </div>
+
+  <!-- 4. PREP CALL -->
+  <div class="stage" id="sec-prep-call">
+    <div class="num">04 · Internal</div>
+    <h2>AE + SDR Prep Call</h2>
+    <div class="desc">A separate internal event (not the client call). The AE researches the account, completes the Research Doc Template, and classifies the upcoming call as <b>L1 / L2 / L3</b> based on the calendar invite's attendee list.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/11jALDLSrBjhxeUw6YPisTe3Xv8exAxsEWls1dve8ML4/edit?tab=t.0" target="_blank">📋 Research Doc Template</a>
+      <a class="tag" href="https://docs.google.com/spreadsheets/d/1eqvioSiVJ8fQfRTlkC48o8v2co9eXI4MYM5IMLFVv-w/edit?usp=sharing" target="_blank">📊 Prep Call Tracker</a>
+    </div>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">Research Doc ready 1 day prior?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-prep-call">✕ No ↩</a>
+      <div class="yn-caption">Reassign AE, redo Prep Call</div>
+    </div>
+  </div>
+
+  <!-- 5. DISCOVERY CALL -->
+  <div class="stage" id="sec-discovery">
+    <div class="num">05 · Client-Facing</div>
+    <h2>Discovery Call/Technical Deep Dive</h2>
+    <div class="desc">Call intensity and flow are set by the L1/L2/L3 classification decided in the prep call. Throughout, show only output/endpoint glimpses — never the full dashboard.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/157QnzKCg3i28kTf8EU3IVBTEh6Z0I67z8_G7clpOQn4/edit?tab=t.0" target="_blank">🎙 Demo Verbatim</a>
+      <a class="tag" href="https://docs.google.com/presentation/d/1vbOzazc4FgkhtN2WFONc_UfcJNkVDuLnQk3CSGcxU-Q/edit?usp=sharing" target="_blank">📊 Implementation Automation Discovery Call</a>
+      <a class="tag" href="https://docs.google.com/spreadsheets/d/1pMdGm4zKke4dZu3RaDywIUxQHLSd_wPKyPv99WTHuLY/edit?gid=2121829433#gid=2121829433" target="_blank">📈 Client Impact &amp; Efficiency</a>
+    </div>
+
+    <details class="branch">
+      <summary>Expand: L1 / L2 / L3 branching logic</summary>
+      <div class="branch-body">
+        <div class="sublevel l1">
+          <div class="subtitle">L1 — Solo Director/VP of Implementation, Delivery, or PS</div>
+          <div class="subtext">Deep discovery questions, high-level demo only, output glimpses only. <span class="next">Next: mandatory calendar booking for a Demo Deep Dive with a larger audience.</span></div>
+        </div>
+        <div class="sublevel l2">
+          <div class="subtitle">L2 — Larger group (2+ attendees)</div>
+          <div class="subtext">Moderate discovery + deep platform demo, output only. <span class="next">Next: mandatory calendar booking to loop in an exec for a technical deep dive.</span></div>
+        </div>
+        <div class="sublevel l3">
+          <div class="subtitle">L3 — SVP+ Executives</div>
+          <div class="subtext">Light/embedded discovery, lead with brand vision first, deep demo, output only. <span class="next">Next: mandatory calendar booking for an L1-style discovery + demo, then loop in Operations for deeper analysis.</span></div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- 6. CLOSE-OUT -->
+  <div class="stage" id="sec-closeout">
+    <div class="num">06 · Mandatory Checklist</div>
+    <h2>Discovery Call Close-Out</h2>
+    <div class="desc">What the AE covers before ending the call depends entirely on whether a platform/demo was actually shown.</div>
+
+    <details class="branch" open>
+      <summary>Path A — Simple Discovery only (no platform shown)</summary>
+      <div class="branch-body">
+        <div class="subtext body-font">Questions + relationship-building only. AE pitches for a <b>deep dive / technical discussion with a larger audience</b> as the next step. POC is only briefly mentioned, framed around outcome-based pricing — not pushed as a full discussion.</div>
+        <div class="tags" style="margin-top:10px;">
+          <a class="tag" href="https://docs.google.com/presentation/d/1vbOzazc4FgkhtN2WFONc_UfcJNkVDuLnQk3CSGcxU-Q/edit?slide=id.g3ea7e6873c0_0_71#slide=id.g3ea7e6873c0_0_71" target="_blank">📊 Discovery-only Deck (no demo shown)</a>
+        </div>
+      </div>
+    </details>
+
+    <details class="branch" open>
+      <summary>Path B — Platform / Demo was shown</summary>
+      <div class="branch-body">
+        <div class="subtext body-font">AE sets 3 explicit expectations before the call ends:</div>
+        <ol class="body-font" style="font-size:13.5px;line-height:1.6;padding-left:20px;margin:8px 0;">
+          <li>Calendar invite locked for the next call, specific date</li>
+          <li>NDA to follow post-call</li>
+          <li>ROI analysis questionnaire to follow post-call</li>
+        </ol>
+        <div class="tags">
+          <a class="tag" href="https://docs.google.com/document/d/157QnzKCg3i28kTf8EU3IVBTEh6Z0I67z8_G7clpOQn4/edit?tab=t.0" target="_blank">🎙 Demo Verbatim (closing tone)</a>
+          <a class="tag" href="https://drive.google.com/file/d/1vIweJkv_o9lOhDAB0mt5z5gX8qZkGHBE/view?usp=sharing" target="_blank">🏗 Architecture Diagram</a>
+          <a class="tag" href="https://docs.google.com/presentation/d/1nP_QJU3rXxhCQ4kTrngc1jxbD_NBnVwV/edit?usp=drive_link&ouid=109233061988076003572&rtpof=true&sd=true" target="_blank">⚔ Build vs Buy Deck</a>
+          <a class="tag" href="https://drive.google.com/file/d/1BgDVX7qYPPVPpEm50dJh-B4_AqSxZyiW/view?ts=6a56266e" target="_blank">📄 Build vs Buy — Supporting Doc</a>
+          <a class="tag" href="https://docs.google.com/presentation/d/19b4dXfKuc2Z1BQPhI_coYmnY5X5duy5dFG1HntBfLY0/edit?slide=id.g3f639333dc1_1_1331#slide=id.g3f639333dc1_1_1331" target="_blank">📊 Beacon - Implementation Automation</a>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">Qualified?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-outreach">✕ No ↩</a>
+      <div class="yn-caption">Re-prospect via SDR (different stakeholders)</div>
+    </div>
+    <div class="yn-item">
+      <div class="mini-diamond no dead">✕ No ✕</div>
+      <div class="yn-caption">Declare Not Fit</div>
+    </div>
+  </div>
+
+  <!-- 7. ROI/POC DISCUSSION -->
+  <div class="stage" id="sec-roi-poc">
+    <div class="num">07 · Technical + Commercial</div>
+    <h2>ROI / POC Discussion</h2>
+    <div class="desc">Technical deep dive and ROI/POC alignment happen here. This is where the NDA, ROI survey, and POC proposal — previewed in the close-out — actually get sent and worked through.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/1cOxx6YwoQp55vuV4UyWuII35GfEhJqYa/edit" target="_blank">📄 NDA — India</a>
+      <a class="tag" href="https://docs.google.com/document/d/1Q8-OrM4MpoTL77_MuAf-M0U-DH1s0cgg/edit" target="_blank">📄 NDA — Non-India</a>
+      <a class="tag" href="https://docs.google.com/document/d/1TipdvTV7lYUTDDGz4o_18OD_cXI20lpRu0XrR_uIrVA/edit" target="_blank">📋 POC Proposal Template</a>
+      <a class="tag" href="https://docs.google.com/forms/d/e/1FAIpQLSfakqNiqr7Vxp3nRx3cWc-ShBqPBjhI1rtBA9QMJ_916Vf6PA/viewform" target="_blank">📝 ROI Survey (sent to client)</a>
+      <a class="tag" href="https://docs.google.com/document/d/1XU0KuYPUWUXgc7V2W0yqLS-ALV-6LFHO7Bt3sug_x0k/edit?tab=t.0" target="_blank">🛡 Tech FAQ &amp; Objection Handling</a>
+      <span class="tag noLink">🛡 AE Objection Handling &amp; Tech FAQ (this workshop's doc)</span>
+      <a class="tag" href="https://docs.google.com/document/d/1xpB_2bedyN-4P61sgxjN25MpRlhhQGeI/edit" target="_blank">🗺 Mutual Action Plan (MAP) Template</a>
+    </div>
+    <details class="branch">
+      <summary>When the MAP goes out</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">Sent by email immediately after the technical deep dive, once the POC has been verbally agreed — sets the milestone-by-milestone plan both sides commit to for the POC.</div>
+    </details>
+    <details class="branch" open>
+      <summary>When the POC Proposal actually goes out</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">Not automatic — the POC Proposal Template is only sent when the prospect specifically needs it to champion the deal internally (e.g. to get sign-off from their own leadership). If they don't need it for that, skip it.</div>
+    </details>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">POC approved?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-roi-poc">✕ No ↩</a>
+      <div class="yn-caption">Align budget with client via ROI Analysis</div>
+    </div>
+  </div>
+  <div style="text-align:center;margin:-4px auto 12px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;font-size:12px;color:var(--ink-soft);">via <a href="https://docs.google.com/spreadsheets/d/1LlOhVZyAfB_3pcCbj-v4AHKXzOjlwf8jM_Okkhcm7nI/edit?resourcekey=&gid=1811918447#gid=1811918447" target="_blank" style="color:var(--amber);">Rakesh's POC approval mandate questionnaire</a></div>
+
+  <!-- 8. POC SETUP -->
+  <div class="stage" id="sec-poc-setup">
+    <div class="num">08 · Internal Setup</div>
+    <h2>POC Setup / Kickoff</h2>
+    <div class="desc">NDA signed. Deal logged in <b>CRM (gtm.beacon.li)</b>.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/13KTD1MgeK-i3bjoy8KsEmXqMZVDoy8tOhwniMyAraEk/edit" target="_blank">🚀 POC Kickoff Template</a>
+    </div>
+    <details class="branch" open>
+      <summary>Prep for Kickoff</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">AE checks credentials for login access and prepares a set of clarifying questions to get full clarity on the use case. Once success criteria is agreed with the client, the AE sends over an MoM clearly documenting that success criteria and gets client sign-off on it — before the POC officially kicks off.</div>
+    </details>
+    <details class="branch" open>
+      <summary>Step-by-step sequence</summary>
+      <div class="branch-body">
+        <ol class="body-font" style="font-size:13.5px;line-height:1.7;padding-left:20px;margin:8px 0;">
+          <li>AE creates the POC Kickoff document, looping in <b>Harsha (PCS team)</b>.</li>
+          <li>Kickoff document shared with the client.</li>
+          <li>Once the client approves, PCS validates the POC.</li>
+          <li>AE coordinates with PCS on timeline, then schedules the Kickoff call.</li>
+        </ol>
+      </div>
+    </details>
+    <details class="branch" open>
+      <summary>Dry run demo — internal sync-up</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">AE runs a dry run of the POC demo internally with the PCS team beforehand. In some cases, the AE also schedules a separate dry run demo with the prospect before the final POC demo takes place in front of the larger group of execs.</div>
+    </details>
+    <details class="branch" open>
+      <summary>Post-agreement — client sync-ups</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">Once the POC is agreed from the client side and all credentials are received, only if the prospect insists, set up regular sync-up calls with the client to maintain relatability and keep them updated on POC progress.</div>
+    </details>
+  </div>
+
+  <!-- 9. POC DEMO -->
+  <div class="stage" id="sec-poc-demo">
+    <div class="num">09 · Delivery</div>
+    <h2>POC Demo</h2>
+    <div class="desc">Coordinate with the PCS team and schedule the POC demo with the client.</div>
+    <details class="branch" open>
+      <summary>Before the demo — video prep</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">Where possible, coordinate with the Design and PCS teams beforehand to have an edited POC demo video ready ahead of the call.</div>
+    </details>
+    <details class="branch" open>
+      <summary>POC PPT / live demo prep</summary>
+      <div class="branch-body subtext body-font" style="font-size:13.5px;color:var(--ink);">Create the POC PPT wherever necessary, or prep for showing the live demo to the client.</div>
+    </details>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">POC successful?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <div class="mini-diamond no dead">✕ No ✕</div>
+      <div class="yn-caption">Discuss with Rakesh &amp; PCS for next steps</div>
+    </div>
+  </div>
+  <div class="exit">RCA-relevant exit point</div>
+
+  <!-- 10. LOOP IN INFOSEC, PROCUREMENT AND LEGAL TEAM -->
+  <div class="stage" id="sec-legal-loop">
+    <div class="num">10 · Internal</div>
+    <h2>Loop in Infosec, Procurement and Legal Team</h2>
+    <div class="desc">Bring in Infosec, Procurement, and Legal as needed before commercials move forward.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/19LxB4vN55tCtWAQYanocV2-omEQwWju5Y4Af7hzjbwg/edit" target="_blank">⚖ Information for Legal</a>
+      <a class="tag" href="https://docs.google.com/document/d/1mvAcRa14JFWp77cnaNAmM9xRMuG8B5D4y_67_dcboRU/edit" target="_blank">🏢 Vendor Onboarding Doc (Company Profile &amp; Security)</a>
+      <a class="tag" href="https://docs.google.com/forms/d/e/1FAIpQLSfPqK8fPOrBiJ1P1WnunlhNJ-gr6KyuKWVsY6HcvN-bpLaItw/viewform" target="_blank">📝 Work Request Form — Legal</a>
+      <a class="tag" href="https://docs.google.com/document/d/10qe4nP9vLY_imQATuRctoTlqavS8gn77/edit" target="_blank">📜 MSA Cheat Sheet</a>
+      <a class="tag" href="https://docs.google.com/document/d/1Lujlext5Y93INvoO45So5EQMRoOa0u1j/edit" target="_blank">📄 Addendum / MOU</a>
+      <a class="tag" href="https://docs.google.com/document/d/1dtkiz1c0-DttoO-dHpv1kDOyc_mAkdPOryQzqJ6tfdk/edit" target="_blank">📄 Letter of Intent</a>
+    </div>
+  </div>
+
+  <!-- 11. INTERNAL COMMERCIAL DISCUSSION -->
+  <div class="stage" id="sec-internal-commercial">
+    <div class="num">11 · Internal</div>
+    <h2>Internal Commercial Discussion</h2>
+    <div class="desc">Before anything goes to the client, pricing gets aligned internally first.</div>
+    <details class="branch" open>
+      <summary>Step-by-step sequence</summary>
+      <div class="branch-body">
+        <ol class="body-font" style="font-size:13.5px;line-height:1.7;padding-left:20px;margin:8px 0;">
+          <li>Check <a href="https://metabase-new.beacon.li/" target="_blank">Metabase</a> for token consumption per session. Sign in with the shared <code>sales@beacon.li</code> account — ask Annie/Shahruk for the password, or take it from the team password manager. (It is deliberately not written here: this page is served as a static file at <code>/data-room/index.html</code>, which needs no login, so anything printed on it is readable by anyone with the URL.)</li>
+          <li>Run the ROI analysis based on that consumption data.</li>
+          <li>Discuss commercials with Rakesh before anything is sent to the client.</li>
+        </ol>
+      </div>
+    </details>
+    <details class="branch" open>
+      <summary>Metabase — how to pull the token consumption figure</summary>
+      <div class="branch-body">
+        <ol class="body-font" style="font-size:13.5px;line-height:1.7;padding-left:20px;margin:8px 0;">
+          <li>Login to <a href="https://metabase-new.beacon.li/" target="_blank">Metabase</a> — new.beacon.li.</li>
+          <li>Click on the POC Data Requirement tab.</li>
+          <li>Ask the respective AI engineer working on that project for the session ID, and search for it under the Org ID box.</li>
+          <li>Once the dashboard auto-populates, check the input tokens consumption range across all the sessions.</li>
+          <li>For a safe bet — calculate the average of the top 1% of sessions and the top 10% of sessions. That's the token consumption figure you'll use for the ROI Analysis.</li>
+        </ol>
+      </div>
+    </details>
+  </div>
+
+  <!-- 12. COMMERCIALS -->
+  <div class="stage" id="sec-commercials">
+    <div class="num">12 · Negotiation</div>
+    <h2>Commercials / Negotiation</h2>
+    <div class="desc">Draft the business proposal with terms and commercials, and share with the client to get alignment.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/1VbvsKXEhUc39yYn3hFh7cf0N7yZduNs1vcMv7c8ROzM/edit" target="_blank">💼 Business Proposal Template</a>
+    </div>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">Terms agreed?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Continue</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-internal-commercial">✕ No ↩</a>
+      <div class="yn-caption">AE negotiates directly; loop back to rework pricing with Rakesh</div>
+    </div>
+  </div>
+  <div class="exit">RCA-relevant exit point</div>
+
+  <!-- 12. CLOSE -->
+  <div class="stage" id="sec-close">
+    <div class="num">13 · Final</div>
+    <h2>Close</h2>
+    <div class="desc">MSA signed. Deal converts to Closed Won.</div>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/1Vqx9p3QseKOFiXve7yM3cr5MVwvkTClW/edit" target="_blank">📜 MSA Template</a>
+    </div>
+  </div>
+
+  <div class="connector">
+    <div class="diamond">Signed?</div>
+  </div>
+  <div class="outcomes">
+    <div class="yn-item">
+      <div class="mini-diamond yes">✓ Yes ↓</div>
+      <div class="yn-caption">Closed Won</div>
+    </div>
+    <div class="yn-item">
+      <a class="mini-diamond no" href="#sec-commercials">✕ No ↩</a>
+      <div class="yn-caption">Renegotiate terms</div>
+    </div>
+  </div>
+
+  <div class="closedwon">
+    <h3>🎉 Closed Won</h3>
+  </div>
+
+</div>
+
+<div class="flow" style="margin-top:48px;">
+  <h1 style="font-family:Georgia,serif;color:var(--brand-deep);font-size:26px;text-align:center;margin-bottom:6px;">Appendix — Supporting Library</h1>
+  <p class="body-font" style="text-align:center;color:var(--ink-soft);font-size:13.5px;max-width:600px;margin:0 auto 32px;">Everything below exists in the Sales Library but isn't tied to a specific flowchart block. Reference as needed.</p>
+
+  <div class="stage">
+    <h2 style="font-size:17px;">Product &amp; Pitch Decks (alternate/extra versions)</h2>
+    <div class="tags">
+      <a class="tag" href="https://drive.google.com/file/d/1iOc5hJ5jYFGWyEeEXpQN39UBbkK0Idgn/view" target="_blank">📄 AI Implementation Orchestration Deck (PDF)</a>
+      <a class="tag" href="https://docs.google.com/presentation/d/1pa36aR9hFhiqkOcG-vFcfTRsCEcezZGnjloXZQKgnpE/edit" target="_blank">📊 AI Implementation Orchestration Deck (PPTX alt)</a>
+      <a class="tag" href="https://drive.google.com/file/d/11V_mA_n56IIpNGFxbKZffybEkUTSkz2E/view" target="_blank">📄 AI Implementation Orchestration Deck (PDF send version)</a>
+      <a class="tag" href="https://docs.google.com/presentation/d/19b4dXfKuc2Z1BQPhI_coYmnY5X5duy5dFG1HntBfLY0/edit" target="_blank">📊 New Sales Pitch Deck — Implementation Automation</a>
+      <a class="tag" href="https://docs.google.com/presentation/d/1vbOzazc4FgkhtN2WFONc_UfcJNkVDuLnQk3CSGcxU-Q/edit?usp=sharing" target="_blank">📊 Implementation Automation Discovery Call</a>
+      <a class="tag" href="https://drive.google.com/file/d/1YtjPDqlgELQyz1KPv3n1tjArfUZFHDyp/view" target="_blank">🖼 Data Flow Diagram</a>
+      <a class="tag" href="https://drive.google.com/file/d/1p2-caxbgIh40Qowa83QKgzvFcVH51Mk2/view" target="_blank">🎬 Product Video (Old)</a>
+    </div>
+  </div>
+
+  <div class="stage">
+    <h2 style="font-size:17px;">Competitive &amp; Positioning</h2>
+    <div class="tags">
+      <a class="tag" href="https://drive.google.com/file/d/14j22g9lcqcQ7pCU-Y7E9gCjcOBxR6cWY/view" target="_blank">⚔ Competitive Battlecard — Beacon vs AI Bolt-Ons / Build vs Buy</a>
+      <a class="tag" href="https://drive.google.com/file/d/1R2V8GLdIZ_SETEoUZbsID5jJhoh-Psko/view" target="_blank">⚔ Beacon vs In House AI Agents</a>
+    </div>
+  </div>
+
+  <div class="stage">
+    <h2 style="font-size:17px;">ROI &amp; POC (extra/internal)</h2>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/spreadsheets/d/1LMCBg_y5SwPHUQNWOg-TU58SchK963jMfy03Qp1QhEw/edit" target="_blank">📊 ROI — Responder Sheet (Internal)</a>
+      <a class="tag" href="https://docs.google.com/spreadsheets/d/1DUduWp68YZ3vO6JQQApRj27UlEEUmw1JW4EhUa7qF_E/edit?gid=845680178#gid=845680178" target="_blank">📊 ROI Analysis Template</a>
+      <a class="tag" href="https://docs.google.com/presentation/d/1lo3IH4dy9aa9N2R17LfQe_NzZdAqHAv6O0mTwWJoHTc/edit" target="_blank">📽 POC Presentation (client-facing results deck)</a>
+    </div>
+  </div>
+
+  <div class="stage">
+    <h2 style="font-size:17px;">Corporate / Compliance (reference only)</h2>
+    <div class="tags">
+      <a class="tag" href="https://drive.google.com/file/d/1aw7Hngf5tW4yFzAjLTtzQSLjjIZfU6xP/view" target="_blank">📄 Written Consent of Shareholders</a>
+      <a class="tag" href="https://drive.google.com/file/d/1C0vQFGCwyERPLbCbrkil9xG_dU_1D4gb/view" target="_blank">📄 Certificate of Incorporation</a>
+      <a class="tag" href="https://drive.google.com/file/d/1-7ba9-ZzSlqeJx4HVr4W6npcZO-8ES9P/view" target="_blank">📄 EIN Application Confirmation</a>
+      <a class="tag" href="https://drive.google.com/file/d/1x3ZoGcDW2n3UNHCG_t6jEToNQNxNHYVB/view" target="_blank">📄 Share Certificate 2</a>
+      <a class="tag" href="https://drive.google.com/file/d/1oF7bQ7l6Mnkij7O9BY3d8_mqxjU1UNuz/view" target="_blank">📄 Wire Details</a>
+    </div>
+  </div>
+
+  <div class="stage">
+    <h2 style="font-size:17px;">Knowledge Bank</h2>
+    <div class="tags">
+      <a class="tag" href="https://docs.google.com/document/d/1HA17vIuD_GEY0R1aQVEajHdasSRKwRonNmilju3CBO0/edit?tab=t.0" target="_blank">📄 New Architecture Diagram Explained</a>
+      <a class="tag" href="https://docs.google.com/document/d/1yqkPdmLj_nN-P7gE2noSMdzhXd_LD1B3ClAnzGuzrno/edit?tab=t.0" target="_blank">📄 PS Complexity Guide</a>
+      <a class="tag" href="https://docs.google.com/document/d/1q2C79fRSEpqBv2lQfH5djXfjs5ACyWkFW-CeTaI1vAs/edit?tab=t.0" target="_blank">📄 Winning Complex Enterprise Deals</a>
+      <a class="tag" href="https://drive.google.com/file/d/1Dv-HunhltjocDSJnIORvKmAyMeHf_X32/view?ts=6a628148" target="_blank">📊 Winning Complex Enterprise Deals Deck</a>
+      <a class="tag" href="https://docs.google.com/document/d/14enMatdnIUMFENQKCgfpyQ8n6w_t3aqdRlYYawIVlr4/edit?tab=t.0" target="_blank">📄 Post-PoC Objection Handling</a>
+    </div>
+  </div>
+
+</div>
+
+<footer class="note">
+  This flowchart is the single source of truth for the end-to-end Beacon sales process. For any supporting document not directly linked above, refer to the <a href="#" onclick="alert('Ask Annie/Shahruk for the current Sales Library link.'); return false;">Sales Library</a> master index.
+</footer>
+
+</body>
+</html>
