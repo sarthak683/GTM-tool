@@ -23,6 +23,10 @@ celery_app = Celery(
         "app.tasks.prospect_reminders",
         "app.tasks.meeting_relink",
         "app.tasks.ae_meeting_reminder",
+        # Sweeps expired rows out of zippy_generated_docs. Pulls in
+        # zippy_docs.storage only (model + session), never the document
+        # generators — the worker still has no reason to import python-docx.
+        "app.tasks.zippy_documents",
     ],
 )
 
@@ -78,6 +82,13 @@ celery_app.conf.update(
         "recalculate-deal-health-daily": {
             "task": "app.tasks.health.recalculate_all_deal_health",
             "schedule": crontab(hour=2, minute=0),
+        },
+        # Drop Zippy-generated documents past their retention window. Off-peak
+        # and daily: the table gains a handful of rows a month at most, so this
+        # is housekeeping, not a hot path.
+        "purge-expired-zippy-documents": {
+            "task": "app.tasks.zippy_documents.purge_expired_zippy_documents",
+            "schedule": crontab(hour=3, minute=30),
         },
         "reconcile-recent-deal-tasks": {
             "task": "app.tasks.health.reconcile_recent_deal_tasks",

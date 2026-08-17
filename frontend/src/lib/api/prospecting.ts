@@ -474,6 +474,19 @@ export interface SdrConflictRow {
   prospect_count: number;
 }
 
+/**
+ * Why a prospect's email domain does not match its account.
+ *
+ * `alias_gap`   — NO live account owns that domain. Nothing is misfiled: the
+ *                 prospect is an acquisition or alternate brand of the account
+ *                 it already sits on, and the ACCOUNT is missing the domain as
+ *                 an alias. Re-linking these would scatter accounts that were
+ *                 correctly consolidated.
+ * `misattached` — another live account already claims the domain, so the
+ *                 prospect is genuinely ambiguous and may belong there.
+ */
+export type MisattachedCause = "alias_gap" | "misattached";
+
 export interface MisattachedProspectRow {
   contact_id: string;
   contact_name: string;
@@ -489,7 +502,23 @@ export interface MisattachedProspectRow {
   suggested_company_id: string | null;
   suggested_company_name: string | null;
   suggested_company_domain: string | null;
+  /** The live account that owns `contact_domain` today (primary OR alias).
+   *  Set without a `suggested_company_id` when the domain is claimed only as
+   *  another account's alias — adding it here would 422. */
+  domain_owner_id: string | null;
+  domain_owner_name: string | null;
+  likely_cause: MisattachedCause;
+  /** `add_alias` for alias gaps, `relink` for true misattachments. */
+  recommended_action: "add_alias" | "relink";
+  /** Cause-specific wording — an alias gap must NOT read as an error. */
   evidence: string;
+}
+
+/** Misattached candidates carry per-cause subtotals over the FULL set, so the
+ *  two UI sections can show honest totals even when `rows` is limit-capped. */
+export interface MisattachedSection extends DataHealthSection<MisattachedProspectRow> {
+  alias_gap_total: number;
+  misattached_total: number;
 }
 
 export interface DomainCorrectionRow {
@@ -510,7 +539,7 @@ export interface DataHealthSection<T> {
 export interface SourcingDataHealth {
   generated_at: string;
   sdr_conflicts: DataHealthSection<SdrConflictRow>;
-  misattached: DataHealthSection<MisattachedProspectRow>;
+  misattached: MisattachedSection;
   domain_corrections: DataHealthSection<DomainCorrectionRow>;
 }
 
@@ -608,8 +637,37 @@ export const accountSourcingApi = {
       body: JSON.stringify({ company_id: companyId }),
     }),
 
-  recotapSummary: () =>
-    request<RecotapSummary>("/api/v1/account-sourcing/recotap/summary"),
+  /** Record ONE extra domain as an alias of an account.
+   *
+   *  The company PUT REPLACES `additional_domains` wholesale, so this has to be
+   *  a read-modify-write — sending just the new domain would wipe the existing
+   *  aliases. A cross-account collision comes back as 422 and `request` throws
+   *  with the server's own message (which names the colliding account).
+   *
+   *  Resolves `false` when the domain was already an alias (nothing written). */
+  addAliasDomain: async (companyId: string, domain: string): Promise<boolean> => {
+    const path = `/api/v1/account-sourcing/companies/${companyId}`;
+    const company = await request<Company>(path);
+    const existing = company.additional_domains ?? [];
+    if (existing.includes(domain)) return false;
+    await request<Company>(path, {
+      method: "PUT",
+      body: JSON.stringify({ additional_domains: [...existing, domain] }),
+    });
+    return true;
+  },
+
+  /** Buying-journey funnel counts over the SAME filtered, visibility-scoped
+   *  population as the list. Pass the page's active filters — without them the
+   *  funnel showed workspace-wide numbers to reps who own a handful of
+   *  accounts. `journey_stage` is ignored server-side (facet-count semantics:
+   *  the tiles ARE that filter), so it is safe to pass the whole object. */
+  recotapSummary: (params?: AccountSourcingFilters) => {
+    const search = buildAccountSourcingQuery(params);
+    return request<RecotapSummary>(
+      `/api/v1/account-sourcing/recotap/summary${search.toString() ? `?${search}` : ""}`,
+    );
+  },
 
   recotapRefresh: () =>
     request<{ pull: { pulled: number; configured: number }; seed: { seeded: number } }>(

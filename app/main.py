@@ -2,17 +2,15 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.core.logging_config import setup_logging
 from app.core.request_context import get_request_id, request_id_var
-from app.services.zippy_docs.base import ZIPPY_OUTPUT_DIR
 
 # Configure app-wide logging. Without this, the root logger sits at WARNING and
 # every `logger.info(...)` in the codebase — including the Zippy per-iteration
@@ -166,13 +164,35 @@ if settings.ENABLE_METRICS:
             "installed; skipping /metrics"
         )
 
-# Serve Zippy-generated Word docs (MOM, NDAs, drafts) so the frontend can link
-# straight to them. The directory is ensured at import time by zippy_docs.base.
-app.mount(
-    "/zippy_outputs",
-    StaticFiles(directory=str(ZIPPY_OUTPUT_DIR), check_dir=False),
-    name="zippy_outputs",
-)
+# ── Legacy Zippy document links ───────────────────────────────────────────────
+# /zippy_outputs used to be a StaticFiles mount over a directory inside the
+# container. That was never durable: production runs two backend replicas with
+# no shared volume, so a file written by one pod was invisible to the other, and
+# the container's writable layer is discarded on every restart, redeploy and
+# reschedule. Generated documents now live in Postgres and are served from
+# /api/v1/zippy/documents/{token} (app/api/v1/endpoints/zippy.py).
+#
+# The mount is gone, but old links live on forever inside
+# zippy_messages.artifacts, so this route stays to answer them honestly. Those
+# files are provably lost — both prod pods' output directories were empty — so
+# there is nothing to look up and nothing to touch on disk; we just say what
+# happened and how to get the document back. 410 Gone, because the resource
+# existed and no longer does.
+@app.get("/zippy_outputs/{filename:path}", include_in_schema=False)
+async def legacy_zippy_output(filename: str, request: Request) -> Response:
+    from app.api.v1.endpoints.zippy import document_unavailable_response
+
+    logger.info("Legacy /zippy_outputs link requested: %s", filename)
+    return document_unavailable_response(
+        request,
+        status_code=410,
+        headline="This document is no longer available",
+        detail=(
+            "Documents generated before this link format was retired were held "
+            "on a server's temporary disk and were cleared the next time the "
+            "service restarted."
+        ),
+    )
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

@@ -314,6 +314,11 @@ class Settings(BaseSettings):
     ZIPPY_TOP_K: int = 8
     ZIPPY_CHUNK_SIZE: int = 1200
     ZIPPY_CHUNK_OVERLAP: int = 200
+    # How long a Zippy-generated document stays downloadable from
+    # /api/v1/zippy/documents/{token}. The bytes are the fallback for a failed
+    # Google Drive upload; the Drive copy (which the UI prefers) is permanent.
+    # Expired rows are swept nightly by app.tasks.zippy_documents.
+    ZIPPY_DOC_RETENTION_DAYS: int = 30
 
     # ── Derived security helpers ──────────────────────────────────────────────
     @property

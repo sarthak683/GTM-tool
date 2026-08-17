@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 
 # ── Upload deduplication cache ───────────────────────────────────────────────
@@ -47,15 +51,47 @@ def cache_upload(
         oldest_key = next(iter(_RECENT_UPLOADS))
         del _RECENT_UPLOADS[oldest_key]
 
-# Everything Zippy generates lands under this directory. FastAPI serves it via
-# /zippy_outputs so the frontend can link directly to the finished file.
+# Scratch space for document rendering — NOT a published directory.
+#
+# python-docx / openpyxl / python-pptx all render to a filesystem path, and each
+# generator's Drive upload reads the finished bytes straight back off it, so a
+# real file still has to exist for the duration of the call. What changed is
+# that it is now *only* a scratch file: the moment the document becomes a link
+# the user can click, `zippy_docs.storage.persist_generated_document` copies the
+# bytes into Postgres and deletes this file.
+#
+# It used to live under ./storage/zippy_outputs and be published by a
+# StaticFiles mount at /zippy_outputs. That was the bug: production runs two
+# backend replicas with no shared volume, so the file only existed on the pod
+# that made it (the link 404'd whenever the request landed on the other replica)
+# and the container's writable layer is wiped by every restart and redeploy.
+# Pointing this at the system temp dir makes the ephemerality explicit instead
+# of pretending a per-pod directory is durable storage.
 ZIPPY_OUTPUT_DIR = Path(
     os.environ.get(
         "ZIPPY_OUTPUT_DIR",
-        str(Path(__file__).resolve().parents[3] / "storage" / "zippy_outputs"),
+        str(Path(tempfile.gettempdir()) / "zippy_outputs"),
     )
 ).resolve()
-ZIPPY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_output_dir() -> Path:
+    """Create the scratch directory on first use and return it.
+
+    Deliberately lazy. This used to run at import time, which meant any process
+    that imported the app — including ones that never generate a document — had
+    to be able to write to the path, and a read-only root filesystem would take
+    down boot. Creating it when a generator actually needs it removes that
+    coupling; the failure, if it comes, now surfaces on the call that caused it.
+    """
+    try:
+        ZIPPY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error(
+            "Cannot create Zippy scratch directory %s: %s", ZIPPY_OUTPUT_DIR, exc
+        )
+        raise
+    return ZIPPY_OUTPUT_DIR
 
 
 @dataclass
@@ -84,13 +120,24 @@ def _slug(value: str, max_len: int = 48) -> str:
 
 
 def build_output_path(kind: str, client_name: str, extension: str = "docx") -> tuple[Path, str]:
-    """Return ``(absolute_path, public_url)`` for a new document."""
+    """Return ``(scratch_path, provisional_url)`` for a new document.
+
+    The second element is intentionally empty. A document's real URL is a
+    capability token minted when the bytes are written to Postgres, which
+    happens after generation and after the Drive upload — see
+    ``zippy_docs.storage.persist_generated_document``, which sets ``doc.url``.
+
+    The tuple shape is kept so the seven generators that unpack it need no
+    change, and an empty string is the honest placeholder: if persistence never
+    runs, the artifact carries no link at all rather than the old
+    ``/zippy_outputs/...`` path, which pointed at a file on one specific pod's
+    ephemeral disk and mostly 404'd.
+    """
     date_str = datetime.utcnow().strftime("%Y-%m-%d")
     unique = uuid4().hex[:6]
     filename = f"{_slug(kind)}-{_slug(client_name)}-{date_str}-{unique}.{extension}"
-    path = ZIPPY_OUTPUT_DIR / filename
-    url = f"/zippy_outputs/{filename}"
-    return path, url
+    path = ensure_output_dir() / filename
+    return path, ""
 
 
 def human_today() -> str:

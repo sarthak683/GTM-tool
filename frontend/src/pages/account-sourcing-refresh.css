@@ -315,6 +315,11 @@
 .account-sourcing-page .as-review-mis {
   grid-template-columns: minmax(150px, 1.2fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(200px, 1.6fr) minmax(180px, 220px);
 }
+/* Alias gaps are grouped one row per (account, missing domain), and their
+   action label spells out both — hence the wider Resolve track. */
+.account-sourcing-page .as-review-alias {
+  grid-template-columns: minmax(150px, 1.2fr) minmax(110px, 1fr) 92px minmax(190px, 1.5fr) minmax(220px, 280px);
+}
 .account-sourcing-page .as-review-dom {
   grid-template-columns: minmax(160px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 90px minmax(210px, 260px);
 }

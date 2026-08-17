@@ -668,6 +668,11 @@ export type MeetingBucketDeal = {
   meeting_booked_with?: string | null;
 };
 
+// Accepts the single id the per-rep drilldowns pass and the multi-select list
+// the page filter holds, and drops empties so an unscoped call sends no param.
+const toIdList = (value?: string | string[] | null): string[] =>
+  (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
+
 export const analyticsApi = {
   salesDashboard: (
     windowDays = 90,
@@ -710,31 +715,38 @@ export const analyticsApi = {
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
-  // `geography` is a REPEATABLE param on the backend — send every selected
-  // geography, and the custom range too, so the drilldown resolves the exact
-  // same window as the tile it opened from.
+  // `geography`, `user_id` and `rep_id` are all REPEATABLE params on the
+  // backend — send every selected value, plus the custom range, so the
+  // drilldown resolves the exact same scope and window as the tile it opened
+  // from. `repIds` is the page's rep filter (AE-scoped, like sales-dashboard's
+  // rep_id); `userIds` is the rep a PER-REP pill belongs to (AE or SDR). An
+  // overall pill sends only repIds; a rep row sends both.
   meetingBucketDeals: (
     bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled",
-    userId?: string | null,
+    userIds?: string | string[] | null,
     windowDays?: number,
     geographies: string[] = [],
     fromDate?: string,
     toDate?: string,
+    repIds: string[] = [],
   ) => {
     const params = new URLSearchParams({ bucket });
-    if (userId) params.set("user_id", userId);
+    for (const id of toIdList(userIds)) params.append("user_id", id);
+    for (const id of repIds) params.append("rep_id", id);
     if (windowDays != null) params.set("window_days", String(windowDays));
     for (const g of geographies) params.append("geography", g);
     if (fromDate) params.set("from_date", fromDate);
     if (toDate) params.set("to_date", toDate);
     return request<{ deals: MeetingBucketDeal[] }>(`/api/v1/analytics/meeting-bucket-deals?${params.toString()}`);
   },
-  // NOTE: /analytics/pipeline-deals takes ONLY user_id — it lists the current
-  // open pipeline, which is a point-in-time snapshot rather than a windowed
-  // aggregate, so window/geography params would have nothing to bind to.
-  pipelineDeals: (userId?: string | null) => {
+  // NOTE: /analytics/pipeline-deals takes no window — it lists the CURRENT open
+  // pipeline, a point-in-time snapshot rather than a windowed aggregate, so a
+  // window param would have nothing to bind to. Geography does bind: the tile's
+  // pipeline_amount is computed off geography-filtered deal rows.
+  pipelineDeals: (userIds?: string | string[] | null, geographies: string[] = []) => {
     const params = new URLSearchParams();
-    if (userId) params.set("user_id", userId);
+    for (const id of toIdList(userIds)) params.append("user_id", id);
+    for (const g of geographies) params.append("geography", g);
     return request<PipelineDealRow[]>(`/api/v1/analytics/pipeline-deals?${params.toString()}`);
   },
   meetingBookedFromDeals: (

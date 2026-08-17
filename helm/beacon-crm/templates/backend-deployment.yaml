@@ -78,12 +78,21 @@ spec:
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           volumeMounts:
+            # Scratch only. Zippy renders a .docx/.xlsx/.pptx here because
+            # python-docx and friends need a real file, then immediately copies
+            # the bytes into Postgres and deletes it — see
+            # app/services/zippy_docs/storage.py. Nothing durable lives on a
+            # backend pod's disk.
             - name: tmp
               mountPath: /tmp
-            - name: app-storage
-              mountPath: /app/storage
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: app-storage
-          emptyDir: {}
+        # The `app-storage` emptyDir that used to be mounted at /app/storage is
+        # gone. It existed to hold Zippy's generated documents, which was never
+        # sound: an emptyDir is per-pod, so with more than one replica the
+        # download link only worked on the pod that happened to generate the
+        # file, and the volume is destroyed with the pod on every restart and
+        # redeploy. Those documents are now rows in `zippy_generated_docs`,
+        # which every replica can read and which survives a rollout. Do not
+        # reintroduce a per-pod volume for user-visible artifacts.

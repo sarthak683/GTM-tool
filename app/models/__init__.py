@@ -36,6 +36,7 @@ from app.models.task import (
 from app.models.zippy import (
     ZippyConversation, ZippyConversationRead,
     ZippyMessage, ZippyMessageRead, ZippyChatRequest,
+    ZippyGeneratedDoc,
     IndexedDriveFile, IndexedDriveFileRead,
 )
 
@@ -65,6 +66,7 @@ __all__ = [
     "TaskComment", "TaskCommentCreate", "TaskCommentRead",
     "ZippyConversation", "ZippyConversationRead",
     "ZippyMessage", "ZippyMessageRead", "ZippyChatRequest",
+    "ZippyGeneratedDoc",
     "IndexedDriveFile", "IndexedDriveFileRead",
     "PushSubscription", "PushSubscriptionRead",
     "RecotapAccount", "RecotapAccountRead",

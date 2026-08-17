@@ -6,7 +6,7 @@ const SHOW_DEAL_VELOCITY    = false;
 const SHOW_FORECAST_VIEW    = false;
 const SHOW_MONTHLY_FUNNEL   = false;
 // ─────────────────────────────────────────────────────────────────────────────
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Bar,
@@ -267,6 +267,7 @@ function MilestoneDealsModal({
   accentColor,
   buckets,
   onOpenBucket,
+  bucketScopeLabel = "All Reps",
 }: {
   label: string;
   deals: MilestoneDealRow[];
@@ -274,6 +275,9 @@ function MilestoneDealsModal({
   accentColor: string;
   buckets?: MeetingBucketCard[];
   onOpenBucket?: (bucket: MeetingBucketKey, title: string) => void;
+  // Names the rep/geography scope these pills were computed under. Defaults to
+  // the unfiltered case; never hardcode it, or a filtered pill reads as global.
+  bucketScopeLabel?: string;
 }) {
   // Close on Escape
   useEffect(() => {
@@ -415,7 +419,7 @@ function MilestoneDealsModal({
           {buckets && buckets.length > 0 && (
             <div style={{ padding: "18px 22px 22px", display: "grid", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — All Reps</p>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — {bucketScopeLabel}</p>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
                 {buckets.map((b) => (
@@ -443,11 +447,16 @@ function PipelineDealModal({
   deals,
   loading,
   onClose,
+  scopeLabel = "",
 }: {
   repName: string;
   deals: PipelineDealRow[];
   loading: boolean;
   onClose: () => void;
+  // Geography scope this list was fetched under, shown so a region-filtered
+  // list never reads as the rep's whole pipeline. Kept out of `repName` because
+  // that also names the export file.
+  scopeLabel?: string;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -481,7 +490,9 @@ function PipelineDealModal({
       >
         <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#4561d5", textTransform: "uppercase" }}>Pipeline</p>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#4561d5", textTransform: "uppercase" }}>
+              Pipeline{scopeLabel ? ` — ${scopeLabel}` : ""}
+            </p>
             <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
               {repName}
               {!loading && deals.length > 0 && (
@@ -1277,6 +1288,7 @@ function MetricCard({
   trend,
   buckets,
   onOpenBucket,
+  bucketScopeLabel,
 }: {
   label: string;
   value: string;
@@ -1287,6 +1299,7 @@ function MetricCard({
   trend?: { curr: number; prev: number };
   buckets?: MeetingBucketCard[];
   onOpenBucket?: (bucket: MeetingBucketKey, title: string) => void;
+  bucketScopeLabel?: string;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const palette = {
@@ -1343,6 +1356,7 @@ function MetricCard({
           accentColor={palette.icon}
           buckets={buckets}
           onOpenBucket={onOpenBucket}
+          bucketScopeLabel={bucketScopeLabel}
         />
       )}
     </>
@@ -2815,7 +2829,7 @@ export default function SalesAnalytics() {
   const [meetingBucketModal, setMeetingBucketModal] = useState<{ bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled"; title: string; userId: string | null | undefined } | null>(null);
   const [meetingBucketDeals, setMeetingBucketDeals] = useState<MeetingBucketDeal[]>([]);
   const [meetingBucketLoading, setMeetingBucketLoading] = useState(false);
-  const [pipelineDealModal, setPipelineDealModal] = useState<{ userId: string | null | undefined; repName: string } | null>(null);
+  const [pipelineDealModal, setPipelineDealModal] = useState<{ userId: string | null | undefined; repName: string; scopeLabel: string } | null>(null);
   const [pipelineDealDeals, setPipelineDealDeals] = useState<PipelineDealRow[]>([]);
   const [pipelineDealLoading, setPipelineDealLoading] = useState(false);
   const [meetingBookedFromModal, setMeetingBookedFromModal] = useState<{ channel: "Email" | "LinkedIn" | "Call"; title: string; userId: string | null | undefined } | null>(null);
@@ -2835,6 +2849,46 @@ export default function SalesAnalytics() {
   const selectedRepNames = useMemo(
     () => repFilter.map((id) => visibleTeamUsers.find((u) => u.id === id)?.name ?? id),
     [repFilter, visibleTeamUsers],
+  );
+
+  const repNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const teamUser of visibleTeamUsers) byId.set(teamUser.id, teamUser.name);
+    // The leaderboard payload is the same response that rendered the pill, so a
+    // per-rep drill-down can name its rep even before the team list resolves.
+    for (const row of data?.rep_activity ?? []) {
+      if (row.user_id && row.rep_name) byId.set(row.user_id, row.rep_name);
+    }
+    return byId;
+  }, [visibleTeamUsers, data?.rep_activity]);
+
+  // Drill-down headers name the scope they were opened under. A modal that says
+  // "All Reps" while a filter is active makes wrongly-scoped rows look
+  // deliberate, which is exactly how the Meetings Booked mismatch went unnoticed.
+  const repScopeLabel = useMemo(() => {
+    if (repFilter.length === 0) return "All Reps";
+    if (repFilter.length === 1) return selectedRepNames[0] ?? "1 rep";
+    return `${repFilter.length} reps`;
+  }, [repFilter, selectedRepNames]);
+
+  const geoScopeLabel = useMemo(() => {
+    if (geographyFilter.length === 0) return "";
+    if (geographyFilter.length === 1) return geographyFilter[0];
+    return `${geographyFilter.length} regions`;
+  }, [geographyFilter]);
+
+  // "Jacob · America" / "3 reps" / "All Reps". `repOverride` names the single rep
+  // whose row was clicked, which is narrower than the page filter.
+  const scopeLabelFor = useCallback(
+    (repOverride?: string | null) => {
+      // Never fall back to the page-level label for a single-rep drill-down —
+      // "All Reps" on one rep's list is the exact mislabel this fixes.
+      const repPart = repOverride
+        ? repNameById.get(repOverride) ?? "Selected rep"
+        : repScopeLabel;
+      return geoScopeLabel ? `${repPart} · ${geoScopeLabel}` : repPart;
+    },
+    [repNameById, repScopeLabel, geoScopeLabel],
   );
 
   useEffect(() => {
@@ -3039,11 +3093,15 @@ export default function SalesAnalytics() {
 
   const handleOpenPipelineDeals = (userId: string | null | undefined, repName: string) => {
     const seq = ++pipelineDealSeqRef.current;
-    setPipelineDealModal({ userId, repName });
+    // Snapshot the geography scope: the header must keep naming the filter the
+    // list was fetched under even if the user changes it behind the modal.
+    setPipelineDealModal({ userId, repName, scopeLabel: geoScopeLabel });
     setPipelineDealDeals([]);
     setPipelineDealLoading(true);
     analyticsApi
-      .pipelineDeals(userId ?? undefined)
+      // Geography must ride along: the rep's pipeline tile is computed off
+      // geography-filtered deals, so an unfiltered list would over-report.
+      .pipelineDeals(userId ?? undefined, geographyFilter)
       .then((rows) => {
         if (seq === pipelineDealSeqRef.current) setPipelineDealDeals(rows);
       })
@@ -3061,11 +3119,13 @@ export default function SalesAnalytics() {
     userId: string | null | undefined,
   ) => {
     const seq = ++meetingBucketSeqRef.current;
-    setMeetingBucketModal({ bucket, title, userId });
+    setMeetingBucketModal({ bucket, title: `${title} — ${scopeLabelFor(userId)}`, userId });
     setMeetingBucketDeals([]);
     setMeetingBucketLoading(true);
     analyticsApi
-      .meetingBucketDeals(bucket, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined)
+      // repFilter is what scoped the pill server-side; without it the overall
+      // pill's modal listed every rep's meetings while the tile showed one rep's.
+      .meetingBucketDeals(bucket, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined, repFilter)
       .then((r) => {
         if (seq === meetingBucketSeqRef.current) setMeetingBucketDeals(r.deals);
       })
@@ -3082,7 +3142,7 @@ export default function SalesAnalytics() {
     userId: string | null | undefined,
   ) => {
     const seq = ++meetingBookedFromSeqRef.current;
-    setMeetingBookedFromModal({ channel, title: `${channel} Meetings Booked`, userId });
+    setMeetingBookedFromModal({ channel, title: `${channel} Meetings Booked — ${scopeLabelFor(userId)}`, userId });
     setMeetingBookedFromDeals([]);
     setMeetingBookedFromError("");
     setMeetingBookedFromLoading(true);
@@ -3301,6 +3361,17 @@ export default function SalesAnalytics() {
     return nextDeals;
   };
 
+  // The board endpoint is unscoped, but every tile these lists drill into was
+  // computed by sales-dashboard under the page's rep filter (`Deal.assigned_to_id
+  // IN rep_id`). Mirror that here or the modal contradicts the number that
+  // opened it. NOTE: geography is NOT mirrored — the backend buckets raw region
+  // values through _normalize_geography_key, and duplicating that mapping in the
+  // client would just drift; these lists can still over-list under a region filter.
+  const scopeBoardDealsToFilter = (deals: Deal[]) =>
+    repFilter.length === 0
+      ? deals
+      : deals.filter((deal) => deal.assigned_to_id && repFilter.includes(deal.assigned_to_id));
+
   const openDealModal = (title: string, subtitle: string, deals: Deal[]) => {
     setHighlightModal({ title, subtitle, deals });
     setHighlightLoading(false);
@@ -3376,7 +3447,7 @@ export default function SalesAnalytics() {
       setHighlightLoading(true);
       setHighlightModal({ title: `${row.label} stalled deals`, subtitle: "Loading drilldown...", deals: [] });
       try {
-        const deals = await loadBoardDeals();
+        const deals = scopeBoardDealsToFilter(await loadBoardDeals());
         const filtered = deals
           .filter((deal) => deal.stage === row.key && (deal.days_in_stage ?? 0) >= 30)
           .sort((a, b) => (b.days_in_stage ?? 0) - (a.days_in_stage ?? 0));
@@ -3396,7 +3467,7 @@ export default function SalesAnalytics() {
       setHighlightLoading(true);
       setHighlightModal({ title: item.title || "Beacon Readout drilldown", subtitle: item.subtitle || "Loading drilldown...", deals: [] });
       try {
-        const deals = await loadBoardDeals();
+        const deals = scopeBoardDealsToFilter(await loadBoardDeals());
         const closedStageIds = new Set(["closed_won", "closed_lost", "not_a_fit", "cold", "on_hold", "nurture", "churned", "closed"]);
         const activeDeals = deals.filter((deal) => !closedStageIds.has(deal.stage));
         const today = new Date();
@@ -3651,6 +3722,7 @@ export default function SalesAnalytics() {
                 {...card}
                 buckets={card.label === "Demo Scheduled" ? overallMeetingBucketCards : undefined}
                 onOpenBucket={card.label === "Demo Scheduled" ? (bucket, title) => handleOpenMeetingBucket(bucket, title, undefined) : undefined}
+                bucketScopeLabel={card.label === "Demo Scheduled" ? scopeLabelFor() : undefined}
               />
             ))}
           </div>
@@ -3875,6 +3947,7 @@ export default function SalesAnalytics() {
       {pipelineDealModal && (
         <PipelineDealModal
           repName={pipelineDealModal.repName}
+          scopeLabel={pipelineDealModal.scopeLabel}
           deals={pipelineDealDeals}
           loading={pipelineDealLoading}
           onClose={() => setPipelineDealModal(null)}

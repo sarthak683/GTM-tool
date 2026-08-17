@@ -32,6 +32,7 @@ import {
   AccountSourcingHttpError,
   type AccountSourcingFilters,
   type AccountSourcingSort,
+  type MisattachedProspectRow,
   type RecotapSummary,
   type SourcingDataHealth,
 } from "../lib/api/prospecting";
@@ -593,6 +594,15 @@ function CompanyCard({
 // strictly read-only; every fix here goes through the SAME merge / company
 // update / assignment endpoints the rest of the app uses. Rows disappear (and
 // their section total drops) as they are resolved.
+//
+// The backend's `misattached` set feeds TWO sections, because the same
+// detection covers two opposite problems. Most rows are `alias_gap`: the
+// prospect is filed CORRECTLY on an acquisition / alternate brand of its
+// account, and only the ACCOUNT is incomplete — offering "move to another
+// account" there would scatter accounts that were correctly consolidated. Only
+// `misattached` rows (another live account already owns the domain) get a move
+// action. Alias gaps are grouped per (account, domain) because ONE alias
+// resolves every prospect on that domain.
 
 const REVIEW_HEAD: CSSProperties = {
   fontSize: 11,
@@ -672,6 +682,18 @@ function ReviewSection({
   );
 }
 
+/** Every prospect on ONE account whose email domain the account does not claim
+ *  yet — resolved together by recording that single domain as an alias. */
+interface AliasGapGroup {
+  key: string;
+  domain: string;
+  companyId: string;
+  companyName: string;
+  companyDomain: string | null;
+  evidence: string;
+  contacts: MisattachedProspectRow[];
+}
+
 function NeedsReviewTab() {
   const [health, setHealth] = useState<SourcingDataHealth | null>(null);
   const [loading, setLoading] = useState(true);
@@ -703,7 +725,9 @@ function NeedsReviewTab() {
   // Drop the rows a successful fix resolved and decrement that section's total,
   // so the queue shrinks as the admin works it without a full refetch.
   const dropRows = useCallback(
-    <K extends "sdr_conflicts" | "misattached" | "domain_corrections">(
+    // Deliberately NOT "misattached": that section carries per-cause subtotals
+    // this generic spread would silently drop — it uses dropMisattached below.
+    <K extends "sdr_conflicts" | "domain_corrections">(
       section: K,
       match: (row: SourcingDataHealth[K]["rows"][number]) => boolean,
     ) => {
@@ -716,6 +740,30 @@ function NeedsReviewTab() {
           ...current,
           [section]: { total: Math.max(0, current[section].total - removed), rows: kept },
         } as SourcingDataHealth;
+      });
+    },
+    [],
+  );
+
+  // Misattached rows feed TWO sections (alias gaps + true misattachments), so
+  // resolving one has to decrement the matching subtotal as well as the total.
+  const dropMisattached = useCallback(
+    (match: (row: MisattachedProspectRow) => boolean) => {
+      setHealth((current) => {
+        if (!current) return current;
+        const section = current.misattached;
+        const removed = section.rows.filter(match);
+        if (!removed.length) return current;
+        const gapsRemoved = removed.filter((row) => row.likely_cause === "alias_gap").length;
+        return {
+          ...current,
+          misattached: {
+            total: Math.max(0, section.total - removed.length),
+            alias_gap_total: Math.max(0, section.alias_gap_total - gapsRemoved),
+            misattached_total: Math.max(0, section.misattached_total - (removed.length - gapsRemoved)),
+            rows: section.rows.filter((row) => !match(row)),
+          },
+        };
       });
     },
     [],
@@ -746,6 +794,43 @@ function NeedsReviewTab() {
   const misattached = health?.misattached;
   const domainFixes = health?.domain_corrections;
   const loadingAll = loading && rowLimit > 200;
+
+  // Split the misattached candidates by cause, and collapse the alias gaps into
+  // one row per (account, missing domain). ONE alias addition resolves EVERY
+  // prospect on that domain — grouping is the difference between a handful of
+  // clicks and one per contact. Must stay above the early returns below.
+  const { aliasGroups, aliasRowCount, trueMisattached } = useMemo(() => {
+    const rows = health?.misattached.rows ?? [];
+    const groups = new Map<string, AliasGapGroup>();
+    let gapRows = 0;
+    for (const row of rows) {
+      if (row.likely_cause !== "alias_gap") continue;
+      gapRows += 1;
+      const domain = row.contact_domain ?? "";
+      const key = `${row.current_company_id}::${domain}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.contacts.push(row);
+        continue;
+      }
+      groups.set(key, {
+        key,
+        domain,
+        companyId: row.current_company_id,
+        companyName: row.current_company_name || "Unnamed account",
+        companyDomain: row.current_company_domain,
+        evidence: row.evidence,
+        contacts: [row],
+      });
+    }
+    return {
+      aliasRowCount: gapRows,
+      aliasGroups: [...groups.values()].sort(
+        (a, b) => b.contacts.length - a.contacts.length || a.companyName.localeCompare(b.companyName),
+      ),
+      trueMisattached: rows.filter((row) => row.likely_cause === "misattached"),
+    };
+  }, [health]);
 
   if (loading && !health) {
     return (
@@ -857,66 +942,152 @@ function NeedsReviewTab() {
         })}
       </ReviewSection>
 
-      {/* ── Misattached prospects ───────────────────────────────────────── */}
+      {/* ── Missing alias domains (the bulk of the old "misattached" list) ──
+          These prospects are filed CORRECTLY. Their domain is an acquisition /
+          alternate brand the account simply does not claim yet, so the fix is
+          to complete the ACCOUNT — never to move the people. */}
+      <ReviewSection
+        title="Missing alias domains"
+        blurb={`${aliasGroups.length} account + domain pair${aliasGroups.length === 1 ? "" : "s"}. These prospects are filed correctly — the account is missing this domain as an alias (an acquisition, alternate brand, or legacy domain). Adding the alias once resolves every prospect on it. Nobody moves.`}
+        total={misattached?.alias_gap_total ?? 0}
+        shown={aliasRowCount}
+        onLoadAll={() => setRowLimit(2000)}
+        loadingAll={loadingAll}
+      >
+        <div className="as-review-head as-review-alias" style={{ padding: "2px 12px 4px" }}>
+          <span style={REVIEW_HEAD}>Account</span>
+          <span style={REVIEW_HEAD}>Missing alias</span>
+          <span style={REVIEW_HEAD}>Prospects</span>
+          <span style={REVIEW_HEAD}>Why</span>
+          <span style={{ ...REVIEW_HEAD, textAlign: "right" }}>Resolve</span>
+        </div>
+        {aliasGroups.map((group) => {
+          const count = group.contacts.length;
+          const label = `Add ${group.domain} as alias to ${group.companyName}`;
+          return (
+            <div key={group.key} className="as-review-row as-review-alias">
+              <div style={{ minWidth: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => nav(`/account-sourcing/${group.companyId}`)}
+                  title="Open account"
+                  style={{ ...REVIEW_STRONG, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", padding: 0, display: "block", width: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {group.companyName}
+                </button>
+                <div style={{ ...REVIEW_CELL, color: colors.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.companyDomain || "—"}</div>
+              </div>
+              <span style={{ ...REVIEW_STRONG, color: "#4d7c0f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.domain}</span>
+              <span
+                style={REVIEW_CELL}
+                title={group.contacts.map((c) => c.contact_email || c.contact_name).filter(Boolean).slice(0, 12).join("\n")}
+              >
+                {count} prospect{count === 1 ? "" : "s"}
+              </span>
+              <span style={{ ...REVIEW_CELL, fontSize: 11.5, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}>{group.evidence}</span>
+              <div className="as-review-actions" style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  disabled={Boolean(busyKey)}
+                  title={label}
+                  style={{ ...REVIEW_ACTION_PRIMARY, opacity: busyKey ? 0.5 : 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}
+                  onClick={() =>
+                    void runAction(
+                      `alias:${group.key}`,
+                      `Add ${group.domain} as an alias domain on ${group.companyName}?\n\nThe domain is recorded on the account and ${count} prospect row${count === 1 ? "" : "s"} clear${count === 1 ? "s" : ""} from this queue. No prospect moves.`,
+                      async () => {
+                        const added = await accountSourcingApi.addAliasDomain(group.companyId, group.domain);
+                        return added
+                          ? `${group.domain} added as an alias on ${group.companyName} — ${count} prospect row${count === 1 ? "" : "s"} resolved.`
+                          : `${group.domain} was already an alias on ${group.companyName}.`;
+                      },
+                      () =>
+                        dropMisattached(
+                          (r) =>
+                            r.likely_cause === "alias_gap" &&
+                            r.current_company_id === group.companyId &&
+                            (r.contact_domain ?? "") === group.domain,
+                        ),
+                    )
+                  }
+                >
+                  {label}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </ReviewSection>
+
+      {/* ── Misattached prospects (genuinely ambiguous only) ─────────────────
+          Another LIVE account already owns this domain, so the prospect may
+          belong there. Only these get a "Move to …" action. */}
       <ReviewSection
         title="Misattached prospects"
-        blurb="The prospect's email domain matches neither its account's domain nor that account's dominant contact domain."
-        total={misattached?.total ?? 0}
-        shown={misattached?.rows.length ?? 0}
+        blurb="Another live account already owns this prospect's email domain, so it may be sitting on the wrong account. These are the genuinely ambiguous rows — confirm before moving anyone."
+        total={misattached?.misattached_total ?? 0}
+        shown={trueMisattached.length}
         onLoadAll={() => setRowLimit(2000)}
         loadingAll={loadingAll}
       >
         <div className="as-review-head as-review-mis" style={{ padding: "2px 12px 4px" }}>
           <span style={REVIEW_HEAD}>Prospect</span>
           <span style={REVIEW_HEAD}>Currently on</span>
-          <span style={REVIEW_HEAD}>Looks like</span>
+          <span style={REVIEW_HEAD}>Domain belongs to</span>
           <span style={REVIEW_HEAD}>Evidence</span>
           <span style={{ ...REVIEW_HEAD, textAlign: "right" }}>Resolve</span>
         </div>
-        {(misattached?.rows ?? []).map((row) => (
-          <div key={row.contact_id} className="as-review-row as-review-mis">
-            <div style={{ minWidth: 0 }}>
-              <div style={{ ...REVIEW_STRONG, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.contact_name || "Unnamed prospect"}</div>
-              <div style={{ ...REVIEW_CELL, color: colors.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.contact_email || row.contact_domain || "—"}</div>
+        {trueMisattached.map((row) => {
+          // The domain's owner is the re-link target. suggested_* is the exact
+          // primary-domain match; domain_owner_* also covers an owner that
+          // claims the domain only as an alias.
+          const targetId = row.suggested_company_id ?? row.domain_owner_id;
+          const targetName = row.suggested_company_name ?? row.domain_owner_name;
+          return (
+            <div key={row.contact_id} className="as-review-row as-review-mis">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ ...REVIEW_STRONG, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.contact_name || "Unnamed prospect"}</div>
+                <div style={{ ...REVIEW_CELL, color: colors.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.contact_email || row.contact_domain || "—"}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => nav(`/account-sourcing/${row.current_company_id}`)}
+                title="Open the account this prospect sits on today"
+                style={{ ...REVIEW_CELL, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", padding: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {row.current_company_name || "—"}
+              </button>
+              <span style={{ ...REVIEW_CELL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {targetName || <span style={{ color: colors.faint }}>Another live account</span>}
+              </span>
+              <span style={{ ...REVIEW_CELL, fontSize: 11.5, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}>{row.evidence}</span>
+              <div className="as-review-actions" style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                {targetId ? (
+                  <button
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    style={{ ...REVIEW_ACTION_PRIMARY, opacity: busyKey ? 0.5 : 1 }}
+                    onClick={() =>
+                      void runAction(
+                        `mis:${row.contact_id}`,
+                        `Move ${row.contact_name || "this prospect"} to ${targetName}?`,
+                        async () => {
+                          await accountSourcingApi.relinkContactCompany(row.contact_id, targetId);
+                          return `${row.contact_name || "Prospect"} moved to ${targetName}.`;
+                        },
+                        () => dropMisattached((r) => r.contact_id === row.contact_id),
+                      )
+                    }
+                  >
+                    Move to {targetName}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: colors.faint, whiteSpace: "nowrap" }}>Handle manually</span>
+                )}
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => nav(`/account-sourcing/${row.current_company_id}`)}
-              title="Open the account this prospect sits on today"
-              style={{ ...REVIEW_CELL, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", padding: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            >
-              {row.current_company_name || "—"}
-            </button>
-            <span style={{ ...REVIEW_CELL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {row.suggested_company_name || <span style={{ color: colors.faint }}>No existing account</span>}
-            </span>
-            <span style={{ ...REVIEW_CELL, fontSize: 11.5, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}>{row.evidence}</span>
-            <div className="as-review-actions" style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              {row.suggested_company_id ? (
-                <button
-                  type="button"
-                  disabled={Boolean(busyKey)}
-                  style={{ ...REVIEW_ACTION_PRIMARY, opacity: busyKey ? 0.5 : 1 }}
-                  onClick={() =>
-                    void runAction(
-                      `mis:${row.contact_id}`,
-                      `Move ${row.contact_name || "this prospect"} to ${row.suggested_company_name}?`,
-                      async () => {
-                        await accountSourcingApi.relinkContactCompany(row.contact_id, row.suggested_company_id as string);
-                        return `${row.contact_name || "Prospect"} moved to ${row.suggested_company_name}.`;
-                      },
-                      () => dropRows("misattached", (r) => r.contact_id === row.contact_id),
-                    )
-                  }
-                >
-                  Move to {row.suggested_company_name}
-                </button>
-              ) : (
-                <span style={{ fontSize: 11, fontWeight: 700, color: colors.faint, whiteSpace: "nowrap" }}>Handle manually</span>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </ReviewSection>
 
       {/* ── Domain corrections ──────────────────────────────────────────── */}
@@ -988,16 +1159,10 @@ function NeedsReviewTab() {
                         `dom:${row.company_id}:alias`,
                         `Add ${row.suggested_domain} as an alias domain on ${row.company_name}?`,
                         async () => {
-                          // Read-modify-write: the API replaces the alias list.
-                          const company = await accountSourcingApi.getCompany(row.company_id);
-                          const existing = company.additional_domains ?? [];
-                          if (existing.includes(row.suggested_domain)) {
-                            return `${row.suggested_domain} was already an alias on ${row.company_name}.`;
-                          }
-                          await accountSourcingApi.updateCompany(row.company_id, {
-                            additional_domains: [...existing, row.suggested_domain],
-                          });
-                          return `${row.suggested_domain} added as an alias on ${row.company_name}.`;
+                          const added = await accountSourcingApi.addAliasDomain(row.company_id, row.suggested_domain);
+                          return added
+                            ? `${row.suggested_domain} added as an alias on ${row.company_name}.`
+                            : `${row.suggested_domain} was already an alias on ${row.company_name}.`;
                         },
                         () => dropRows("domain_corrections", (r) => r.company_id === row.company_id),
                       )
@@ -1215,7 +1380,10 @@ export default function AccountSourcing() {
         // Same filters as the list → the KPI strip describes what is on screen.
         accountSourcingApi.summary(activeFilters),
         accountSourcingApi.listBatches(RECENT_IMPORTS_LIMIT),
-        accountSourcingApi.recotapSummary().catch(() => null),
+        // Same filters as the list → the funnel describes what is on screen,
+        // and a rep only ever sees their own accounts. (The server ignores
+        // journey_stage here so the tiles stay usable as the filter control.)
+        accountSourcingApi.recotapSummary(activeFilters).catch(() => null),
       ]);
       // A newer request superseded this one — drop the stale response.
       if (seq !== loadSeqRef.current) return;

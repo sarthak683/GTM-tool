@@ -17,14 +17,14 @@ import csv
 import io
 import logging
 import re
-from dataclasses import dataclass, fields as dataclass_fields
+from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, literal_column, or_
 from sqlalchemy.orm import aliased, load_only
 from sqlmodel import select
 
@@ -1912,29 +1912,67 @@ async def refresh_recotap_signals(
 
 
 @router.get("/recotap/summary")
-async def recotap_summary(_user: CurrentUser, session: DBSession = None):
+async def recotap_summary(
+    _user: CurrentUser,
+    session: DBSession = None,
+    filters: CompanySourcingFilters = Depends(),
+):
     """Journey-stage + engagement counts across sourced accounts — powers the
-    Account Sourcing journey funnel + filter chips."""
-    total = (
-        await session.execute(select(func.count(Company.id)).where(_account_sourcing_visibility_filter()))
-    ).scalar_one()
+    Account Sourcing journey funnel + filter chips.
+
+    Scoped through ``build_sourced_companies_stmt``, exactly like the list, the
+    KPI summary and the export. It previously counted RecotapAccount rows with
+    NO company scoping at all, so an SDR who owns 12 accounts was shown the
+    whole workspace's funnel ("Consideration 340") — and soft-deleted /
+    non-sourcing accounts were counted too.
+
+    ``journey_stage`` is deliberately EXCLUDED from the scope: the funnel tiles
+    ARE the journey-stage filter control, so they must show the distribution
+    across the OTHER active filters (standard facet-count semantics). Applying
+    it would collapse the funnel to the selected stage and zero every tile the
+    user might switch to. Every other filter applies, so the funnel tracks the
+    filter bar.
+
+    Every counter is a DISTINCT ACCOUNT count, not a recotap-row count: a
+    company can carry more than one ``recotap_accounts`` row, and counting rows
+    made a tile promise more accounts than clicking it produced.
+    """
+    stmt = build_sourced_companies_stmt(
+        _user, dataclass_replace(filters, journey_stage=None)
+    ).order_by(None)
+    scoped = stmt.subquery()
+    scoped_ids = select(scoped.c.id)
+    accounts = func.count(func.distinct(RecotapAccount.company_id))
+
+    total = (await session.execute(select(func.count()).select_from(scoped))).scalar_one()
     stage_rows = (
         await session.execute(
-            select(RecotapAccount.journey_stage, func.count())
-            .where(RecotapAccount.company_id.is_not(None))
+            select(RecotapAccount.journey_stage, accounts)
+            .where(RecotapAccount.company_id.in_(scoped_ids))
             .group_by(RecotapAccount.journey_stage)
         )
     ).all()
     stages = {s: 0 for s in RECOTAP_JOURNEY_STAGES}
-    scored = 0
     for stage, cnt in stage_rows:
         if stage and stage in stages:
             stages[stage] = cnt
-            scored += cnt
+    # `scored` is counted separately rather than summed from `stages`: an account
+    # with two recotap rows in different stages appears in both tiles, so the sum
+    # would over-count it and understate `not_scored`. This mirrors EXACTLY the
+    # population the list's `journey_stage=not_scored` filter excludes.
+    scored = (
+        await session.execute(
+            select(accounts).where(
+                RecotapAccount.company_id.in_(scoped_ids),
+                RecotapAccount.journey_stage.is_not(None),
+                RecotapAccount.journey_stage != "",
+            )
+        )
+    ).scalar_one()
     eng_rows = (
         await session.execute(
-            select(RecotapAccount.engagement, func.count())
-            .where(RecotapAccount.company_id.is_not(None))
+            select(RecotapAccount.engagement, accounts)
+            .where(RecotapAccount.company_id.in_(scoped_ids))
             .group_by(RecotapAccount.engagement)
         )
     ).all()
@@ -2190,6 +2228,53 @@ def _normalized_company_domain(column):
     )
 
 
+def _has_alias_domain(company_alias, domain_expr):
+    """True when ``company_alias.additional_domains`` contains ``domain_expr``.
+
+    Same JSONB containment test ``validate_alias_domains`` uses for collision
+    detection, so this report and the alias writer can never disagree about who
+    owns a domain. ``jsonb_build_array`` takes the domain as a SQL EXPRESSION /
+    bind parameter — never interpolate it into a JSON literal.
+    """
+    # `'[]'::jsonb` as a literal_column rather than cast("[]", JSONB): the latter
+    # emits a JSONB bind param, which has no literal renderer and so cannot be
+    # compiled with literal_binds (how the query-semantics tests read the SQL).
+    return func.coalesce(company_alias.additional_domains, literal_column("'[]'::jsonb")).op("@>")(
+        func.jsonb_build_array(domain_expr)
+    )
+
+
+def _owns_domain(company_alias, domain_expr):
+    """True when the account claims ``domain_expr`` as primary OR alias domain."""
+    return or_(
+        func.lower(company_alias.domain) == domain_expr,
+        _has_alias_domain(company_alias, domain_expr),
+    )
+
+
+# The two shapes hiding inside the misattached-prospect candidates. They look
+# identical to the detection query but need OPPOSITE fixes, so the report names
+# them explicitly instead of leaving the UI to infer intent from a null id.
+MISATTACHED_CAUSES = ("alias_gap", "misattached")
+MISATTACHED_ACTIONS = {"alias_gap": "add_alias", "misattached": "relink"}
+
+
+def _misattached_cause(domain_owner_id) -> str:
+    """Classify one misattached-candidate row from the data, NOT from whether a
+    relink suggestion happens to exist.
+
+    ``alias_gap``   — no OTHER live account owns the contact's email domain
+                      (primary or alias). Nothing is misfiled: the prospect is
+                      an acquisition / alternate brand of the account it already
+                      sits on, and the ACCOUNT is simply missing that domain as
+                      an alias. Presenting these as errors invites an admin to
+                      scatter correctly consolidated accounts.
+    ``misattached`` — another live account already claims that domain, so the
+                      prospect is genuinely ambiguous and may belong there.
+    """
+    return "misattached" if domain_owner_id else "alias_gap"
+
+
 def _sdr_conflict_stmt():
     """Contact-vs-account SDR conflicts (both slots set, different), grouped
     per (account, conflicting contact-SDR) pair with the prospect count."""
@@ -2229,7 +2314,20 @@ def _misattached_stmt():
     domains counted — freemail included, exactly like the script) nor the
     account's own normalized domain, and is not freemail itself. A suggested
     home is attached when a live company's domain equals the contact's email
-    domain (the same exact-match rule the repair script's P3 relink used)."""
+    domain (the same exact-match rule the repair script's P3 relink used).
+
+    Every row additionally carries ``domain_owner_id``/``domain_owner_name`` —
+    the live account (if any) that already claims the contact's domain as its
+    primary OR alias domain. That is what separates a genuine misattachment
+    from an ``alias_gap`` (see ``_misattached_cause``); it is computed with a
+    correlated LIMIT 1 scalar subquery rather than a second join so it can
+    never multiply rows and change the audited totals.
+
+    Contacts whose domain is ALREADY an alias on their current account are
+    excluded: the account claims them, so there is nothing left to review. That
+    is also what makes the UI's "Add alias" fix stick — without it the resolved
+    rows would reappear on the next run of the report.
+    """
     edom = _contact_email_domain()
     cd = (
         select(
@@ -2255,6 +2353,30 @@ def _misattached_stmt():
     )
     suggested = aliased(Company)
     contact_domain = _contact_email_domain()
+
+    # The account that actually owns the contact's domain today, primary or
+    # alias. Correlated + LIMIT 1: a plain join would duplicate the row when two
+    # live accounts claim the same domain. Primary-domain owners sort first so
+    # this agrees with `suggested_*` whenever an exact primary match exists.
+    owner = aliased(Company)
+
+    def _owner_scalar(column):
+        return (
+            select(column)
+            .where(
+                owner.id != Company.id,
+                owner.deleted_at.is_(None),
+                _owns_domain(owner, contact_domain),
+            )
+            .order_by(
+                case((func.lower(owner.domain) == contact_domain, 0), else_=1),
+                owner.name.asc(),
+            )
+            .limit(1)
+            .correlate(Company, Contact)
+            .scalar_subquery()
+        )
+
     return (
         select(
             Contact.id.label("contact_id"),
@@ -2271,6 +2393,8 @@ def _misattached_stmt():
             suggested.id.label("suggested_company_id"),
             suggested.name.label("suggested_company_name"),
             suggested.domain.label("suggested_company_domain"),
+            _owner_scalar(owner.id).label("domain_owner_id"),
+            _owner_scalar(owner.name).label("domain_owner_name"),
         )
         .select_from(Contact)
         .join(Company, Company.id == Contact.company_id)
@@ -2291,9 +2415,63 @@ def _misattached_stmt():
             ~contact_domain.like(func.concat("%.", dom.c.dominant)),
             contact_domain != _normalized_company_domain(Company.domain),
             contact_domain.not_in(_DATA_HEALTH_FREEMAIL),
+            # Already recorded as an alias on the account the contact sits on →
+            # resolved, so it drops out of the queue instead of coming back.
+            ~_has_alias_domain(Company, contact_domain),
         )
         .order_by(Company.name.asc(), Contact.email.asc())
     )
+
+
+def _misattached_row(row) -> dict:
+    """Serialize one misattached-candidate row, with cause-specific wording.
+
+    The old single `evidence` string asserted a mismatch for EVERY row, which
+    reads as an error for the ~75% of rows that are alias gaps — where the
+    prospect is filed correctly and only the account record is incomplete.
+    """
+    cause = _misattached_cause(row.domain_owner_id)
+    dominant = row.company_dominant_domain
+    dominant_n = int(row.dominant_contact_count or 0)
+    current = row.current_company_name or "this account"
+    current_domain = row.current_company_domain or "no domain"
+    if cause == "alias_gap":
+        evidence = (
+            f"No live account owns '{row.contact_domain}'. {current} is on '{current_domain}' "
+            f"(dominant prospect domain '{dominant}', {dominant_n} contacts) but does not list "
+            f"'{row.contact_domain}' as an alias — most likely an acquisition or alternate brand "
+            f"of {current}, so the ACCOUNT is incomplete, not the prospect."
+        )
+    else:
+        owner = row.domain_owner_name or "another live account"
+        evidence = (
+            f"'{row.contact_domain}' already belongs to the live account {owner}, but this prospect "
+            f"sits on {current} ('{current_domain}', dominant prospect domain '{dominant}', "
+            f"{dominant_n} contacts) — genuinely ambiguous, so confirm before moving it."
+        )
+    return {
+        "contact_id": str(row.contact_id),
+        "contact_name": f"{row.contact_first_name or ''} {row.contact_last_name or ''}".strip(),
+        "contact_email": row.contact_email,
+        "contact_domain": row.contact_domain,
+        "contact_sdr_name": row.contact_sdr_name,
+        "current_company_id": str(row.current_company_id),
+        "current_company_name": row.current_company_name,
+        "current_company_domain": row.current_company_domain,
+        "company_dominant_domain": dominant,
+        "dominant_contact_count": dominant_n,
+        "suggested_company_id": str(row.suggested_company_id) if row.suggested_company_id else None,
+        "suggested_company_name": row.suggested_company_name,
+        "suggested_company_domain": row.suggested_company_domain,
+        # The account that owns contact_domain today (primary OR alias). Equals
+        # the suggestion whenever an exact primary match exists; set WITHOUT a
+        # suggestion when the domain is claimed only as another account's alias.
+        "domain_owner_id": str(row.domain_owner_id) if row.domain_owner_id else None,
+        "domain_owner_name": row.domain_owner_name,
+        "likely_cause": cause,
+        "recommended_action": MISATTACHED_ACTIONS[cause],
+        "evidence": evidence,
+    }
 
 
 def _domain_correction_stmt():
@@ -2377,6 +2555,13 @@ async def get_sourcing_data_health(
     Soft-deleted companies are excluded everywhere. Rows are actioned via the
     EXISTING merge / company-update / assignment endpoints — this endpoint
     never writes anything.
+
+    The misattached section additionally SPLITS its rows by ``likely_cause``
+    (``alias_gap`` vs ``misattached``, with ``alias_gap_total`` /
+    ``misattached_total`` subtotals): the detection is right, but most rows are
+    acquisitions and alternate brands filed CORRECTLY under an account that is
+    merely missing the domain as an alias. Those want ``add_alias``, not the
+    ``relink`` that would scatter a consolidated account.
     """
     generated_at = datetime.utcnow()
 
@@ -2391,8 +2576,20 @@ async def get_sourcing_data_health(
     sdr_total = await _count(sdr_stmt)
     sdr_rows = (await session.execute(sdr_stmt.limit(limit))).all()
 
+    # Misattached candidates are counted PER CAUSE in one grouped pass, so the
+    # section subtotals can never drift from `total` (and so the UI can label
+    # the alias-gap rows honestly instead of calling all of them errors).
     mis_stmt = _misattached_stmt()
-    mis_total = await _count(mis_stmt)
+    mis_sub = mis_stmt.order_by(None).subquery()
+    is_alias_gap = mis_sub.c.domain_owner_id.is_(None)
+    mis_cause_rows = (
+        await session.execute(
+            select(is_alias_gap.label("is_alias_gap"), func.count()).group_by(is_alias_gap)
+        )
+    ).all()
+    alias_gap_total = sum(int(n) for flag, n in mis_cause_rows if flag)
+    misattached_total = sum(int(n) for flag, n in mis_cause_rows if not flag)
+    mis_total = alias_gap_total + misattached_total
     mis_rows = (await session.execute(mis_stmt.limit(limit))).all()
 
     dc_stmt = _domain_correction_stmt()
@@ -2418,29 +2615,10 @@ async def get_sourcing_data_health(
         },
         "misattached": {
             "total": mis_total,
-            "rows": [
-                {
-                    "contact_id": str(row.contact_id),
-                    "contact_name": f"{row.contact_first_name or ''} {row.contact_last_name or ''}".strip(),
-                    "contact_email": row.contact_email,
-                    "contact_domain": row.contact_domain,
-                    "contact_sdr_name": row.contact_sdr_name,
-                    "current_company_id": str(row.current_company_id),
-                    "current_company_name": row.current_company_name,
-                    "current_company_domain": row.current_company_domain,
-                    "company_dominant_domain": row.company_dominant_domain,
-                    "dominant_contact_count": int(row.dominant_contact_count or 0),
-                    "suggested_company_id": str(row.suggested_company_id) if row.suggested_company_id else None,
-                    "suggested_company_name": row.suggested_company_name,
-                    "suggested_company_domain": row.suggested_company_domain,
-                    "evidence": (
-                        f"email domain '{row.contact_domain}' matches neither the account's dominant "
-                        f"contact domain '{row.company_dominant_domain}' ({int(row.dominant_contact_count or 0)} contacts) "
-                        f"nor its domain '{row.current_company_domain}'"
-                    ),
-                }
-                for row in mis_rows
-            ],
+            # Per-cause subtotals over the FULL set (not just the returned page).
+            "alias_gap_total": alias_gap_total,
+            "misattached_total": misattached_total,
+            "rows": [_misattached_row(row) for row in mis_rows],
         },
         "domain_corrections": {
             "total": dc_total,

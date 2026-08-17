@@ -339,6 +339,187 @@ def test_data_health_route_is_admin_only(m):
     assert sig.parameters["_admin"].annotation is deps.AdminUser
 
 
+# ── 4c. Misattached rows are CLASSIFIED, not all called errors ───────────────
+#
+# The detection matches the audited prod CSVs (192 rows), but only 48 of those
+# are genuine misattachments — the other 144 are acquisitions / alternate brands
+# filed CORRECTLY under an account that is merely missing the domain as an
+# alias. Calling those "misattached" invites an admin to scatter correctly
+# consolidated accounts, so cause and recommended action are explicit.
+
+
+def test_misattached_cause_is_derived_from_domain_ownership(m):
+    # Another live account owns the domain → genuinely ambiguous.
+    assert m._misattached_cause(uuid4()) == "misattached"
+    # Nobody else owns it → the ACCOUNT is missing an alias, nothing is misfiled.
+    assert m._misattached_cause(None) == "alias_gap"
+    assert set(m.MISATTACHED_CAUSES) == {"alias_gap", "misattached"}
+    assert m.MISATTACHED_ACTIONS == {"alias_gap": "add_alias", "misattached": "relink"}
+
+
+def _mis_row(**over):
+    base = dict(
+        contact_id=uuid4(),
+        contact_first_name="Bill",
+        contact_last_name="Reid",
+        contact_email="breid@infinityqs.com",
+        contact_domain="infinityqs.com",
+        contact_sdr_name="Jane",
+        current_company_id=uuid4(),
+        current_company_name="Advantive",
+        current_company_domain="advantive.com",
+        company_dominant_domain="advantive.com",
+        dominant_contact_count=9,
+        suggested_company_id=None,
+        suggested_company_name=None,
+        suggested_company_domain=None,
+        domain_owner_id=None,
+        domain_owner_name=None,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def test_alias_gap_row_reads_as_an_incomplete_account_not_an_error(m):
+    row = m._misattached_row(_mis_row())
+    assert row["likely_cause"] == "alias_gap"
+    assert row["recommended_action"] == "add_alias"
+    assert row["domain_owner_id"] is None
+    # The old wording asserted a mismatch for every row; an alias gap must say
+    # the ACCOUNT is incomplete, and must not claim the prospect is misfiled.
+    ev = row["evidence"]
+    assert "No live account owns 'infinityqs.com'" in ev
+    assert "alias" in ev and "Advantive" in ev
+    assert "misattached" not in ev.lower()
+
+
+def test_true_misattachment_row_names_the_account_that_owns_the_domain(m):
+    owner_id = uuid4()
+    row = m._misattached_row(
+        _mis_row(
+            contact_domain="acme.com",
+            suggested_company_id=owner_id,
+            suggested_company_name="Acme",
+            suggested_company_domain="acme.com",
+            domain_owner_id=owner_id,
+            domain_owner_name="Acme",
+        )
+    )
+    assert row["likely_cause"] == "misattached"
+    assert row["recommended_action"] == "relink"
+    assert row["suggested_company_id"] == str(owner_id)
+    assert row["domain_owner_id"] == str(owner_id)
+    assert "'acme.com' already belongs to the live account Acme" in row["evidence"]
+
+
+def test_misattached_row_classifies_alias_only_owners_without_a_primary_suggestion(m):
+    """A domain claimed only as ANOTHER account's alias is still a real conflict
+    (adding it here would 422), even though the primary-domain join finds no
+    suggestion — so the cause must not be inferred from suggested_company_id."""
+    owner_id = uuid4()
+    row = m._misattached_row(
+        _mis_row(domain_owner_id=owner_id, domain_owner_name="Globex", suggested_company_id=None)
+    )
+    assert row["likely_cause"] == "misattached"
+    assert row["suggested_company_id"] is None
+    assert "Globex" in row["evidence"]
+
+
+def test_misattached_query_exposes_domain_ownership_over_primary_and_alias(m):
+    sql = _sql_literal(m._misattached_stmt())
+    # Correlated LIMIT 1 scalar subqueries — NOT a second join, which would
+    # duplicate rows (and inflate the audited totals) when two accounts claim
+    # the same domain.
+    assert sql.count("AS domain_owner_id") == 1 and sql.count("AS domain_owner_name") == 1
+    assert sql.count("LIMIT 1") == 2
+    # Ownership = primary domain OR an alias in additional_domains.
+    assert "coalesce(companies_2.additional_domains, '[]'::jsonb) @> jsonb_build_array(" in sql
+    assert "lower(companies_2.domain) = lower(split_part(contacts.email, '@', 2))" in sql
+    # Primary-domain owners sort first, so domain_owner agrees with suggested_*.
+    assert "ORDER BY CASE WHEN (lower(companies_2.domain)" in sql
+    # The original primary-domain suggestion join is untouched.
+    assert "LEFT OUTER JOIN companies AS companies_1" in sql
+
+
+def test_misattached_query_drops_contacts_already_aliased_on_their_account(m):
+    """Otherwise the UI's "Add alias" fix would not stick: the rows it resolved
+    would reappear the next time the report is run."""
+    sql = _sql_literal(m._misattached_stmt())
+    assert (
+        "NOT (coalesce(companies.additional_domains, '[]'::jsonb) @> jsonb_build_array("
+        "lower(split_part(contacts.email, '@', 2))))"
+    ) in sql
+
+
+def test_data_health_reports_per_cause_subtotals_over_the_full_set(m):
+    """`alias_gap_total` / `misattached_total` must come from a grouped COUNT
+    over the whole statement, not from the (limit-capped) returned rows."""
+    src = inspect.getsource(m.get_sourcing_data_health)
+    assert "alias_gap_total" in src and "misattached_total" in src
+    assert "mis_total = alias_gap_total + misattached_total" in src
+    # Subtotals are computed from the statement subquery, before .limit().
+    grouped = src.split("mis_sub = ", 1)[1].split("mis_rows = ", 1)[0]
+    assert "domain_owner_id.is_(None)" in grouped and "group_by" in grouped
+    assert ".limit(" not in grouped
+
+
+# ── 4d. Buying-journey funnel is scoped like every other sourcing surface ────
+
+
+def test_recotap_summary_uses_the_shared_filters_and_visibility(m):
+    """The funnel used to count RecotapAccount rows with NO company scoping, so
+    an SDR owning 12 accounts saw the whole workspace's stage counts."""
+    params = inspect.signature(m.recotap_summary).parameters
+    assert params["filters"].annotation is m.CompanySourcingFilters
+    src = inspect.getsource(m.recotap_summary)
+    assert "build_sourced_companies_stmt(" in src
+    # Stage grouping, engagement grouping and `scored` all run over the scoped set.
+    assert src.count("RecotapAccount.company_id.in_(scoped_ids)") == 3
+    assert "RecotapAccount.company_id.is_not(None)" not in src
+    assert "select(func.count()).select_from(scoped)" in src
+
+
+def test_recotap_summary_excludes_journey_stage_from_its_own_facet_counts(m):
+    """The funnel tiles ARE the journey-stage filter, so applying that filter to
+    them would collapse the funnel to the selected stage and zero every tile the
+    user might switch to."""
+    src = inspect.getsource(m.recotap_summary)
+    assert "dataclass_replace(filters, journey_stage=None)" in src
+
+
+def test_recotap_summary_counts_distinct_accounts_not_recotap_rows(m):
+    """A company can carry more than one recotap_accounts row, so counting rows
+    made a tile promise more accounts than clicking it actually listed."""
+    src = inspect.getsource(m.recotap_summary)
+    assert "accounts = func.count(func.distinct(RecotapAccount.company_id))" in src
+    # Stage + engagement groupings and `scored` all use that distinct counter.
+    assert src.count("select(RecotapAccount.journey_stage, accounts)") == 1
+    assert src.count("select(RecotapAccount.engagement, accounts)") == 1
+    # `scored` is counted, never summed from the stage tiles (an account with
+    # two rows in different stages would otherwise be double-counted).
+    assert "scored += " not in src
+    assert "select(accounts).where(" in src
+    assert "not_scored" in src
+
+
+def test_recotap_summary_visibility_matches_the_accounts_list(m, admin_user):
+    """Admins keep workspace-wide numbers; a rep is narrowed to owned accounts."""
+    from sqlalchemy.dialects import postgresql
+
+    rep = SimpleNamespace(id=uuid4(), role="sdr")
+    empty = m.CompanySourcingFilters()
+
+    def _where(user):
+        stmt = m.build_sourced_companies_stmt(user, empty).order_by(None)
+        return str(stmt.compile(dialect=postgresql.dialect()))
+
+    rep_sql = _where(rep)
+    assert "companies.assigned_to_id = " in rep_sql and "companies.sdr_id = " in rep_sql
+    admin_sql = _where(admin_user)
+    assert "companies.assigned_to_id = " not in admin_sql
+    assert "companies.deleted_at IS NULL" in admin_sql
+
+
 # ── 5. Auth gates over the wire (no DB touched — rejected pre-query) ─────────
 
 

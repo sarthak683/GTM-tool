@@ -4524,7 +4524,14 @@ async def meeting_bucket_deals(
         Literal["next_1w", "next_2w", "beyond_2w", "direct_sql", "demo_rescheduled"],
         Query(),
     ],
-    user_id: Annotated[Optional[UUID], Query()] = None,
+    user_id: Annotated[
+        list[UUID],
+        Query(description="Rep(s) whose per-rep pill is being opened — credited as AE or SDR. Repeatable; a single value still works."),
+    ] = [],
+    rep_id: Annotated[
+        list[UUID],
+        Query(description="The page's active rep filter — AE-assigned, exactly like sales-dashboard's rep_id. Repeatable."),
+    ] = [],
     window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
     geography: Annotated[list[str], Query()] = [],
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
@@ -4539,10 +4546,33 @@ async def meeting_bucket_deals(
     never disagree with the pill it drills into. The 1w/2w bucket BOUNDARIES
     stay UTC-midnight based, mirroring the dashboard's meeting_bucket_totals
     computation exactly.
+
+    Rep scoping mirrors the dashboard's TWO levels, because the page has two
+    kinds of Meetings Booked pill:
+      * `rep_id`  — the page-level rep filter. sales_dashboard pre-filters the
+        milestone rows on `Deal.assigned_to_id IN rep_id` before it builds
+        meeting_bucket_totals, so the overall pills are AE-scoped. Sending the
+        same ids here makes this list equal that pill.
+      * `user_id` — the rep a PER-REP pill belongs to. The dashboard credits
+        each demo to its AE *and* its SDR, so this one matches either side.
+    They compose: `rep_id` alone is the overall pill under an active filter,
+    `rep_id` + `user_id` is one rep's row inside that filter. Empty means
+    unscoped, which keeps the old single-`user_id` callers working unchanged.
     """
     _tz = workspace_zoneinfo(await get_analytics_settings(session))
     window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date, tz=_tz)
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
+    filter_rep_ids = [r for r in rep_id if r]
+    pill_user_ids = [u for u in user_id if u]
+    if filter_rep_ids and pill_user_ids:
+        # sales_dashboard narrows a pill's credited reps to the active filter
+        # (`owner_uids &= set(filter_rep_ids)`), so a rep whose leaderboard row
+        # is still on screen while they sit OUTSIDE the filter shows a zero
+        # pill. Intersect the same way, and short-circuit when nothing is left.
+        allowed = set(filter_rep_ids)
+        pill_user_ids = [u for u in pill_user_ids if u in allowed]
+        if not pill_user_ids:
+            return MeetingBucketDealsResponse(deals=[])
     today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     week1_dt = today_dt + timedelta(days=7)
     week2_dt = today_dt + timedelta(days=14)
@@ -4580,8 +4610,14 @@ async def meeting_bucket_deals(
                 Deal.deleted_at.is_(None),
             )
         )
-        if user_id is not None:
-            stmt = stmt.where(or_(Deal.assigned_to_id == user_id, Deal.sdr_id == user_id))
+        # Page filter first (AE only — same as sales_dashboard's pre-filter on
+        # the milestone rows), then the per-rep pill's AE-or-SDR attribution.
+        if filter_rep_ids:
+            stmt = stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+        if pill_user_ids:
+            stmt = stmt.where(
+                or_(Deal.assigned_to_id.in_(pill_user_ids), Deal.sdr_id.in_(pill_user_ids))
+            )
 
         # Deduplicate by deal_id (a deal may have multiple meetings), keeping the
         # latest scheduled date.
@@ -4648,8 +4684,15 @@ async def meeting_bucket_deals(
                 Deal.deleted_at.is_(None),
             )
         )
-        if user_id is not None:
-            stmt = stmt.where(Activity.created_by_id == user_id)
+        # The dashboard's demos_rescheduled total keeps a reschedule when the
+        # DEAL belongs to a filtered rep (AE or SDR), and credits the per-rep
+        # count to whoever LOGGED it — mirror both.
+        if filter_rep_ids:
+            stmt = stmt.where(
+                or_(Deal.assigned_to_id.in_(filter_rep_ids), Deal.sdr_id.in_(filter_rep_ids))
+            )
+        if pill_user_ids:
+            stmt = stmt.where(Activity.created_by_id.in_(pill_user_ids))
 
         rows = (await session.execute(stmt)).all()
         if filter_geographies:
@@ -4687,12 +4730,22 @@ class PipelineDealItem(BaseModel):
 async def pipeline_deals(
     session: DBSession,
     current_user: CurrentUser,
-    user_id: Annotated[Optional[UUID], Query()] = None,
+    user_id: Annotated[list[UUID], Query(description="Rep(s) to scope to — AE-assigned. Repeatable; a single value still works.")] = [],
+    geography: Annotated[list[str], Query()] = [],
 ) -> list[PipelineDealItem]:
-    """Return active-stage deals for a rep (or all reps) for the Pipeline drilldown."""
+    """Return active-stage deals for a rep (or all reps) for the Pipeline drilldown.
+
+    There is no window param on purpose — the pipeline tile is a point-in-time
+    snapshot of open deals, not a windowed aggregate. Geography DOES bind: the
+    dashboard's per-rep `pipeline_amount` is computed off deal rows that were
+    already narrowed by the page's geography filter, so this list has to apply
+    the same bucket filter or it over-lists whenever a region is selected.
+    """
     stage_settings = await get_configured_deal_stages(session)
     active_stage_ids = {s["id"] for s in stage_settings if s.get("group") != "closed"}
     stage_label_map = {s["id"]: s["label"] for s in stage_settings}
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
+    filter_user_ids = [u for u in user_id if u]
 
     AEUser = aliased(User)
     stmt = (
@@ -4701,6 +4754,7 @@ async def pipeline_deals(
             Deal.name,
             Deal.stage,
             Deal.value,
+            Deal.geography.label("deal_geography"),
             AEUser.name.label("ae_name"),
         )
         .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
@@ -4711,10 +4765,14 @@ async def pipeline_deals(
             Deal.deleted_at.is_(None),
         )
     )
-    if user_id is not None:
-        stmt = stmt.where(Deal.assigned_to_id == user_id)
+    if filter_user_ids:
+        stmt = stmt.where(Deal.assigned_to_id.in_(filter_user_ids))
 
     rows = (await session.execute(stmt)).all()
+    if filter_geographies:
+        # Geography via _normalize_geography_key in Python, like the dashboard —
+        # the param holds bucket labels while the column holds raw values.
+        rows = [r for r in rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
     result = [
         PipelineDealItem(
             deal_id=str(row.id),

@@ -26,6 +26,7 @@ from app.services.zippy_docs.nda import inspect_template as inspect_nda_template
 from app.services.zippy_docs.proposal import ProposalInput
 from app.services.zippy_docs.proposal import generate as generate_proposal
 from app.services.zippy_docs.proposal import inspect_proposal_template
+from app.services.zippy_docs.storage import persist_generated_document
 
 logger = logging.getLogger(__name__)
 
@@ -946,17 +947,28 @@ async def _execute_search(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome
     return ToolOutcome(result_text="\n".join(lines), citations=citations)
 
 
-def _doc_to_artifact(doc: GeneratedDocument) -> dict:
+async def _doc_to_artifact(
+    doc: GeneratedDocument, *, user_id: Optional[UUID] = None
+) -> dict:
     """Frontend artifact.
+
+    This is the single point where a generated document turns into a link that
+    is written into `zippy_messages.artifacts` and may be clicked days later, so
+    it is also where the bytes are made durable: `persist_generated_document`
+    copies the freshly rendered file into Postgres, rewrites `doc.url` to a
+    token-keyed download route, and deletes the scratch file. Doing it here
+    rather than in each of the seven generators means a future generator is
+    covered automatically instead of silently regressing to a dead link.
 
     NOTE on `url` vs `drive_url`: the frontend chip in
     ZippyMessageBubble.tsx prepends API_BASE to `url`, so `url` MUST
-    stay a relative path (e.g. /zippy_outputs/foo.docx) — putting an
-    absolute Google Docs URL there produces a mangled
+    stay a relative path (e.g. /api/v1/zippy/documents/<token>) — putting
+    an absolute Google Docs URL there produces a mangled
     `http://localhost:8000https://docs.google.com/...` href that
     Chrome rejects as about:blank. The chip reads `drive_url` directly
     when present and uses `url` only as a download fallback.
     """
+    await persist_generated_document(doc, user_id=user_id)
     return {
         "type": doc.kind,
         "filename": doc.filename,
@@ -1038,7 +1050,7 @@ async def _execute_mom(args: dict, *, user_id: Optional[UUID]) -> ToolOutcome:
             f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -1084,7 +1096,7 @@ async def _execute_nda(args: dict, *, user_id: Optional[UUID] = None) -> ToolOut
             f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -1131,7 +1143,7 @@ async def _execute_proposal(args: dict, *, user_id: Optional[UUID] = None) -> To
             f"Business Proposal {action} for **{inp.client_name}**.\n"
             f"Variant: {inp.variant} | File: {doc.filename}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -1186,7 +1198,7 @@ async def _execute_roi(args: dict, *, user_id: Optional[UUID] = None) -> ToolOut
             f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -1341,7 +1353,7 @@ async def _execute_poc_kickoff(
             f"Summary: {doc.summary}"
             f"{body_block}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -1411,7 +1423,7 @@ async def _execute_poc_ppt(
             f"{_doc_link_text(doc)}\n"
             f"Summary: {doc.summary}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
 
 
@@ -2056,5 +2068,5 @@ async def _execute_generic(args: dict, *, user_id: Optional[UUID] = None) -> Too
             f"✅ Document generated: {data.title}.\n"
             f"{_doc_link_text(doc)}"
         ),
-        artifacts=[_doc_to_artifact(doc)],
+        artifacts=[await _doc_to_artifact(doc, user_id=user_id)],
     )
