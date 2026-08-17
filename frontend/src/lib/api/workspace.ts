@@ -566,7 +566,6 @@ export type SalesDashboard = {
   forecast_buckets?: SalesForecastRow[];
   forecast_granularity?: "week" | "month";
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
-  accounts_by_status?: SalesAccountStatusRow[];
   quota: SalesQuotaState;
   meeting_bucket_totals?: {
     meetings_next_1w: number;
@@ -575,12 +574,6 @@ export type SalesDashboard = {
     direct_sql: number;
     demo_rescheduled: number;
   };
-};
-
-export type SalesAccountStatusRow = {
-  key: string;
-  label: string;
-  count: number;
 };
 
 export type SalesActivityDrilldownRow = {

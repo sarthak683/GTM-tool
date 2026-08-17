@@ -51,7 +51,6 @@ import {
   type SalesActivityDrilldown,
   type SalesActivityDrilldownRow,
   type SalesDashboard,
-  type SalesAccountStatusRow,
   type SalesForecastRow,
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
@@ -65,7 +64,6 @@ import {
   type SalesVelocityRow,
 } from "../lib/api";
 import { getCachedUsers } from "../lib/cachedFetch";
-import { accountStatusOption } from "../lib/accountStatus";
 import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
@@ -120,9 +118,145 @@ const CHART = {
   weighted: "#5a9216",     // deep green — weighted pipeline (the "real" number)
   primary: "#6fae27",
   primarySoft: "#f1f9e2",
-  grid: "#eef2f8",
-  axis: "#7d8ea3",
+  grid: "#e8eef6",
+  axis: "#8496aa",
+  axisStrong: "#5c6f85",
+  // Hover wash behind the focused category. Neutral rather than tinted by the
+  // series colour, so it never reads as another bar.
+  cursor: "rgba(31, 49, 68, 0.045)",
 };
+
+// ── Chart primitives ─────────────────────────────────────────────────────────
+// Shared so every Recharts surface here renders with the same grid weight, tick
+// treatment and bar geometry. Before this, each chart inlined its own hexes and
+// they had already drifted apart.
+
+// NOTE: sales-analytics-refresh.css already styles axis ticks, grid dashes and
+// the tooltip card with `!important` (see its ".recharts-*" block). These props
+// are the correct defaults and what a chart lifted out of this page would use,
+// but on THIS page the stylesheet wins — so changing them here alone will look
+// like it did nothing. Change the CSS too.
+const AXIS_TICK = { fill: CHART.axis, fontSize: 11, fontWeight: 600 } as const;
+
+/** Axis label for a bucket whose value is a full range ("Jul 07 – Jul 13").
+ *
+ *  Despite the name, `shortLabel` on a weekly row IS the whole range, and six
+ *  of them do not fit across a half-width card — they overlap into an unreadable
+ *  smear. Recharts' default answer is to drop every other tick, which is worse
+ *  on a six-bucket chart where each bar is a week someone is accountable for.
+ *  Showing just the start date keeps every tick; the tooltip is passed the same
+ *  underlying value, so the full range is still one hover away. */
+function bucketTick(value: unknown) {
+  const text = String(value ?? "");
+  const [start] = text.split(/[–—-]/);
+  return (start ?? text).trim() || text;
+}
+
+/** Stable, collision-free gradient id from a hex colour. */
+function gradientId(color: string) {
+  return `cg-${color.replace("#", "")}`;
+}
+
+/** Vertical gradient defs, one per distinct series colour.
+ *  Solid-filled bars read flat at these sizes; a slight top-to-bottom fade
+ *  gives them weight without inventing a second colour per series.
+ *
+ *  CALL THIS, do not mount it as `<ChartGradients />`. Recharts walks its own
+ *  children and renders only the element types it recognises, so a custom
+ *  component wrapper is silently dropped — the `<defs>` never reaches the SVG,
+ *  every `fill="url(#…)"` resolves to nothing, and the chart draws a full set
+ *  of correctly-positioned but completely invisible bars. Returning the element
+ *  from a plain function call makes `<defs>` a direct child, which Recharts
+ *  does pass through. */
+function chartGradients(colors: string[]) {
+  const unique = Array.from(new Set(colors));
+  return (
+    <defs>
+      {unique.map((color) => (
+        <linearGradient key={color} id={gradientId(color)} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={1} />
+          <stop offset="100%" stopColor={color} stopOpacity={0.72} />
+        </linearGradient>
+      ))}
+    </defs>
+  );
+}
+
+/**
+ * Bar shape that rounds ONLY the top of a stack.
+ *
+ * Recharts applies `radius` to every segment it draws, so a stacked bar given
+ * `radius={[6,6,0,0]}` gets a rounded cap on each segment — which shows up as
+ * notches and slivers of background *inside* the column where segments meet.
+ * The four-series Outreach Mix chart had exactly that. This shape rounds a
+ * segment only when it is the topmost non-zero one for its own datum, which is
+ * also why it has to be told the stack order: "topmost" depends on the other
+ * series' values at that x, not on this segment alone.
+ */
+function makeStackedBarShape(stackKeys: readonly string[], dataKey: string, radius = 6) {
+  // `unknown` because that is what Recharts' ActiveShape signature passes;
+  // narrowing here is explicit rather than trusting an inferred shape.
+  return function StackedBar(props: unknown) {
+    const p = (props ?? {}) as Record<string, unknown>;
+    const x = Number(p.x ?? 0);
+    const y = Number(p.y ?? 0);
+    const width = Number(p.width ?? 0);
+    const height = Number(p.height ?? 0);
+    const fill = String(p.fill ?? CHART.primary);
+    const payload = (p.payload ?? {}) as Record<string, number>;
+    // A zero-height segment still gets drawn by Recharts as a hairline; skip it
+    // so empty channels leave no artefact at the baseline.
+    if (!(height > 0) || !(width > 0)) return <g />;
+
+    const topKey = [...stackKeys].reverse().find((key) => Number(payload[key] ?? 0) > 0);
+    const r = topKey === dataKey ? Math.min(radius, width / 2, height) : 0;
+    const path = r
+      ? `M${x},${y + height} L${x},${y + r} Q${x},${y} ${x + r},${y} `
+        + `L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} `
+        + `L${x + width},${y + height} Z`
+      : `M${x},${y} h${width} v${height} h${-width} Z`;
+    return <path d={path} fill={fill} />;
+  };
+}
+
+/** Shown instead of an axis-only skeleton when a chart has nothing to draw. */
+function ChartEmpty({ height, message }: { height: number; message: string }) {
+  return (
+    <div
+      style={{
+        height,
+        display: "grid",
+        placeItems: "center",
+        borderRadius: 12,
+        border: "1px dashed #dde6f0",
+        background: "#fbfdff",
+      }}
+    >
+      <p style={{ margin: 0, fontSize: 12.5, color: "#8496aa", textAlign: "center", padding: "0 16px" }}>
+        {message}
+      </p>
+    </div>
+  );
+}
+
+/** Legend rendered as ordinary markup above the plot.
+ *  Recharts' built-in legend is laid out inside the SVG and steals height from
+ *  the plot area, which at 240–320px is a visible chunk of the chart. */
+function ChartLegend({ items }: { items: { label: string; color: string }[] }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", alignItems: "center" }}>
+      {items.map((item) => (
+        <span
+          key={item.label}
+          style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 650, color: "#5c6f85" }}
+        >
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: item.color, flexShrink: 0 }} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
 // Sequential funnel colors, light → deep green, gold for the closed-won crown.
 const FUNNEL_COLORS: Record<string, string> = {
   demo_done: "#bfe08a",
@@ -1617,38 +1751,6 @@ function RepActivityTable({
   );
 }
 
-function AccountStatusBreakdown({ rows }: { rows: SalesAccountStatusRow[] }) {
-  const total = rows.reduce((sum, row) => sum + (row.count || 0), 0);
-  if (total === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No sourced accounts in this scope.</p>;
-  }
-  const max = Math.max(...rows.map((row) => row.count || 0), 1);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {rows.map((row) => {
-        const option = accountStatusOption(row.key);
-        const color = option?.color ?? "#64748b";
-        const bg = option?.bg ?? "#eef2f7";
-        const pct = total > 0 ? Math.round((row.count / total) * 100) : 0;
-        return (
-          <div key={row.key} style={{ display: "grid", gap: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#142335" }}>
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
-                {row.label}
-              </span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#68788d" }}>{row.count} • {pct}%</span>
-            </div>
-            <div style={{ height: 8, borderRadius: 999, background: bg, overflow: "hidden" }}>
-              <div style={{ width: `${Math.max((row.count / max) * 100, row.count > 0 ? 6 : 0)}%`, height: "100%", borderRadius: 999, background: color }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function StatPill({
   label,
   value,
@@ -1745,28 +1847,48 @@ const REP_ACTIVITY_META = Object.fromEntries(
 function WeeklyRepTooltip({ active, payload, label }: TooltipProps<number, string>) {
   if (!active || !payload || payload.length === 0) return null;
 
+  // Stacked series are listed bottom-to-top by Recharts, which reads backwards
+  // against the column the user is looking at. Reverse so the row order in the
+  // tooltip matches the segment order on screen.
+  const rows = [...payload].reverse();
+  const total = rows.reduce((sum, entry) => sum + Number(entry.value ?? 0), 0);
+  const showTotal = rows.length > 1;
+
   return (
     <div
       style={{
-        borderRadius: 14,
-        border: "1px solid #dfe7f2",
-        background: "rgba(255,255,255,0.96)",
-        boxShadow: "0 18px 34px rgba(21, 42, 68, 0.12)",
-        padding: "12px 14px",
-        minWidth: 180,
+        borderRadius: 12,
+        border: "1px solid #e3ebf5",
+        background: "rgba(255,255,255,0.98)",
+        boxShadow: "0 12px 30px rgba(21, 42, 68, 0.14)",
+        padding: "11px 13px",
+        minWidth: 190,
       }}
     >
-      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
-      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-        {payload.map((entry) => (
-          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#62748a" }}>
-              <span style={{ width: 9, height: 9, borderRadius: 999, background: entry.color ?? "#4e6be6" }} />
+      <p style={{ margin: 0, fontSize: 11.5, fontWeight: 800, color: "#1f3144", letterSpacing: "0.01em" }}>{label}</p>
+      <div style={{ display: "grid", gap: 5, marginTop: 9 }}>
+        {rows.map((entry) => (
+          <div key={String(entry.dataKey)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: "#62748a" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: entry.color ?? CHART.primary, flexShrink: 0 }} />
               {entry.name}
             </span>
-            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{Number(entry.value ?? 0)}</span>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: "#203244", fontVariantNumeric: "tabular-nums" }}>
+              {Number(entry.value ?? 0)}
+            </span>
           </div>
         ))}
+        {showTotal && (
+          <div
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+              marginTop: 3, paddingTop: 6, borderTop: "1px solid #eef3f9",
+            }}
+          >
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: "#8496aa", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</span>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: "#1f3144", fontVariantNumeric: "tabular-nums" }}>{total}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2086,14 +2208,23 @@ function RepWeeklyActivityFocus({
               <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>{bucketWord} Outreach Mix</p>
               <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars make {bucketWord.toLowerCase()} volume comparisons easier than separate mini-charts, while still showing which channel did the work.</p>
             </div>
-            <div style={{ width: "100%", height: 320 }}>
+            <ChartLegend
+              items={OUTREACH_MIX_KEYS.map((key) => {
+                const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
+                return { label: metric.label, color: metric.color };
+              })}
+            />
+            {weeklyChartData.length === 0 ? (
+              <ChartEmpty height={300} message={`No outreach recorded for ${selectedRow.rep_name} in this window.`} />
+            ) : (
+            <div style={{ width: "100%", height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#edf2f8" />
-                  <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
-                  <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(78, 107, 230, 0.05)" }} />
-                  <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+                <BarChart data={weeklyChartData} margin={{ top: 8, right: 6, bottom: 0, left: -8 }} barCategoryGap="26%">
+                  {chartGradients(OUTREACH_MIX_KEYS.map((k) => REP_ACTIVITY_META[k as keyof SalesRepActivityRow].color))}
+                  <CartesianGrid vertical={false} stroke={CHART.grid} strokeDasharray="3 5" />
+                  <XAxis dataKey="shortLabel" tick={AXIS_TICK} axisLine={false} tickLine={false} dy={4} interval={0} tickFormatter={bucketTick} minTickGap={4} />
+                  <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} tickCount={5} />
+                  <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: CHART.cursor, radius: 8 }} />
                   {OUTREACH_MIX_KEYS.map((key) => {
                     const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
                     return (
@@ -2102,15 +2233,19 @@ function RepWeeklyActivityFocus({
                         dataKey={key}
                         name={metric.label}
                         stackId="outreach"
-                        fill={metric.color}
-                        radius={[6, 6, 0, 0]}
-                        maxBarSize={42}
+                        fill={`url(#${gradientId(metric.color)})`}
+                        // Custom shape instead of `radius`: Recharts rounds every
+                        // segment it draws, which put rounded caps INSIDE the stack.
+                        shape={makeStackedBarShape(OUTREACH_MIX_KEYS, String(key))}
+                        maxBarSize={44}
+                        animationDuration={520}
                       />
                     );
                   })}
                 </BarChart>
               </ResponsiveContainer>
             </div>
+            )}
           </div>
 
           <div style={{ display: "grid", gap: 14 }}>
@@ -2122,21 +2257,33 @@ function RepWeeklyActivityFocus({
                   {connectedCallTarget !== null ? ` The dashed line is this rep's weekly connected-call target (${connectedCallTarget}).` : ""}
                 </p>
               </div>
-              <div style={{ width: "100%", height: 240 }}>
+              <ChartLegend
+                items={[
+                  ...CALL_QUALITY_KEYS.map((key) => {
+                    const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
+                    return { label: metric.label, color: metric.color };
+                  }),
+                  ...(connectedCallTarget !== null ? [{ label: `Target ${connectedCallTarget}`, color: "#94a3b8" }] : []),
+                ]}
+              />
+              {weeklyChartData.length === 0 ? (
+                <ChartEmpty height={228} message="No calls logged in this window." />
+              ) : (
+              <div style={{ width: "100%", height: 228 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={6}>
-                    <CartesianGrid vertical={false} stroke="#edf2f8" />
-                    <XAxis dataKey="shortLabel" tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
-                    <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
-                    <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+                  <BarChart data={weeklyChartData} margin={{ top: 8, right: 6, bottom: 0, left: -8 }} barGap={5} barCategoryGap="30%">
+                    {chartGradients(CALL_QUALITY_KEYS.map((k) => REP_ACTIVITY_META[k as keyof SalesRepActivityRow].color))}
+                    <CartesianGrid vertical={false} stroke={CHART.grid} strokeDasharray="3 5" />
+                    <XAxis dataKey="shortLabel" tick={AXIS_TICK} axisLine={false} tickLine={false} dy={4} interval={0} tickFormatter={bucketTick} minTickGap={4} />
+                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} tickCount={5} />
+                    <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: CHART.cursor, radius: 8 }} />
                     {connectedCallTarget !== null && (
                       <ReferenceLine
                         y={connectedCallTarget}
-                        stroke="#68788d"
-                        strokeDasharray="4 4"
+                        stroke="#94a3b8"
+                        strokeDasharray="5 5"
+                        strokeWidth={1.5}
                         ifOverflow="extendDomain"
-                        label={{ value: `Target ${connectedCallTarget}`, position: "insideTopRight", fill: "#68788d", fontSize: 11, fontWeight: 700 }}
                       />
                     )}
                     {CALL_QUALITY_KEYS.map((key) => {
@@ -2146,15 +2293,17 @@ function RepWeeklyActivityFocus({
                           key={String(key)}
                           dataKey={key}
                           name={metric.label}
-                          fill={metric.color}
-                          radius={[6, 6, 0, 0]}
-                          maxBarSize={20}
+                          fill={`url(#${gradientId(metric.color)})`}
+                          radius={[5, 5, 0, 0]}
+                          maxBarSize={22}
+                          animationDuration={520}
                         />
                       );
                     })}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              )}
             </div>
 
           </div>
@@ -3656,15 +3805,6 @@ export default function SalesAnalytics() {
               exportSuffix={exportSuffix}
             />
           </SectionCard>
-
-          {(data.accounts_by_status ?? []).length > 0 && (
-            <SectionCard
-              title="Accounts by Status"
-              subtitle="Where sourced accounts currently sit, so sourcing volume can be read against how much of it is actually moving."
-            >
-              <AccountStatusBreakdown rows={data.accounts_by_status ?? []} />
-            </SectionCard>
-          )}
 
           {SHOW_DEAL_VELOCITY && <SectionCard
             title="Deal Velocity / Aging"

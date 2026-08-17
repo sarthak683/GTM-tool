@@ -141,20 +141,6 @@ CONVERTED_DEAL_STAGES = {
 }
 
 # Canonical account-sourcing status values + display labels. Kept in lockstep
-# with ACCOUNT_STATUS_VALUES in app/models/company.py and the frontend control.
-# Insertion order drives the "Accounts by Status" breakdown order on the
-# dashboard; keep it in lockstep with frontend/src/lib/accountStatus.ts.
-ACCOUNT_STATUS_LABELS: dict[str, str] = {
-    "cold": "Cold",
-    "in_progress": "In Progress",
-    "meeting_booked": "Meeting Booked",
-    "meeting_done": "Meeting Done",
-    "in_pipeline": "In Pipeline",
-    "not_a_fit": "Not a Fit",
-    "dnd": "DND",
-    "reach_out_later": "Reach Out Later",
-}
-
 
 def _is_rep(rep_id, rep_user_ids) -> bool:
     """True if this attributed id should count as rep activity.
@@ -399,12 +385,6 @@ class MonthlyUniqueFunnelRow(BaseModel):
     closed_won: int
 
 
-class AccountStatusRow(BaseModel):
-    key: str       # canonical status value (or "unset")
-    label: str     # human label
-    count: int
-
-
 class MeetingBucketTotals(BaseModel):
     meetings_next_1w: int = 0
     meetings_next_2w: int = 0
@@ -435,7 +415,6 @@ class SalesDashboardRead(BaseModel):
     forecast_buckets: list[ForecastRow] = []
     forecast_granularity: str = "month"
     monthly_unique_funnel: list[MonthlyUniqueFunnelRow]
-    accounts_by_status: list[AccountStatusRow] = []
     quota: QuotaState
     # Global (unique) counts for the Output "Meetings Booked" buckets. Each demo
     # is counted once here so the week buckets reconcile to the Demo Scheduled
@@ -4262,31 +4241,6 @@ async def sales_dashboard(
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 
     # ── Accounts by status ───────────────────────────────────────────────────
-    # Distribution of sourced accounts across the manual account_status field,
-    # scoped to the selected reps (owner or SDR) and geography. Always emits the
-    # 5 canonical statuses so the UI stays stable; "No status" only if non-zero.
-    status_select = select(
-        Company.account_status, Company.region, Company.assigned_to_id, Company.sdr_id
-    )
-    if filter_rep_ids:
-        status_select = status_select.where(
-            or_(Company.assigned_to_id.in_(filter_rep_ids), Company.sdr_id.in_(filter_rep_ids))
-        )
-    status_counts: dict[str, int] = {}
-    for srow in (await session.execute(status_select)).all():
-        if filter_geographies and _normalize_geography_key(srow.region) not in filter_geographies:
-            continue
-        key = str(srow.account_status or "").strip().lower() or "unset"
-        status_counts[key] = status_counts.get(key, 0) + 1
-    accounts_by_status = [
-        AccountStatusRow(key=key, label=label, count=status_counts.get(key, 0))
-        for key, label in ACCOUNT_STATUS_LABELS.items()
-    ]
-    if status_counts.get("unset"):
-        accounts_by_status.append(
-            AccountStatusRow(key="unset", label="No status", count=status_counts["unset"])
-        )
-
     # Echo the window that was RESOLVED, not the raw params — those are null for
     # every preset pick, which left the client's "as of" strip and its CSV
     # filenames with no dates in the common case. window_end is exclusive, so
@@ -4343,7 +4297,6 @@ async def sales_dashboard(
         forecast_buckets=forecast_bucket_rows,
         forecast_granularity=forecast_granularity,
         monthly_unique_funnel=monthly_unique_funnel,
-        accounts_by_status=accounts_by_status,
         meeting_bucket_totals=MeetingBucketTotals(
             meetings_next_1w=meeting_bucket_totals["meetings_next_1w"],
             meetings_next_2w=meeting_bucket_totals["meetings_next_2w"],

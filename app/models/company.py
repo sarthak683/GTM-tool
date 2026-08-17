@@ -8,9 +8,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 # Manual account-sourcing status. Canonical snake_case values stored in the DB;
-# human labels live in ACCOUNT_STATUS_LABELS (app/api/v1/endpoints/analytics.py)
-# and the frontend control (frontend/src/lib/accountStatus.ts, which owns the
-# display order). Keep all three in lockstep.
+# human labels live in the frontend control (frontend/src/lib/accountStatus.ts,
+# which owns them and the display order). Keep the two in lockstep. A third copy
+# used to sit in analytics.py to drive an "Accounts by Status" dashboard card;
+# both were removed once the card was dropped.
 ACCOUNT_STATUS_VALUES = {
     "cold",
     "in_progress",
