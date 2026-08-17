@@ -246,7 +246,11 @@ def _resolve_report_recipients(
     report_settings: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
     config = normalize_sales_report_settings(report_settings)
-    requested = recipients or config["recipients"]
+    # `None` means "use the configured list"; an explicitly EMPTY list means
+    # "nobody" and must not fall back to the full roster — the partial-resend
+    # path passes [] once every recipient already has this send key, and a
+    # truthiness test there would re-deliver the report to all of them.
+    requested = list(recipients) if recipients is not None else config["recipients"]
     if is_production_environment():
         return requested, []
 
@@ -1178,7 +1182,11 @@ async def send_us_pod_call_report_email(
         report["send_results"] = [
             {
                 "status": "blocked",
-                "error": "Non-production report recipient is not in the allowed recipient list.",
+                "error": (
+                    "No recipients configured for this report."
+                    if is_production_environment()
+                    else "Non-production report recipient is not in the allowed recipient list."
+                ),
                 "blocked_recipients": blocked_recipients,
             }
         ]

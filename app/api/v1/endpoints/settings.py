@@ -957,8 +957,13 @@ async def _update_sales_report_settings_block(
     raw = sync_settings.get(key)
     current = normalize_sales_report_settings(raw if isinstance(raw, dict) else None, defaults=defaults)
     updates = body.model_dump(exclude_unset=True)
+    # Forget "today's report already went out" only when a schedule value
+    # actually CHANGES. The Settings UI PATCHes the whole object on every save,
+    # so testing mere presence cleared the dedup keys on unrelated edits (adding
+    # a recipient, toggling skip_weekends) and the next 15-minute beat tick
+    # re-delivered that morning's daily/weekly report to everyone.
     schedule_keys = {"send_timezone", "send_hour", "send_minute", "send_days", "weekly_report_day"}
-    if schedule_keys.intersection(updates):
+    if any(key in updates and updates[key] != current.get(key) for key in schedule_keys):
         for history_key in (
             "last_scheduled_send_key",
             "last_scheduled_send_at",

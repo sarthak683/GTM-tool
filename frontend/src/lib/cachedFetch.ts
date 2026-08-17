@@ -28,6 +28,10 @@ export function createCachedFetch<T>(fetcher: () => Promise<T>, ttlMs: number = 
   let value: T | undefined;
   let fetchedAt = 0;
   let inFlight: Promise<T> | null = null;
+  // Bumped by invalidate(). A request that started before the bump carries
+  // pre-mutation data, so it must not write itself back into the cache — that
+  // silently defeated the invalidate and re-armed a full TTL of stale data.
+  let generation = 0;
 
   const get = (): Promise<T> => {
     if (value !== undefined && Date.now() - fetchedAt <= ttlMs) {
@@ -36,17 +40,20 @@ export function createCachedFetch<T>(fetcher: () => Promise<T>, ttlMs: number = 
     if (inFlight) {
       return inFlight;
     }
+    const startedAt = generation;
     inFlight = fetcher()
       .then((result) => {
-        value = result;
-        fetchedAt = Date.now();
-        inFlight = null;
+        if (startedAt === generation) {
+          value = result;
+          fetchedAt = Date.now();
+          inFlight = null;
+        }
         return result;
       })
       .catch((err) => {
         // Do not cache failures: clear the in-flight pointer so the next caller
         // retries the network instead of being stuck with a rejected promise.
-        inFlight = null;
+        if (startedAt === generation) inFlight = null;
         throw err;
       });
     return inFlight;
@@ -56,6 +63,7 @@ export function createCachedFetch<T>(fetcher: () => Promise<T>, ttlMs: number = 
     value = undefined;
     fetchedAt = 0;
     inFlight = null;
+    generation += 1;
   };
 
   return { get, invalidate };

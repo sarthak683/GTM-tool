@@ -528,7 +528,13 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
   };
   const taBase: CSSProperties = { ...inputBase, resize: "vertical", minHeight: 72, lineHeight: 1.55 };
 
-  function Field({ label, fkey, type = "text", isTextarea = false }: {
+  // Plain render helper, deliberately NOT a component rendered as <Field/>.
+  // Declared in this body, it got a fresh identity on every render, so React
+  // tore down and rebuilt each input on every keystroke — the MEDDPICC editor
+  // dropped focus after every character typed. Invoking it directly inlines the
+  // markup into this component's tree, so the inputs keep their DOM nodes.
+  // (Contains no hooks, so direct invocation is safe.)
+  function renderField({ label, fkey, type = "text", isTextarea = false }: {
     label: string; fkey: keyof OppForm; type?: string; isTextarea?: boolean;
   }) {
     const val = form[fkey];
@@ -667,41 +673,41 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
               <div>
                 <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>Core Deal</div>
                 <div style={{ display: "grid", gap: 14 }}>
-                  <Field label="Opportunity Name" fkey="opp_name" />
+                  {renderField({ label: "Opportunity Name", fkey: "opp_name" })}
                   <div style={col2}>
-                    <Field label="Amount ($)" fkey="opp_amount" type="number" />
-                    <Field label="ARR ($)" fkey="opp_arr" type="number" />
+                    {renderField({ label: "Amount ($)", fkey: "opp_amount", type: "number" })}
+                    {renderField({ label: "ARR ($)", fkey: "opp_arr", type: "number" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Multiyear License Fee ($)" fkey="opp_multiyear_license_fee" type="number" />
-                    <Field label="Service Fee ($)" fkey="opp_service_fee" type="number" />
+                    {renderField({ label: "Multiyear License Fee ($)", fkey: "opp_multiyear_license_fee", type: "number" })}
+                    {renderField({ label: "Service Fee ($)", fkey: "opp_service_fee", type: "number" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Opportunity Owner" fkey="opp_owner" />
-                    <Field label="Solution Engineer" fkey="opp_solution_engineer" />
+                    {renderField({ label: "Opportunity Owner", fkey: "opp_owner" })}
+                    {renderField({ label: "Solution Engineer", fkey: "opp_solution_engineer" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Type" fkey="opp_type" />
-                    <Field label="Sales Category" fkey="opp_sales_category" />
+                    {renderField({ label: "Type", fkey: "opp_type" })}
+                    {renderField({ label: "Sales Category", fkey: "opp_sales_category" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Stage" fkey="opp_stage" />
-                    <Field label="Forecast Category" fkey="opp_forecast_category" />
+                    {renderField({ label: "Stage", fkey: "opp_stage" })}
+                    {renderField({ label: "Forecast Category", fkey: "opp_forecast_category" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Probability %" fkey="opp_probability" type="number" />
-                    <Field label="Geolocation" fkey="opp_geolocation" />
+                    {renderField({ label: "Probability %", fkey: "opp_probability", type: "number" })}
+                    {renderField({ label: "Geolocation", fkey: "opp_geolocation" })}
                   </div>
                   <div style={col2}>
-                    <Field label="Close Date" fkey="opp_close_date" type="date" />
-                    <Field label="POC Start Date" fkey="opp_poc_start_date" type="date" />
+                    {renderField({ label: "Close Date", fkey: "opp_close_date", type: "date" })}
+                    {renderField({ label: "POC Start Date", fkey: "opp_poc_start_date", type: "date" })}
                   </div>
                   <div style={col2}>
-                    <Field label="POC Status" fkey="opp_poc_status" />
+                    {renderField({ label: "POC Status", fkey: "opp_poc_status" })}
                     <div />
                   </div>
-                  <Field label="AOP Doc Link" fkey="opp_aop_doc_link" />
-                  <Field label="MSP Doc Link" fkey="opp_msp_doc_link" />
+                  {renderField({ label: "AOP Doc Link", fkey: "opp_aop_doc_link" })}
+                  {renderField({ label: "MSP Doc Link", fkey: "opp_msp_doc_link" })}
                 </div>
               </div>
 
@@ -709,38 +715,38 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
               <div>
                 <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>MEDDPICC</div>
                 <div style={{ display: "grid", gap: 14 }}>
-                  <Field label="Business Initiatives" fkey="medd_business_initiatives" isTextarea />
-                  <Field label="Business Pains" fkey="medd_business_pains" isTextarea />
+                  {renderField({ label: "Business Initiatives", fkey: "medd_business_initiatives", isTextarea: true })}
+                  {renderField({ label: "Business Pains", fkey: "medd_business_pains", isTextarea: true })}
                   <div style={col2}>
-                    <Field label="Size of Business Pain ($)" fkey="medd_size_business_pain" type="number" />
-                    <Field label="Who is Impacted (Business)" fkey="medd_who_impacted_business" />
+                    {renderField({ label: "Size of Business Pain ($)", fkey: "medd_size_business_pain", type: "number" })}
+                    {renderField({ label: "Who is Impacted (Business)", fkey: "medd_who_impacted_business" })}
                   </div>
-                  <Field label="Technical Pains" fkey="medd_technical_pains" isTextarea />
+                  {renderField({ label: "Technical Pains", fkey: "medd_technical_pains", isTextarea: true })}
                   <div style={col2}>
-                    <Field label="Size of Technical Pain ($)" fkey="medd_size_technical_pain" type="number" />
-                    <Field label="Who is Impacted (Technical)" fkey="medd_who_impacted_technical" />
+                    {renderField({ label: "Size of Technical Pain ($)", fkey: "medd_size_technical_pain", type: "number" })}
+                    {renderField({ label: "Who is Impacted (Technical)", fkey: "medd_who_impacted_technical" })}
                   </div>
-                  <Field label="Metrics" fkey="medd_metrics" isTextarea />
-                  <Field label="Decision Criteria" fkey="medd_decision_criteria" isTextarea />
+                  {renderField({ label: "Metrics", fkey: "medd_metrics", isTextarea: true })}
+                  {renderField({ label: "Decision Criteria", fkey: "medd_decision_criteria", isTextarea: true })}
                   <div style={col2}>
-                    <Field label="Economic Buyer" fkey="medd_economic_buyer" />
-                    <Field label="EB Top 2 Priorities" fkey="medd_eb_top_2_priorities" />
+                    {renderField({ label: "Economic Buyer", fkey: "medd_economic_buyer" })}
+                    {renderField({ label: "EB Top 2 Priorities", fkey: "medd_eb_top_2_priorities" })}
                   </div>
-                  <Field label="Decision Process" fkey="medd_decision_process" isTextarea />
-                  <Field label="Paper Process" fkey="medd_paper_process" isTextarea />
+                  {renderField({ label: "Decision Process", fkey: "medd_decision_process", isTextarea: true })}
+                  {renderField({ label: "Paper Process", fkey: "medd_paper_process", isTextarea: true })}
                   <div style={col2}>
-                    <Field label="Champion" fkey="medd_champion" />
+                    {renderField({ label: "Champion", fkey: "medd_champion" })}
                     <div />
                   </div>
-                  <Field label="Champion's Win" fkey="medd_champion_win" isTextarea />
-                  <Field label="Competition" fkey="medd_competition" isTextarea />
+                  {renderField({ label: "Champion's Win", fkey: "medd_champion_win", isTextarea: true })}
+                  {renderField({ label: "Competition", fkey: "medd_competition", isTextarea: true })}
                 </div>
               </div>
 
               {/* Current Deal Status */}
               <div>
                 <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.7, color: "#9ba8b5", textTransform: "uppercase", marginBottom: 16, paddingBottom: 10, borderBottom: "1px solid #eef2f8" }}>Current Deal Status</div>
-                <Field label="" fkey="opp_current_deal_status" isTextarea />
+                {renderField({ label: "", fkey: "opp_current_deal_status", isTextarea: true })}
               </div>
 
             </div>
@@ -1830,9 +1836,15 @@ export default function AccountSourcingCompanyDetail() {
                     );
                     await accountSourcingApi.icpResearch(company.id);
                     const settled = await refreshUntilSettled({
+                      // Settle only when the research fingerprint actually
+                      // moves. The old `|| !next.domain.endsWith(".unknown")`
+                      // clause was true for every real domain, so the first
+                      // poll "settled" ~5s in and reported research complete
+                      // while the Celery task was still running. The domain is
+                      // already part of the fingerprint, so a placeholder
+                      // domain resolving still stops the poll.
                       stopWhen: (next) =>
-                        `${next.enriched_at || ""}|${next.icp_score ?? ""}|${next.domain}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "icp_analysis") || ""}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "research_quality") || ""}` !== researchFingerprint ||
-                        !next.domain.endsWith(".unknown"),
+                        `${next.enriched_at || ""}|${next.icp_score ?? ""}|${next.domain}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "icp_analysis") || ""}|${cacheTs((next.enrichment_cache || {}) as Record<string, unknown>, "research_quality") || ""}` !== researchFingerprint,
                       onProgress: ({ attempt, attempts }) => {
                         setResearchStatus({
                           tone: "running",
@@ -1895,9 +1907,11 @@ export default function AccountSourcingCompanyDetail() {
                     await accountSourcingApi.reEnrichCompany(company.id);
                     const currentEnrichedAt = company.enriched_at;
                     await refreshUntilSettled({
-                      stopWhen: (next) =>
-                        next.enriched_at !== currentEnrichedAt ||
-                        !next.domain.endsWith(".unknown"),
+                      // enriched_at moving is the completion signal; the old
+                      // `|| !next.domain.endsWith(".unknown")` clause was true
+                      // for every real domain and stopped the poll on the first
+                      // tick, before the enrichment result had landed.
+                      stopWhen: (next) => next.enriched_at !== currentEnrichedAt,
                     });
                   } finally {
                     setRe(false);
@@ -1945,7 +1959,9 @@ export default function AccountSourcingCompanyDetail() {
                     try {
                       await companiesApi.delete(company.id);
                       nav("/account-sourcing");
-                    } catch { /* swallow */ }
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not delete this account.", "Delete failed");
+                    }
                   }}
                   style={{ width: "100%", border: "1px solid #fecaca", background: "#fff5f5", color: "#dc2626", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
                 >
@@ -2607,7 +2623,9 @@ export default function AccountSourcingCompanyDetail() {
                       accountSourcingApi.addCompanyNote(company.id, noteInput.trim()).then((res) => {
                           setCompany((prev) => prev ? { ...prev, enrichment_cache: { ...(prev.enrichment_cache || {}), activity_log: res.activity_log } } : prev);
                         setNoteInput("");
-                      }).catch(() => {}).finally(() => setNoteSaving(false));
+                      }).catch((error) => {
+                        toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
+                      }).finally(() => setNoteSaving(false));
                     }
                   }}
                 />
@@ -2621,7 +2639,9 @@ export default function AccountSourcingCompanyDetail() {
                       const res = await accountSourcingApi.addCompanyNote(company.id, noteInput.trim());
                       setCompany((prev) => prev ? { ...prev, enrichment_cache: { ...(prev.enrichment_cache || {}), activity_log: res.activity_log } } : prev);
                       setNoteInput("");
-                    } catch { /* ignore */ } finally { setNoteSaving(false); }
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
+                    } finally { setNoteSaving(false); }
                   }}
                   style={{
                     padding: "0 16px", borderRadius: 10, border: "none", cursor: noteInput.trim() ? "pointer" : "not-allowed",

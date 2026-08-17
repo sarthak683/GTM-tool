@@ -494,10 +494,16 @@ export const notificationsApi = {
 };
 
 export const activitiesApi = {
-  list: (dealId?: string, contactId?: string) => {
+  // `type`/`limit` matter whenever the caller filters the result client-side:
+  // the endpoint defaults to the newest 50 activities of EVERY type, so a busy
+  // prospect's comments fall outside the window and the panel renders empty
+  // beside a server-side count that says otherwise.
+  list: (dealId?: string, contactId?: string, opts?: { type?: string; limit?: number }) => {
     const params = new URLSearchParams();
     if (dealId) params.set("deal_id", dealId);
     if (contactId) params.set("contact_id", contactId);
+    if (opts?.type) params.set("type", opts.type);
+    if (opts?.limit) params.set("limit", String(opts.limit));
     return requestList<Activity>(`/api/v1/activities/?${params}`);
   },
   myCountSince: async (sinceIso: string, type?: string) => {

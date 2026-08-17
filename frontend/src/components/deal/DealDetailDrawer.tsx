@@ -778,6 +778,10 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
       const act = await dealsApi.addComment(deal.id, comment.trim());
       setActivities((prev) => [act, ...prev]);
       setComment("");
+    } catch (error) {
+      // Draft stays in the box; without this the note simply never appeared in
+      // the feed and nothing said why.
+      toast.error(error instanceof Error ? error.message : "Could not add the activity.", "Save failed");
     } finally { setSendingComment(false); }
   };
 
@@ -785,7 +789,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     if (!isAdmin) return;
     const label = deal.pipeline_type === "prospect" ? "prospect" : "deal";
     if (!window.confirm(`Delete this ${label}? This cannot be undone.`)) return;
-    await dealsApi.delete(deal.id);
+    try {
+      await dealsApi.delete(deal.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Could not delete this ${label}.`, "Delete failed");
+      return;
+    }
     onDealDeleted?.(deal.id);
     onClose();
   };

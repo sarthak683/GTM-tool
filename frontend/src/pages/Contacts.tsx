@@ -608,6 +608,9 @@ export default function Contacts() {
   const loadSeqRef = useRef(0);
   // Same race guard for the KPI stats request (fetched alongside the list).
   const statsSeqRef = useRef(0);
+  // Same race guard for the comments modal: a slow fetch for prospect A must
+  // not paint its comments under prospect B's header.
+  const commentsSeqRef = useRef(0);
   // Guards the "reset to page 1 on filter change" effect so it does NOT fire on
   // the initial mount. Without this, returning from a prospect detail (remount)
   // would clobber the `pg` restored from the URL/localStorage back to page 1 —
@@ -2018,16 +2021,26 @@ export default function Contacts() {
     setCommentDraft("");
     setCommentsList([]);
     setCommentsLoading(true);
+    const seq = ++commentsSeqRef.current;
+    // Ask the server for comments only: an unfiltered fetch returns the newest
+    // 50 activities of every type, so on a busy prospect the comments fall
+    // outside the window and this panel renders empty next to a row that says
+    // "12 comments · view all".
     activitiesApi
-      .list(undefined, contact.id)
+      .list(undefined, contact.id, { type: "comment", limit: 200 })
       .then((items) => {
+        if (seq !== commentsSeqRef.current) return;
         const comments = (items || [])
           .filter((a) => a.type === "comment")
           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
         setCommentsList(comments);
       })
-      .catch(() => setCommentsList([]))
-      .finally(() => setCommentsLoading(false));
+      .catch(() => {
+        if (seq === commentsSeqRef.current) setCommentsList([]);
+      })
+      .finally(() => {
+        if (seq === commentsSeqRef.current) setCommentsLoading(false);
+      });
   };
 
   const saveComment = async () => {

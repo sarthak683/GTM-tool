@@ -483,7 +483,21 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
         settings_row = await _get_or_create_settings(session)
         config = normalize_pre_meeting_settings(settings_row.pre_meeting_automation_settings)
         if not config["enabled"]:
-            return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+            # Report the no-op as a *skip*, not a plain success. job_health's
+            # task_postrun handler only recognises a deliberate no-op via the
+            # "status" key (app/tasks/job_health_signals._skip_reason); a bare
+            # counters dict advances last_effective_at, so an automation that is
+            # switched off looked like it was doing work every 30 minutes. That
+            # is how prod showed this job "effective" at 2026-08-17 08:55 while
+            # the newest brief actually emailed was 42 days old.
+            return {
+                "status": "skipped",
+                "reason": "automation_disabled",
+                "checked": 0,
+                "generated": 0,
+                "emailed": 0,
+                "skipped": 0,
+            }
 
         # Daily-time mode: only dispatch during a ~1h window starting at the
         # configured local send_time. Beat runs every 30 min, so one or two
@@ -498,7 +512,17 @@ async def run_due_pre_meeting_intel_once(force_time: bool = False) -> dict[str, 
             hour, minute = (int(part) for part in config["send_time"].split(":"))
             send_at = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if not (send_at <= now_local < send_at + timedelta(hours=1)):
-                return {"checked": 0, "generated": 0, "emailed": 0, "skipped": 0}
+                # Same reasoning as the disabled branch above: outside the daily
+                # send window this run does no work, so it must not advance
+                # last_effective_at.
+                return {
+                    "status": "skipped",
+                    "reason": "outside_daily_send_window",
+                    "checked": 0,
+                    "generated": 0,
+                    "emailed": 0,
+                    "skipped": 0,
+                }
 
         now = datetime.utcnow()
         generate_window_end = now + timedelta(hours=config["generate_hours_before"])

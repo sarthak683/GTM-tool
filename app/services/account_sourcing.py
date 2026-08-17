@@ -3026,11 +3026,23 @@ async def _verify_top_contact_emails(
             # next re-enrich whether or not the email turned out deliverable.
             verification["checked_at"] = datetime.utcnow().isoformat()
 
-            # Store verification details in enrichment_data
-            enrich = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
-            enrich["email_verification"] = verification
-            enrich["confidence"] = score
-            contact.enrichment_data = enrich
+            # Store verification details in enrichment_data.
+            #
+            # Build a NEW dict rather than mutating the loaded one in place:
+            # enrichment_data is a plain JSONB column with no MutableDict
+            # tracking, so assigning the same object back leaves SQLAlchemy's
+            # attribute history unchanged (current is original) and the UPDATE
+            # is never emitted. That silent no-op is why prod had 424 contacts
+            # with email_verified set (a scalar, so it persisted) and ZERO with
+            # enrichment_data['email_verification'] — written two lines later.
+            # Losing the "checked_at" stamp also disabled the TTL guard above,
+            # re-billing Hunter for every contact on every re-enrich.
+            existing = contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}
+            contact.enrichment_data = {
+                **existing,
+                "email_verification": verification,
+                "confidence": score,
+            }
 
             if is_deliverable:
                 verified_count += 1

@@ -122,6 +122,23 @@ async def _async_recalculate() -> int:
 @celery_app.task(name="app.tasks.health.reconcile_recent_deal_tasks")
 def reconcile_recent_deal_tasks() -> dict:
     """Refresh a bounded batch of recently active deal tasks so stale system tasks self-heal."""
+    from app.config import settings
+
+    # Manual-tasks-only mode is a deliberate no-op, so report it as a *skip*.
+    # job_health only recognises a no-op via an explicit status in
+    # _SKIP_STATUSES (app/tasks/job_health_signals._skip_reason), and
+    # "completed" is not one of them — so this task advanced last_effective_at
+    # on all 7,238 of its runs while ENABLE_SYSTEM_TASKS was false and
+    # _async_reconcile_recent_deal_tasks returned 0 every time. Production
+    # showed it green and "effective" every 15 minutes with the newest
+    # deals.ai_tasks_refreshed_at stuck 45 days in the past.
+    if not settings.ENABLE_SYSTEM_TASKS:
+        return {
+            "status": "skipped",
+            "reason": "system_tasks_disabled",
+            "deals_refreshed": 0,
+        }
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:

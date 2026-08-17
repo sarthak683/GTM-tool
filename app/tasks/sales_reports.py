@@ -230,7 +230,13 @@ async def _async_send_us_pod_call_report(
                     # the bookkeeping below as a fully-sent pass.
                     pass_recipients = []
 
+            # `report` must exist for the per-type result below even when the
+            # short-circuit branch skips the send entirely — otherwise the first
+            # loop pass raises UnboundLocalError (and a later pass silently
+            # reports the PREVIOUS type's dates/recipients).
+            report: dict = {}
             if scheduled_call and already_sent and pass_recipients == []:
+                report = {"recipients": sorted(already_sent)}
                 send_results = []
                 all_sent = True
                 failed_recipients = []

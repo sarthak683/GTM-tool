@@ -94,9 +94,20 @@ async def reset_prospecting_data(session: AsyncSession) -> dict[str, int]:
     companies = list((await session.execute(select(Company))).scalars().all())
     refreshed_companies = 0
     for company in companies:
-        cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
-        cache.pop("committee_coverage", None)
-        cache.pop("prospecting_priorities", None)
+        # Rebuild into a NEW dict instead of pop()-ing in place: `cache or None`
+        # hands back the *same* object whenever any other key survives, so
+        # SQLAlchemy sees no attribute change on this plain JSONB column and
+        # skips the UPDATE. Stale committee_coverage / prospecting_priorities
+        # then outlive the reset that just deleted every Contact above, and the
+        # UI keeps rendering coverage for people who no longer exist. Only
+        # companies whose cache held nothing else were actually cleared (the
+        # `or None` produced a genuinely new value).
+        existing = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
+        cache = {
+            key: value
+            for key, value in existing.items()
+            if key not in ("committee_coverage", "prospecting_priorities")
+        }
         company.enrichment_cache = cache or None
         refresh_company_prospecting_fields(company, contacts=[])
         session.add(company)

@@ -1,12 +1,20 @@
-import { useCallback, useMemo, useState } from "react";
-import { Database, ExternalLink, FileCode2, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Database, ExternalLink, FileCode2, Plus } from "lucide-react";
 import { dataRoomApi } from "../lib/api";
 import type { DataRoomCategory, DataRoomItem } from "../types";
 import AddItemForm from "./data-room/AddItemForm";
 import ItemsGrid from "./data-room/ItemsGrid";
 import PreviewModal from "./data-room/PreviewModal";
 
+// The Sales Lifecycle SOP is a *static document* served by the frontend nginx,
+// not a database row. For it to exist in production it must be committed to
+// frontend/public/data-room/index.html, which Vite copies into dist/ and the
+// Docker build bakes into the image. Editing it anywhere else — a local copy, a
+// file hand-copied into a running pod — cannot survive a deploy and will never
+// reach users.
 const DATA_ROOM_PATH = "/data-room/index.html";
+
+type LifecycleStatus = "checking" | "ok" | "missing";
 
 const ACCENT = "#4d7c0f";
 const BORDER = "#e3e9f2";
@@ -36,6 +44,37 @@ const isCategory = (key: TabKey): key is DataRoomCategory => key !== "sales_life
 export default function DataRoomPage() {
   const hostedUrl = useMemo(() => DATA_ROOM_PATH, []);
   const [activeTab, setActiveTab] = useState<TabKey>("sales_lifecycle");
+  const [lifecycleStatus, setLifecycleStatus] = useState<LifecycleStatus>("checking");
+
+  // Probe the document before rendering the iframe. Two failure modes to catch:
+  //   1. A real 404 (nginx now returns this when the document is not in the image).
+  //   2. HTTP 200 carrying the CRM's own index.html — what the SPA fallback
+  //      returns on any host still running the old nginx config, and what the
+  //      Vite dev server returns locally. Rendering that would load the entire
+  //      app inside the iframe, which reads as "the document is stale" rather
+  //      than "the document was never deployed".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(DATA_ROOM_PATH, { cache: "no-store" });
+        if (cancelled) return;
+        if (!res.ok) {
+          setLifecycleStatus("missing");
+          return;
+        }
+        const body = await res.text();
+        if (cancelled) return;
+        const isAppShell = body.includes('<div id="root">');
+        setLifecycleStatus(isAppShell ? "missing" : "ok");
+      } catch {
+        if (!cancelled) setLifecycleStatus("missing");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [itemsByCategory, setItemsByCategory] = useState<Record<DataRoomCategory, DataRoomItem[]>>({
     documentation: [],
@@ -154,22 +193,44 @@ export default function DataRoomPage() {
                 <FileCode2 size={16} color="#175089" />
                 <span style={{ fontSize: 12.5, color: MUTED }}>{TAB_DESCRIPTIONS.sales_lifecycle}</span>
               </div>
-              <a
-                href={hostedUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="crm-button soft"
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", padding: "0 12px" }}
-              >
-                <ExternalLink size={14} /> Open in new tab
-              </a>
+              {lifecycleStatus === "ok" ? (
+                <a
+                  href={hostedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="crm-button soft"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", padding: "0 12px" }}
+                >
+                  <ExternalLink size={14} /> Open in new tab
+                </a>
+              ) : null}
             </div>
             <div style={{ minHeight: "68vh", background: "#f8fbff" }}>
-              <iframe
-                title="Data Room"
-                src={hostedUrl}
-                style={{ width: "100%", height: "68vh", border: 0, display: "block", background: "#fff" }}
-              />
+              {lifecycleStatus === "ok" ? (
+                <iframe
+                  title="Data Room"
+                  src={hostedUrl}
+                  style={{ width: "100%", height: "68vh", border: 0, display: "block", background: "#fff" }}
+                />
+              ) : lifecycleStatus === "checking" ? (
+                <div style={{ padding: "48px 16px", textAlign: "center", fontSize: 13, color: MUTED }}>
+                  Loading the sales lifecycle document…
+                </div>
+              ) : (
+                <div style={{ padding: "48px 24px", maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
+                  <AlertTriangle size={26} color="#b45309" style={{ marginBottom: 12 }} />
+                  <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 8 }}>
+                    The sales lifecycle document is not deployed.
+                  </div>
+                  <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.6 }}>
+                    This tab renders <code>{DATA_ROOM_PATH}</code>, a static file that ships inside
+                    the frontend image. No such file is present in the current build, so nothing can
+                    be shown here — and any edit made to a copy elsewhere will not appear until the
+                    document is committed to <code>frontend/public/data-room/index.html</code> and
+                    the frontend is rebuilt and redeployed.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : activeCategory ? (

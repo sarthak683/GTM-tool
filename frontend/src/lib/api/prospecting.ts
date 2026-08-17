@@ -531,8 +531,11 @@ export const accountSourcingApi = {
     return res.json();
   },
 
-  listBatches: () =>
-    requestList<SourcingBatch>("/api/v1/account-sourcing/batches"),
+  // The endpoint pages through the shared Pagination dep (default 50, max 2000),
+  // newest first. Send the limit explicitly so the caller knows which cap it got
+  // and can tell a full page from a short one.
+  listBatches: (limit = 50) =>
+    requestList<SourcingBatch>(`/api/v1/account-sourcing/batches?limit=${limit}`),
 
   batchStatus: (batchId: string) =>
     request<SourcingBatch>(`/api/v1/account-sourcing/batches/${batchId}`),

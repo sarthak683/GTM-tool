@@ -265,8 +265,10 @@ export default function CallDispositionDrawer({
         onClose();
       }
       onSaved?.();
-    } catch {
-      // save failure — keep drawer open
+    } catch (error) {
+      // Keep the drawer open so the notes survive — but say why, or a failed
+      // save is indistinguishable from an unresponsive button.
+      toast.error(error instanceof Error ? error.message : "Failed to save call disposition.", "Save failed");
     } finally {
       setSavingDisposition(false);
     }

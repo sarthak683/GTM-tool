@@ -1083,7 +1083,9 @@ export default function AccountSourcingContactDetail() {
                         const updated = { ...(contact.enrichment_data || {}), notes_log: res.notes_log };
                         setContact((prev) => prev ? { ...prev, enrichment_data: updated } : prev);
                         setNoteInput("");
-                      }).catch(() => {}).finally(() => setNoteSaving(false));
+                      }).catch((error) => {
+                        toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
+                      }).finally(() => setNoteSaving(false));
                     }
                   }}
                 />
@@ -1098,7 +1100,9 @@ export default function AccountSourcingContactDetail() {
                       const updated = { ...(contact.enrichment_data || {}), notes_log: res.notes_log };
                       setContact((prev) => prev ? { ...prev, enrichment_data: updated } : prev);
                       setNoteInput("");
-                    } catch { /* ignore */ } finally { setNoteSaving(false); }
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
+                    } finally { setNoteSaving(false); }
                   }}
                   style={{
                     padding: "0 16px", borderRadius: 10, border: "none",

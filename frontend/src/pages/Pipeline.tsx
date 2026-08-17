@@ -2351,8 +2351,10 @@ export default function Pipeline() {
       await loadDealBoard();
       clearSelection();
       setBulkTag("");
-    } catch {
-      // Board stays as-is on failure; selection is preserved so the rep can retry.
+    } catch (error) {
+      // Board stays as-is on failure; selection is preserved so the rep can
+      // retry. Say so — a silent no-op on a bulk stage change reads as success.
+      toast.error(error instanceof Error ? error.message : "Bulk update failed.", "Bulk update failed");
     } finally {
       setBulkBusy(false);
     }
@@ -2500,7 +2502,9 @@ export default function Pipeline() {
       await contactsApi.delete(contactId);
       setContacts((current) => current.filter((contact) => contact.id !== contactId));
       if (selectedProspect?.id === contactId) setSelectedProspect(null);
-    } catch { /* swallow */ }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete this prospect.", "Delete failed");
+    }
   };
 
   const handleBulkDeleteProspects = async () => {
@@ -2510,7 +2514,9 @@ export default function Pipeline() {
       setContacts([]);
       setSelectedProspect(null);
       void loadProspectBoard();
-    } catch { /* swallow */ }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete prospects.", "Delete failed");
+    }
   };
 
   const clearDragState = () => setDragItem(null);

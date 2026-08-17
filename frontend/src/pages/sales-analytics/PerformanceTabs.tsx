@@ -453,14 +453,28 @@ export function ScorecardTab({ reps }: { reps: RepSummary[] }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Every fetch in this file guards with the same `cancelled` flag as the
+  // Overview page: switching filters fires overlapping requests, and without it
+  // a slow earlier response lands last and wins over the scope now on screen.
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
       .getScorecard({ rep_id: repId, period })
-      .then(setData)
-      .catch((e: Error) => setError(e.message ?? "Failed to load scorecard"))
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message ?? "Failed to load scorecard");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [repId, period]);
 
   const attainment = data?.header.overall_attainment ?? 0;
@@ -677,13 +691,24 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
       .getFunnel({ period, rep_id: repId })
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [period, repId]);
 
   const activeFunnel = useMemo(() => {
@@ -1182,25 +1207,53 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
   // /performance/deal-health takes only rep_id — dwell time is measured against
   // "now", not a window, so window/geography have nothing to bind to here.
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
       .getDealHealth({ rep_id: repId })
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [repId, refreshNonce]);
 
   useEffect(() => {
+    let cancelled = false;
     analyticsApi
       .salesDashboard(windowDays, repIds, geographies, fromDate, toDate)
-      .then(setPipelineData)
+      .then((payload) => {
+        if (!cancelled) setPipelineData(payload);
+      })
       .catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
   }, [windowDays, repIds, geographies, fromDate, toDate, refreshNonce]);
 
   // /performance/pipeline-buckets takes no params at all — always workspace-wide.
   useEffect(() => {
-    performanceApi.getPipelineBuckets().then(setPipelineBuckets).catch(() => null);
+    let cancelled = false;
+    performanceApi
+      .getPipelineBuckets()
+      .then((payload) => {
+        if (!cancelled) setPipelineBuckets(payload);
+      })
+      .catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
   }, [refreshNonce]);
 
   return (
@@ -1411,14 +1464,25 @@ export function ForecastTab({ reps }: { reps: RepSummary[] }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     const quotaNum = quotaStr.trim() ? Number(quotaStr) : undefined;
     performanceApi
       .getForecast({ period, rep_id: repId, quota: quotaNum })
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [period, repId, quotaStr]);
 
   const bucketColors: Record<string, string> = {
@@ -1661,11 +1725,20 @@ export function RankingsTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     performanceApi
       .getLeaderboard({ metric, period })
-      .then(setData)
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [metric, period]);
 
   const fmt = (v: number) => {
@@ -2266,12 +2339,21 @@ export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?
 
   // Same endpoint as Overview, so this tab honours the full global scope.
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     analyticsApi
       .salesDashboard(windowDays, repIds, geographies, fromDate, toDate)
-      .then(setData)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
       .catch(() => null)
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [windowDays, repIds, geographies, fromDate, toDate, refreshNonce]);
 
   const rows: SalesRepWeeklyActivityRow[] = data?.rep_weekly_activity ?? [];
@@ -2312,13 +2394,24 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
   const { refreshNonce } = filters;
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
       .getIncentives({ anchor })
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [anchor, refreshNonce]);
 
   const target = data?.target ?? 0;

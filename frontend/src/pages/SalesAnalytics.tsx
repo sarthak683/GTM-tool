@@ -107,6 +107,12 @@ const PARAM_GEO = "geo";
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 type SalesActivityMetric = "emails" | "manual_emails" | "instantly_emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted" | "ae_demos_scheduled" | "ae_demos_done" | "ae_demos_converted";
+// MIRROR of the backend's connected_calls definition in
+// app/api/v1/endpoints/analytics.py. The drilldown's "Connected" toggle used to
+// mean "anything that isn't attempted", which counted voicemails and rows with
+// no recorded outcome as connects — so the toggle disagreed with the Connected
+// Calls KPI on the same page. Keep the two lists in lock-step.
+const CONNECTED_CALL_OUTCOMES = ["connected", "callback", "answered"];
 
 // Brand-green chart palette. Kept here so every Recharts surface on this page
 // pulls from one source of truth instead of scattering hex literals. The funnel
@@ -998,7 +1004,10 @@ function ActivityDrilldownModal({
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [filterConnected, setFilterConnected] = useState(false);
 
-  const isCallsModal = title.toLowerCase().includes("call");
+  // Title is `${rep_name} · ${metric label}`, so match on the label segment —
+  // matching the whole string gave a rep named "Call…" a Connected toggle on
+  // their Emails modal.
+  const isCallsModal = (title.split("·").pop() ?? title).toLowerCase().includes("call");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -1007,8 +1016,8 @@ function ActivityDrilldownModal({
   }, [onClose]);
 
   const displayedRows = (data?.rows ?? []).filter((row) => {
-    if (filterConnected && isCallsModal && row.call_outcome) {
-      return row.call_outcome.toLowerCase() !== "attempted";
+    if (filterConnected && isCallsModal) {
+      return CONNECTED_CALL_OUTCOMES.includes((row.call_outcome ?? "").trim().toLowerCase());
     }
     return true;
   });
@@ -1063,7 +1072,7 @@ function ActivityDrilldownModal({
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {!loading && !error && data && data.rows.length > 0 && (
+            {!loading && !error && data && displayedRows.length > 0 && (
               <button
                 type="button"
                 onClick={() => downloadCsv(
@@ -1072,7 +1081,10 @@ function ActivityDrilldownModal({
                     "When", "Direction/Type", "Source", "Person", "Company", "Subject/Outcome", "From", "To",
                     ...(showAssignments ? ["AE Assigned", "SDR Assigned"] : []),
                   ],
-                  data.rows.map((row) => [
+                  // Export what the table is showing, not the unfiltered set —
+                  // with "Connected" on, the CSV used to carry rows the user
+                  // could not see on screen.
+                  displayedRows.map((row) => [
                     formatSnapshotTime(row.occurred_at),
                     row.direction || row.activity_type || "",
                     row.source_label || row.source || row.kind || "",
@@ -2968,6 +2980,15 @@ export default function SalesAnalytics() {
     return data?.forecast_by_month ?? [];
   }, [forecastGranularity, forecastRows, data?.forecast_by_week, data?.forecast_by_month]);
 
+  // Monotonic request ids for the drilldown modals: only the latest in-flight
+  // request per modal is allowed to write state. Reopening a modal (or opening a
+  // different bucket) while the first request is still in the air used to let the
+  // slower, stale response land last and fill the modal with the wrong rows.
+  const activityDrilldownSeqRef = useRef(0);
+  const pipelineDealSeqRef = useRef(0);
+  const meetingBucketSeqRef = useRef(0);
+  const meetingBookedFromSeqRef = useRef(0);
+
   const handleOpenActivityMetric = (row: SalesRepActivityRow, metric: SalesActivityMetric) => {
     const labelByMetric: Record<SalesActivityMetric, string> = {
       emails: "Emails",
@@ -2987,6 +3008,7 @@ export default function SalesAnalytics() {
       ae_demos_done: "Demos Done",
       ae_demos_converted: "Converted Demos",
     };
+    const seq = ++activityDrilldownSeqRef.current;
     setActivityDrilldown(null);
     setActivityDrilldownError("");
     setActivityDrilldownTitle(`${row.rep_name} · ${labelByMetric[metric]}`);
@@ -3003,20 +3025,34 @@ export default function SalesAnalytics() {
         DRILLDOWN_PAGE_SIZE,
         0,
       )
-      .then(setActivityDrilldown)
-      .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load source rows"))
-      .finally(() => setActivityDrilldownLoading(false));
+      // A newer request superseded this one — drop the stale response.
+      .then((page) => {
+        if (seq === activityDrilldownSeqRef.current) setActivityDrilldown(page);
+      })
+      .catch((err: Error) => {
+        if (seq === activityDrilldownSeqRef.current) setActivityDrilldownError(err.message || "Failed to load source rows");
+      })
+      .finally(() => {
+        if (seq === activityDrilldownSeqRef.current) setActivityDrilldownLoading(false);
+      });
   };
 
   const handleOpenPipelineDeals = (userId: string | null | undefined, repName: string) => {
+    const seq = ++pipelineDealSeqRef.current;
     setPipelineDealModal({ userId, repName });
     setPipelineDealDeals([]);
     setPipelineDealLoading(true);
     analyticsApi
       .pipelineDeals(userId ?? undefined)
-      .then((rows) => setPipelineDealDeals(rows))
-      .catch(() => setPipelineDealDeals([]))
-      .finally(() => setPipelineDealLoading(false));
+      .then((rows) => {
+        if (seq === pipelineDealSeqRef.current) setPipelineDealDeals(rows);
+      })
+      .catch(() => {
+        if (seq === pipelineDealSeqRef.current) setPipelineDealDeals([]);
+      })
+      .finally(() => {
+        if (seq === pipelineDealSeqRef.current) setPipelineDealLoading(false);
+      });
   };
 
   const handleOpenMeetingBucket = (
@@ -3024,29 +3060,43 @@ export default function SalesAnalytics() {
     title: string,
     userId: string | null | undefined,
   ) => {
+    const seq = ++meetingBucketSeqRef.current;
     setMeetingBucketModal({ bucket, title, userId });
     setMeetingBucketDeals([]);
     setMeetingBucketLoading(true);
     analyticsApi
       .meetingBucketDeals(bucket, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined)
-      .then((r) => setMeetingBucketDeals(r.deals))
-      .catch(() => setMeetingBucketDeals([]))
-      .finally(() => setMeetingBucketLoading(false));
+      .then((r) => {
+        if (seq === meetingBucketSeqRef.current) setMeetingBucketDeals(r.deals);
+      })
+      .catch(() => {
+        if (seq === meetingBucketSeqRef.current) setMeetingBucketDeals([]);
+      })
+      .finally(() => {
+        if (seq === meetingBucketSeqRef.current) setMeetingBucketLoading(false);
+      });
   };
 
   const handleOpenMeetingBookedFrom = (
     channel: "Email" | "LinkedIn" | "Call",
     userId: string | null | undefined,
   ) => {
+    const seq = ++meetingBookedFromSeqRef.current;
     setMeetingBookedFromModal({ channel, title: `${channel} Meetings Booked`, userId });
     setMeetingBookedFromDeals([]);
     setMeetingBookedFromError("");
     setMeetingBookedFromLoading(true);
     analyticsApi
       .meetingBookedFromDeals(channel, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined)
-      .then(setMeetingBookedFromDeals)
-      .catch((requestError: Error) => setMeetingBookedFromError(requestError.message || "Failed to load meeting details"))
-      .finally(() => setMeetingBookedFromLoading(false));
+      .then((rows) => {
+        if (seq === meetingBookedFromSeqRef.current) setMeetingBookedFromDeals(rows);
+      })
+      .catch((requestError: Error) => {
+        if (seq === meetingBookedFromSeqRef.current) setMeetingBookedFromError(requestError.message || "Failed to load meeting details");
+      })
+      .finally(() => {
+        if (seq === meetingBookedFromSeqRef.current) setMeetingBookedFromLoading(false);
+      });
   };
 
   // Fetch the next page and append, so reps can page through all rows (e.g. all
@@ -3054,6 +3104,9 @@ export default function SalesAnalytics() {
   const handleLoadMoreActivity = () => {
     if (!activityDrilldown || !activityDrilldownQuery || activityDrilldownLoadingMore) return;
     const query = activityDrilldownQuery;
+    // Shares the drilldown sequence: opening a different drilldown mid-flight
+    // must not append this page onto the modal that replaced it.
+    const seq = activityDrilldownSeqRef.current;
     setActivityDrilldownLoadingMore(true);
     analyticsApi
       .salesActivityDrilldown(
@@ -3067,11 +3120,16 @@ export default function SalesAnalytics() {
         query.nextOffset,
       )
       .then((page) => {
+        if (seq !== activityDrilldownSeqRef.current) return;
         setActivityDrilldown((prev) => (prev ? { ...page, rows: [...prev.rows, ...page.rows] } : page));
         // Advance by the page size (raw rows consumed), not displayed count.
         setActivityDrilldownQuery((q) => (q ? { ...q, nextOffset: q.nextOffset + DRILLDOWN_PAGE_SIZE } : q));
       })
-      .catch((err: Error) => setActivityDrilldownError(err.message || "Failed to load more rows"))
+      .catch((err: Error) => {
+        if (seq === activityDrilldownSeqRef.current) setActivityDrilldownError(err.message || "Failed to load more rows");
+      })
+      // Cleared unconditionally: unlike the other loaders, nothing re-sets this
+      // flag when a new drilldown opens, so a guarded clear would strand it.
       .finally(() => setActivityDrilldownLoadingMore(false));
   };
 

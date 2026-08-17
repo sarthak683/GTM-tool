@@ -93,6 +93,11 @@ function parseAccountSort(value: string | null): AccountSortKey {
 
 type AccountSourcingTab = "accounts" | "imports" | "review";
 
+// How many import batches the Recent Imports tab asks for. The endpoint returns
+// them newest first, so a full page means there are older ones we are not
+// showing — the tab count says "50+" rather than pretending 50 is the total.
+const RECENT_IMPORTS_LIMIT = 50;
+
 function parseAccountTab(value: string | null): AccountSourcingTab {
   return value === "imports" || value === "review" ? value : "accounts";
 }
@@ -1165,11 +1170,16 @@ export default function AccountSourcing() {
    *
    * ownerScope === "mine" uses owner_id (matches AE *or* SDR). The AE/SDR
    * dropdowns use dedicated ae_id / sdr_id so each filters its own role only.
+   *
+   * The server ANDs owner_id, ae_id and sdr_id as separate WHERE clauses, so
+   * scope + AE intersect ("mine AND that AE's"), which is what picking both
+   * plainly means. aeId used to be dropped under the "mine" scope, leaving the
+   * chip and the "More filters (N)" count advertising a filter nothing applied.
    */
   const activeFilters = useMemo<AccountSourcingFilters>(() => ({
     q: debouncedSearch || undefined,
     ownerId: ownerScope === "mine" ? user?.id : undefined,
-    aeId: ownerScope !== "mine" && ownerFilter.length ? ownerFilter : undefined,
+    aeId: ownerFilter.length ? ownerFilter : undefined,
     sdrId: sdrFilter.length ? sdrFilter : undefined,
     icpTier: tierFilter.length ? tierFilter : undefined,
     disposition: dispositionFilter.length ? dispositionFilter : undefined,
@@ -1204,7 +1214,7 @@ export default function AccountSourcing() {
         }),
         // Same filters as the list → the KPI strip describes what is on screen.
         accountSourcingApi.summary(activeFilters),
-        accountSourcingApi.listBatches(),
+        accountSourcingApi.listBatches(RECENT_IMPORTS_LIMIT),
         accountSourcingApi.recotapSummary().catch(() => null),
       ]);
       // A newer request superseded this one — drop the stale response.
@@ -1301,8 +1311,17 @@ export default function AccountSourcing() {
   }, [search]);
 
   // Any change to the population OR the (now server-side) sort restarts at
-  // page 1 — page 4 of the old ordering is meaningless under a new one.
+  // page 1 — page 4 of the old ordering is meaningless under a new one. Skipped
+  // on the initial mount: without that guard this clobbered the `pg` restored
+  // from the URL/localStorage, so coming back from an account detail (or
+  // opening a bookmarked ?pg=3) always dumped the user on page 1 and stripped
+  // `pg` back out of the URL. Mirrors pageResetMountedRef in Contacts.tsx.
+  const pageResetMountedRef = useRef(false);
   useEffect(() => {
+    if (!pageResetMountedRef.current) {
+      pageResetMountedRef.current = true;
+      return;
+    }
     setPage(1);
   }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, batchFilter, sortBy, prospectsMin, prospectsMax]);
 
@@ -1592,6 +1611,9 @@ export default function AccountSourcing() {
   const batchNeedsAttention = Boolean(
     latestVisibleBatch && ["pending", "processing", "awaiting_confirmation"].includes(latestVisibleBatch.status),
   );
+  // A full page means older imports exist beyond what we fetched, so the tab
+  // count is a floor ("50+"), not the total.
+  const batchesCapped = batches.length >= RECENT_IMPORTS_LIMIT;
   const importStatusCard = latestVisibleBatch ? (
     <div
       style={{
@@ -1778,7 +1800,7 @@ export default function AccountSourcing() {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ffffff", border: "1px solid #e3e9f2", borderRadius: 10, padding: 3 }}>
             {[
               { id: "accounts", label: "Accounts" },
-              { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length})` : ""}` },
+              { id: "imports", label: `Recent Imports${batches.length ? ` (${batches.length}${batchesCapped ? "+" : ""})` : ""}` },
               // Admin-only: the data-health review queue (403 for everyone else).
               ...(isAdmin ? [{ id: "review", label: "Needs Review" }] : []),
             ].map((tab) => (
@@ -2878,6 +2900,11 @@ export default function AccountSourcing() {
           <NeedsReviewTab />
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
+            {batchesCapped ? (
+              <span style={{ color: colors.faint, fontSize: 12 }}>
+                Showing the {RECENT_IMPORTS_LIMIT} most recent imports. Older imports are not listed here.
+              </span>
+            ) : null}
             {batches.length === 0 ? (
               <div style={{ ...cardStyle, padding: 28, textAlign: "center", color: colors.faint }}>
                 No imports yet.

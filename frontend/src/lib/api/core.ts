@@ -69,12 +69,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // now hand-rolled its own fetch instead of using this helper.
   const isMultipart = options?.body instanceof FormData;
   const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    // Must come AFTER the ...options spread: options carries its own `headers`
+    // at some call sites, and spreading options last replaced this merged
+    // object wholesale — dropping the Authorization/Content-Type entries.
     headers: {
       ...(isMultipart ? {} : { "Content-Type": "application/json" }),
       ...getAuthHeaders(),
       ...options?.headers,
     },
-    ...options,
   });
   if (res.status === 401) {
     localStorage.removeItem("beacon_token");
