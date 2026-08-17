@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
-import type { PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
+import type { ContactEngagementStats, PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -36,7 +36,7 @@ import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { ANGEL_SURFACE, ANGEL_TEXT, PERSONA_LABEL, PERSONA_STYLE, STRENGTH_LABEL, STRENGTH_STYLE } from "./contacts/constants";
 import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany } from "./contacts/utils";
 import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
-import { ProgressCell } from "./contacts/ProgressCell";
+import { EMAIL_LOG_OUTCOME_OPTIONS, ProgressCell, deriveSequenceStatusFromEmailLog, getManualEmailLog } from "./contacts/ProgressCell";
 import { LifecycleDrawer } from "./contacts/LifecycleDrawer";
 import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } from "./contacts/CallRecordingPanel";
 import { PreCallIntelPanel } from "./contacts/PreCallIntelPanel";
@@ -403,7 +403,7 @@ export default function Contacts() {
   // (which land on the BARE path with no query string) restores the view
   // instead of resetting everything. Computed once at mount.
   const initParams = useMemo(() => {
-    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
+    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "pe", "em", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
     const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
     if (hasAny) return searchParams;
     try {
@@ -463,6 +463,7 @@ export default function Contacts() {
       initParams.get("seq") || initParams.get("acct") || initParams.get("call") || initParams.get("ae") ||
       initParams.get("sdr") || initParams.get("own") || initParams.get("tz") ||
       initParams.get("co") || initParams.get("owner") === "mine" ||
+      initParams.get("pe") || initParams.get("em") ||
       initParams.get("cc") || initParams.get("ec") || initParams.get("ca") ||
       initParams.get("fcmin") || initParams.get("fcmax") ||
       initParams.get("nfa") || initParams.get("nfb") ||
@@ -483,7 +484,7 @@ export default function Contacts() {
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [moreMenuOpen]);
-  const [personaFilter, setPersonaFilter] = useState<string[]>([]);
+  const [personaFilter, setPersonaFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("pe")));
   const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
   // ACCOUNT-status filter. Server rule: with nothing selected, prospects of
   // disabled (not_a_fit/dnd) accounts are hidden; explicitly selecting a
@@ -518,11 +519,19 @@ export default function Contacts() {
     from: initParams.get("cla") ?? "",
     to: initParams.get("clb") ?? "",
   }));
-  const [emailFilter, setEmailFilter] = useState<string[]>([]);
-  // Client-side filter wired to the engagement KPI tiles. Clicking a tile
-  // narrows the already-loaded prospect page to the matching population —
-  // the same scope the tiles count. null = show everyone.
+  // Email-state filter (has/missing/verified/unverified). Server-side via
+  // ContactFilters.email_state; URL key `em`.
+  const [emailFilter, setEmailFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("em")));
+  // SERVER filter wired to the engagement KPI tiles. Clicking a tile applies
+  // the matching backend filter (emails_opened / linkedin_active /
+  // meetings_booked), so pagination, export, and bulk actions all agree with
+  // the tile's population. null = no tile filter. Deliberately not persisted
+  // to the URL — it's a transient drill-down, not a saved view.
   const [cardFilter, setCardFilter] = useState<"emails" | "linkedin" | "meetings" | null>(null);
+  // Filter-wide engagement counts for the tiles (GET /contacts/stats).
+  // Fetched with the SAME filters as the list, minus the tile filter itself,
+  // so each tile keeps showing its category's count while one is active.
+  const [engagementStats, setEngagementStats] = useState<ContactEngagementStats | null>(null);
   const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() =>
     // SDRs only ever see their own prospects — force "mine" on load regardless
     // of any persisted ?owner= param.
@@ -597,6 +606,8 @@ export default function Contacts() {
   // Monotonic request id for loadContacts: only the latest in-flight request
   // is allowed to write state (see loadContacts for the race it guards).
   const loadSeqRef = useRef(0);
+  // Same race guard for the KPI stats request (fetched alongside the list).
+  const statsSeqRef = useRef(0);
   // Guards the "reset to page 1 on filter change" effect so it does NOT fire on
   // the initial mount. Without this, returning from a prospect detail (remount)
   // would clobber the `pg` restored from the URL/localStorage back to page 1 —
@@ -648,6 +659,14 @@ export default function Contacts() {
   const [whatsappOutcome, setWhatsappOutcome] = useState("sent");
   const [whatsappNotes, setWhatsappNotes] = useState("");
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
+  // Manual email logger — the email twin of the LinkedIn "Log" button. Writes
+  // enrichment_data.manual_email on the contact (no email_status column
+  // exists) + an Activity row; ProgressCell reads the JSONB to light the
+  // email chip ("Sent (manual)").
+  const [emailLogContact, setEmailLogContact] = useState<Contact | null>(null);
+  const [emailLogStatus, setEmailLogStatus] = useState("sent");
+  const [emailLogNotes, setEmailLogNotes] = useState("");
+  const [savingEmailLog, setSavingEmailLog] = useState(false);
   const [commentsContact, setCommentsContact] = useState<Contact | null>(null);
   const [commentsList, setCommentsList] = useState<Activity[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -848,16 +867,26 @@ export default function Contacts() {
   };
 
   // Every filter currently applied to the prospects list. Shared by the list
-  // request and the CSV export so the exported file always matches what the
-  // rep is looking at — exporting a different set than the screen shows is
-  // exactly the confusion this page had before.
-  const buildContactFilterParams = () => ({
+  // request, the CSV export, assign-all-matching, AND the KPI stats request so
+  // they can never disagree about which prospects are in scope.
+  // `includeTileFilter: false` drops only the KPI-tile filter (cardFilter) —
+  // used by the stats request so each tile keeps counting its own category
+  // while one tile is active.
+  const buildContactFilterParams = (opts?: { includeTileFilter?: boolean }) => ({
+      ...(opts?.includeTileFilter === false
+        ? {}
+        : {
+            emailsOpened: cardFilter === "emails" || undefined,
+            linkedinActive: cardFilter === "linkedin" || undefined,
+            meetingsBooked: cardFilter === "meetings" || undefined,
+          }),
       q: debouncedSearch || undefined,
       qField: searchScope && searchScope !== "all" ? searchScope : undefined,
       qMatch: searchScope && searchScope !== "all" ? searchMatch : undefined,
       ...sortToApi(prospectSort),
       companyId: companyFilter || undefined,
       persona: personaFilter.length ? personaFilter : undefined,
+      emailState: emailFilter.length ? emailFilter : undefined,
       sequenceStatus: sequenceFilter.length ? sequenceFilter : undefined,
       callDisposition: callDispositionFilter.length ? callDispositionFilter : undefined,
       linkedinStatus: linkedinStatusFilter.length ? linkedinStatusFilter : undefined,
@@ -885,11 +914,27 @@ export default function Contacts() {
       prospectOnly: true,
   });
 
+  // Filter-wide KPI counts, fetched with every list (re)load so the tiles
+  // reflect the same filter context — minus the tile filter itself, so an
+  // active tile doesn't collapse the other tiles' counts to its own subset.
+  const loadEngagementStats = () => {
+    const seq = ++statsSeqRef.current;
+    contactsApi
+      .stats(buildContactFilterParams({ includeTileFilter: false }))
+      .then((stats) => {
+        if (seq === statsSeqRef.current) setEngagementStats(stats);
+      })
+      .catch(() => {
+        // Tiles are informational — keep the last known numbers on failure.
+      });
+  };
+
   const loadContacts = (opts?: { silent?: boolean }) => {
     // A filter change fires this twice (once with the old page still in the
     // closure, once after the page-reset effect runs), so two requests race.
     // The sequence counter lets only the latest response write state.
     const seq = ++loadSeqRef.current;
+    loadEngagementStats();
     // Silent reloads skip the loading state so the table stays mounted — this
     // is what lets us preserve scroll position after the call drawer closes
     // (the loading flash would otherwise unmount the list and reset scroll).
@@ -1104,6 +1149,8 @@ export default function Contacts() {
       accountStatusFilter.length ? next.set("acct", accountStatusFilter.join(",")) : next.delete("acct");
       callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
       linkedinStatusFilter.length ? next.set("li", linkedinStatusFilter.join(",")) : next.delete("li");
+      personaFilter.length ? next.set("pe", personaFilter.join(",")) : next.delete("pe");
+      emailFilter.length ? next.set("em", emailFilter.join(",")) : next.delete("em");
       callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
       emailOutcomeColorFilter.length ? next.set("ec", emailOutcomeColorFilter.join(",")) : next.delete("ec");
       callAttemptsBucketFilter.length ? next.set("ca", callAttemptsBucketFilter.join(",")) : next.delete("ca");
@@ -1131,7 +1178,7 @@ export default function Contacts() {
       }
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -1149,7 +1196,7 @@ export default function Contacts() {
       return;
     }
     setPage(1);
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -1162,7 +1209,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   // Clear the selection when the FILTERS change — the selected prospects may no
   // longer be in the result set, so acting on them would be surprising.
@@ -1180,7 +1227,8 @@ export default function Contacts() {
     }
     setSelectedContactIds((current) => (current.size === 0 ? current : new Set()));
   }, [
-    aeFilter, callDispositionFilter, linkedinStatusFilter, callOutcomeColorFilter,
+    aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter,
+    cardFilter, callOutcomeColorFilter,
     emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax,
     nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to,
     companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter,
@@ -1842,6 +1890,85 @@ export default function Contacts() {
     }
   };
 
+  // Manual email logger — mirrors saveLinkedinTouch: persist the touch on the
+  // contact so ProgressCell can light the email chip, then write an Activity
+  // row for the timeline. The Contact model has no email_status column, so
+  // the touch rides in enrichment_data.manual_email (read by
+  // getManualEmailLog in ProgressCell.tsx).
+  const saveEmailLog = async () => {
+    if (!emailLogContact || !emailLogStatus) return;
+    setSavingEmailLog(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const derivedSeqStatus = deriveSequenceStatusFromEmailLog(
+        emailLogStatus,
+        emailLogContact.sequence_status,
+      );
+      const prevLog = getManualEmailLog(emailLogContact);
+      // The backend PUT replaces the whole JSONB, so merge client-side and
+      // send every existing key back along with the new manual_email record.
+      const nextEnrichment = {
+        ...(emailLogContact.enrichment_data ?? {}),
+        manual_email: {
+          status: emailLogStatus,
+          last_at: nowIso,
+          count: (prevLog?.count ?? 0) + 1,
+        },
+      };
+      await contactsApi.update(emailLogContact.id, {
+        enrichment_data: nextEnrichment,
+        ...(derivedSeqStatus && derivedSeqStatus !== emailLogContact.sequence_status
+          ? { sequence_status: derivedSeqStatus }
+          : {}),
+      } as Partial<Contact>);
+
+      const emailLabel = ({
+        sent: "Sent email",
+        replied: "Email reply received",
+        no_response: "Email — no response",
+        meeting_booked: "Meeting booked via email",
+      } as Record<string, string>)[emailLogStatus] ?? `Email: ${emailLogStatus}`;
+      const contactLabel = `${emailLogContact.first_name ?? ""} ${emailLogContact.last_name ?? ""}`.trim();
+      const activityContent = emailLogNotes
+        ? `${emailLabel} — ${contactLabel}: ${emailLogNotes}`
+        : `${emailLabel} — ${contactLabel}`;
+      try {
+        await activitiesApi.create({
+          type: "email",
+          source: "manual",
+          content: activityContent,
+          contact_id: emailLogContact.id,
+          event_metadata: {
+            event_type: "manual_email_logged",
+            email_status: emailLogStatus,
+            logged_at: nowIso,
+          },
+        } as Partial<Activity>);
+      } catch {
+        toast.error("Email saved but timeline write failed — check activity feed.", "Partial save");
+      }
+
+      // Quick auto-dismiss toast (reps log many touches in a row).
+      toast.show({
+        tone: "success",
+        message: `Email logged for ${emailLogContact.first_name}.`,
+        title: "Email logged",
+        durationMs: 2000,
+      });
+      // Preserve scroll and reload silently — same pattern as the LinkedIn
+      // and WhatsApp loggers.
+      const scroller = document.querySelector<HTMLElement>(".crm-content");
+      restoreScrollRef.current = scroller ? scroller.scrollTop : null;
+      setEmailLogContact(null);
+      setEmailLogNotes("");
+      loadContacts({ silent: true });
+    } catch {
+      toast.error("Failed to log email.", "Error");
+    } finally {
+      setSavingEmailLog(false);
+    }
+  };
+
   // wa.me needs a bare international number (country code + digits, no + or spaces).
   const waPhoneDigits = (phone?: string | null) => (phone || "").replace(/[^\d]/g, "");
 
@@ -1989,6 +2116,10 @@ export default function Contacts() {
       toast.success(`Follow-up set for ${result.created} prospect${result.created === 1 ? "" : "s"}.`, "Follow-up scheduled");
       setBulkFollowupOpen(false);
       setSelectedContactIds(new Set());
+      // The backend wrote next_followup_at on every selected contact, so the
+      // rows may no longer belong to the current view (e.g. the "Overdue
+      // follow-ups" quick view). Reload like every other bulk action does.
+      loadContacts({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to set follow-up reminders.", "Error");
     } finally {
@@ -2007,15 +2138,18 @@ export default function Contacts() {
     }
   };
 
-  const emailsOpenedCount = contacts.filter((c) => (c.email_open_count ?? 0) > 0).length;
-  // These KPI filters are calculated from the currently loaded prospects.
-  // Calls today is a separate activity total, so that tile is display-only.
-  const cardPredicates = {
-    emails: (c: Contact) => (c.email_open_count ?? 0) > 0,
-    linkedin: (c: Contact) => !!c.linkedin_status && c.linkedin_status !== "none",
-    meetings: (c: Contact) => c.sequence_status === "meeting_booked",
-  } as const;
-  const displayedContacts = cardFilter ? contacts.filter(cardPredicates[cardFilter]) : contacts;
+  // KPI tile values come from GET /contacts/stats — the FULL filtered
+  // population, not the visible 50-row page (which is what these used to
+  // count). Calls today is a separate activity total, so that tile is
+  // display-only. 0 until the first stats response lands.
+  const emailsOpenedCount = engagementStats?.emails_opened ?? 0;
+  const linkedinActiveCount = engagementStats?.linkedin_active ?? 0;
+  const meetingsBookedCount = engagementStats?.meetings_booked ?? 0;
+  // Tile clicks are now REAL server filters (see cardFilter / loadContacts),
+  // so the rows arrive pre-filtered — no client-side narrowing left. Kept as
+  // an alias because the desktop table, mobile list, and "Save & next" all
+  // render from it.
+  const displayedContacts = contacts;
   // The next callable prospect (has a phone) after the one in the open call
   // drawer, in the rep's current view order — powers the "Save & next" button.
   const nextCallable: Contact | null = (() => {
@@ -2027,8 +2161,6 @@ export default function Contacts() {
     }
     return null;
   })();
-  const linkedinActiveCount = contacts.filter((c) => c.linkedin_status && c.linkedin_status !== "none").length;
-  const meetingsBookedCount = contacts.filter((c) => c.sequence_status === "meeting_booked").length;
 
   return (
     <>
@@ -2743,7 +2875,7 @@ export default function Contacts() {
                     <div className="prospect-mobile-card" style={{ padding: 22, textAlign: "center" }}>
                       <Users size={30} style={{ margin: "0 auto 10px", color: "#9fb0c2" }} />
                       <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d" }}>{cardFilter ? "No matching prospects in this view" : "No prospects found"}</div>
-                      <div style={{ fontSize: 12.5, color: "#7a8ea4", marginTop: 5 }}>{cardFilter ? "None of the loaded prospects match this tile yet." : "Try another name, company, or call outcome."}</div>
+                      <div style={{ fontSize: 12.5, color: "#7a8ea4", marginTop: 5 }}>{cardFilter ? "No prospects match this tile's filter yet." : "Try another name, company, or call outcome."}</div>
                       {cardFilter && (
                         <button type="button" onClick={() => setCardFilter(null)} style={{ marginTop: 10, border: "1px solid #dce8f4", background: "#fff", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
                       )}
@@ -2978,6 +3110,8 @@ export default function Contacts() {
                 sequenceFilter.length ||
                 callDispositionFilter.length ||
                 linkedinStatusFilter.length ||
+                personaFilter.length ||
+                emailFilter.length ||
                 callOutcomeColorFilter.length ||
                 emailOutcomeColorFilter.length ||
                 callAttemptsBucketFilter.length ||
@@ -3070,6 +3204,17 @@ export default function Contacts() {
                       />
                     </div>
                   </div>
+                  {/* Persona — server-side filter (ContactFilters.persona);
+                      "Unknown" matches prospects with no persona yet. */}
+                  <MultiSelectFilter
+                    hideLabel
+                    label="Persona"
+                    values={personaFilter}
+                    onChange={setPersonaFilter}
+                    options={PERSONA_FILTER_OPTIONS}
+                    allLabel="All personas"
+                    minWidth={160}
+                  />
                     </div>{/* end Prospects row */}
                   </div>{/* end Prospects group */}
 
@@ -3135,6 +3280,18 @@ export default function Contacts() {
                     options={EMAIL_OUTCOME_COLOR_OPTIONS}
                     allLabel="All email dots"
                     minWidth={210}
+                  />
+                  {/* Email state — has/missing address + Hunter verification
+                      (ContactFilters.email_state: has_email | missing_email |
+                      verified | unverified). Multi-value = OR. */}
+                  <MultiSelectFilter
+                    hideLabel
+                    label="Email state"
+                    values={emailFilter}
+                    onChange={setEmailFilter}
+                    options={EMAIL_FILTER_OPTIONS}
+                    allLabel="Any email state"
+                    minWidth={160}
                   />
                     </div>{/* end Engagement row */}
                   </div>{/* end Engagement group */}
@@ -3370,6 +3527,8 @@ export default function Contacts() {
                         setSequenceFilter([]); setCallDispositionFilter([]);
                         setAccountStatusFilter([]);
                         setLinkedinStatusFilter([]);
+                        setPersonaFilter([]); setEmailFilter([]);
+                        setCardFilter(null);
                         setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
                         setCallAttemptsBucketFilter([]);
                         setFollowupCountMin(null); setFollowupCountMax(null);
@@ -3622,7 +3781,7 @@ export default function Contacts() {
                   <>
                     <Users size={36} style={{ margin: "0 auto 12px", opacity: 0.3, color: "#4b6b8f" }} />
                     <div style={{ fontSize: 15, fontWeight: 800, color: "#25384d", marginBottom: 6 }}>No matching prospects in this view</div>
-                    <div style={{ fontSize: 13, color: "#7a8ea4", marginBottom: 12 }}>None of the loaded prospects match this tile yet.</div>
+                    <div style={{ fontSize: 13, color: "#7a8ea4", marginBottom: 12 }}>No prospects match this tile's filter yet.</div>
                     <button type="button" onClick={() => setCardFilter(null)} style={{ border: "1px solid #dce8f4", background: "#fff", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: "#175089", cursor: "pointer" }}>Show all prospects</button>
                   </>
                 ) : contactsTotal === 0 ? (
@@ -3959,6 +4118,12 @@ export default function Contacts() {
                                       <a href={c.email ? gmailComposeUrl(c.email) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.email) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: c.email ? "#ecfdf3" : "#f6f8fb", color: c.email ? "#1f7a4d" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.email ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.email ? `Email ${c.email} in Gmail` : "No email saved"}>
                                         <Mail size={13} /> Email
                                       </a>
+                                      {/* Email "Log" — the email twin of the LinkedIn Log button.
+                                          Gmail compose records nothing, so without this a personally
+                                          sent email stayed grey "Not sent" in the progress cell. */}
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setEmailLogContact(c); setEmailLogStatus(getManualEmailLog(c)?.status || "sent"); setEmailLogNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: "#ecfdf3", color: "#1f7a4d", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log an email you sent or a reply you received">
+                                        <Mail size={13} /> Log
+                                      </button>
                                       <a href={c.linkedin_url || undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.linkedin_url) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #b8d4f0", background: c.linkedin_url ? "#e8f2ff" : "#f6f8fb", color: c.linkedin_url ? "#0a66c2" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.linkedin_url ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.linkedin_url ? "Open LinkedIn profile" : "No LinkedIn profile"}>
                                         <Link2 size={13} /> LinkedIn
                                       </a>
@@ -5594,6 +5759,98 @@ export default function Contacts() {
                 >
                   {savingLinkedin ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
                   {savingLinkedin ? "Saving…" : "Log touch"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Email Touch Logger — the email twin of the LinkedIn logger ── */}
+      {emailLogContact && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setEmailLogContact(null)}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
+          <div
+            style={{ position: "relative", width: 420, maxWidth: "95vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 60px rgba(14,38,66,0.22)", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#1f7a4d,#16a34a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Mail size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Log email touch</div>
+                  <div style={{ fontSize: 12, color: "#7a96b0" }}>{emailLogContact.first_name} {emailLogContact.last_name}</div>
+                </div>
+              </div>
+              <button onClick={() => setEmailLogContact(null)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Form */}
+            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
+              {emailLogContact.email ? (
+                <a href={gmailComposeUrl(emailLogContact.email)} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1f7a4d", fontWeight: 600, textDecoration: "none" }}>
+                  <ExternalLink size={13} /> Open Gmail compose ({emailLogContact.email})
+                </a>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "#b06a00" }}>No email address saved — you can still log a touch.</div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>What happened? *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+                  {EMAIL_LOG_OUTCOME_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setEmailLogStatus(opt.value)}
+                      style={{
+                        padding: "10px 0", borderRadius: 10, border: `2px solid ${emailLogStatus === opt.value ? "#16a34a" : "#dce8f4"}`,
+                        background: emailLogStatus === opt.value ? "#ecfdf3" : "#f7faff",
+                        color: emailLogStatus === opt.value ? "#1f7a4d" : "#4a6580",
+                        fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#7a96b0" }}>
+                  {emailLogStatus === "sent" && "You sent them an email yourself (e.g. from Gmail)."}
+                  {emailLogStatus === "replied" && "They replied — keep the momentum with a live conversation."}
+                  {emailLogStatus === "no_response" && "You emailed them but haven't heard back yet."}
+                  {emailLogStatus === "meeting_booked" && "A meeting is on the calendar from this email thread."}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Notes (optional)</label>
+                <textarea
+                  value={emailLogNotes}
+                  onChange={(e) => setEmailLogNotes(e.target.value)}
+                  placeholder="What did you send or hear back? Any signals…"
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c8d9e8", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setEmailLogContact(null)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveEmailLog()}
+                  disabled={savingEmailLog}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#1f7a4d,#16a34a)", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: savingEmailLog ? 0.7 : 1 }}
+                >
+                  {savingEmailLog ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  {savingEmailLog ? "Saving…" : "Log touch"}
                 </button>
               </div>
             </div>

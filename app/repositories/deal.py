@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.analytics_defaults import DEFAULT_STUCK_THRESHOLDS_DAYS
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
@@ -21,6 +22,7 @@ from app.models.deal import (
 )
 from app.models.user import User
 from app.repositories.base import BaseRepository
+from app.services.business_days import business_days_between
 from app.services.deal_flags import compute_deal_flags
 
 
@@ -530,6 +532,57 @@ class DealRepository(BaseRepository[Deal]):
                 client_signal[deal_id]["reason"] = reason
         return seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason
 
+    # ── Stall detection (per-stage thresholds, business-day dwell) ───────────
+
+    async def _stall_context(self) -> tuple[dict[str, Any], set[str]]:
+        """Effective per-stage stuck thresholds + closed stage ids.
+
+        Thresholds come from workspace analytics settings with the same
+        precedence as ``get_analytics_settings`` (a saved
+        ``stuck_thresholds_days`` dict replaces the default wholesale;
+        otherwise DEFAULT_STUCK_THRESHOLDS_DAYS applies) — but read WITHOUT the
+        lazy-create commit so a plain board read never writes settings rows.
+        This is the same map performance_metrics.stuck_deals consumes, so the
+        board and the scorecard share one source of truth.
+        """
+        from app.models.settings import WorkspaceSettings
+        from app.services.deal_stages import get_closed_deal_stage_ids
+
+        row = await self.session.get(WorkspaceSettings, 1)
+        stored = (row.analytics_settings or {}) if row else {}
+        thresholds = stored.get("stuck_thresholds_days") or DEFAULT_STUCK_THRESHOLDS_DAYS
+        closed_stage_ids = await get_closed_deal_stage_ids(self.session)
+        return thresholds, closed_stage_ids
+
+    @staticmethod
+    def _apply_stall_fields(
+        read: DealRead,
+        deal: Deal,
+        thresholds: dict[str, Any],
+        closed_stage_ids: set[str],
+        now: datetime,
+    ) -> None:
+        """Populate stall_threshold_days / is_stalled on a DealRead.
+
+        Dwell is BUSINESS days (Mon-Fri) — the thresholds are documented as
+        business days, matching performance_metrics.stuck_deals exactly
+        (same helper, same strict ``>`` comparison). Closed stages are never
+        stalled and expose no threshold.
+        """
+        read.stall_threshold_days = None
+        read.is_stalled = False
+        if deal.stage in closed_stage_ids:
+            return
+        try:
+            threshold = int(thresholds.get(deal.stage))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return
+        read.stall_threshold_days = threshold
+        entered_at = deal.stage_entered_at or deal.created_at
+        if entered_at is None:
+            return
+        read.is_stalled = business_days_between(entered_at, now) > threshold
+
     # ── Board query ──────────────────────────────────────────────────────────
 
     async def board(
@@ -573,6 +626,7 @@ class DealRepository(BaseRepository[Deal]):
         result = await self.session.execute(stmt)
         rows = result.all()
         seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason = await self._build_engagement_maps([deal.id for deal, *_ in rows if deal.id])
+        stall_thresholds, closed_stage_ids = await self._stall_context()
 
         board: dict[str, list[DealRead]] = {}
         now = datetime.utcnow()
@@ -594,6 +648,7 @@ class DealRepository(BaseRepository[Deal]):
                 read.days_in_stage = (now - deal.stage_entered_at).days
             elif deal.created_at:
                 read.days_in_stage = (now - deal.created_at).days
+            self._apply_stall_fields(read, deal, stall_thresholds, closed_stage_ids, now)
             board.setdefault(deal.stage, []).append(read)
 
         return board
@@ -657,10 +712,13 @@ class DealRepository(BaseRepository[Deal]):
         read.seller_engagement_reason = seller_reason.get(deal.id)
         read.client_engagement_reason = client_reason.get(deal.id)
         # Compute days_in_stage live
+        now = datetime.utcnow()
         if deal.stage_entered_at:
-            read.days_in_stage = (datetime.utcnow() - deal.stage_entered_at).days
+            read.days_in_stage = (now - deal.stage_entered_at).days
         elif deal.created_at:
-            read.days_in_stage = (datetime.utcnow() - deal.created_at).days
+            read.days_in_stage = (now - deal.created_at).days
+        stall_thresholds, closed_stage_ids = await self._stall_context()
+        self._apply_stall_fields(read, deal, stall_thresholds, closed_stage_ids, now)
         return read
 
     # ── Contact management ───────────────────────────────────────────────────

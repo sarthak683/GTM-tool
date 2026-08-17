@@ -110,6 +110,34 @@ ROLE_EMAIL_PATTERNS = (
 GENERIC_LAST_NAME_TOKENS = ("contact", "team", "support", "notifications", "notification")
 
 
+# ── KPI tile predicates ────────────────────────────────────────────────────
+# Server-side twins of the Prospecting page's engagement tiles (Contacts.tsx).
+# Each helper is used BOTH as a list filter (ContactFilters.emails_opened /
+# linkedin_active / meetings_booked) and as the conditional-count predicate in
+# ``aggregate_engagement_stats`` — one definition, so the number shown on a
+# tile and the rows returned when the tile is clicked can never disagree.
+# Frontend semantics mirrored here:
+#   emails_opened   → (email_open_count ?? 0) > 0
+#   linkedin_active → linkedin_status set and != "none"
+#   meetings_booked → sequence_status === "meeting_booked"
+
+
+def emails_opened_clause():
+    return Contact.email_open_count > 0
+
+
+def linkedin_active_clause():
+    return and_(
+        Contact.linkedin_status.is_not(None),
+        Contact.linkedin_status != "",
+        Contact.linkedin_status != "none",
+    )
+
+
+def meetings_booked_clause():
+    return Contact.sequence_status == "meeting_booked"
+
+
 def _parse_multi_query(value: str | None) -> list[str]:
     if not value:
         return []
@@ -246,7 +274,7 @@ class ContactRepository(BaseRepository[Contact]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Contact, session)
 
-    async def list_with_company_name(
+    def _filtered_statements(
         self,
         company_id: Optional[UUID] = None,
         q: Optional[str] = None,
@@ -257,8 +285,6 @@ class ContactRepository(BaseRepository[Contact]):
         call_disposition: Optional[str] = None,
         email_state: Optional[str] = None,
         linkedin_status: Optional[str] = None,
-        sort_by: Optional[str] = None,
-        sort_dir: Optional[str] = None,
         ae_id: Optional[str] = None,
         sdr_id: Optional[str] = None,
         owner_id: Optional[str] = None,
@@ -278,14 +304,20 @@ class ContactRepository(BaseRepository[Contact]):
         next_followup_before: Optional[datetime] = None,
         call_last_after: Optional[datetime] = None,
         call_last_before: Optional[datetime] = None,
-        skip: int = 0,
-        limit: int = 50,
-    ) -> tuple[list[ContactRead], int]:
-        """
-        Return contacts with company_name populated via SQL JOIN.
+        emails_opened: Optional[bool] = None,
+        linkedin_active: Optional[bool] = None,
+        meetings_booked: Optional[bool] = None,
+    ):
+        """Build the fully-filtered list SELECT + matching COUNT statement.
 
-        This replaces the two-call pattern (GET /contacts + GET /companies)
-        that the frontend was forced to use when company_name wasn't in the response.
+        Single filter source shared by ``list_with_company_name`` (the
+        prospects list + CSV export) AND ``aggregate_engagement_stats``
+        (GET /contacts/stats). Every ``.where()`` is applied to BOTH
+        statements, so the page, its total, the export, and the KPI tile
+        counts can never disagree about which prospects are in scope.
+
+        Returns ``(base_stmt, count_stmt, search_rank)``; ``search_rank`` is
+        the optional relevance ordering expression for the broad search.
         """
         ae_user = aliased(User)
         sdr_user = aliased(User)
@@ -684,6 +716,21 @@ class ContactRepository(BaseRepository[Contact]):
             base_stmt = base_stmt.where(email_filter)
             count_stmt = count_stmt.where(email_filter)
 
+        # KPI tile filters — True applies the predicate, None/False is a no-op
+        # (the tiles only ever send true; there is no "not opened" tile). The
+        # clauses are the module-level helpers shared with
+        # aggregate_engagement_stats so tile counts and tile-click results
+        # always agree.
+        if emails_opened:
+            base_stmt = base_stmt.where(emails_opened_clause())
+            count_stmt = count_stmt.where(emails_opened_clause())
+        if linkedin_active:
+            base_stmt = base_stmt.where(linkedin_active_clause())
+            count_stmt = count_stmt.where(linkedin_active_clause())
+        if meetings_booked:
+            base_stmt = base_stmt.where(meetings_booked_clause())
+            count_stmt = count_stmt.where(meetings_booked_clause())
+
         ae_ids = _parse_uuid_values(ae_id)
         sdr_ids = _parse_uuid_values(sdr_id)
         owner_ids = _parse_uuid_values(owner_id)
@@ -946,6 +993,88 @@ class ContactRepository(BaseRepository[Contact]):
                 base_stmt = base_stmt.where(tz_filter)
                 count_stmt = count_stmt.where(tz_filter)
 
+        return base_stmt, count_stmt, search_rank
+
+    async def list_with_company_name(
+        self,
+        company_id: Optional[UUID] = None,
+        q: Optional[str] = None,
+        q_field: Optional[str] = None,
+        q_match: Optional[str] = None,
+        persona: Optional[str] = None,
+        sequence_status: Optional[str] = None,
+        call_disposition: Optional[str] = None,
+        email_state: Optional[str] = None,
+        linkedin_status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_dir: Optional[str] = None,
+        ae_id: Optional[str] = None,
+        sdr_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        restrict_to_owner_id: Optional[str] = None,
+        restrict_to_role: Optional[str] = None,
+        scope_any_match: bool = False,
+        prospect_only: bool = False,
+        company_account_status: Optional[str] = None,
+        include_disabled_accounts: bool = False,
+        timezone: Optional[str] = None,
+        call_outcome_color: Optional[list[str]] = None,
+        email_outcome_color: Optional[list[str]] = None,
+        call_attempts_bucket: Optional[list[str]] = None,
+        call_attempt_min: Optional[int] = None,
+        call_attempt_max: Optional[int] = None,
+        next_followup_after: Optional[datetime] = None,
+        next_followup_before: Optional[datetime] = None,
+        call_last_after: Optional[datetime] = None,
+        call_last_before: Optional[datetime] = None,
+        emails_opened: Optional[bool] = None,
+        linkedin_active: Optional[bool] = None,
+        meetings_booked: Optional[bool] = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[ContactRead], int]:
+        """
+        Return contacts with company_name populated via SQL JOIN.
+
+        This replaces the two-call pattern (GET /contacts + GET /companies)
+        that the frontend was forced to use when company_name wasn't in the response.
+        Filtering lives in ``_filtered_statements`` (shared with the stats
+        aggregate); this method adds ordering, pagination, and row hydration.
+        """
+        base_stmt, count_stmt, search_rank = self._filtered_statements(
+            company_id=company_id,
+            q=q,
+            q_field=q_field,
+            q_match=q_match,
+            persona=persona,
+            sequence_status=sequence_status,
+            call_disposition=call_disposition,
+            email_state=email_state,
+            linkedin_status=linkedin_status,
+            ae_id=ae_id,
+            sdr_id=sdr_id,
+            owner_id=owner_id,
+            restrict_to_owner_id=restrict_to_owner_id,
+            restrict_to_role=restrict_to_role,
+            scope_any_match=scope_any_match,
+            prospect_only=prospect_only,
+            company_account_status=company_account_status,
+            include_disabled_accounts=include_disabled_accounts,
+            timezone=timezone,
+            call_outcome_color=call_outcome_color,
+            email_outcome_color=email_outcome_color,
+            call_attempts_bucket=call_attempts_bucket,
+            call_attempt_min=call_attempt_min,
+            call_attempt_max=call_attempt_max,
+            next_followup_after=next_followup_after,
+            next_followup_before=next_followup_before,
+            call_last_after=call_last_after,
+            call_last_before=call_last_before,
+            emails_opened=emails_opened,
+            linkedin_active=linkedin_active,
+            meetings_booked=meetings_booked,
+        )
+
         total = (await self.session.execute(count_stmt)).scalar_one()
 
         # Explicit sort overrides the default search-rank + created_at ordering.
@@ -1010,6 +1139,111 @@ class ContactRepository(BaseRepository[Contact]):
 
         await apply_contact_tracking(self.session, result)
         return result, total
+
+    async def aggregate_engagement_stats(
+        self,
+        company_id: Optional[UUID] = None,
+        q: Optional[str] = None,
+        q_field: Optional[str] = None,
+        q_match: Optional[str] = None,
+        persona: Optional[str] = None,
+        sequence_status: Optional[str] = None,
+        call_disposition: Optional[str] = None,
+        email_state: Optional[str] = None,
+        linkedin_status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_dir: Optional[str] = None,
+        ae_id: Optional[str] = None,
+        sdr_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        restrict_to_owner_id: Optional[str] = None,
+        restrict_to_role: Optional[str] = None,
+        scope_any_match: bool = False,
+        prospect_only: bool = False,
+        company_account_status: Optional[str] = None,
+        include_disabled_accounts: bool = False,
+        timezone: Optional[str] = None,
+        call_outcome_color: Optional[list[str]] = None,
+        email_outcome_color: Optional[list[str]] = None,
+        call_attempts_bucket: Optional[list[str]] = None,
+        call_attempt_min: Optional[int] = None,
+        call_attempt_max: Optional[int] = None,
+        next_followup_after: Optional[datetime] = None,
+        next_followup_before: Optional[datetime] = None,
+        call_last_after: Optional[datetime] = None,
+        call_last_before: Optional[datetime] = None,
+        emails_opened: Optional[bool] = None,
+        linkedin_active: Optional[bool] = None,
+        meetings_booked: Optional[bool] = None,
+    ) -> dict[str, int]:
+        """One-query engagement aggregate over the FULL filtered prospect set.
+
+        Powers ``GET /contacts/stats`` — the KPI tiles on the Prospecting page.
+        The WHERE clause is built by the same ``_filtered_statements`` the list
+        and export use (including the visibility gate), so the tiles count the
+        whole filtered population, not just the visible 50-row page. Conditional
+        counts use ``count(CASE WHEN … THEN 1 END)`` so it stays one round-trip.
+
+        ``sort_by`` / ``sort_dir`` are accepted for ``ContactFilters`` parity
+        (the endpoint forwards ``as_repo_kwargs()`` wholesale) and ignored.
+        """
+        _base_stmt, count_stmt, _search_rank = self._filtered_statements(
+            company_id=company_id,
+            q=q,
+            q_field=q_field,
+            q_match=q_match,
+            persona=persona,
+            sequence_status=sequence_status,
+            call_disposition=call_disposition,
+            email_state=email_state,
+            linkedin_status=linkedin_status,
+            ae_id=ae_id,
+            sdr_id=sdr_id,
+            owner_id=owner_id,
+            restrict_to_owner_id=restrict_to_owner_id,
+            restrict_to_role=restrict_to_role,
+            scope_any_match=scope_any_match,
+            prospect_only=prospect_only,
+            company_account_status=company_account_status,
+            include_disabled_accounts=include_disabled_accounts,
+            timezone=timezone,
+            call_outcome_color=call_outcome_color,
+            email_outcome_color=email_outcome_color,
+            call_attempts_bucket=call_attempts_bucket,
+            call_attempt_min=call_attempt_min,
+            call_attempt_max=call_attempt_max,
+            next_followup_after=next_followup_after,
+            next_followup_before=next_followup_before,
+            call_last_after=call_last_after,
+            call_last_before=call_last_before,
+            emails_opened=emails_opened,
+            linkedin_active=linkedin_active,
+            meetings_booked=meetings_booked,
+        )
+
+        # Rebuild the aggregate SELECT explicitly (same FROM/JOIN as the count
+        # statement) and reuse the count statement's accumulated WHERE clause
+        # verbatim — no re-derivation, no drift.
+        stats_stmt = (
+            select(
+                func.count(Contact.id).label("total"),
+                func.count(case((emails_opened_clause(), 1))).label("emails_opened"),
+                func.count(case((linkedin_active_clause(), 1))).label("linkedin_active"),
+                func.count(case((meetings_booked_clause(), 1))).label("meetings_booked"),
+            )
+            .select_from(Contact)
+            .outerjoin(Company, Contact.company_id == Company.id)
+        )
+        if count_stmt.whereclause is not None:
+            stats_stmt = stats_stmt.where(count_stmt.whereclause)
+
+        row = (await self.session.execute(stats_stmt)).one()
+        return {
+            "total": int(row.total or 0),
+            "emails_opened": int(row.emails_opened or 0),
+            "linkedin_active": int(row.linkedin_active or 0),
+            "meetings_booked": int(row.meetings_booked or 0),
+        }
 
     async def delete_all(self) -> None:
         """Delete all contacts and their dependent records. Admin only.

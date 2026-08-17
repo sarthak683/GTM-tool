@@ -14,6 +14,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deal_stage_history import DealStageHistory
 
+# Canonical win/loss close reasons stored in DealStageHistory.reason (and
+# mirrored into Deal.qualification.close_reason). The frontend mirror lives in
+# frontend/src/lib/closeReasons.ts and the win/loss analytics rollup matches
+# on EXACTLY these values — do not rename/remove entries without coordinating
+# both sides.
+CLOSE_REASONS: tuple[str, ...] = (
+    "budget",
+    "timing",
+    "lost_to_competitor",
+    "no_response",
+    "not_a_fit",
+    "pricing",
+    "champion_left",
+    "other",
+)
+
 
 async def record_stage_transition(
     session: AsyncSession,

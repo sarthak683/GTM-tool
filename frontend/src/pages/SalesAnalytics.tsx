@@ -7,13 +7,14 @@ const SHOW_FORECAST_VIEW    = false;
 const SHOW_MONTHLY_FUNNEL   = false;
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Label,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -33,6 +34,7 @@ import {
   LoaderCircle,
   Mail,
   Phone,
+  RotateCw,
   Search,
   Sigma,
   TrendingUp,
@@ -57,10 +59,12 @@ import {
   type MeetingBucketDeal,
   type MeetingBookedFromDealItem,
   type PipelineDealRow,
+  type SalesQuotaState,
   type SalesRepActivityRow,
   type SalesRepWeeklyActivityRow,
   type SalesStageBucket,
   type SalesVelocityRow,
+  type SalesWinLoss,
 } from "../lib/api";
 import { getCachedUsers } from "../lib/cachedFetch";
 import { accountStatusOption } from "../lib/accountStatus";
@@ -71,6 +75,7 @@ import { SkeletonList } from "../components/ui/Skeleton";
 import {
   PerformanceTabContent,
   PERFORMANCE_TABS,
+  type AnalyticsFilterScope,
   type PerformanceTabKey,
 } from "./sales-analytics/PerformanceTabs";
 
@@ -91,6 +96,14 @@ const WINDOW_PRESETS = [
 ] as const;
 const windowPresetLabel = (days: number): string =>
   WINDOW_PRESETS.find((preset) => preset.days === days)?.label ?? `${days}d`;
+// Default window — also the value omitted from the URL to keep links clean.
+const DEFAULT_WINDOW_DAYS = 7;
+// URL search-param keys for the shareable/reloadable filter state.
+const PARAM_WINDOW = "window";
+const PARAM_FROM = "from";
+const PARAM_TO = "to";
+const PARAM_REPS = "reps";
+const PARAM_GEO = "geo";
 const GEO_OPTIONS = ["all", "unassigned", "America", "Rest of the World"] as const;
 const DEVELOPER_EMAILS = new Set(["sarthak@beacon.li"]);
 type SalesActivityMetric = "emails" | "manual_emails" | "instantly_emails" | "email_replies" | "calls" | "connected_calls" | "live_calls" | "linkedin_reachouts" | "meetings" | "total" | "demos_scheduled" | "demos_done" | "demos_converted" | "ae_demos_scheduled" | "ae_demos_done" | "ae_demos_converted";
@@ -140,6 +153,14 @@ function formatSnapshotTime(value?: string) {
   }).format(date);
 }
 
+// "2026-08-15" → "Aug 15". Date-only values must never go through
+// `new Date(iso)` (parsed as UTC midnight → previous day west of UTC).
+function formatWindowDay(iso?: string | null): string {
+  const parsed = parseDateOnly(iso);
+  if (!parsed) return "";
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 function formatCurrency(val: number | null | undefined): string {
   if (!val) return "—";
   if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
@@ -182,6 +203,39 @@ const exportBtnStyle: React.CSSProperties = {
   border: "1px solid #cfe0d2", background: "#f1f9e2", color: "#4d7c0f",
   borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer",
 };
+
+// Denser variant for in-card export buttons (leaderboards, focus mode) so the
+// control never out-weighs the data it sits above.
+const exportBtnCompactStyle: React.CSSProperties = {
+  ...exportBtnStyle,
+  padding: "5px 10px",
+  fontSize: 11,
+  borderRadius: 10,
+};
+
+// Filename-safe slug: lowercase, non-alphanumerics collapsed to a single dash.
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Loss-reason keys the backend emits, mapped to display labels. Anything
+// unrecognized falls back to a prettified version of the raw key so a new
+// backend reason never renders as a blank chip.
+const LOSS_REASON_LABELS: Record<string, string> = {
+  budget: "Budget",
+  timing: "Timing",
+  lost_to_competitor: "Lost to competitor",
+  no_response: "No response",
+  not_a_fit: "Not a fit",
+  pricing: "Pricing",
+  champion_left: "Champion left",
+  other: "Other",
+  unspecified: "Unspecified",
+};
+
+function lossReasonLabel(key: string): string {
+  return LOSS_REASON_LABELS[key] ?? key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
 
 // 11px uppercase group labels for the compact filter bar.
 const saFilterLabelStyle: React.CSSProperties = {
@@ -1337,7 +1391,7 @@ function HighlightsCard({
       title="Beacon Readout"
       subtitle="A quick operating narrative built from the live dashboard so managers can see the signal before drilling into charts."
       action={
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#f6f0ff", border: "1px solid #e7d8ff", color: "#6643b5", fontSize: 12, fontWeight: 700 }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#f3fbe3", border: "1px solid #d8ecb4", color: "#4d7c0f", fontSize: 12, fontWeight: 700 }}>
           <Sigma size={14} />
           Operating summary
         </div>
@@ -1358,10 +1412,10 @@ function HighlightsCard({
             type="button"
             onClick={() => onOpenHighlight(item)}
             style={{
-              borderRadius: 16,
-              border: "1px solid #ece7fb",
-              background: "linear-gradient(180deg, #fff 0%, #fbf9ff 100%)",
-              padding: 16,
+              borderRadius: 14,
+              border: "1px solid #e3e9f2",
+              background: "linear-gradient(180deg, #fff 0%, #fbfdf6 100%)",
+              padding: 14,
               display: "flex",
               gap: 12,
               alignItems: "flex-start",
@@ -1370,12 +1424,12 @@ function HighlightsCard({
               cursor: "pointer",
             }}
           >
-            <div style={{ width: 28, height: 28, borderRadius: 10, background: "#f3edff", color: "#7556cb", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 2 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 10, background: "#f3fbe3", color: "#4d7c0f", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 2 }}>
               <ArrowUpRight size={14} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#2d4055" }}>{item.message}</p>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#7556cb" }}>Open drilldown →</span>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#142335" }}>{item.message}</p>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#4d7c0f" }}>Open drilldown →</span>
             </div>
           </button>
           );
@@ -1385,18 +1439,62 @@ function HighlightsCard({
   );
 }
 
+// Headline metric + its period-over-period badge, sized to sit inline in the
+// dense leaderboard row header. Presentational only — no hooks.
+function PopStat({ label, curr, prev }: { label: string; curr: number; prev: number }) {
+  return (
+    <span
+      title={`${label}: ${curr} this period vs ${prev} in the prior equal-length period`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+    >
+      <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 800, color: "#142335", fontVariantNumeric: "tabular-nums" }}>{curr}</span>
+      <TrendBadge curr={curr} prev={prev} />
+    </span>
+  );
+}
+
+// Columns shared by both leaderboard CSVs. Kept next to the table so the
+// export can never drift from what the row actually renders.
+const REP_LEADERBOARD_CSV_HEADERS = [
+  "Rep", "Role", "Active Deals", "Pipeline", "Touches", "Prev Touches",
+  "Emails", "Prev Emails", "Manual Emails", "Instantly Emails", "Emails In",
+  "Calls", "Prev Calls", "Connected Calls", "Prev Connected Calls",
+  "LinkedIn", "Prev LinkedIn", "Meetings", "Prev Meetings",
+  "Demos Scheduled", "Demos Done", "Demos Converted",
+];
+
+function repLeaderboardCsvRow(row: SalesRepActivityRow, useAeDemos: boolean) {
+  return [
+    row.rep_name, row.role ?? "", row.active_deals, Math.round(row.pipeline_amount ?? 0),
+    row.total, row.prev_total ?? 0,
+    row.emails, row.prev_emails ?? 0, row.manual_emails ?? 0, row.instantly_emails ?? 0, row.email_replies,
+    row.calls, row.prev_calls ?? 0, row.connected_calls, row.prev_connected_calls ?? 0,
+    row.linkedin_reachouts, row.prev_linkedin_reachouts ?? 0, row.meetings, row.prev_meetings ?? 0,
+    useAeDemos ? (row.ae_demos_scheduled ?? 0) : row.demos_scheduled,
+    useAeDemos ? (row.ae_demos_done ?? 0) : row.demos_done,
+    useAeDemos ? (row.ae_demos_converted ?? 0) : row.demos_converted,
+  ];
+}
+
 function RepActivityTable({
   rows,
   onOpenMetric,
   showDemos = false,
   showAeDemos = false,
   emptyLabel = "No rep activity yet for this time range.",
+  exportName,
+  exportSuffix = "",
 }: {
   rows: SalesRepActivityRow[];
   onOpenMetric: (row: SalesRepActivityRow, metric: SalesActivityMetric) => void;
   showDemos?: boolean;
   showAeDemos?: boolean;
   emptyLabel?: string;
+  /** Filename stem, e.g. "sdr-leaderboard". Omit to hide the export button. */
+  exportName?: string;
+  /** Resolved window + filter hints appended to the filename. */
+  exportSuffix?: string;
 }) {
   if (rows.length === 0) {
     return <p className="crm-muted" style={{ margin: 0 }}>{emptyLabel}</p>;
@@ -1404,6 +1502,22 @@ function RepActivityTable({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {exportName && (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={() => downloadCsv(
+              `${exportName}${exportSuffix}`,
+              REP_LEADERBOARD_CSV_HEADERS,
+              rows.map((row) => repLeaderboardCsvRow(row, showAeDemos)),
+            )}
+            title={`Export ${rows.length} row${rows.length === 1 ? "" : "s"} as CSV`}
+            style={exportBtnCompactStyle}
+          >
+            <Download size={12} /> Export CSV
+          </button>
+        </div>
+      )}
       {rows.map((row, index) => (
         <div
           key={row.key}
@@ -1420,6 +1534,13 @@ function RepActivityTable({
             <div style={{ minWidth: 0 }}>
               <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#223446", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.rep_name}</p>
               <p style={{ margin: "4px 0 0", fontSize: 12, color: "#708195" }}>{row.active_deals} active deals • {formatShortCurrency(row.pipeline_amount)} pipeline</p>
+            </div>
+            {/* Period-over-period on the headline columns — current window vs
+                the immediately-preceding equal-length window, same scoping. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <PopStat label="Touches" curr={row.total} prev={row.prev_total ?? 0} />
+              <PopStat label="Connected" curr={row.connected_calls} prev={row.prev_connected_calls ?? 0} />
+              <PopStat label="Meetings" curr={row.meetings} prev={row.prev_meetings ?? 0} />
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
@@ -1507,11 +1628,11 @@ function AccountStatusBreakdown({ rows }: { rows: SalesAccountStatusRow[] }) {
         return (
           <div key={row.key} style={{ display: "grid", gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#243447" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#142335" }}>
                 <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
                 {row.label}
               </span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#5d7187" }}>{row.count} • {pct}%</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#68788d" }}>{row.count} • {pct}%</span>
             </div>
             <div style={{ height: 8, borderRadius: 999, background: bg, overflow: "hidden" }}>
               <div style={{ width: `${Math.max((row.count / max) * 100, row.count > 0 ? 6 : 0)}%`, height: "100%", borderRadius: 999, background: color }} />
@@ -1676,16 +1797,62 @@ function CurrencyBarTooltip({ active, payload, label }: TooltipProps<number, str
   );
 }
 
+// Chart data key → the metric id used in the analytics-settings target maps.
+const QUOTA_METRIC_BY_CHART_KEY: Record<string, string> = {
+  emails: "emails_sent",
+  connected_calls: "calls_connected",
+  meetings: "demos_booked",
+  demos_done: "demos_done",
+};
+
+/**
+ * Resolve a positive WEEKLY target for one rep + one chart metric.
+ *
+ * Lookup order: an explicit per-rep-id map wins, then the rep's role bucket
+ * ("sdr" / "ae"). Team totals are deliberately NOT a fallback here — these
+ * charts plot a single rep's bars, so a team-sized line would be mis-scaled.
+ * Returns null when nothing matches, which renders zero goal-line chrome.
+ */
+function resolveRepWeeklyTarget(
+  quota: SalesQuotaState | undefined,
+  chartKey: string,
+  userId?: string | null,
+  role?: string | null,
+): number | null {
+  if (!quota?.configured) return null;
+  const metric = QUOTA_METRIC_BY_CHART_KEY[chartKey];
+  const targets = quota.weekly_targets;
+  if (!metric || !targets) return null;
+  for (const key of [userId ?? "", (role ?? "").toLowerCase()]) {
+    if (!key) continue;
+    const value = targets[key]?.[metric];
+    if (typeof value === "number" && value > 0) return value;
+  }
+  return null;
+}
+
+const REP_FOCUS_CSV_HEADERS = [
+  "Rep", "Bucket", "Start", "End", "Emails", "Manual Emails", "Instantly Emails",
+  "Calls", "Connected Calls", "Live Calls", "LinkedIn", "Meetings", "Total",
+];
+
 function RepWeeklyActivityFocus({
   rows,
   onOpenBucket,
   onOpenPipeline,
   onOpenMeetingBookedFrom,
+  granularity = "weekly",
+  quota,
+  exportSuffix = "",
 }: {
   rows: SalesRepWeeklyActivityRow[];
   onOpenBucket?: (bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled", title: string, userId: string | null | undefined) => void;
   onOpenPipeline?: (userId: string | null | undefined, repName: string) => void;
   onOpenMeetingBookedFrom?: (channel: "Email" | "LinkedIn" | "Call", userId: string | null | undefined) => void;
+  /** Bucket size of `weeks` — the backend switches to daily on short windows. */
+  granularity?: "daily" | "weekly";
+  quota?: SalesQuotaState;
+  exportSuffix?: string;
 }) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
@@ -1732,6 +1899,14 @@ function RepWeeklyActivityFocus({
   const liMeetingBookedRate = liTotal > 0 ? Math.round((liMeetingBooked / liTotal) * 100) : 0;
   const callMeetingBooked = selectedRow.totals.call_meeting_booked ?? 0;
   const emailMeetingBooked = selectedRow.totals.email_meeting_booked ?? 0;
+  const bucketWord = granularity === "daily" ? "Daily" : "Weekly";
+  const bucketNoun = granularity === "daily" ? "day" : "week";
+  // Targets are configured per WEEK, so a goal line only makes sense while the
+  // bars are weekly buckets. On daily windows we draw nothing rather than
+  // compare a day's bar to a week's target.
+  const connectedCallTarget = granularity === "weekly"
+    ? resolveRepWeeklyTarget(quota, "connected_calls", selectedRow.user_id, selectedRow.totals.role)
+    : null;
 
   const meetingBookedButton = (channel: "Email" | "LinkedIn" | "Call", count: number, color: string) => (
     <button
@@ -1773,12 +1948,29 @@ function RepWeeklyActivityFocus({
                 <BarChart3 size={14} />
                 Focus mode
               </span>
+              <button
+                type="button"
+                onClick={() => downloadCsv(
+                  `rep-activity_${slugify(selectedRow.rep_name) || "rep"}${exportSuffix}`,
+                  REP_FOCUS_CSV_HEADERS,
+                  selectedRow.weeks.map((week) => [
+                    selectedRow.rep_name, week.label, week.week_start, week.week_end,
+                    week.emails, week.manual_emails, week.instantly_emails,
+                    week.calls, week.connected_calls, week.live_calls,
+                    week.linkedin_reachouts, week.meetings, week.total,
+                  ]),
+                )}
+                title={`Export ${selectedRow.rep_name}'s ${bucketNoun}-by-${bucketNoun} activity as CSV`}
+                style={exportBtnCompactStyle}
+              >
+                <Download size={12} /> Export CSV
+              </button>
             </div>
 
             <div>
               <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", color: "#142335" }}>{selectedRow.rep_name}</h3>
               <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.55, color: "#68788d", maxWidth: 720 }}>
-                Spotlighting one rep at a time keeps the weekly story readable. Use the rep buttons to switch context without redrawing a wall of charts.
+                Spotlighting one rep at a time keeps the {bucketWord.toLowerCase()} story readable. Use the rep buttons to switch context without redrawing a wall of charts.
               </p>
             </div>
 
@@ -1877,7 +2069,7 @@ function RepWeeklyActivityFocus({
                 </div>
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: "#6f8195" }}>
-                Use the first chart to read weekly outreach mix, then use the second chart to judge call quality and whether conversations are converting into real connects.
+                Use the first chart to read {bucketWord.toLowerCase()} outreach mix, then use the second chart to judge call quality and whether conversations are converting into real connects.
               </p>
             </div>
           </div>
@@ -1886,8 +2078,8 @@ function RepWeeklyActivityFocus({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
           <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
             <div>
-              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
-              <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars make weekly volume comparisons easier than separate mini-charts, while still showing which channel did the work.</p>
+              <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>{bucketWord} Outreach Mix</p>
+              <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars make {bucketWord.toLowerCase()} volume comparisons easier than separate mini-charts, while still showing which channel did the work.</p>
             </div>
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -1920,7 +2112,10 @@ function RepWeeklyActivityFocus({
             <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Call Quality</p>
-                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Grouped bars show whether raw dials are becoming connected calls and real conversations week over week.</p>
+                <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>
+                  Grouped bars show whether raw dials are becoming connected calls and real conversations {bucketNoun} over {bucketNoun}.
+                  {connectedCallTarget !== null ? ` The dashed line is this rep's weekly connected-call target (${connectedCallTarget}).` : ""}
+                </p>
               </div>
               <div style={{ width: "100%", height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -1930,6 +2125,15 @@ function RepWeeklyActivityFocus({
                     <YAxis tick={{ fill: "#7d8ea3", fontSize: 11 }} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => Math.round(v).toString()} allowDecimals={false} />
                     <Tooltip content={<WeeklyRepTooltip />} cursor={{ fill: "rgba(21, 115, 109, 0.05)" }} />
                     <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
+                    {connectedCallTarget !== null && (
+                      <ReferenceLine
+                        y={connectedCallTarget}
+                        stroke="#68788d"
+                        strokeDasharray="4 4"
+                        ifOverflow="extendDomain"
+                        label={{ value: `Target ${connectedCallTarget}`, position: "insideTopRight", fill: "#68788d", fontSize: 11, fontWeight: 700 }}
+                      />
+                    )}
                     {CALL_QUALITY_KEYS.map((key) => {
                       const metric = REP_ACTIVITY_META[key as keyof SalesRepActivityRow];
                       return (
@@ -2207,14 +2411,14 @@ function ConversionFunnelView({ steps }: { steps: SalesFunnelStep[] }) {
           const color = colors[i % colors.length];
           return (
             <div key={step.key} style={{ display: "grid", gridTemplateColumns: "minmax(86px, 0.5fr) minmax(120px, 2fr) auto", gap: 12, alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#2a3d54" }}>{step.label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{step.label}</span>
               <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden" }}>
                 <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: color, transition: "width 240ms ease" }} />
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", whiteSpace: "nowrap" }}>
-                <span style={{ fontSize: 14, fontWeight: 800, color: "#1f3144", fontVariantNumeric: "tabular-nums" }}>{step.count}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: "#142335", fontVariantNumeric: "tabular-nums" }}>{step.count}</span>
                 {typeof step.conversion_from_previous === "number" && (
-                  <span title={`${step.conversion_from_previous}% of the previous step converted here`} style={{ fontSize: 11, fontWeight: 700, color: "#5a7184", background: "#f4f7fb", border: "1px solid #e3ebf4", borderRadius: 999, padding: "2px 8px" }}>
+                  <span title={`${step.conversion_from_previous}% of the previous step converted here`} style={{ fontSize: 11, fontWeight: 700, color: "#68788d", background: "#f7f9fc", border: "1px solid #e3e9f2", borderRadius: 999, padding: "2px 8px" }}>
                     {step.conversion_from_previous}%
                   </span>
                 )}
@@ -2222,6 +2426,53 @@ function ConversionFunnelView({ steps }: { steps: SalesFunnelStep[] }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Closed-won / closed-lost outcomes inside the resolved window, with the
+// loss-reason mix underneath. Reason capture ships in the same release, so
+// "Unspecified" legitimately dominates until reps start filling it in.
+function WinLossView({ winLoss }: { winLoss: SalesWinLoss }) {
+  const won = winLoss.won_count ?? 0;
+  const lost = winLoss.lost_count ?? 0;
+  const winRate = winLoss.win_rate == null ? null : Math.round(winLoss.win_rate * 100);
+  const reasons = (winLoss.loss_reasons ?? []).filter((r) => (r.count ?? 0) > 0);
+  const maxReason = Math.max(...reasons.map((r) => r.count), 1);
+
+  const tiles: Array<{ label: string; value: string; sub: string; color: string; bg: string; border: string }> = [
+    { label: "Won", value: String(won), sub: formatShortCurrency(winLoss.won_amount), color: "#4d7c0f", bg: "#f3fbe3", border: "#d8ecb4" },
+    { label: "Lost", value: String(lost), sub: formatShortCurrency(winLoss.lost_amount), color: "#b94343", bg: "#fdeeee", border: "#f4cfd0" },
+    { label: "Win rate", value: winRate === null ? "—" : `${winRate}%`, sub: `${won + lost} closed`, color: "#142335", bg: "#f7f9fc", border: "#e3e9f2" },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+        {tiles.map((tile) => (
+          <div key={tile.label} style={{ borderRadius: 10, background: tile.bg, border: `1px solid ${tile.border}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: tile.color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{tile.label}</span>
+            <span style={{ fontSize: 21, lineHeight: 1, fontWeight: 800, color: "#142335", fontVariantNumeric: "tabular-nums" }}>{tile.value}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d" }}>{tile.sub}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.06em" }}>Loss reasons</span>
+        {reasons.length === 0 ? (
+          <p className="crm-muted" style={{ margin: 0, fontSize: 12 }}>No losses recorded in this window.</p>
+        ) : (
+          reasons.map((reason) => (
+            <div key={reason.reason} style={{ display: "grid", gridTemplateColumns: "minmax(96px, 0.9fr) minmax(80px, 2fr) auto", gap: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>{lossReasonLabel(reason.reason)}</span>
+              <div style={{ height: 8, borderRadius: 999, background: "#eef2f8", overflow: "hidden" }}>
+                <div style={{ width: `${Math.max((reason.count / maxReason) * 100, 6)}%`, height: "100%", borderRadius: 999, background: "#e29a9a" }} />
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 800, color: "#68788d", fontVariantNumeric: "tabular-nums" }}>{reason.count}</span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -2411,7 +2662,9 @@ const ALL_TABS: Array<{ key: string; label: string }> = [
   ...PERFORMANCE_TABS.map((t) => ({ key: t.key, label: t.label })),
 ];
 
-function TabStrip({ active }: { active: string }) {
+// `search` carries the global filter scope across tab switches so the URL (and
+// therefore a reload from any tab) keeps the same window/rep/geo selection.
+function TabStrip({ active, search = "" }: { active: string; search?: string }) {
   return (
     <nav
       style={{
@@ -2428,7 +2681,8 @@ function TabStrip({ active }: { active: string }) {
       }}
     >
       {ALL_TABS.map((t) => {
-        const to = t.key === "overview" ? "/sales-analytics" : `/sales-analytics/${t.key}`;
+        const path = t.key === "overview" ? "/sales-analytics" : `/sales-analytics/${t.key}`;
+        const to = search ? `${path}?${search}` : path;
         const isActive = t.key === active;
         return (
           <NavLink
@@ -2459,9 +2713,30 @@ function TabStrip({ active }: { active: string }) {
   );
 }
 
+// Read the initial filter state out of the URL so a reloaded or shared link
+// restores exactly what the sender was looking at. Anything missing or
+// malformed falls back to the page default.
+function readWindowDaysParam(search: string): number {
+  const raw = new URLSearchParams(search).get(PARAM_WINDOW);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_WINDOW_DAYS;
+}
+
+function readListParam(search: string, key: string): string[] {
+  const raw = new URLSearchParams(search).get(key);
+  if (!raw) return [];
+  return raw.split(",").map((value) => value.trim()).filter(Boolean);
+}
+
+function readDateParam(search: string, key: string): string {
+  const raw = new URLSearchParams(search).get(key) ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
 export default function SalesAnalytics() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { tab: tabParam } = useParams<{ tab?: string }>();
   const activeTab = (ALL_TABS.find((t) => t.key === tabParam)?.key ?? "overview") as
     | "overview"
@@ -2488,12 +2763,18 @@ export default function SalesAnalytics() {
       .catch(() => setPods([]));
   }, []);
 
-  const [windowDays, setWindowDays] = useState<number>(7);
+  // Filter state is URL-seeded on mount (see the mirroring effect below), so a
+  // reload or a pasted link lands on the same scope. Lazy initializers run once.
+  const [windowDays, setWindowDays] = useState<number>(() => readWindowDaysParam(window.location.search));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [repFilter, setRepFilter] = useState<string[]>([]);
-  const [geographyFilter, setGeographyFilter] = useState<string[]>([]);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [repFilter, setRepFilter] = useState<string[]>(() => readListParam(window.location.search, PARAM_REPS));
+  const [geographyFilter, setGeographyFilter] = useState<string[]>(() => readListParam(window.location.search, PARAM_GEO));
+  const [fromDate, setFromDate] = useState(() => readDateParam(window.location.search, PARAM_FROM));
+  const [toDate, setToDate] = useState(() => readDateParam(window.location.search, PARAM_TO));
+  // Bumped by the refresh button; the fetch effect reads the ref and clears it
+  // so only that one request bypasses the 45s server cache.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const forceRefreshRef = useRef(false);
   const [forecastGranularity, setForecastGranularity] = useState<"week" | "month" | "custom">("month");
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastRows, setForecastRows] = useState<SalesForecastRow[]>([]);
@@ -2561,13 +2842,40 @@ export default function SalesAnalytics() {
     setRepFilter((current) => current.filter((id) => id !== user.id));
   }, [hideDeveloper, user?.id]);
 
+  // The filter scope as a query string. Params sitting at their default value
+  // are omitted so shared links stay short and readable.
+  const filterSearch = useMemo(() => {
+    const params = new URLSearchParams();
+    if (fromDate && toDate) {
+      params.set(PARAM_FROM, fromDate);
+      params.set(PARAM_TO, toDate);
+    } else if (windowDays !== DEFAULT_WINDOW_DAYS) {
+      params.set(PARAM_WINDOW, String(windowDays));
+    }
+    if (repFilter.length > 0) params.set(PARAM_REPS, repFilter.join(","));
+    if (geographyFilter.length > 0) params.set(PARAM_GEO, geographyFilter.join(","));
+    return params.toString();
+  }, [windowDays, fromDate, toDate, repFilter, geographyFilter]);
+
+  // Mirror the scope into the URL (replace, so filter fiddling never floods the
+  // back stack). Comparing against the live search first makes this a no-op
+  // once they agree, which is what stops the navigate → re-render → navigate loop.
+  useEffect(() => {
+    const current = location.search.replace(/^\?/, "");
+    if (current === filterSearch) return;
+    navigate({ search: filterSearch ? `?${filterSearch}` : "" }, { replace: true });
+  }, [filterSearch, location.search, navigate]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Consume the one-shot force flag: only the click that set it skips cache.
+    const bypassCache = forceRefreshRef.current;
+    forceRefreshRef.current = false;
 
     analyticsApi
-      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined, forecastGranularity === "custom" ? undefined : forecastGranularity)
+      .salesDashboard(windowDays, repFilter, geographyFilter, fromDate || undefined, toDate || undefined, forecastGranularity === "custom" ? undefined : forecastGranularity, bypassCache)
       .then((payload) => {
         if (!cancelled) {
           setData(payload);
@@ -2586,7 +2894,7 @@ export default function SalesAnalytics() {
     return () => {
       cancelled = true;
     };
-  }, [windowDays, repFilter, geographyFilter, fromDate, toDate]);
+  }, [windowDays, repFilter, geographyFilter, fromDate, toDate, refreshNonce]);
 
   // Week/month forecast buckets both ship in the main payload, so toggling
   // granularity is now instant and client-side (no refetch). Only a custom date
@@ -2608,6 +2916,49 @@ export default function SalesAnalytics() {
       });
     return () => { cancelled = true; };
   }, [forecastGranularity, forecastCustomFrom, forecastCustomTo, windowDays, repFilter, geographyFilter]);
+
+  // The window the BACKEND actually resolved, echoed back in the payload. This
+  // is what the "As of" strip shows and what CSV filenames carry — never the
+  // raw picker values, which can disagree (e.g. "All" → a clamped range).
+  const resolvedFrom = data?.from_date ?? (fromDate || null);
+  const resolvedTo = data?.to_date ?? (toDate || null);
+  const resolvedWindowLabel = useMemo(() => {
+    const start = formatWindowDay(resolvedFrom);
+    const end = formatWindowDay(resolvedTo);
+    if (!start || !end) return "";
+    return start === end ? start : `${start} – ${end}`;
+  }, [resolvedFrom, resolvedTo]);
+
+  // Filenames carry their scope so two exports taken minutes apart with
+  // different filters never collide in the downloads folder.
+  const exportSuffix = useMemo(() => {
+    const parts: string[] = [];
+    if (resolvedFrom) parts.push(resolvedFrom);
+    if (resolvedTo && resolvedTo !== resolvedFrom) parts.push(resolvedTo);
+    if (repFilter.length === 1) parts.push(`rep-${slugify(selectedRepNames[0] ?? repFilter[0])}`);
+    else if (repFilter.length > 1) parts.push(`reps-${repFilter.length}`);
+    if (geographyFilter.length === 1) parts.push(`geo-${slugify(geographyFilter[0])}`);
+    else if (geographyFilter.length > 1) parts.push(`geo-${geographyFilter.length}`);
+    return parts.length > 0 ? `_${parts.join("_")}` : "";
+  }, [resolvedFrom, resolvedTo, repFilter, geographyFilter, selectedRepNames]);
+
+  // One object so every performance tab scopes to the same global bar.
+  const filterScope = useMemo<AnalyticsFilterScope>(() => ({
+    windowDays,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+    repIds: repFilter,
+    geographies: geographyFilter,
+    refreshNonce,
+  }), [windowDays, fromDate, toDate, repFilter, geographyFilter, refreshNonce]);
+
+  const activityGranularity = data?.activity_bucket_granularity === "daily" ? "daily" : "weekly";
+
+  // An all-zero win/loss card is noise, not information — hide it until the
+  // window actually contains a closed deal.
+  const showWinLoss = Boolean(
+    data?.win_loss && ((data.win_loss.won_count ?? 0) > 0 || (data.win_loss.lost_count ?? 0) > 0),
+  );
 
   // The rows the Forecast chart actually renders: custom uses the fetched rows;
   // week/month read straight from the already-loaded dashboard payload.
@@ -2677,7 +3028,7 @@ export default function SalesAnalytics() {
     setMeetingBucketDeals([]);
     setMeetingBucketLoading(true);
     analyticsApi
-      .meetingBucketDeals(bucket, userId, windowDays, geographyFilter[0])
+      .meetingBucketDeals(bucket, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined)
       .then((r) => setMeetingBucketDeals(r.deals))
       .catch(() => setMeetingBucketDeals([]))
       .finally(() => setMeetingBucketLoading(false));
@@ -2692,7 +3043,7 @@ export default function SalesAnalytics() {
     setMeetingBookedFromError("");
     setMeetingBookedFromLoading(true);
     analyticsApi
-      .meetingBookedFromDeals(channel, userId, windowDays)
+      .meetingBookedFromDeals(channel, userId, windowDays, geographyFilter, fromDate || undefined, toDate || undefined)
       .then(setMeetingBookedFromDeals)
       .catch((requestError: Error) => setMeetingBookedFromError(requestError.message || "Failed to load meeting details"))
       .finally(() => setMeetingBookedFromLoading(false));
@@ -3168,13 +3519,43 @@ export default function SalesAnalytics() {
             placeholder="All geographies"
           />
         </div>
+        {/* Snapshot age + the window the backend actually resolved, plus a
+            manual refresh that bypasses the 45s server-side cache. */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8 }}>
+          <div style={{ display: "grid", gap: 2, textAlign: "right", lineHeight: 1.35 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d", whiteSpace: "nowrap" }}>
+              {data?.generated_at ? `As of ${formatSnapshotTime(data.generated_at)}` : loading ? "Loading…" : "—"}
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", whiteSpace: "nowrap" }}>
+              {usingCustomRange ? "Custom" : windowPresetLabel(windowDays)}
+              {resolvedWindowLabel ? ` · ${resolvedWindowLabel}` : ""}
+            </span>
+          </div>
+          {/* Visuals live in sales-analytics-refresh.css (.sa-refresh-button) —
+              .crm-button's 36px min-height and global hover lift both have to be
+              neutralized, which is not something an inline style can do. */}
+          <button
+            type="button"
+            className="crm-button sa-refresh-button"
+            onClick={() => {
+              if (loading) return;
+              forceRefreshRef.current = true;
+              setRefreshNonce((n) => n + 1);
+            }}
+            disabled={loading}
+            aria-label="Refresh dashboard"
+            title="Refresh — recomputes now instead of serving the cached snapshot"
+          >
+            {loading ? <LoaderCircle size={14} className="spin" /> : <RotateCw size={14} />}
+          </button>
+        </div>
       </section>
 
-      <TabStrip active={activeTab} />
+      <TabStrip active={activeTab} search={filterSearch} />
 
       <div ref={tabContentRef} className="sa-tab-content">
         {activeTab !== "overview" ? (
-          <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} />
+          <PerformanceTabContent tab={activeTab as PerformanceTabKey} reps={perfReps} filters={filterScope} />
         ) : (
         <>
       {error && (
@@ -3200,6 +3581,10 @@ export default function SalesAnalytics() {
           )}
 
 
+          {data.highlights.length > 0 && (
+            <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
+          )}
+
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", color: "#142335" }}>Overall Performance</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {metricCards.map((card) => (
@@ -3210,6 +3595,23 @@ export default function SalesAnalytics() {
                 onOpenBucket={card.label === "Demo Scheduled" ? (bucket, title) => handleOpenMeetingBucket(bucket, title, undefined) : undefined}
               />
             ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>
+            {showWinLoss && (
+              <SectionCard
+                title="Win / Loss"
+                subtitle="Deals that closed inside this window, split won versus lost, with the reason mix behind the losses."
+              >
+                <WinLossView winLoss={data.win_loss as SalesWinLoss} />
+              </SectionCard>
+            )}
+            <SectionCard
+              title="Conversion Funnel"
+              subtitle="Step-to-step conversion through the pipeline for this window. Each badge is the share of the previous step that made it here."
+            >
+              <ConversionFunnelView steps={data.conversion_funnel} />
+            </SectionCard>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>
@@ -3224,6 +3626,8 @@ export default function SalesAnalytics() {
                 onOpenMetric={handleOpenActivityMetric}
                 showDemos
                 emptyLabel="No SDR activity yet for this time range."
+                exportName="sdr-leaderboard"
+                exportSuffix={exportSuffix}
               />
             </SectionCard>
 
@@ -3238,21 +3642,35 @@ export default function SalesAnalytics() {
                 onOpenMetric={handleOpenActivityMetric}
                 showAeDemos
                 emptyLabel="No AE activity yet for this time range."
+                exportName="ae-leaderboard"
+                exportSuffix={exportSuffix}
               />
             </SectionCard>
           </div>
 
           <SectionCard
             title="Rep Activity"
-            subtitle="Focus on the highest-activity rep by default, then switch reps with the selector. Stacked weekly bars show outreach mix, and grouped bars show call quality without overwhelming the screen."
+            subtitle={`Focus on the highest-activity rep by default, then switch reps with the selector. Stacked ${activityGranularity} bars show outreach mix, and grouped bars show call quality without overwhelming the screen.`}
           >
             <RepWeeklyActivityFocus
               rows={visibleRepWeeklyActivity}
               onOpenBucket={handleOpenMeetingBucket}
               onOpenPipeline={handleOpenPipelineDeals}
               onOpenMeetingBookedFrom={handleOpenMeetingBookedFrom}
+              granularity={activityGranularity}
+              quota={data.quota}
+              exportSuffix={exportSuffix}
             />
           </SectionCard>
+
+          {(data.accounts_by_status ?? []).length > 0 && (
+            <SectionCard
+              title="Accounts by Status"
+              subtitle="Where sourced accounts currently sit, so sourcing volume can be read against how much of it is actually moving."
+            >
+              <AccountStatusBreakdown rows={data.accounts_by_status ?? []} />
+            </SectionCard>
+          )}
 
           {SHOW_DEAL_VELOCITY && <SectionCard
             title="Deal Velocity / Aging"

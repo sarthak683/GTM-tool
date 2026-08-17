@@ -184,6 +184,13 @@ class DealRead(DealBase):
     company_name: Optional[str] = None
     assigned_rep_name: Optional[str] = None
     contact_count: int = 0
+    # Stall detection — computed live by DealRepository from the workspace's
+    # per-stage stuck thresholds (analytics_settings.stuck_thresholds_days,
+    # BUSINESS-day dwell). stall_threshold_days is None when the current stage
+    # has no configured threshold or is a closed stage; closed stages are
+    # never stalled.
+    stall_threshold_days: Optional[int] = None
+    is_stalled: bool = False
     # Computed from qualification.meddpicc
     meddpicc_score: Optional[int] = None
     seller_engagement_at: Optional[datetime] = None

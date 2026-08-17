@@ -345,6 +345,175 @@ export const customDemoApi = {
   htmlUrl: (id: string) => `${BASE}/api/v1/custom-demos/${id}/html`,
 };
 
+/**
+ * Every filter the Account Sourcing accounts list understands — the frontend
+ * twin of the backend's `CompanySourcingFilters` dependency.
+ *
+ * The list, the summary (KPI strip), the CSV export and the filter-wide
+ * bulk-assign all serialize through `buildAccountSourcingQuery`, so the four
+ * populations agree by construction. Before this existed, "Download filtered"
+ * sent only the prospect-count bounds and quietly exported the whole
+ * workspace.
+ */
+export interface AccountSourcingFilters {
+  q?: string;
+  icpTier?: string[];
+  disposition?: string[];
+  /** `unset` = no status. Passing not_a_fit/dnd lifts the disabled-account hiding. */
+  accountStatus?: string[];
+  recommendedOutreachLane?: string[];
+  assignedRep?: string;
+  assignedRepEmail?: string;
+  /** Matches AE **or** SDR ownership. `__unassigned__` = neither slot set. */
+  ownerId?: string | string[];
+  aeId?: string | string[];
+  sdrId?: string | string[];
+  /** `not_scored` = no Recotap journey stage. */
+  journeyStage?: string[];
+  batchId?: string;
+  prospectsMin?: number;
+  prospectsMax?: number;
+  companyIds?: string[];
+}
+
+/** Server-side sort keys accepted by the list + export (anything else → 422). */
+export type AccountSourcingSortKey =
+  | "created_at"
+  | "name"
+  | "icp_score"
+  | "prospect_count"
+  | "enriched_at";
+
+export interface AccountSourcingSort {
+  sort?: AccountSourcingSortKey;
+  /** Omitted → desc, except `name` → asc. */
+  order?: "asc" | "desc";
+}
+
+function appendMulti(search: URLSearchParams, key: string, value?: string | string[]) {
+  const joined = Array.isArray(value) ? value.join(",") : value;
+  if (joined) search.set(key, joined);
+}
+
+/** Serialize the page's active filter state into the shared query params. */
+export function buildAccountSourcingQuery(
+  filters?: AccountSourcingFilters,
+  sort?: AccountSourcingSort,
+): URLSearchParams {
+  const search = new URLSearchParams();
+  if (filters?.q) search.set("q", filters.q);
+  appendMulti(search, "icp_tier", filters?.icpTier);
+  appendMulti(search, "disposition", filters?.disposition);
+  appendMulti(search, "account_status", filters?.accountStatus);
+  appendMulti(search, "recommended_outreach_lane", filters?.recommendedOutreachLane);
+  if (filters?.assignedRep) search.set("assigned_rep", filters.assignedRep);
+  if (filters?.assignedRepEmail) search.set("assigned_rep_email", filters.assignedRepEmail);
+  appendMulti(search, "owner_id", filters?.ownerId);
+  appendMulti(search, "ae_id", filters?.aeId);
+  appendMulti(search, "sdr_id", filters?.sdrId);
+  appendMulti(search, "journey_stage", filters?.journeyStage);
+  if (filters?.batchId) search.set("batch_id", filters.batchId);
+  if (filters?.prospectsMin !== undefined) search.set("prospects_min", String(filters.prospectsMin));
+  if (filters?.prospectsMax !== undefined) search.set("prospects_max", String(filters.prospectsMax));
+  appendMulti(search, "company_ids", filters?.companyIds);
+  if (sort?.sort) search.set("sort", sort.sort);
+  if (sort?.order) search.set("order", sort.order);
+  return search;
+}
+
+/** Error carrying the HTTP status, so callers can branch on 409 vs 422. */
+export class AccountSourcingHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "AccountSourcingHttpError";
+    this.status = status;
+  }
+}
+
+async function requestWithStatus<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = err?.detail;
+    const message =
+      typeof detail === "string" && detail
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d) => (typeof d === "string" ? d : d?.msg)).filter(Boolean).join("; ")
+          : res.statusText || "Request failed";
+    throw new AccountSourcingHttpError(res.status, message);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export interface FilterAssignResult {
+  matched: number;
+  updated: number;
+  skipped: number;
+  user_id: string | null;
+  role: "ae" | "sdr";
+  /** Prospects held by a third rep — deliberately left where they were. */
+  prospects_kept_divergent: number;
+}
+
+// ── Admin data-health (Needs review) ────────────────────────────────────────
+
+export interface SdrConflictRow {
+  company_id: string;
+  company_name: string;
+  company_sdr_id: string;
+  company_sdr_name: string | null;
+  contact_sdr_id: string;
+  contact_sdr_name: string | null;
+  prospect_count: number;
+}
+
+export interface MisattachedProspectRow {
+  contact_id: string;
+  contact_name: string;
+  contact_email: string | null;
+  contact_domain: string | null;
+  contact_sdr_name: string | null;
+  current_company_id: string;
+  current_company_name: string | null;
+  current_company_domain: string | null;
+  company_dominant_domain: string | null;
+  dominant_contact_count: number;
+  /** null = no existing home for this prospect; do NOT offer a re-link. */
+  suggested_company_id: string | null;
+  suggested_company_name: string | null;
+  suggested_company_domain: string | null;
+  evidence: string;
+}
+
+export interface DomainCorrectionRow {
+  company_id: string;
+  company_name: string;
+  current_domain: string | null;
+  suggested_domain: string;
+  evidence_count: number;
+  /** true = another live account already owns it → merge, don't rename. */
+  suggested_domain_taken: boolean;
+}
+
+export interface DataHealthSection<T> {
+  total: number;
+  rows: T[];
+}
+
+export interface SourcingDataHealth {
+  generated_at: string;
+  sdr_conflicts: DataHealthSection<SdrConflictRow>;
+  misattached: DataHealthSection<MisattachedProspectRow>;
+  domain_corrections: DataHealthSection<DomainCorrectionRow>;
+}
+
 export const accountSourcingApi = {
   upload: async (file: File): Promise<SourcingBatch> => {
     const form = new FormData();
@@ -385,49 +554,56 @@ export const accountSourcingApi = {
   listCompanies: (skip = 0, limit = 200, assignedRepEmail?: string) =>
     requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}${assignedRepEmail ? `&assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`),
 
-  listCompaniesPaginated: (params?: {
-    skip?: number;
-    limit?: number;
-    q?: string;
-    icpTier?: string[];
-    disposition?: string[];
-    accountStatus?: string[];
-    recommendedOutreachLane?: string[];
-    assignedRepEmail?: string;
-    ownerId?: string | string[];
-    aeId?: string | string[];
-    sdrId?: string | string[];
-    journeyStage?: string[];
-    prospectsMin?: number;
-    prospectsMax?: number;
-  }) => {
-    const search = new URLSearchParams({
-      skip: String(params?.skip ?? 0),
-      limit: String(params?.limit ?? 50),
-    });
-    if (params?.q) search.set("q", params.q);
-    if (params?.icpTier?.length) search.set("icp_tier", params.icpTier.join(","));
-    if (params?.disposition?.length) search.set("disposition", params.disposition.join(","));
-    if (params?.accountStatus?.length) search.set("account_status", params.accountStatus.join(","));
-    if (params?.recommendedOutreachLane?.length) search.set("recommended_outreach_lane", params.recommendedOutreachLane.join(","));
-    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
-    if (params?.ownerId) {
-      const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
-      if (ownerValue) search.set("owner_id", ownerValue);
-    }
-    if (params?.aeId) {
-      const aeValue = Array.isArray(params.aeId) ? params.aeId.join(",") : params.aeId;
-      if (aeValue) search.set("ae_id", aeValue);
-    }
-    if (params?.sdrId) {
-      const sdrValue = Array.isArray(params.sdrId) ? params.sdrId.join(",") : params.sdrId;
-      if (sdrValue) search.set("sdr_id", sdrValue);
-    }
-    if (params?.journeyStage?.length) search.set("journey_stage", params.journeyStage.join(","));
-    if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
-    if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
+  listCompaniesPaginated: (
+    params?: AccountSourcingFilters & AccountSourcingSort & { skip?: number; limit?: number },
+  ) => {
+    const search = buildAccountSourcingQuery(params, params);
+    search.set("skip", String(params?.skip ?? 0));
+    search.set("limit", String(params?.limit ?? 50));
     return requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
   },
+
+  /** Count-only probe over the SAME population as the list — used to re-confirm
+   *  a filter-wide assignment after the server reports a 409 size mismatch. */
+  countCompanies: async (filters?: AccountSourcingFilters) => {
+    const search = buildAccountSourcingQuery(filters);
+    search.set("skip", "0");
+    search.set("limit", "1");
+    const page = await requestPaginated<Company>(`/api/v1/account-sourcing/companies?${search}`);
+    return page.total;
+  },
+
+  /** Admin-only data-quality report backing the "Needs review" tab.
+   *  `limit` caps rows PER SECTION; each section's `total` is the full count. */
+  dataHealth: (limit?: number) =>
+    request<SourcingDataHealth>(
+      `/api/v1/account-sourcing/data-health${limit ? `?limit=${limit}` : ""}`,
+    ),
+
+  /** Assign every account matching `filters`. `expectedTotal` is the count the
+   *  user was shown — the server 409s instead of assigning a different set. */
+  assignCompaniesByFilter: (
+    filters: AccountSourcingFilters,
+    body: { userId: string | null; role: "ae" | "sdr"; expectedTotal?: number },
+  ) =>
+    requestWithStatus<FilterAssignResult>(
+      `/api/v1/assignments/companies/by-filter?${buildAccountSourcingQuery(filters)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          user_id: body.userId,
+          role: body.role,
+          ...(body.expectedTotal !== undefined ? { expected_total: body.expectedTotal } : {}),
+        }),
+      },
+    ),
+
+  /** Re-home a misattached prospect onto the account it actually belongs to. */
+  relinkContactCompany: (contactId: string, companyId: string) =>
+    request<Contact>(`/api/v1/contacts/${contactId}`, {
+      method: "PUT",
+      body: JSON.stringify({ company_id: companyId }),
+    }),
 
   recotapSummary: () =>
     request<RecotapSummary>("/api/v1/account-sourcing/recotap/summary"),
@@ -438,13 +614,9 @@ export const accountSourcingApi = {
       { method: "POST" },
     ),
 
-  summary: (params?: { assignedRepEmail?: string; ownerId?: string | string[] }) => {
-    const search = new URLSearchParams();
-    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
-    if (params?.ownerId) {
-      const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
-      if (ownerValue) search.set("owner_id", ownerValue);
-    }
+  /** KPI-strip counts over the SAME filtered population as the list. */
+  summary: (params?: AccountSourcingFilters) => {
+    const search = buildAccountSourcingQuery(params);
     return request<AccountSourcingSummary>(
       `/api/v1/account-sourcing/summary${search.toString() ? `?${search.toString()}` : ""}`
     );
@@ -538,16 +710,9 @@ export const accountSourcingApi = {
       { method: "POST", body: JSON.stringify({ body }) }
     ),
 
-  exportCsv: async (params?: { assignedRep?: string; assignedRepEmail?: string; disposition?: string; batchId?: string; prospectsMin?: number; prospectsMax?: number; companyIds?: string[] }) => {
-    const search = new URLSearchParams();
-    if (params?.assignedRep) search.set("assigned_rep", params.assignedRep);
-    if (params?.assignedRepEmail) search.set("assigned_rep_email", params.assignedRepEmail);
-    if (params?.disposition) search.set("disposition", params.disposition);
-    if (params?.batchId) search.set("batch_id", params.batchId);
-    if (params?.prospectsMin !== undefined) search.set("prospects_min", String(params.prospectsMin));
-    if (params?.prospectsMax !== undefined) search.set("prospects_max", String(params.prospectsMax));
-    if (params?.companyIds?.length) search.set("company_ids", params.companyIds.join(","));
-    const qs = search.toString();
+  /** CSV of EXACTLY the filtered + sorted population the accounts table shows. */
+  exportCsv: async (params?: AccountSourcingFilters, sort?: AccountSourcingSort) => {
+    const qs = buildAccountSourcingQuery(params, sort).toString();
     const res = await fetch(`${BASE}/api/v1/account-sourcing/export${qs ? `?${qs}` : ""}`, {
       headers: getAuthHeaders(),
     });

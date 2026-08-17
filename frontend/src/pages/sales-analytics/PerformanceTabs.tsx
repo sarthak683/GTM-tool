@@ -65,6 +65,46 @@ import {
 } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
+/**
+ * The global Sales Analytics filter bar, lifted out of SalesAnalytics.tsx and
+ * threaded through every tab so one set of controls scopes the whole page.
+ *
+ * Not every performance endpoint accepts every dimension — where a tab can
+ * only honour part of the scope it does so and leaves the rest alone rather
+ * than silently ignoring the bar entirely. See each tab for what it applies.
+ */
+export interface AnalyticsFilterScope {
+  windowDays: number;
+  /** ISO YYYY-MM-DD; set only when the custom range picker is in use. */
+  fromDate?: string;
+  toDate?: string;
+  repIds: string[];
+  geographies: string[];
+  /**
+   * Bumped by the filter bar's refresh button. Tabs list it in their fetch deps
+   * so a refresh re-pulls their data too. They deliberately do NOT send
+   * force_refresh themselves: the Overview request fired by the same click
+   * recomputes and reseeds the shared server cache, so a second forced
+   * recompute of the identical payload would be pure duplicated work.
+   */
+  refreshNonce?: number;
+}
+
+const EMPTY_FILTER_SCOPE: AnalyticsFilterScope = {
+  windowDays: 90,
+  repIds: [],
+  geographies: [],
+};
+
+/**
+ * Endpoints under /performance take a SINGLE optional rep_id, while the global
+ * bar is multi-select. One selected rep scopes cleanly; zero or several fall
+ * back to workspace-wide, which is what those endpoints mean by "no rep_id".
+ */
+function singleRepId(filters: AnalyticsFilterScope): string | undefined {
+  return filters.repIds.length === 1 ? filters.repIds[0] : undefined;
+}
+
 // ── Shared visual primitives ───────────────────────────────────────────────
 
 const PALETTE = {
@@ -1126,9 +1166,7 @@ function PipelineBucketModal({
 
 // ── Risk (Deal Health) tab ─────────────────────────────────────────────────
 
-export function RiskTab({ reps }: { reps: RepSummary[] }) {
-  const { isAdmin } = useAuth();
-  const [repId, setRepId] = useState<string | undefined>(undefined);
+export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFilterScope }) {
   const [data, setData] = useState<DealHealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1138,6 +1176,11 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
   const [pipelineBuckets, setPipelineBuckets] = useState<PipelineBucketsResponse | null>(null);
   const [openPipelineBucket, setOpenPipelineBucket] = useState<{ label: string; deals: PipelineBucketDeal[] } | null>(null);
 
+  const { windowDays, fromDate, toDate, repIds, geographies, refreshNonce } = filters;
+  const repId = singleRepId(filters);
+
+  // /performance/deal-health takes only rep_id — dwell time is measured against
+  // "now", not a window, so window/geography have nothing to bind to here.
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -1146,23 +1189,25 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [repId]);
+  }, [repId, refreshNonce]);
 
   useEffect(() => {
-    analyticsApi.salesDashboard(90).then(setPipelineData).catch(() => null);
+    analyticsApi
+      .salesDashboard(windowDays, repIds, geographies, fromDate, toDate)
+      .then(setPipelineData)
+      .catch(() => null);
+  }, [windowDays, repIds, geographies, fromDate, toDate, refreshNonce]);
+
+  // /performance/pipeline-buckets takes no params at all — always workspace-wide.
+  useEffect(() => {
     performanceApi.getPipelineBuckets().then(setPipelineBuckets).catch(() => null);
-  }, []);
+  }, [refreshNonce]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
         title="Deal Health Red Alerts"
-        subtitle="Deals stuck in stage beyond the threshold. Data sourced live from Pipeline."
-        action={
-          <div style={{ display: "flex", gap: 10 }}>
-            {isAdmin && <RepPicker reps={reps} value={repId} onChange={setRepId} />}
-          </div>
-        }
+        subtitle="Deals stuck in stage beyond the threshold. Data sourced live from Pipeline. Scoped by the rep filter above when exactly one rep is selected."
       >
         {data && (() => {
           const b = data.red_alert_buckets ?? {};
@@ -1263,7 +1308,7 @@ export function RiskTab({ reps }: { reps: RepSummary[] }) {
       {/* Overall Sales Pipeline */}
       <Panel
         title="Overall Sales Pipeline"
-        subtitle="Deals in the pipeline that may need attention based on deal size and stage."
+        subtitle="Deals in the pipeline that may need attention based on deal size and stage. Always workspace-wide — this endpoint takes no filters."
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           {/* Bucket 1: Low-value late-stage deals */}
@@ -2020,7 +2065,13 @@ function TouchpointPill({
   );
 }
 
-function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
+function AccountAnalysisFocus({
+  rows,
+  granularity = "weekly",
+}: {
+  rows: SalesRepWeeklyActivityRow[];
+  granularity?: "daily" | "weekly";
+}) {
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => {
       const delta = (b.totals.total ?? 0) - (a.totals.total ?? 0);
@@ -2065,6 +2116,7 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
   const liConnRequested    = selectedRow.totals.linkedin_connection_requested ?? 0;
   const liIntroMsg         = selectedRow.totals.linkedin_intro_msg ?? 0;
   const liFollowupMsg      = selectedRow.totals.linkedin_followup_msg ?? 0;
+  const bucketWord         = granularity === "daily" ? "Daily" : "Weekly";
 
   return (
     <div
@@ -2147,7 +2199,7 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
         <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#f8fafc", padding: 12, display: "grid", gap: 10 }}>
           <div>
             <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Choose Account</p>
-            <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total weekly touches in the current window.</p>
+            <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#687b92" }}>Sorted by total touches in the current window.</p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {sortedRows.map((row, index) => {
@@ -2183,8 +2235,8 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
       {/* Weekly Outreach Mix chart — full width */}
       <div style={{ borderRadius: 14, border: "1px solid #e3e9f2", background: "#fff", padding: 14, display: "grid", gap: 12 }}>
         <div>
-          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>Weekly Outreach Mix</p>
-          <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars show weekly volume by channel — calls, emails, LinkedIn, and meetings — so you can spot where effort is concentrated.</p>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#71849a" }}>{bucketWord} Outreach Mix</p>
+          <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#6f8195" }}>Stacked bars show {bucketWord.toLowerCase()} volume by channel — calls, emails, LinkedIn, and meetings — so you can spot where effort is concentrated.</p>
         </div>
         <div style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -2206,25 +2258,30 @@ function AccountAnalysisFocus({ rows }: { rows: SalesRepWeeklyActivityRow[] }) {
   );
 }
 
-export function OutreachAnalysisTab() {
+export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFilterScope }) {
   const [data, setData] = useState<SalesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const { windowDays, fromDate, toDate, repIds, geographies, refreshNonce } = filters;
+
+  // Same endpoint as Overview, so this tab honours the full global scope.
   useEffect(() => {
+    setLoading(true);
     analyticsApi
-      .salesDashboard(90)
+      .salesDashboard(windowDays, repIds, geographies, fromDate, toDate)
       .then(setData)
       .catch(() => null)
       .finally(() => setLoading(false));
-  }, []);
+  }, [windowDays, repIds, geographies, fromDate, toDate, refreshNonce]);
 
   const rows: SalesRepWeeklyActivityRow[] = data?.rep_weekly_activity ?? [];
+  const bucketWord = data?.activity_bucket_granularity === "daily" ? "daily" : "weekly";
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
         title="Account Analysis"
-        subtitle="Outreach activity by account. Select an account from the panel to spotlight its weekly email, call, and LinkedIn mix alongside call quality trends."
+        subtitle={`Outreach activity by account. Select an account from the panel to spotlight its ${bucketWord} email, call, and LinkedIn mix alongside call quality trends.`}
         action={
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999, background: "#eef4ff", border: "1px solid #d7e2fb", fontSize: 11, fontWeight: 800, color: "#3555c4", letterSpacing: "0.06em", textTransform: "uppercase" }}>
             <Building2 size={13} />
@@ -2233,7 +2290,7 @@ export function OutreachAnalysisTab() {
         }
       >
         {loading && <Loading />}
-        {!loading && <AccountAnalysisFocus rows={rows} />}
+        {!loading && <AccountAnalysisFocus rows={rows} granularity={bucketWord} />}
       </Panel>
     </div>
   );
@@ -2241,20 +2298,28 @@ export function OutreachAnalysisTab() {
 
 // ── Incentive tab ──────────────────────────────────────────────────────────
 
-function IncentiveTab() {
+function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFilterScope }) {
   const [data, setData] = useState<IncentiveResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // /performance/incentives only takes an `anchor` date — it always reports a
+  // whole calendar period, so the one dimension of the global bar it can honour
+  // is WHICH period. An explicit custom end date anchors it; the day-window
+  // presets are deliberately ignored, since anchoring "7 days ago" would silently
+  // report the previous month whenever the window straddles a month boundary.
+  const anchor = filters.toDate;
+  const { refreshNonce } = filters;
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     performanceApi
-      .getIncentives({})
+      .getIncentives({ anchor })
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [anchor, refreshNonce]);
 
   const target = data?.target ?? 0;
   const totalSql = data?.rows.reduce((sum, r) => sum + r.sql_total, 0) ?? 0;
@@ -2351,21 +2416,33 @@ export const PERFORMANCE_TABS = _ALL_PERFORMANCE_TABS.filter((t) => t.show) as u
 
 export type PerformanceTabKey = (typeof PERFORMANCE_TABS)[number]["key"];
 
-export function PerformanceTabContent({ tab, reps }: { tab: PerformanceTabKey; reps: RepSummary[] }) {
+export function PerformanceTabContent({
+  tab,
+  reps,
+  filters = EMPTY_FILTER_SCOPE,
+}: {
+  tab: PerformanceTabKey;
+  reps: RepSummary[];
+  /** The global filter bar's scope. Each tab applies what its endpoint supports. */
+  filters?: AnalyticsFilterScope;
+}) {
   switch (tab) {
+    // Scorecard / Funnel / Forecast / Targets are behind SHOW_TAB_* flags and
+    // keep their own period + rep controls; they are not wired to the global
+    // bar until they are turned back on.
     case "scorecard":
       return <ScorecardTab reps={reps} />;
     case "funnel":
       return <FunnelTab reps={reps} />;
     case "risk":
-      return <RiskTab reps={reps} />;
+      return <RiskTab filters={filters} />;
     case "forecast":
       return <ForecastTab reps={reps} />;
     case "targets":
       return <TargetsTab />;
     case "outreach-analysis":
-      return <OutreachAnalysisTab />;
+      return <OutreachAnalysisTab filters={filters} />;
     case "incentive":
-      return <IncentiveTab />;
+      return <IncentiveTab filters={filters} />;
   }
 }

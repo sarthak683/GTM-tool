@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -31,7 +32,11 @@ def _can_see_company(company: Company, user) -> bool:
     isn't leaked).
     """
     if company.deleted_at is not None:
-        return False  # soft-deleted: gone for everyone (404, no trash view yet)
+        # Soft-deleted: gone from every detail/update route for everyone. The
+        # row is reachable only through GET /companies/trash (admin) and
+        # GET /companies/{id}/tombstone (which says "deleted" or "merged into
+        # X" without exposing the record).
+        return False
     if user.role == "admin":
         return True
     return company.assigned_to_id == user.id or company.sdr_id == user.id
@@ -180,6 +185,178 @@ async def create_company(payload: CompanyCreate, session: DBSession, _user: Curr
     )
 
 
+# ── Trash / restore ──────────────────────────────────────────────────────────
+# NOTE ON ROUTE ORDER: "/trash" MUST stay above "/{company_id}" — FastAPI
+# matches in declaration order, so a literal path declared after the UUID param
+# route is swallowed by it (422 "value is not a valid uuid", not a 404, which
+# is a genuinely confusing way to lose an endpoint).
+
+
+class CompanyTrashRow(BaseModel):
+    id: UUID
+    name: str
+    domain: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    merged_into_id: Optional[UUID] = None
+    # Null for a plain delete AND for merges predating migration 115 (no
+    # back-pointer was recorded then) — the UI treats both as a plain delete.
+    merged_into_name: Optional[str] = None
+    prospect_count: int = 0
+
+
+class CompanyTombstone(BaseModel):
+    deleted: bool
+    name: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    merged_into_id: Optional[UUID] = None
+    merged_into_name: Optional[str] = None
+
+
+class CompanyRestoreResponse(BaseModel):
+    id: UUID
+    name: str
+    deals_restored: int
+    tasks_reopened: int
+    was_merged_into_id: Optional[UUID] = None
+
+
+@router.get("/trash", response_model=List[CompanyTrashRow])
+async def list_company_trash(
+    session: DBSession,
+    _admin: AdminUser,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Soft-deleted accounts, newest deletion first (admin).
+
+    The counterpart to DELETE /companies/{id}: without this the only way to see
+    what soft-delete had swallowed was a manual SELECT against the DB.
+    ``prospect_count`` is the contacts still attached to the account — they
+    kept their rows and their company_id through the delete, so it is a
+    truthful preview of what comes back.
+    """
+    from app.models.contact import Contact
+
+    winner = aliased(Company)
+    prospect_count = (
+        select(func.count(Contact.id))
+        .where(Contact.company_id == Company.id)
+        .correlate(Company)
+        .scalar_subquery()
+    )
+    rows = (
+        await session.execute(
+            select(
+                Company.id,
+                Company.name,
+                Company.domain,
+                Company.deleted_at,
+                Company.merged_into_id,
+                winner.name.label("merged_into_name"),
+                prospect_count.label("prospect_count"),
+            )
+            .outerjoin(winner, winner.id == Company.merged_into_id)
+            .where(Company.deleted_at.is_not(None))
+            .order_by(Company.deleted_at.desc(), Company.id)
+            .limit(limit)
+        )
+    ).all()
+    return [
+        CompanyTrashRow(
+            id=row.id,
+            name=row.name,
+            domain=row.domain,
+            deleted_at=row.deleted_at,
+            merged_into_id=row.merged_into_id,
+            merged_into_name=row.merged_into_name,
+            prospect_count=int(row.prospect_count or 0),
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{company_id}/tombstone", response_model=CompanyTombstone)
+async def get_company_tombstone(company_id: UUID, session: DBSession, _user: CurrentUser):
+    """Why a company link dead-ends — for ANY authenticated role.
+
+    ``_can_see_company`` 404s a soft-deleted account by design, which left a
+    merged-away company indistinguishable from a typo'd URL: the detail page
+    said "Company not found" and the rep re-created the account they had just
+    been merged out of. This route answers only the question the dead link
+    raises — deleted? merged into what? — and deliberately exposes nothing else
+    about the record, so it is safe without the ownership gate.
+
+    404 ONLY when the id never existed. A live company returns
+    ``{"deleted": false}``.
+    """
+    company = await session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if company.deleted_at is None:
+        return CompanyTombstone(deleted=False)
+
+    # Chains resolve themselves: if the winner was later deleted or merged on,
+    # its own detail page 404s and shows ITS tombstone, so A->B->C walks.
+    merged_into_name = None
+    if company.merged_into_id:
+        merged_into_name = (
+            await session.execute(
+                select(Company.name).where(Company.id == company.merged_into_id)
+            )
+        ).scalar_one_or_none()
+    return CompanyTombstone(
+        deleted=True,
+        name=company.name,
+        deleted_at=company.deleted_at,
+        merged_into_id=company.merged_into_id if merged_into_name else None,
+        merged_into_name=merged_into_name,
+    )
+
+
+@router.post("/{company_id}/restore", response_model=CompanyRestoreResponse)
+async def restore_company_endpoint(company_id: UUID, session: DBSession, _admin: AdminUser):
+    """Bring a soft-deleted account back (admin).
+
+    Restores the company row and the deals that were deleted WITH it; contacts
+    return automatically (their visibility was only ever query-level gating on
+    the parent). Tasks dismissed by the delete stay dismissed, and a restored
+    merge loser comes back EMPTY — its data stayed on the winner. See
+    ``company_lifecycle.restore_company`` for the full reasoning.
+
+    409 when another live account has taken over this account's domain in the
+    meantime (the lower(domain) unique index is partial on live rows, so the
+    slot is genuinely occupied — rename or merge, then restore).
+    """
+    from app.services.company_lifecycle import live_company_with_domain, restore_company
+
+    company = await session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if company.deleted_at is None:
+        raise HTTPException(status_code=404, detail="Company is not in the trash")
+
+    holder = await live_company_with_domain(session, company.domain, company.id)
+    if holder:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Domain '{company.domain}' now belongs to the live account "
+                f"'{holder}'. Restoring would duplicate it — rename or merge that "
+                "account first."
+            ),
+        )
+
+    was_merged_into_id = company.merged_into_id
+    result = await restore_company(session, company)
+    await session.commit()
+    return CompanyRestoreResponse(
+        id=company.id,
+        name=company.name,
+        deals_restored=result["deals_restored"],
+        tasks_reopened=result["tasks_reopened"],
+        was_merged_into_id=was_merged_into_id,
+    )
+
+
 @router.get("/{company_id}", response_model=CompanyRead)
 async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
     company = await CompanyRepository(session).get_or_raise(company_id)
@@ -223,8 +400,12 @@ async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser
     demos/closed-won scorecards. Now: the company and its live deals get
     ``deleted_at``; contacts keep their rows and links (hidden from prospecting
     by the deleted-account gate); every activity and history row survives, so
-    historical metrics never change. Restoring is a manual UPDATE (deleted_at
-    = NULL) until a trash view exists.
+    historical metrics never change.
+
+    Reversible: GET /companies/trash lists what is in here and
+    POST /companies/{id}/restore brings an account back (Settings -> Trash in
+    the UI). Restore returns the account, its co-deleted deals, and its
+    prospects; tasks this delete dismissed stay dismissed.
     """
     from app.services.company_lifecycle import soft_delete_company
 

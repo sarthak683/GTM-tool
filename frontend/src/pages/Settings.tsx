@@ -23,6 +23,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { settingsApi, personalEmailSyncApi, driveApi, authApi, pushApi } from "../lib/api";
+import { trashApi, type CompanyTrashRow, type DealTrashRow } from "../lib/api/trash";
 import { getCachedGmailSync, getCachedRolePermissions, invalidateGmailSyncCache, invalidateRolePermissionsCache } from "../lib/cachedFetch";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
 import type { DriveFolder, PersonalEmailStatus, SelectedDriveFolder, JobHealthRow } from "../lib/api";
@@ -45,7 +46,17 @@ import type {
   SyncScheduleSettings,
 } from "../types";
 
-type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications" | "system-health";
+type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications" | "system-health" | "trash";
+
+/** Trash timestamps as a short local date. The API layer already appends "Z"
+ *  to naive UTC datetimes, but re-check here so a raw value can't silently
+ *  render in the wrong timezone. */
+function fmtTrashDate(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
 
 // Curated IANA timezones for the pre-meeting daily-send picker. The backend
 // validates against the full zoneinfo database, so any value here is accepted;
@@ -158,6 +169,14 @@ export default function SettingsPage() {
   const [jobHealth, setJobHealth] = useState<JobHealthRow[] | null>(null);
   const [jobHealthLoading, setJobHealthLoading] = useState(false);
   const [jobHealthError, setJobHealthError] = useState<string | null>(null);
+  // Trash tab: soft-deleted accounts + deals, loaded lazily when the tab opens
+  // (same pattern as System Health above). `null` = not fetched yet, which is
+  // what keeps the empty state from flashing before the first load.
+  const [trashCompanies, setTrashCompanies] = useState<CompanyTrashRow[] | null>(null);
+  const [trashDeals, setTrashDeals] = useState<DealTrashRow[] | null>(null);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   // Web Push state for the Notifications tab. Drives the opt-in toggle so the
   // rep can register their *current* browser (typically their mobile PWA) to
   // receive "tap to call" notifications when their desktop clicks Call.
@@ -1268,6 +1287,72 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
+  const loadTrash = () => {
+    setTrashLoading(true);
+    setTrashError(null);
+    Promise.all([trashApi.listCompanies(50), trashApi.listDeals(50)])
+      .then(([companies, deals]) => {
+        setTrashCompanies(companies);
+        setTrashDeals(deals);
+      })
+      .catch((e) => setTrashError(e instanceof Error ? e.message : "Failed to load trash"))
+      .finally(() => setTrashLoading(false));
+  };
+
+  // Lazy: only fetched when an admin actually opens Trash.
+  useEffect(() => {
+    if (activeTab === "trash" && isAdmin) loadTrash();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
+  const restoreCompany = async (row: CompanyTrashRow) => {
+    // Spell out what restore actually does. A merged loser is the sharp edge:
+    // its data stayed on the winner, so restoring gives back an empty shell —
+    // say so before the click, not after.
+    const note = row.merged_into_name
+      ? `\n\nThis account was MERGED into ${row.merged_into_name}. Restoring does NOT un-merge it: its contacts, deals, and activity stay on ${row.merged_into_name}, so "${row.name}" comes back as an empty account.`
+      : `\n\nComes back: the account, its ${row.prospect_count} prospect${row.prospect_count === 1 ? "" : "s"}, and the deals deleted with it.\nStays as-is: tasks that were dismissed when it was deleted.`;
+    if (!confirm(`Restore ${row.name}?${note}`)) return;
+    setRestoringId(row.id);
+    try {
+      const res = await trashApi.restoreCompany(row.id);
+      setTrashCompanies((prev) => (prev ?? []).filter((c) => c.id !== row.id));
+      // A company restore un-deletes its deals too, so the deal table is now
+      // stale. Refetch rather than guessing which rows went — deal names alone
+      // can't identify which account they belonged to.
+      if (res.deals_restored > 0) loadTrash();
+      toast.success(
+        res.deals_restored > 0
+          ? `${res.name} restored with ${res.deals_restored} deal${res.deals_restored === 1 ? "" : "s"}.`
+          : `${res.name} restored.`,
+        "Account restored",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Restore failed", "Could not restore");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const restoreDeal = async (row: DealTrashRow) => {
+    if (
+      !confirm(
+        `Restore ${row.name}?\n\nComes back: the deal, with its activity, stage history, and stakeholders.\nStays as-is: tasks that were dismissed when it was deleted.`,
+      )
+    )
+      return;
+    setRestoringId(row.id);
+    try {
+      const res = await trashApi.restoreDeal(row.id);
+      setTrashDeals((prev) => (prev ?? []).filter((d) => d.id !== row.id));
+      toast.success(`${res.name} is back on the pipeline.`, "Deal restored");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Restore failed", "Could not restore");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
   // Refresh push subscription state whenever the Notifications tab is
   // opened — covers the case where the user revoked permission in
   // browser settings between visits.
@@ -1373,6 +1458,7 @@ export default function SettingsPage() {
               {tabButton("zippy", "Zippy", <Bot size={15} />)}
               {isAdmin && tabButton("zippy-prompt", "System Prompt", <Shield size={15} />)}
               {isAdmin && tabButton("system-health", "System Health", <RefreshCw size={15} />)}
+              {isAdmin && tabButton("trash", "Trash", <Trash2 size={15} />)}
             </div>
           </aside>
 
@@ -2936,6 +3022,142 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+          </div>
+        ) : activeTab === "trash" ? (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div className="crm-chip" style={{ marginBottom: 12, background: "#f3fbe3", color: "#4d7c0f", borderColor: "#dcefbb" }}>
+                  <Trash2 size={14} />
+                  Trash
+                </div>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Deleted accounts and deals</h3>
+                <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
+                  Deleting an account or a deal only hides it — every contact, activity, and stage-history row survives so past
+                  scorecards never rewrite. This is where those rows live, and Restore brings them back.
+                </p>
+              </div>
+              <button className="crm-button soft" type="button" onClick={loadTrash} disabled={trashLoading}>
+                <RefreshCw size={15} className={trashLoading ? "animate-spin" : undefined} />
+                Refresh
+              </button>
+            </div>
+
+            {trashError ? (
+              <div style={{ border: "1px solid #f3c7cd", background: "#fdecec", color: "#b42336", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>{trashError}</div>
+            ) : trashLoading && !trashCompanies && !trashDeals ? (
+              <div className="crm-muted" style={{ padding: 16, fontSize: 13 }}>Loading trash…</div>
+            ) : (
+              <>
+                {/* ── Companies ─────────────────────────────────────────── */}
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>
+                    Accounts
+                    {trashCompanies?.length ? <span style={{ color: "#68788d", fontWeight: 600 }}> · {trashCompanies.length}</span> : null}
+                  </div>
+                  {!trashCompanies || trashCompanies.length === 0 ? (
+                    <div className="crm-muted" style={{ padding: "14px 16px", fontSize: 13, border: "1px solid #e3e9f2", borderRadius: 14, background: "#fff" }}>Trash is empty.</div>
+                  ) : (
+                    <div style={{ overflowX: "auto", border: "1px solid #e3e9f2", borderRadius: 14, background: "#fff" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ textAlign: "left", color: "#68788d", background: "#f7f9fc" }}>
+                            {["Account", "Prospects", "Deleted", ""].map((h, i) => (
+                              <th key={h || `sp-${i}`} style={{ padding: "10px 14px", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: "1px solid #e3e9f2" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trashCompanies.map((c) => (
+                            <tr key={c.id} style={{ borderTop: "1px solid #eef1f6" }}>
+                              <td style={{ padding: "11px 14px" }}>
+                                <div style={{ fontWeight: 700, color: "#25384d" }}>{c.name}</div>
+                                {c.domain ? <div style={{ fontSize: 11, color: "#9fb0c0" }}>{c.domain}</div> : null}
+                                {c.merged_into_name ? (
+                                  <div style={{ fontSize: 11, color: "#4d7c0f", marginTop: 3, fontWeight: 600 }}>
+                                    merged into {c.merged_into_name}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{c.prospect_count}</td>
+                              <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{fmtTrashDate(c.deleted_at)}</td>
+                              <td style={{ padding: "11px 14px", textAlign: "right" }}>
+                                <button
+                                  type="button"
+                                  className="crm-button soft"
+                                  onClick={() => restoreCompany(c)}
+                                  disabled={restoringId === c.id}
+                                  style={{ fontSize: 12, padding: "5px 12px", whiteSpace: "nowrap" }}
+                                >
+                                  {restoringId === c.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                                  Restore
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Deals ─────────────────────────────────────────────── */}
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>
+                    Deals
+                    {trashDeals?.length ? <span style={{ color: "#68788d", fontWeight: 600 }}> · {trashDeals.length}</span> : null}
+                  </div>
+                  {!trashDeals || trashDeals.length === 0 ? (
+                    <div className="crm-muted" style={{ padding: "14px 16px", fontSize: 13, border: "1px solid #e3e9f2", borderRadius: 14, background: "#fff" }}>Trash is empty.</div>
+                  ) : (
+                    <div style={{ overflowX: "auto", border: "1px solid #e3e9f2", borderRadius: 14, background: "#fff" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ textAlign: "left", color: "#68788d", background: "#f7f9fc" }}>
+                            {["Deal", "Stage", "Value", "Deleted", ""].map((h, i) => (
+                              <th key={h || `sp-${i}`} style={{ padding: "10px 14px", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: "1px solid #e3e9f2" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trashDeals.map((d) => (
+                            <tr key={d.id} style={{ borderTop: "1px solid #eef1f6" }}>
+                              <td style={{ padding: "11px 14px" }}>
+                                <div style={{ fontWeight: 700, color: "#25384d" }}>{d.name}</div>
+                                {d.company_name ? <div style={{ fontSize: 11, color: "#9fb0c0" }}>{d.company_name}</div> : null}
+                              </td>
+                              <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{d.stage ?? "—"}</td>
+                              <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>
+                                {d.amount == null ? "—" : `$${Math.round(d.amount).toLocaleString()}`}
+                              </td>
+                              <td style={{ padding: "11px 14px", color: "#5b6b7d", whiteSpace: "nowrap" }}>{fmtTrashDate(d.deleted_at)}</td>
+                              <td style={{ padding: "11px 14px", textAlign: "right" }}>
+                                <button
+                                  type="button"
+                                  className="crm-button soft"
+                                  onClick={() => restoreDeal(d)}
+                                  disabled={restoringId === d.id}
+                                  style={{ fontSize: 12, padding: "5px 12px", whiteSpace: "nowrap" }}
+                                >
+                                  {restoringId === d.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                                  Restore
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <p className="crm-muted" style={{ fontSize: 11, lineHeight: 1.7, maxWidth: 760 }}>
+                  Restoring an account also restores the deals that were deleted with it. Tasks dismissed at delete time stay
+                  dismissed — re-open the ones that still matter from the task center. Restoring a merged account does not
+                  un-merge it: its records stay on the account it was merged into.
+                </p>
+              </>
+            )}
           </div>
         ) : activeTab === "system-health" ? (
           <div style={{ display: "grid", gap: 14 }}>

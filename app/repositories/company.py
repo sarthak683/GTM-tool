@@ -86,8 +86,11 @@ def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: b
       re-enabling impossible for non-admins). Single-object guards
       (``_can_see_company``) key on ownership only, for the same reason.
     """
-    # Soft-deleted accounts are gone from every surface for everyone — admins
-    # included (there is no "trash" view yet; restoring is a manual UPDATE).
+    # Soft-deleted accounts are gone from every browse surface for everyone —
+    # admins included. They are reachable only through the trash view
+    # (GET /api/v1/companies/trash) and restored via
+    # POST /api/v1/companies/{id}/restore, which deliberately do NOT go
+    # through this filter.
     live = Company.deleted_at.is_(None)
     if is_admin:
         return live

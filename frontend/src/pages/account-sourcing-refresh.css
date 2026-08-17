@@ -287,6 +287,53 @@
      used to swallow the inline selected tint — restate it here. */
   background: #f3f9ea !important;
 }
+/* ── "Needs review" queue ──────────────────────────────────────────────────
+   Dense admin tables over the data-health report. Same idiom as the account
+   table: a header row and body rows sharing one grid track list so the columns
+   line up, and only the identity column flexes. The three sections have
+   different shapes, hence three track lists. */
+.account-sourcing-page .as-review-head,
+.account-sourcing-page .as-review-row {
+  display: grid;
+  align-items: center;
+  column-gap: 12px;
+}
+.account-sourcing-page .as-review-row {
+  border: 1px solid var(--as-border-soft);
+  border-radius: 10px;
+  background: var(--as-surface);
+  padding: 7px 12px;
+  min-width: 0;
+}
+.account-sourcing-page .as-review-row:hover {
+  border-color: #cfdaea;
+  background: #fbfdff;
+}
+.account-sourcing-page .as-review-sdr {
+  grid-template-columns: minmax(160px, 1.4fr) minmax(90px, 1fr) minmax(90px, 1fr) 72px minmax(240px, 320px);
+}
+.account-sourcing-page .as-review-mis {
+  grid-template-columns: minmax(150px, 1.2fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(200px, 1.6fr) minmax(180px, 220px);
+}
+.account-sourcing-page .as-review-dom {
+  grid-template-columns: minmax(160px, 1.3fr) minmax(110px, 1fr) minmax(110px, 1fr) 90px minmax(210px, 260px);
+}
+/* Below ~1080px the five columns stop fitting: stack each row into a card and
+   drop the header, mirroring how the account table degrades. */
+@media (max-width: 1080px) {
+  .account-sourcing-page .as-review-head { display: none; }
+  .account-sourcing-page .as-review-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+  .account-sourcing-page .as-review-row .as-review-actions {
+    justify-content: flex-start !important;
+  }
+}
+
 @media (max-width: 980px) {
   .account-sourcing-page .as-company-table-header { display: none; }
   .account-sourcing-page .as-company-row,

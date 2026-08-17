@@ -432,6 +432,15 @@ export type SalesRepActivityRow = {
   demos_rescheduled?: number;
   // Email meetings booked
   email_meeting_booked?: number;
+  // Previous equal-length window, same rep/geo scoping — powers the
+  // period-over-period badges on the leaderboards.
+  prev_total?: number;
+  prev_calls?: number;
+  prev_connected_calls?: number;
+  prev_live_calls?: number;
+  prev_emails?: number;
+  prev_linkedin_reachouts?: number;
+  prev_meetings?: number;
 };
 
 export type SalesRepActivityWeekRow = {
@@ -517,6 +526,30 @@ export type SalesQuotaState = {
   configured: boolean;
   title: string;
   message: string;
+  // Raw target maps from analytics settings. The outer key is the settings'
+  // grouping — role buckets ("sdr" / "ae") today, rep ids if an admin
+  // configures per-rep maps. Inner key is the metric id.
+  weekly_targets?: Record<string, Record<string, number>> | null;
+  monthly_targets?: Record<string, Record<string, number>> | null;
+  // Per-metric sum across every key of the matching map — the "team goal line".
+  team_weekly_targets?: Record<string, number> | null;
+  team_monthly_targets?: Record<string, number> | null;
+};
+
+// Closed-won / closed-lost rollup for the resolved window.
+export type SalesWinLossReason = {
+  reason: string;
+  count: number;
+};
+
+export type SalesWinLoss = {
+  won_count: number;
+  lost_count: number;
+  /** won / (won + lost) — null when the window has no closed outcomes. */
+  win_rate: number | null;
+  won_amount: number;
+  lost_amount: number;
+  loss_reasons: SalesWinLossReason[];
 };
 
 export type SalesHighlightDrilldown = {
@@ -542,6 +575,8 @@ export type SalesDashboard = {
   window_days: number;
   from_date?: string | null;
   to_date?: string | null;
+  /** Bucket size of rep_weekly_activity — "daily" when the resolved window is ≤ 14 days. */
+  activity_bucket_granularity?: "daily" | "weekly";
   summary: SalesDashboardSummary;
   highlights: Array<SalesHighlight | string>;
   rep_activity: SalesRepActivityRow[];
@@ -564,6 +599,8 @@ export type SalesDashboard = {
     direct_sql: number;
     demo_rescheduled: number;
   };
+  /** Window-scoped closed-won/closed-lost rollup. Null on older payloads. */
+  win_loss?: SalesWinLoss | null;
 };
 
 export type SalesAccountStatusRow = {
@@ -639,6 +676,9 @@ export const analyticsApi = {
     fromDate?: string,
     toDate?: string,
     forecastGranularity?: "week" | "month",
+    // Bypasses the 45s server-side snapshot cache. Only set it for an
+    // explicit user-driven refresh — never on the normal filter-change fetch.
+    forceRefresh?: boolean,
   ) => {
     const params = new URLSearchParams({ window_days: String(windowDays) });
     for (const id of repIds) params.append("rep_id", id);
@@ -646,6 +686,7 @@ export const analyticsApi = {
     if (fromDate) params.set("from_date", fromDate);
     if (toDate) params.set("to_date", toDate);
     if (forecastGranularity) params.set("forecast_granularity", forecastGranularity);
+    if (forceRefresh) params.set("force_refresh", "true");
     return request<SalesDashboard>(`/api/v1/analytics/sales-dashboard?${params.toString()}`);
   },
   salesActivityDrilldown: (
@@ -669,18 +710,28 @@ export const analyticsApi = {
   },
   monthlyFunnelSummary: (months = 12) =>
     request<MonthlyUniqueFunnelRow[]>(`/api/v1/analytics/monthly-funnel-summary?months=${months}`),
+  // `geography` is a REPEATABLE param on the backend — send every selected
+  // geography, and the custom range too, so the drilldown resolves the exact
+  // same window as the tile it opened from.
   meetingBucketDeals: (
     bucket: "next_1w" | "next_2w" | "beyond_2w" | "direct_sql" | "demo_rescheduled",
     userId?: string | null,
     windowDays?: number,
-    geography?: string,
+    geographies: string[] = [],
+    fromDate?: string,
+    toDate?: string,
   ) => {
     const params = new URLSearchParams({ bucket });
     if (userId) params.set("user_id", userId);
     if (windowDays != null) params.set("window_days", String(windowDays));
-    if (geography) params.set("geography", geography);
+    for (const g of geographies) params.append("geography", g);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
     return request<{ deals: MeetingBucketDeal[] }>(`/api/v1/analytics/meeting-bucket-deals?${params.toString()}`);
   },
+  // NOTE: /analytics/pipeline-deals takes ONLY user_id — it lists the current
+  // open pipeline, which is a point-in-time snapshot rather than a windowed
+  // aggregate, so window/geography params would have nothing to bind to.
   pipelineDeals: (userId?: string | null) => {
     const params = new URLSearchParams();
     if (userId) params.set("user_id", userId);
@@ -690,10 +741,16 @@ export const analyticsApi = {
     channel: "Email" | "LinkedIn" | "Call",  // already supported on backend
     userId?: string | null,
     windowDays?: number,
+    geographies: string[] = [],
+    fromDate?: string,
+    toDate?: string,
   ) => {
     const params = new URLSearchParams({ channel });
     if (userId) params.set("user_id", userId);
     if (windowDays != null) params.set("window_days", String(windowDays));
+    for (const g of geographies) params.append("geography", g);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
     return request<MeetingBookedFromDealItem[]>(`/api/v1/analytics/meeting-booked-from-deals?${params.toString()}`);
   },
 };

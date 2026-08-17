@@ -74,6 +74,36 @@
   overflow: visible;
 }
 
+/* Ghost refresh control at the right end of the filter bar. Styling lives here
+ * rather than inline because two inherited rules have to be neutralized and an
+ * inline style cannot do it: .crm-button's 36px min-height (min-height beats an
+ * inline height) and the global .crm-button:hover lift, which would shift the
+ * fixed-height filter row — the exact thing the button rules further down this
+ * file already take care to avoid. */
+.sales-analytics-page .sa-refresh-button {
+  min-height: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--sa-border);
+  background: var(--sa-surface);
+  color: var(--sa-ink-mute);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.sales-analytics-page .sa-refresh-button:hover:not(:disabled) {
+  transform: none;
+  background: #f3fbe3;
+  border-color: #cfe89a;
+  color: #4d7c0f;
+}
+.sales-analytics-page .sa-refresh-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ───────────────────────────────────────────────────────────────────────
  * Generic crm-panel — chart / KPI cards
  * ─────────────────────────────────────────────────────────────────────── */

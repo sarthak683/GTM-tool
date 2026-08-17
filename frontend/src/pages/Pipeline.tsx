@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
-import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, settingsApi } from "../lib/api";
+import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, performanceApi, settingsApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
+import { CLOSE_REASONS, isCloseReasonStage } from "../lib/closeReasons";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
@@ -157,6 +158,16 @@ function downloadCsv(filename: string, rows: CsvRow[]) {
 
 function fileSafeSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "pipeline";
+}
+
+// Compact $ for the quiet weighted-pipeline lines ("$1.2M", "$410k", "$950").
+function compactCurrency(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${sign}$${Math.round(abs)}`;
 }
 
 // Engagement timestamps are naive-UTC (no trailing Z). Parsing them with a bare
@@ -536,7 +547,7 @@ function MultiSelectFilter({
   );
 }
 
-function SummaryCard({ label, value, tone = "default", action }: { label: string; value: string | number; tone?: "default" | "accent" | "success"; action?: ReactNode }) {
+function SummaryCard({ label, value, tone = "default", action, sub }: { label: string; value: string | number; tone?: "default" | "accent" | "success"; action?: ReactNode; sub?: string }) {
   const toneClass = tone === "accent" ? " pr-summary-tile--accent" : tone === "success" ? " pr-summary-tile--success" : "";
   return (
     <div className={`pr-summary-tile${toneClass}`}>
@@ -544,6 +555,7 @@ function SummaryCard({ label, value, tone = "default", action }: { label: string
         <span>{value}</span>
         {action}
       </div>
+      {sub && <div className="pr-summary-sub" title={sub}>{sub}</div>}
       <div className="pr-summary-label" title={label}>{label}</div>
     </div>
   );
@@ -1137,7 +1149,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {deal.assigned_rep_name ? <div title={deal.assigned_rep_name} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
-          <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: "#68788d" }}><Clock3 size={11} /><span>{deal.days_in_stage ?? 0}d</span></div>
+          <div
+            title={
+              deal.stall_threshold_days != null
+                ? `${deal.days_in_stage ?? 0} days in stage · stall threshold ${deal.stall_threshold_days} business days${deal.is_stalled ? " · stalled" : ""}`
+                : `${deal.days_in_stage ?? 0} days in stage`
+            }
+            style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: deal.is_stalled ? "#b45309" : "#68788d" }}
+          ><Clock3 size={11} /><span>{deal.days_in_stage ?? 0}d</span></div>
           {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 11, color: "#68788d", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={11} />{deal.contact_count}</span>}
         </div>
         {priorityTag && (
@@ -1236,7 +1255,7 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
   );
 }
 
-function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
+function BoardColumn({ stage, count, totalValue, weightedValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; weightedValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
     <div style={{ width: 312, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, padding: "0 4px" }}>
@@ -1262,11 +1281,19 @@ function BoardColumn({ stage, count, totalValue, dropActive, onAdd, onExport, on
           </div>
         </div>
         {typeof totalValue === "number" && Number.isFinite(totalValue) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 14, minWidth: 0 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</span>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: totalValue > 0 ? "#4d7c0f" : "#94a3b8", letterSpacing: "0.01em" }}>
               {formatCurrency(totalValue)}
             </span>
+            {typeof weightedValue === "number" && Number.isFinite(weightedValue) && (
+              <span
+                title="Probability-weighted total (stage probability × deal value)"
+                style={{ fontSize: 11, fontWeight: 600, color: "#8ca0b3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                · wtd {compactCurrency(weightedValue)}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1736,6 +1763,17 @@ export default function Pipeline() {
   const [convertingProspect, setConvertingProspect] = useState(false);
   const [pendingConvertProspect, setPendingConvertProspect] = useState<Contact | null>(null);
   const [pendingDealMove, setPendingDealMove] = useState<PendingDealMove | null>(null);
+  // Close-reason capture (shared enum) for drag-to-close moves — required by
+  // the backend when the target is CLOSED LOST, optional for CLOSED WON.
+  const [moveReason, setMoveReason] = useState("");
+  const [moveReasonDetail, setMoveReasonDetail] = useState("");
+  // Bulk close: target stage held while the one-shot reason prompt is open.
+  const [bulkCloseStage, setBulkCloseStage] = useState<string | null>(null);
+  const [bulkCloseReason, setBulkCloseReason] = useState("");
+  const [bulkCloseDetail, setBulkCloseDetail] = useState("");
+  // Workspace stage probabilities for the quiet weighted-$ lines. null =
+  // unavailable (fetch failed) — the weighted UI simply stays hidden.
+  const [stageProbabilities, setStageProbabilities] = useState<Record<string, number> | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
   const [showFunnelSettings, setShowFunnelSettings] = useState(false);
   const [pipelineSummaryConfig, setPipelineSummaryConfig] = useState<PipelineSummarySettings>(() =>
@@ -1870,6 +1908,15 @@ export default function Pipeline() {
     getCachedRolePermissions().then(setRolePermissions).catch(() => setRolePermissions(null));
   }, []);
 
+  // Stage probabilities for weighted pipeline $. GET /performance/settings is
+  // readable by every authenticated role (the Performance tabs already use
+  // it); if it fails, weighted lines are simply not shown.
+  useEffect(() => {
+    performanceApi.getSettings()
+      .then((analyticsSettings) => setStageProbabilities(analyticsSettings.stage_probabilities ?? null))
+      .catch(() => setStageProbabilities(null));
+  }, []);
+
   useEffect(() => {
     const requestedStages = searchParams.getAll("stage").filter(Boolean);
     const requestedAssignees = searchParams.getAll("assignee").filter(Boolean);
@@ -1936,7 +1983,10 @@ export default function Pipeline() {
       });
       if (healthFilters.length) items = items.filter((deal) => healthFilters.includes((deal.health || "unknown").toLowerCase()));
       if (commitFilter.length) items = items.filter((deal) => deal.commit_to_deal === true);
-      if (stalledOnly) items = items.filter((deal) => (deal.days_in_stage ?? 0) >= 30);
+      // Server-computed stall flag: business-day dwell vs the workspace's
+      // per-stage threshold — the SAME rule the performance scorecard uses
+      // (the old hardcoded 30-calendar-day cutoff disagreed with it).
+      if (stalledOnly) items = items.filter((deal) => Boolean(deal.is_stalled));
       if (overdueOnly) {
         items = items.filter((deal) => {
           if (closedStageIds.has(deal.stage) || !deal.close_date_est) return false;
@@ -2049,16 +2099,16 @@ export default function Pipeline() {
     return next;
   }, [assigneeFilters, companyMap, contacts, geographyFilters, search, stageFilters]);
 
-  const FORECAST_STAGES = [
-    { id: "demo_scheduled", label: "Demo Scheduled" },
-    { id: "demo_done", label: "Demo Done" },
-    { id: "poc_agreed", label: "POC Agreed" },
-    { id: "poc_wip", label: "POC WIP" },
-    { id: "poc_done", label: "POC Done" },
-    { id: "commercial_negotiation", label: "Commercial" },
-    { id: "msa_review", label: "MSA Review" },
-    { id: "closed_won", label: "Closed Won" },
-  ];
+  // Derived from the ACTUAL configured stage list (was a hardcoded copy that
+  // silently drifted whenever an admin edited stages): every active-group
+  // stage in board order, then closed_won as the terminal conversion step.
+  const FORECAST_STAGES = useMemo(
+    () => [
+      ...effectiveDealStages.filter((stage) => stage.group === "active").map((stage) => ({ id: stage.id, label: stage.label })),
+      ...effectiveDealStages.filter((stage) => stage.id === "closed_won").map((stage) => ({ id: stage.id, label: stage.label })),
+    ],
+    [effectiveDealStages],
+  );
 
   const stageForecast = useMemo(() => {
     return FORECAST_STAGES.map((stage, index) => {
@@ -2073,7 +2123,7 @@ export default function Pipeline() {
       const conversionPct = prevCount != null && prevCount > 0 ? Math.round((count / prevCount) * 100) : null;
       return { ...stage, count, value, conversionPct };
     });
-  }, [filteredDealBoard]);
+  }, [FORECAST_STAGES, filteredDealBoard]);
 
   const dealSummary = useMemo(() => {
     const visible = Object.values(filteredDealBoard).flat();
@@ -2088,6 +2138,30 @@ export default function Pipeline() {
       bofu: visible.filter((deal) => pipelineSummaryConfig.deal.bofu.includes(deal.stage)).length,
     };
   }, [filteredDealBoard, pipelineSummaryConfig.deal]);
+
+  // Weighted $ per funnel bucket (stage probability × deal value, over the
+  // SAME visible deals the counts describe). null while probabilities are
+  // unavailable — the tiles then render exactly as before.
+  const dealWeighted = useMemo(() => {
+    if (!stageProbabilities) return null;
+    const visible = Object.values(filteredDealBoard).flat();
+    const weightedFor = (stageIds: string[]) => {
+      const wanted = new Set(stageIds);
+      return visible.reduce((sum, deal) => {
+        if (!wanted.has(deal.stage)) return sum;
+        const value = Number(deal.value ?? 0);
+        if (!Number.isFinite(value)) return sum;
+        return sum + value * (stageProbabilities[deal.stage] ?? 0);
+      }, 0);
+    };
+    const buckets: Partial<Record<SummaryCardKey, number>> = {
+      active: weightedFor(pipelineSummaryConfig.deal.active),
+      tofu: weightedFor(pipelineSummaryConfig.deal.tofu),
+      mofu: weightedFor(pipelineSummaryConfig.deal.mofu),
+      bofu: weightedFor(pipelineSummaryConfig.deal.bofu),
+    };
+    return buckets;
+  }, [filteredDealBoard, pipelineSummaryConfig.deal, stageProbabilities]);
 
   const prospectSummary = useMemo(() => {
     const activeStageIds = new Set(pipelineSummaryConfig.prospect.active);
@@ -2118,16 +2192,23 @@ export default function Pipeline() {
 
   const summary = tab === "deal" ? dealSummary : prospectSummary;
   const visibleSummaryCards = tab === "deal" ? pipelineSummaryConfig.deal.visible_cards : pipelineSummaryConfig.prospect.visible_cards;
-  const summaryCards = SUMMARY_CARD_META.filter((card) => visibleSummaryCards.includes(card.key)).map((card) => ({
-    ...card,
-    value: summary[card.key],
-  }));
+  const summaryCards = SUMMARY_CARD_META.filter((card) => visibleSummaryCards.includes(card.key)).map((card) => {
+    const weighted = tab === "deal" && dealWeighted ? dealWeighted[card.key] : undefined;
+    return {
+      ...card,
+      value: summary[card.key],
+      // Quiet weighted-$ line under the count — only where probabilities are
+      // loaded and the bucket has weighted value ("wtd $410k").
+      sub: weighted != null && weighted > 0 ? `wtd ${compactCurrency(weighted)}` : undefined,
+    };
+  });
   const currentBoardLoading = tab === "deal" ? loadingDeals : loadingProspects;
   const summaryLoading = currentBoardLoading || loadingSummarySettings;
   const summaryCardsToRender = summaryLoading
     ? SUMMARY_CARD_META.filter((card) => ["active", "tofu", "mofu", "bofu"].includes(card.key)).map((card) => ({
         ...card,
-        value: "—",
+        value: "—" as string | number,
+        sub: undefined as string | undefined,
       }))
     : summaryCards;
   const canImportCrm =
@@ -2261,7 +2342,7 @@ export default function Pipeline() {
       return next;
     });
 
-  const runBulk = async (payload: { stage?: string; add_tags?: string[]; reassign?: boolean; assigned_to_id?: string | null }) => {
+  const runBulk = async (payload: { stage?: string; reason?: string; reason_detail?: string; add_tags?: string[]; reassign?: boolean; assigned_to_id?: string | null }) => {
     if (selectedDealIds.size === 0 || bulkBusy) return;
     setBulkBusy(true);
     try {
@@ -2481,6 +2562,9 @@ export default function Pipeline() {
       return;
     }
     const draggedDeal = allDeals.find((deal) => deal.id === dragItem.id);
+    // Fresh reason draft per move — the confirm modal collects it for closes.
+    setMoveReason("");
+    setMoveReasonDetail("");
     setPendingDealMove({
       dealId: dragItem.id,
       dealName: draggedDeal?.name || "this deal",
@@ -2492,9 +2576,19 @@ export default function Pipeline() {
 
   const confirmPendingDealMove = async () => {
     if (!pendingDealMove) return;
+    const closeTarget = isCloseReasonStage(pendingDealMove.targetStage);
+    // Backend 422s a reason-less CLOSED LOST move; the Confirm button is
+    // disabled until a reason is picked, this is just a belt-and-braces guard.
+    if (pendingDealMove.targetStage === "closed_lost" && !moveReason) return;
     setBusyStage(pendingDealMove.targetStage);
     try {
-      await dealsApi.moveStage(pendingDealMove.dealId, pendingDealMove.targetStage);
+      await dealsApi.moveStage(
+        pendingDealMove.dealId,
+        pendingDealMove.targetStage,
+        closeTarget
+          ? { reason: moveReason || undefined, reason_detail: moveReasonDetail.trim() || undefined }
+          : undefined,
+      );
       // Deals-only mutation — don't re-download the 500-row prospect list.
       await loadDealBoard();
     } catch (error) {
@@ -2744,7 +2838,7 @@ export default function Pipeline() {
           </div>
           <div className="pr-summary-grid">
             {summaryCardsToRender.map((card) => (
-              <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} />
+              <SummaryCard key={card.key} label={card.label} value={card.value} tone={card.tone ?? "default"} sub={card.sub} />
             ))}
           </div>
           <button
@@ -2845,7 +2939,7 @@ export default function Pipeline() {
                     onChange={(e) => handleStalledOnlyChange(e.target.checked)}
                     style={{ accentColor: "#d97706", width: 14, height: 14 }}
                   />
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (30d+ in stage)</span>
+                  <span title="Uses the workspace's per-stage stuck thresholds (business days) — same rule as the performance scorecard." style={{ fontSize: 12.5, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (over stage threshold)</span>
                 </label>
               </div>
             )}
@@ -2933,10 +3027,16 @@ export default function Pipeline() {
                 const divider = index > 0 && (tab === "deal" ? effectiveDealStages[index - 1]?.group : effectiveProspectStages[index - 1]?.group) === "active" && stage.group === "closed";
                 const dealItems = filteredDealBoard[stage.id] ?? [];
                 const prospectItems = filteredProspects[stage.id as ProspectStageId] ?? [];
+                const dealTotal = dealItems.reduce((sum, deal) => { const n = Number(deal.value); return sum + (Number.isFinite(n) ? n : 0); }, 0);
+                // Weighted column total = raw total × stage probability. Shown
+                // only for active-group stages with a configured probability
+                // (closed columns would just echo the raw total or $0).
+                const stageProb = stageProbabilities?.[stage.id];
+                const weightedTotal = tab === "deal" && !currentBoardLoading && stage.group === "active" && typeof stageProb === "number" ? dealTotal * stageProb : undefined;
                 return (
                   <div key={stage.id} style={{ display: "flex", gap: 12, height: "100%" }}>
                     {divider && <div style={{ width: 1, background: "linear-gradient(180deg, #dbe6f2 0%, transparent 100%)", margin: "28px 2px 0", alignSelf: "stretch" }} />}
-                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealItems.reduce((sum, deal) => { const n = Number(deal.value); return sum + (Number.isFinite(n) ? n : 0); }, 0)} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onExport={currentBoardLoading ? undefined : () => exportPipelineCsv({ stage })} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
+                    <BoardColumn stage={stage} count={currentBoardLoading ? 0 : tab === "deal" ? dealItems.length : prospectItems.length} totalValue={currentBoardLoading || tab !== "deal" ? undefined : dealTotal} weightedValue={weightedTotal} dropActive={dragItem ? (dragItem.kind === "deal" ? tab === "deal" && dragItem.fromStage !== stage.id : tab === "prospect" && dragItem.fromStage !== stage.id) : false} onAdd={tab === "deal" ? () => setCreateDealStage(stage.id) : undefined} onExport={currentBoardLoading ? undefined : () => exportPipelineCsv({ stage })} onDrop={() => tab === "deal" ? handleDealDrop(stage.id) : handleProspectDrop(stage.id as ProspectStageId)}>
                       {currentBoardLoading ? (
                         Array.from({ length: stage.group === "active" ? 3 : 1 }).map((_, skeletonIndex) => (
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
@@ -3034,7 +3134,7 @@ export default function Pipeline() {
         <div style={{ position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 60, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderRadius: 14, background: "#0b0c0e", boxShadow: "0 18px 44px rgba(11,12,14,0.42)", border: "1px solid #23262b", maxWidth: "calc(100vw - 24px)" }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>{selectedDealIds.size} selected</span>
           <span style={{ width: 1, height: 22, background: "rgba(255,255,255,0.14)" }} />
-          <select disabled={bulkBusy} value="" onChange={(e) => { if (e.target.value) runBulk({ stage: e.target.value }); }} style={{ height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "#16181c", color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "0 8px", cursor: "pointer" }}>
+          <select disabled={bulkBusy} value="" onChange={(e) => { const v = e.target.value; if (!v) return; if (isCloseReasonStage(v)) { setBulkCloseReason(""); setBulkCloseDetail(""); setBulkCloseStage(v); } else { runBulk({ stage: v }); } }} style={{ height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.18)", background: "#16181c", color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "0 8px", cursor: "pointer" }}>
             <option value="" disabled>Move to stage…</option>
             {effectiveDealStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
@@ -3049,6 +3149,75 @@ export default function Pipeline() {
           <button type="button" onClick={clearSelection} style={{ height: 32, borderRadius: 8, border: "none", background: "transparent", color: "#c7cdd6", fontSize: 12.5, fontWeight: 700, padding: "0 8px", cursor: "pointer" }}>Clear</button>
           {bulkBusy && <span style={{ fontSize: 12, fontWeight: 700, color: "#9ace3d" }}>Working…</span>}
         </div>
+      )}
+
+      {/* Bulk close: one reason prompt, applied to every selected deal. */}
+      {bulkCloseStage && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.22)", zIndex: 70 }}
+            onClick={bulkBusy ? undefined : () => setBulkCloseStage(null)}
+          />
+          <div style={{ position: "fixed", inset: 0, zIndex: 71, display: "grid", placeItems: "center", padding: 16 }}>
+            <div className="crm-panel" style={{ width: "min(520px, 100%)", padding: 24, borderRadius: 18 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#182042", marginBottom: 10 }}>
+                Close {selectedDealIds.size} {selectedDealIds.size === 1 ? "deal" : "deals"}?
+              </div>
+              <div style={{ color: "#5e738b", fontSize: 14, lineHeight: 1.7, marginBottom: 18 }}>
+                Every selected deal moves to{" "}
+                <strong>{dealStageLabelMap.get(bulkCloseStage) ?? bulkCloseStage}</strong>. The reason below applies to all of them and powers the win/loss rollup.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b" }}>
+                  Close reason{bulkCloseStage === "closed_lost" ? <span style={{ color: "#dc2626" }}> *</span> : " (optional)"}
+                </label>
+                <select
+                  value={bulkCloseReason}
+                  onChange={(event) => setBulkCloseReason(event.target.value)}
+                  style={{ height: 38, borderRadius: 10, border: bulkCloseStage === "closed_lost" && !bulkCloseReason ? "1.5px solid #fbbf24" : "1px solid #d7e2ee", background: "#fff", padding: "0 10px", fontSize: 13, color: bulkCloseReason ? "#182042" : "#94a3b8", outline: "none" }}
+                >
+                  <option value="">Select a reason…</option>
+                  {CLOSE_REASONS.map((reason) => (
+                    <option key={reason.value} value={reason.value}>{reason.label}</option>
+                  ))}
+                </select>
+                <textarea
+                  value={bulkCloseDetail}
+                  onChange={(event) => setBulkCloseDetail(event.target.value)}
+                  rows={2}
+                  placeholder="Optional detail applied to all selected deals…"
+                  style={{ width: "100%", border: "1px solid #d7e2ee", borderRadius: 10, padding: "8px 10px", fontSize: 13, color: "#182042", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  type="button"
+                  className="crm-button soft"
+                  disabled={bulkBusy}
+                  onClick={() => setBulkCloseStage(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="crm-button primary"
+                  disabled={bulkBusy || (bulkCloseStage === "closed_lost" && !bulkCloseReason)}
+                  onClick={async () => {
+                    if (bulkCloseStage === "closed_lost" && !bulkCloseReason) return;
+                    await runBulk({
+                      stage: bulkCloseStage,
+                      reason: bulkCloseReason || undefined,
+                      reason_detail: bulkCloseDetail.trim() || undefined,
+                    });
+                    setBulkCloseStage(null);
+                  }}
+                >
+                  {bulkBusy ? "Closing…" : "Close deals"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {createDealStage && <CreateDealModal defaultStage={createDealStage} companies={companies} users={users} onClose={() => setCreateDealStage(null)} onCreated={handleDealCreated} stages={effectiveDealStages} />}
@@ -3081,6 +3250,31 @@ export default function Pipeline() {
                 <strong>{dealStageLabelMap.get(pendingDealMove.targetStage) ?? pendingDealMove.targetStage}</strong>.
                 {" "}This will update pipeline tracking for the deal.
               </div>
+              {isCloseReasonStage(pendingDealMove.targetStage) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b" }}>
+                    Close reason{pendingDealMove.targetStage === "closed_lost" ? <span style={{ color: "#dc2626" }}> *</span> : " (optional)"}
+                  </label>
+                  <select
+                    value={moveReason}
+                    onChange={(event) => setMoveReason(event.target.value)}
+                    style={{ height: 38, borderRadius: 10, border: pendingDealMove.targetStage === "closed_lost" && !moveReason ? "1.5px solid #fbbf24" : "1px solid #d7e2ee", background: "#fff", padding: "0 10px", fontSize: 13, color: moveReason ? "#182042" : "#94a3b8", outline: "none" }}
+                  >
+                    <option value="">Select a reason…</option>
+                    {CLOSE_REASONS.map((reason) => (
+                      <option key={reason.value} value={reason.value}>{reason.label}</option>
+                    ))}
+                  </select>
+                  <textarea
+                    value={moveReasonDetail}
+                    onChange={(event) => setMoveReasonDetail(event.target.value)}
+                    rows={2}
+                    placeholder="Optional detail — e.g. lost to incumbent on price…"
+                    style={{ width: "100%", border: "1px solid #d7e2ee", borderRadius: 10, padding: "8px 10px", fontSize: 13, color: "#182042", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+                  />
+                  <span style={{ fontSize: 11, color: "#8ca0b3" }}>Powers the win/loss rollup — pick the closest match.</span>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                 <button
                   type="button"
@@ -3093,7 +3287,7 @@ export default function Pipeline() {
                 <button
                   type="button"
                   className="crm-button primary"
-                  disabled={Boolean(busyStage)}
+                  disabled={Boolean(busyStage) || (pendingDealMove.targetStage === "closed_lost" && !moveReason)}
                   onClick={confirmPendingDealMove}
                 >
                   {busyStage ? "Moving..." : "Yes, move it"}

@@ -88,8 +88,22 @@ export type ContactSearchParams = {
     // opt in to review them.
     includeDisabledAccounts?: boolean;
     timezone?: string[];
+    // KPI tile filters — server-side twins of the Prospecting engagement
+    // tiles. true narrows to the tile's population; the backend shares the
+    // exact predicates with GET /contacts/stats (see app/repositories/contact.py).
+    emailsOpened?: boolean;
+    linkedinActive?: boolean;
+    meetingsBooked?: boolean;
     sortBy?: "name" | "first_name" | "last_name" | "company" | "email" | "title" | "created_at";
     sortDir?: "asc" | "desc";
+};
+
+/** Filter-wide KPI tile counts returned by GET /contacts/stats. */
+export type ContactEngagementStats = {
+  total: number;
+  emails_opened: number;
+  linkedin_active: number;
+  meetings_booked: number;
 };
 
 /**
@@ -132,6 +146,9 @@ export const buildContactQuery = (params: ContactSearchParams): URLSearchParams 
     if (params.companyAccountStatus?.length) search.set("company_account_status", params.companyAccountStatus.join(","));
     if (params.includeDisabledAccounts) search.set("include_disabled_accounts", "true");
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
+    if (params.emailsOpened) search.set("emails_opened", "true");
+    if (params.linkedinActive) search.set("linkedin_active", "true");
+    if (params.meetingsBooked) search.set("meetings_booked", "true");
     if (params.sortBy) search.set("sort_by", params.sortBy);
     if (params.sortDir) search.set("sort_dir", params.sortDir);
   return search;
@@ -153,6 +170,17 @@ export const contactsApi = {
     search.set("skip", String(params.skip ?? 0));
     search.set("limit", String(params.limit ?? 50));
     return requestPaginated<Contact>(`/api/v1/contacts/?${search}`);
+  },
+
+  /**
+   * Filter-wide engagement counts for the KPI tiles. Uses the SAME query
+   * builder as searchPaginated/exportCsv, and the backend shares the same
+   * ContactFilters dependency + visibility gate — so a tile's number always
+   * matches what clicking the tile (a real server filter) returns.
+   */
+  stats: (params: ContactSearchParams) => {
+    const search = buildContactQuery(params);
+    return request<ContactEngagementStats>(`/api/v1/contacts/stats?${search}`);
   },
 
   /**
@@ -311,16 +339,26 @@ export const dealsApi = {
     request<Deal>(`/api/v1/deals/${id}/meddpicc/auto-fill`, {
       method: "POST",
     }),
-  moveStage: (dealId: string, stage: string) =>
+  moveStage: (
+    dealId: string,
+    stage: string,
+    // Win/loss close reason (enum) + optional detail. Required by the backend
+    // when stage=closed_lost; optional for closed_won; ignored otherwise.
+    opts?: { reason?: string; reason_detail?: string },
+  ) =>
     request<Deal>(`/api/v1/deals/${dealId}/stage`, {
       method: "PATCH",
-      body: JSON.stringify({ stage }),
+      body: JSON.stringify({ stage, ...(opts ?? {}) }),
     }),
   delete: (id: string) =>
     request<void>(`/api/v1/deals/${id}`, { method: "DELETE" }),
   bulkUpdate: (payload: {
     deal_ids: string[];
     stage?: string;
+    // Close reason (enum) + optional detail — required when stage=closed_lost,
+    // optional for closed_won, ignored for other stages. Applies to all deals.
+    reason?: string;
+    reason_detail?: string;
     add_tags?: string[];
     reassign?: boolean;
     assigned_to_id?: string | null;

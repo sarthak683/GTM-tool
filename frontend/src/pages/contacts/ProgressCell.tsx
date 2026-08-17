@@ -80,18 +80,77 @@ const CALL_BOOKED = new Set(["demo_scheduled_booked", "meeting_confirmed"]);
 // paused, …) confirms the lead actually entered the campaign.
 const PRE_SEND_INSTANTLY = new Set(["", "ready", "missing_email", "none"]);
 
+// ── Manual email log ───────────────────────────────────────────────────────
+// A rep-logged email touch (the "Log" button next to Email in the Action
+// column). Mirrors the LinkedIn logger mechanism, but the Contact model has
+// no email_status column, so the record rides in the enrichment_data JSONB
+// under `manual_email`. The logger in Contacts.tsx writes it; this cell reads
+// it so a personally-sent Gmail no longer renders as a grey "Not sent"
+// forever. Exported (with the outcome options) so Contacts.tsx and this cell
+// share one definition.
+export type ManualEmailLog = {
+  status?: string; // sent | replied | no_response | meeting_booked
+  last_at?: string; // ISO timestamp of the latest manual log
+  count?: number; // how many manual email touches were logged
+};
+
+export const EMAIL_LOG_OUTCOME_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "sent", label: "Sent" },
+  { value: "replied", label: "Replied" },
+  { value: "no_response", label: "No response" },
+  { value: "meeting_booked", label: "Meeting booked" },
+];
+
+export function getManualEmailLog(contact: Pick<Contact, "enrichment_data">): ManualEmailLog | null {
+  const ed = contact.enrichment_data;
+  if (!ed || typeof ed !== "object") return null;
+  const raw = (ed as Record<string, unknown>).manual_email;
+  if (!raw || typeof raw !== "object") return null;
+  return raw as ManualEmailLog;
+}
+
+// Sequence-status transition for a manual email log — same guardrails as the
+// call/LinkedIn derivations in lib/prospectWorkflow.ts: a booked meeting is
+// never downgraded, a hard negative only moves on a meeting, and a plain
+// send only upgrades pre-launch states to "sent" (which also keeps the
+// backend's email yellow color filter in agreement with this chip).
+export function deriveSequenceStatusFromEmailLog(
+  emailStatus?: string | null,
+  currentStatus?: string | null,
+): string | undefined {
+  if (!emailStatus) return currentStatus ?? undefined;
+  if (emailStatus === "meeting_booked") return "meeting_booked";
+  if (currentStatus === "meeting_booked") return currentStatus;
+  if (currentStatus === "not_interested") return currentStatus;
+  if (emailStatus === "replied") return "replied";
+  // sent / no_response — an outbound touch: move pre-launch states to "sent".
+  if (!currentStatus || ["ready", "research_needed"].includes(currentStatus)) return "sent";
+  return currentStatus ?? undefined;
+}
+
 function getEmailChannel(contact: Contact): ChannelState {
   const seq = contact.sequence_status || "";
   const opens = contact.email_open_count ?? 0;
   const clicks = contact.email_click_count ?? 0;
-  const lastAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
-  // A send is only "real" with evidence: tracked opens/clicks, or an
-  // instantly_status past the pre-send states. This stops the lane claiming a
-  // phantom "sent" for contacts whose sequence_status was set manually or by
-  // import with no email actually behind it (drives the drawer/ProgressCell
-  // agreement — see "Emails sent 0" reconciliation).
+  const openedAt = contact.email_last_opened_at ? new Date(contact.email_last_opened_at) : null;
+  // Manual email log (see getManualEmailLog above): a rep-logged send counts
+  // as real evidence and feeds this lane's timestamp → lastTouch.
+  const manual = getManualEmailLog(contact);
+  const manualAtRaw = manual?.last_at ? new Date(manual.last_at) : null;
+  const manualAt = manualAtRaw && !Number.isNaN(manualAtRaw.getTime()) ? manualAtRaw : null;
+  const lastAt = openedAt && manualAt
+    ? (manualAt.getTime() > openedAt.getTime() ? manualAt : openedAt)
+    : (openedAt ?? manualAt);
+  // A send is only "real" with evidence: tracked opens/clicks, an
+  // instantly_status past the pre-send states, or a manual rep log. This
+  // stops the lane claiming a phantom "sent" for contacts whose
+  // sequence_status was set manually or by import with no email actually
+  // behind it (drives the drawer/ProgressCell agreement — see "Emails sent 0"
+  // reconciliation).
   const inst = (contact.instantly_status || "").toLowerCase();
-  const reallySent = opens > 0 || clicks > 0 || (inst !== "" && !PRE_SEND_INSTANTLY.has(inst));
+  const trackedSend = opens > 0 || clicks > 0 || (inst !== "" && !PRE_SEND_INSTANTLY.has(inst));
+  const manualOnly = !trackedSend && !!manual;
+  const reallySent = trackedSend || !!manual;
   if (!reallySent) {
     return { dots: [], heroColor: null, label: "Not sent", sub: "Email pending", timestamp: null };
   }
@@ -112,7 +171,7 @@ function getEmailChannel(contact: Contact): ChannelState {
   const sent = reallySent;
 
   const dots: OutcomeDot[] = [];
-  if (sent) dots.push({ color: "yellow", title: "Email sent" });
+  if (sent) dots.push({ color: "yellow", title: manualOnly ? "Email sent (logged by rep)" : "Email sent" });
   // One blue dot per open, capped at 6 so the rail stays compact. Excess
   // opens become a "+N" pill rendered between the blues and any terminal
   // outcome dot — so a hot reader with 12 opens replying positively reads
@@ -137,6 +196,13 @@ function getEmailChannel(contact: Contact): ChannelState {
   else if (replied) { heroColor = "green"; label = "Positive reply"; sub = opens > 0 ? `${opens} open${opens === 1 ? "" : "s"}` : "Reply received"; }
   else if (negative) { heroColor = "red"; label = "Negative reply"; sub = "Not interested · email"; }
   else if (opens > 0) { heroColor = "blue"; label = "Opened"; sub = `${opens} open${opens === 1 ? "" : "s"} · no reply yet`; }
+  else if (manualOnly) {
+    // Only evidence is the rep's own log — distinct sub-state so a manually
+    // sent Gmail reads amber "Sent (manual)" instead of grey "Not sent".
+    heroColor = "yellow";
+    label = "Sent (manual)";
+    sub = manual?.status === "no_response" ? "No response yet · logged by rep" : "Logged by rep";
+  }
   else if (sent) { heroColor = "yellow"; label = "Sent"; sub = "Awaiting open"; }
   else { heroColor = null; label = "Not sent"; sub = "Email pending"; }
 

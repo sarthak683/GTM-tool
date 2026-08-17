@@ -233,6 +233,13 @@ class ContactFilters:
     next_followup_before: Optional[datetime] = Query(default=None, description="Only contacts whose scheduled follow-up (next_followup_at) is at/before this UTC datetime.")
     call_last_after: Optional[datetime] = Query(default=None, description="Only contacts last called (call_last_at) at/after this UTC datetime.")
     call_last_before: Optional[datetime] = Query(default=None, description="Only contacts last called (call_last_at) at/before this UTC datetime.")
+    # KPI tile filters — server-side twins of the Prospecting engagement tiles.
+    # true applies the predicate; false/absent is a no-op (there is no inverse
+    # tile). Predicates live in app/repositories/contact.py (*_clause helpers)
+    # and are shared with GET /contacts/stats so counts and rows always agree.
+    emails_opened: Optional[bool] = Query(default=None, description="true → only prospects with at least one tracked email open (email_open_count > 0).")
+    linkedin_active: Optional[bool] = Query(default=None, description="true → only prospects with a logged LinkedIn motion (linkedin_status set and not 'none').")
+    meetings_booked: Optional[bool] = Query(default=None, description="true → only prospects whose sequence_status is meeting_booked.")
 
     def as_repo_kwargs(self) -> dict:
         """Filter kwargs for ``ContactRepository.list_with_company_name``."""
@@ -350,6 +357,43 @@ async def list_contacts(
         **filters.as_repo_kwargs(),
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
+
+
+class ContactEngagementStats(SQLModel):
+    """Filter-wide KPI tile counts for the Prospecting page."""
+
+    total: int
+    emails_opened: int
+    linkedin_active: int
+    meetings_booked: int
+
+
+# NOTE: registered before /{contact_id} so "stats" is never parsed as a UUID.
+@router.get("/stats", response_model=ContactEngagementStats)
+async def get_contact_stats(
+    session: DBSession,
+    current_user: CurrentUser,
+    filters: ContactFilters = Depends(),
+):
+    """Engagement KPI counts over EVERY prospect matching the current filters.
+
+    Why this exists: the tiles beside "Total prospects" used to be computed
+    client-side from the visible 50-row page, so "Emails opened: 3" really
+    meant "3 on this page" while pagination claimed the full total. This
+    endpoint shares the SAME ``ContactFilters`` dependency and visibility gate
+    as the list/export, and aggregates in one SQL round-trip, so the tiles are
+    accurate across all pages and can never drift from the list.
+    """
+    repo = ContactRepository(session)
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, current_user) else str(current_user.id)
+    )
+    stats = await repo.aggregate_engagement_stats(
+        restrict_to_role=current_user.role,
+        restrict_to_owner_id=restrict_to_owner_id,
+        **filters.as_repo_kwargs(),
+    )
+    return ContactEngagementStats(**stats)
 
 
 @router.post("/admin/purge-all")

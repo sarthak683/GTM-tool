@@ -17,14 +17,15 @@ import csv
 import io
 import logging
 import re
+from dataclasses import dataclass, fields as dataclass_fields
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import load_only
+from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import aliased, load_only
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
@@ -123,6 +124,262 @@ def _account_sourcing_visibility_filter():
             select(Deal.id).where(Deal.company_id == Company.id).exists(),
         ),
     )
+
+
+# ── Shared list/export/summary filter contract ────────────────────────────────
+
+
+@dataclass
+class CompanySourcingFilters:
+    """Every filter the Account Sourcing accounts list understands.
+
+    Shared by ``list_sourced_companies``, ``get_sourced_company_summary`` and
+    ``export_sourced_companies`` via ``Depends()`` — and by the filter-wide
+    bulk-assign endpoint in ``assignments.py`` — so none of them can drift from
+    the list the user is actually looking at. (The export previously declared
+    its own, much smaller parameter set AND a different base population, so
+    "download the filtered list" silently exported something else.)
+
+    FastAPI expands these into exactly the query parameters the endpoints
+    previously declared individually, so existing param names keep working.
+    """
+
+    q: str | None = Query(default=None, description="Search by name, domain, industry, rep, disposition, or outreach lane")
+    icp_tier: str | None = Query(default=None, description="One or more ICP tiers (comma-separated). Use '__empty__' for accounts with no tier.")
+    disposition: str | None = Query(default=None, description="One or more dispositions (comma-separated). Use '__empty__' for accounts with no disposition.")
+    account_status: str | None = Query(default=None, description="One or more account_status values (comma-separated). Use 'unset' for accounts with no status.")
+    recommended_outreach_lane: str | None = Query(default=None, description="One or more outreach lanes (comma-separated). Use '__empty__' for accounts with no lane.")
+    assigned_rep: str | None = Query(default=None, description="Exact match on the assigned rep display name (legacy export filter).")
+    assigned_rep_email: str | None = Query(default=None, description="Exact match on the assigned AE email.")
+    owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership. Use '__unassigned__' for accounts with neither slot set.")
+    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only.")
+    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only.")
+    journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage.")
+    batch_id: UUID | None = Query(default=None, description="Only accounts attached to this sourcing batch (import).")
+    prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account.")
+    prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account.")
+    company_ids: str | None = Query(default=None, description="Comma-separated company UUIDs (selected rows only).")
+
+    def __post_init__(self) -> None:
+        # FastAPI resolves the Query(...) defaults before calling __init__, so
+        # real requests never hit this. Direct construction (tests, programmatic
+        # reuse) would otherwise leave the truthy Query sentinel objects in the
+        # fields; normalize them to their plain defaults.
+        from pydantic.fields import FieldInfo
+
+        for field_ in dataclass_fields(self):
+            value = getattr(self, field_.name)
+            if isinstance(value, FieldInfo):
+                setattr(self, field_.name, value.default)
+
+
+def _parse_uuid_multi(raw: str | None) -> list[UUID]:
+    """Lenient comma-separated UUID parser for owner filters (bad tokens are
+    dropped, matching the list endpoint's historical behavior)."""
+    parsed: list[UUID] = []
+    for part in str(raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed.append(UUID(part))
+        except ValueError:
+            continue
+    return parsed
+
+
+def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
+    """Single filtered SELECT over the Account Sourcing company set.
+
+    SINGLE SOURCE OF TRUTH for which accounts a request touches: the list, the
+    summary, the CSV export, and the filter-wide bulk-assign all build their
+    statement here, on the same base visibility
+    (``_account_sourcing_visibility_filter`` + ``company_visibility_filter``).
+    """
+    # Parse the status filter up front: explicitly asking for a disabled status
+    # (not_a_fit/dnd) means the caller is reviewing parked accounts, so the
+    # visibility filter must not hide them (owners could otherwise never see —
+    # or re-enable — their own parked accounts).
+    status_tokens = (
+        [t.strip().lower() for t in str(filters.account_status).split(",") if t.strip()]
+        if filters.account_status
+        else []
+    )
+    include_disabled = any(t in INACTIVE_ACCOUNT_STATUSES for t in status_tokens)
+    stmt = (
+        select(Company)
+        .where(_account_sourcing_visibility_filter())
+        .where(
+            company_visibility_filter(
+                user.id, user.role == "admin", include_disabled=include_disabled
+            )
+        )
+    )
+
+    selected_ids = _parse_uuid_list(filters.company_ids)
+    if selected_ids:
+        stmt = stmt.where(Company.id.in_(selected_ids))
+
+    search_term = (filters.q or "").strip()
+    if search_term:
+        like = f"%{search_term}%"
+        stmt = stmt.where(
+            or_(
+                Company.name.ilike(like),
+                Company.domain.ilike(like),
+                Company.industry.ilike(like),
+                Company.assigned_rep.ilike(like),
+                Company.assigned_rep_email.ilike(like),
+                Company.disposition.ilike(like),
+                Company.recommended_outreach_lane.ilike(like),
+            )
+        )
+    stmt = _apply_text_multi_filter(stmt, Company.icp_tier, filters.icp_tier)
+    stmt = _apply_text_multi_filter(stmt, Company.disposition, filters.disposition)
+    if status_tokens:
+        status_clauses = []
+        real_statuses = [t for t in status_tokens if t != "unset"]
+        if real_statuses:
+            status_clauses.append(Company.account_status.in_(real_statuses))
+        if "unset" in status_tokens:
+            status_clauses.append(or_(Company.account_status.is_(None), Company.account_status == ""))
+        if status_clauses:
+            stmt = stmt.where(or_(*status_clauses))
+    stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, filters.recommended_outreach_lane)
+    if filters.assigned_rep:
+        stmt = stmt.where(Company.assigned_rep == filters.assigned_rep)
+    if filters.assigned_rep_email:
+        stmt = stmt.where(Company.assigned_rep_email == filters.assigned_rep_email)
+    if filters.batch_id:
+        stmt = stmt.where(Company.sourcing_batch_id == filters.batch_id)
+
+    if filters.owner_id:
+        # Mirror the contacts repository: a "__unassigned__" sentinel means
+        # "no owner" (both ownership slots null), OR-ed in alongside any real
+        # owner ids so reps can surface accounts that slipped through.
+        owner_uuids = _parse_uuid_multi(filters.owner_id)
+        owner_unassigned = "__unassigned__" in [
+            part.strip() for part in str(filters.owner_id).split(",")
+        ]
+        owner_clauses = []
+        if owner_uuids:
+            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
+        if owner_unassigned:
+            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
+        if owner_clauses:
+            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+
+    if filters.ae_id:
+        ae_uuids = _parse_uuid_multi(filters.ae_id)
+        if ae_uuids:
+            stmt = stmt.where(Company.assigned_to_id.in_(ae_uuids))
+
+    if filters.sdr_id:
+        sdr_uuids = _parse_uuid_multi(filters.sdr_id)
+        if sdr_uuids:
+            stmt = stmt.where(Company.sdr_id.in_(sdr_uuids))
+
+    # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
+    # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
+    # accounts with no Recotap row or an empty/null stage.
+    if filters.journey_stage:
+        stages = [s.strip() for s in str(filters.journey_stage).split(",") if s.strip()]
+        want_not_scored = "not_scored" in stages
+        real_stages = [s for s in stages if s != "not_scored"]
+        journey_clauses = []
+        if real_stages:
+            journey_clauses.append(
+                Company.id.in_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.in_(real_stages),
+                    )
+                )
+            )
+        if want_not_scored:
+            journey_clauses.append(
+                Company.id.notin_(
+                    select(RecotapAccount.company_id).where(
+                        RecotapAccount.company_id.is_not(None),
+                        RecotapAccount.journey_stage.is_not(None),
+                        RecotapAccount.journey_stage != "",
+                    )
+                )
+            )
+        if journey_clauses:
+            stmt = stmt.where(or_(*journey_clauses) if len(journey_clauses) > 1 else journey_clauses[0])
+
+    # Advanced filter: prospects (contacts) per account. We materialise a
+    # per-company count via a grouped subquery and apply >= / <= bounds.
+    # The UI flattens its operator+value into min/max, so the backend just
+    # ANDs whichever bounds are present.
+    if filters.prospects_min is not None or filters.prospects_max is not None:
+        prospect_count_sub = (
+            select(Contact.company_id, func.count(Contact.id).label("cnt"))
+            .group_by(Contact.company_id)
+            .subquery()
+        )
+        prospect_count = func.coalesce(prospect_count_sub.c.cnt, 0)
+        stmt = stmt.outerjoin(prospect_count_sub, Company.id == prospect_count_sub.c.company_id)
+        if filters.prospects_min is not None:
+            stmt = stmt.where(prospect_count >= filters.prospects_min)
+        if filters.prospects_max is not None:
+            stmt = stmt.where(prospect_count <= filters.prospects_max)
+
+    return stmt
+
+
+# Sort keys the accounts list + export accept (`sort` query param).
+COMPANY_SORT_KEYS = ("created_at", "name", "icp_score", "prospect_count", "enriched_at")
+# Keys whose natural first page is "biggest/newest first" when `order` is omitted.
+_SORT_DEFAULT_DESC = {"created_at", "icp_score", "prospect_count", "enriched_at"}
+
+
+def apply_company_sort(stmt, sort: str | None, order: str | None):
+    """Server-side ORDER BY for the accounts list and its CSV export.
+
+    Defaults preserve the historical ordering (created_at desc, id desc).
+    Nullable columns sort NULLS LAST in both directions, with one deliberate
+    exception: ``enriched_at`` ascending puts NULLs FIRST so the UI's
+    "unenriched first" view is expressible (`sort=enriched_at&order=asc`).
+    ``Company.id desc`` is always appended as a stable pagination tiebreaker.
+    """
+    key = (sort or "created_at").strip().lower()
+    if key not in COMPANY_SORT_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported sort key '{key}'. Use one of: {', '.join(COMPANY_SORT_KEYS)}",
+        )
+    direction = (order or "").strip().lower()
+    if not direction:
+        direction = "desc" if key in _SORT_DEFAULT_DESC else "asc"
+    if direction not in ("asc", "desc"):
+        raise HTTPException(status_code=422, detail="Unsupported sort order. Use 'asc' or 'desc'.")
+
+    nullable = key in ("icp_score", "enriched_at")
+    if key == "created_at":
+        expr = Company.created_at
+    elif key == "name":
+        expr = func.lower(Company.name)
+    elif key == "icp_score":
+        expr = Company.icp_score
+    elif key == "enriched_at":
+        expr = Company.enriched_at
+    else:  # prospect_count — live per-account contact count
+        expr = (
+            select(func.count(Contact.id))
+            .where(Contact.company_id == Company.id)
+            .correlate(Company)
+            .scalar_subquery()
+        )
+
+    ordering = expr.asc() if direction == "asc" else expr.desc()
+    if nullable:
+        if key == "enriched_at" and direction == "asc":
+            ordering = ordering.nulls_first()
+        else:
+            ordering = ordering.nulls_last()
+    return stmt.order_by(ordering, Company.id.desc())
 
 
 def _can_see_company(company: Company, user) -> bool:
@@ -652,6 +909,25 @@ async def _queue_batch_import(
         raise HTTPException(status_code=500, detail="Failed to queue batch import") from exc
 
 
+# How many affected account names an owner-resolution error row spells out
+# before collapsing the rest into a "+N more" tail.
+OWNER_ERROR_NAMES_SHOWN = 5
+
+
+def owner_resolution_error_message(slot: str, cell: str, account_names: list[str]) -> str:
+    """Text for the batch error row describing an unresolvable AE/SDR cell.
+
+    ``slot`` is "AE" or "SDR", ``cell`` the raw sheet value, ``account_names``
+    every account that lost that owner slot (in import order).
+    """
+    shown = ", ".join(account_names[:OWNER_ERROR_NAMES_SHOWN])
+    extra = len(account_names) - OWNER_ERROR_NAMES_SHOWN
+    return (
+        f"{slot} '{cell}' did not match an active user — left unassigned on "
+        f"{len(account_names)} account(s): {shown}" + (f" (+{extra} more)" if extra > 0 else "")
+    )
+
+
 async def _process_uploaded_rows(
     session,
     batch: SourcingBatch,
@@ -674,7 +950,36 @@ async def _process_uploaded_rows(
         if full:
             _users_by_full_name.setdefault(full, []).append(user)
 
-    def _resolve_user(rep_email: str | None, rep_name: str | None) -> dict[str, str] | None:
+    # One error row per UNIQUE unresolvable owner cell, not per row. A sheet
+    # whose whole SDR column names someone the CRM doesn't know would otherwise
+    # push one row per line into error_log — and `_update_batch_progress`
+    # rewrites the whole JSONB blob after EVERY row, so per-row entries make
+    # the import quadratic. The single row carries a running count plus the
+    # first few affected accounts, and is mutated in place as more turn up (the
+    # list is reassigned wholesale on each progress write, so edits persist).
+    _owner_error_rows: dict[tuple[str, str], dict[str, str]] = {}
+    _owner_error_accounts: dict[tuple[str, str], list[str]] = {}
+
+    def _record_owner_resolution_failure(slot: str, cell: str, row_name: str) -> None:
+        key = (slot, cell.lower())
+        names = _owner_error_accounts.setdefault(key, [])
+        names.append(row_name)
+        message = owner_resolution_error_message(slot, cell, names)
+        existing = _owner_error_rows.get(key)
+        if existing is None:
+            entry = {"name": row_name, "error": message}
+            _owner_error_rows[key] = entry
+            errors.append(entry)
+        else:
+            existing["error"] = message
+
+    def _resolve_user(
+        rep_email: str | None,
+        rep_name: str | None,
+        *,
+        slot: str,
+        row_name: str,
+    ) -> dict[str, str] | None:
         """Resolve an uploaded AE/SDR cell to an active user.
 
         Matching is strict to prevent the wrong rep being assigned from a CSV:
@@ -684,7 +989,12 @@ async def _process_uploaded_rows(
           - NO first-name / fuzzy matching. A first-name fallback previously let
             a name fragment collide with an unrelated rep (e.g. the sheet said
             one SDR but the account was assigned to a different same-first-name
-            user). When nothing resolves, leave the slot unassigned and log it.
+            user). When nothing resolves, leave the slot unassigned AND record
+            it on the batch's error rows: a logger.warning alone made these
+            failures invisible to the uploader, which is the exact mechanism
+            that let hundreds of SDR conflicts/gaps accumulate in prod.
+        ``slot`` is the human label ("AE"/"SDR"); ``row_name`` the company name
+        of the row, so the error row matches the existing {name, error} shape.
         """
         found: User | None = None
         if rep_email:
@@ -696,12 +1006,20 @@ async def _process_uploaded_rows(
         if not found:
             if rep_email or rep_name:
                 logger.warning(
-                    "Sourcing import could not resolve owner cell to an active "
+                    "Sourcing import could not resolve %s cell to an active "
                     "user; leaving unassigned (email=%r name=%r batch=%s)",
+                    slot,
                     rep_email,
                     rep_name,
                     batch_id,
                 )
+                cell = " / ".join(
+                    part for part in ((rep_email or "").strip(), (rep_name or "").strip()) if part
+                )
+                # Same shape as the other import error rows ({name, error});
+                # NOT counted as a failed row — the account itself imported,
+                # only the owner slot was left empty.
+                _record_owner_resolution_failure(slot, cell, row_name)
             return None
         return {
             "id": str(found.id),
@@ -734,8 +1052,13 @@ async def _process_uploaded_rows(
         domain = fields["domain"]
         name = fields["name"]
 
-        ae_user = _resolve_user(fields.get("assigned_rep_email"), fields.get("assigned_rep_name") or fields.get("assigned_rep"))
-        sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"))
+        ae_user = _resolve_user(
+            fields.get("assigned_rep_email"),
+            fields.get("assigned_rep_name") or fields.get("assigned_rep"),
+            slot="AE",
+            row_name=name,
+        )
+        sdr_user = _resolve_user(fields.get("sdr_email"), fields.get("sdr_name"), slot="SDR", row_name=name)
         if ae_user:
             fields["assigned_to_id"] = ae_user["id"]
             fields["assigned_rep_email"] = ae_user["email"]
@@ -1244,164 +1567,12 @@ async def list_sourced_companies(
     _user: CurrentUser,
     session: DBSession = None,
     page: Pagination = None,
-    q: str | None = Query(default=None),
-    icp_tier: str | None = Query(default=None),
-    disposition: str | None = Query(default=None),
-    account_status: str | None = Query(default=None, description="One or more account_status values (comma-separated). Use 'unset' for accounts with no status."),
-    recommended_outreach_lane: str | None = Query(default=None),
-    assigned_rep_email: str | None = Query(default=None),
-    owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
-    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only."),
-    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only."),
-    journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage."),
-    prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account."),
-    prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account."),
+    filters: CompanySourcingFilters = Depends(),
+    sort: str | None = Query(default=None, description="Sort key: created_at | name | icp_score | prospect_count | enriched_at. Default created_at."),
+    order: str | None = Query(default=None, description="Sort direction: asc | desc. Defaults to desc (name: asc)."),
 ):
     """List sourced companies plus lightweight ClickUp-imported accounts."""
-    # Parse the status filter up front: explicitly asking for a disabled status
-    # (not_a_fit/dnd) means the caller is reviewing parked accounts, so the
-    # visibility filter must not hide them (owners could otherwise never see —
-    # or re-enable — their own parked accounts).
-    status_tokens = (
-        [t.strip().lower() for t in str(account_status).split(",") if t.strip()]
-        if account_status
-        else []
-    )
-    include_disabled = any(t in INACTIVE_ACCOUNT_STATUSES for t in status_tokens)
-    stmt = (
-        select(Company)
-        .where(_account_sourcing_visibility_filter())
-        .where(
-            company_visibility_filter(
-                _user.id, _user.role == "admin", include_disabled=include_disabled
-            )
-        )
-    )
-    search_term = (q or "").strip()
-    if search_term:
-        like = f"%{search_term}%"
-        stmt = stmt.where(
-            or_(
-                Company.name.ilike(like),
-                Company.domain.ilike(like),
-                Company.industry.ilike(like),
-                Company.assigned_rep.ilike(like),
-                Company.assigned_rep_email.ilike(like),
-                Company.disposition.ilike(like),
-                Company.recommended_outreach_lane.ilike(like),
-            )
-        )
-    stmt = _apply_text_multi_filter(stmt, Company.icp_tier, icp_tier)
-    stmt = _apply_text_multi_filter(stmt, Company.disposition, disposition)
-    if status_tokens:
-        status_clauses = []
-        real_statuses = [t for t in status_tokens if t != "unset"]
-        if real_statuses:
-            status_clauses.append(Company.account_status.in_(real_statuses))
-        if "unset" in status_tokens:
-            status_clauses.append(or_(Company.account_status.is_(None), Company.account_status == ""))
-        if status_clauses:
-            stmt = stmt.where(or_(*status_clauses))
-    stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, recommended_outreach_lane)
-    if assigned_rep_email:
-        stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
-    if owner_id:
-        owner_uuids: list[UUID] = []
-        owner_unassigned = False
-        for raw in str(owner_id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            # Mirror the contacts repository: a "__unassigned__" sentinel means
-            # "no owner" (both ownership slots null), OR-ed in alongside any real
-            # owner ids so reps can surface accounts that slipped through.
-            if raw == "__unassigned__":
-                owner_unassigned = True
-                continue
-            try:
-                owner_uuids.append(UUID(raw))
-            except ValueError:
-                continue
-        owner_clauses = []
-        if owner_uuids:
-            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
-        if owner_unassigned:
-            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
-        if owner_clauses:
-            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
-
-    if ae_id:
-        ae_uuids: list[UUID] = []
-        for raw in str(ae_id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                ae_uuids.append(UUID(raw))
-            except ValueError:
-                continue
-        if ae_uuids:
-            stmt = stmt.where(Company.assigned_to_id.in_(ae_uuids))
-
-    if sdr_id:
-        sdr_uuids: list[UUID] = []
-        for raw in str(sdr_id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                sdr_uuids.append(UUID(raw))
-            except ValueError:
-                continue
-        if sdr_uuids:
-            stmt = stmt.where(Company.sdr_id.in_(sdr_uuids))
-
-    # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
-    # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
-    # accounts with no Recotap row or an empty/null stage.
-    if journey_stage:
-        stages = [s.strip() for s in str(journey_stage).split(",") if s.strip()]
-        want_not_scored = "not_scored" in stages
-        real_stages = [s for s in stages if s != "not_scored"]
-        journey_clauses = []
-        if real_stages:
-            journey_clauses.append(
-                Company.id.in_(
-                    select(RecotapAccount.company_id).where(
-                        RecotapAccount.company_id.is_not(None),
-                        RecotapAccount.journey_stage.in_(real_stages),
-                    )
-                )
-            )
-        if want_not_scored:
-            journey_clauses.append(
-                Company.id.notin_(
-                    select(RecotapAccount.company_id).where(
-                        RecotapAccount.company_id.is_not(None),
-                        RecotapAccount.journey_stage.is_not(None),
-                        RecotapAccount.journey_stage != "",
-                    )
-                )
-            )
-        if journey_clauses:
-            stmt = stmt.where(or_(*journey_clauses) if len(journey_clauses) > 1 else journey_clauses[0])
-
-    # Advanced filter: prospects (contacts) per account. We materialise a
-    # per-company count via a correlated subquery and apply >= / <= bounds.
-    # The UI flattens its operator+value into min/max, so the backend just
-    # ANDs whichever bounds are present.
-    if prospects_min is not None or prospects_max is not None:
-        prospect_count_sub = (
-            select(Contact.company_id, func.count(Contact.id).label("cnt"))
-            .group_by(Contact.company_id)
-            .subquery()
-        )
-        prospect_count = func.coalesce(prospect_count_sub.c.cnt, 0)
-        stmt = stmt.outerjoin(prospect_count_sub, Company.id == prospect_count_sub.c.company_id)
-        if prospects_min is not None:
-            stmt = stmt.where(prospect_count >= prospects_min)
-        if prospects_max is not None:
-            stmt = stmt.where(prospect_count <= prospects_max)
+    stmt = build_sourced_companies_stmt(_user, filters)
 
     total = (
         await session.execute(
@@ -1410,7 +1581,7 @@ async def list_sourced_companies(
     ).scalar_one()
     items = (
         await session.execute(
-            stmt.order_by(Company.created_at.desc(), Company.id.desc())
+            apply_company_sort(stmt, sort, order)
             .offset(page.skip)
             .limit(page.limit)
         )
@@ -1426,40 +1597,15 @@ async def list_sourced_companies(
 async def get_sourced_company_summary(
     _user: CurrentUser,
     session: DBSession = None,
-    assigned_rep_email: str | None = Query(default=None),
-    owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership."),
+    filters: CompanySourcingFilters = Depends(),
 ):
-    stmt = (
-        select(Company)
-        .where(_account_sourcing_visibility_filter())
-        .where(company_visibility_filter(_user.id, _user.role == "admin"))
-    )
-    if assigned_rep_email:
-        stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
-    if owner_id:
-        owner_uuids: list[UUID] = []
-        owner_unassigned = False
-        for raw in str(owner_id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            # Mirror the contacts repository: a "__unassigned__" sentinel means
-            # "no owner" (both ownership slots null), OR-ed in alongside any real
-            # owner ids so reps can surface accounts that slipped through.
-            if raw == "__unassigned__":
-                owner_unassigned = True
-                continue
-            try:
-                owner_uuids.append(UUID(raw))
-            except ValueError:
-                continue
-        owner_clauses = []
-        if owner_uuids:
-            owner_clauses.append(or_(Company.assigned_to_id.in_(owner_uuids), Company.sdr_id.in_(owner_uuids)))
-        if owner_unassigned:
-            owner_clauses.append(and_(Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)))
-        if owner_clauses:
-            stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
+    """Counters over the same filtered set the accounts list shows.
+
+    Accepts the full shared filter set (``CompanySourcingFilters``) so the
+    summary tiles can reflect the filtered table, including ``batch_id``.
+    All filters default to None, so existing callers see identical results.
+    """
+    stmt = build_sourced_companies_stmt(_user, filters)
 
     # The summary only inspects a handful of columns per company (the counters
     # below + the JSONB keys account_priority_snapshot / _icp_analysis read).
@@ -2003,55 +2149,334 @@ async def merge_sourced_company(
     }
 
 
+# ── Data health (duplicate / conflict detection) ──────────────────────────────
+#
+# Ports the three MANUAL-review queries from the one-off prod repair script
+# scripts/prod-repair/sourcing-repair-2026-08-16.sh (SDR conflicts, misattached
+# prospect candidates, real-domain corrections) into a first-class, read-only
+# admin endpoint so the cleanup no longer requires kubectl + psql. Semantics
+# are kept in lockstep with that script; the UI actions rows via the EXISTING
+# merge / update / assignment endpoints.
+
+# The script's freemail list, verbatim — deliberately NOT the (smaller)
+# FREE_EMAIL_PROVIDERS constant, so results match the audited prod queries.
+_DATA_HEALTH_FREEMAIL = (
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com",
+    "aol.com", "proton.me", "protonmail.com", "live.com", "msn.com",
+    "googlemail.com", "rediffmail.com", "qq.com", "yandex.com", "ymail.com",
+    "me.com",
+)
+
+
+def _contact_email_domain():
+    """lower(split_part(contacts.email, '@', 2)) — the contact's mail domain."""
+    return func.lower(func.split_part(Contact.email, "@", 2))
+
+
+def _normalized_company_domain(column):
+    """The script's company-domain normalizer: strip scheme, path, leading www.
+
+    regexp_replace(split_part(regexp_replace(lower(coalesce(domain,'')),
+    '^https?://',''),'/',1),'^www.','')
+    """
+    return func.regexp_replace(
+        func.split_part(
+            func.regexp_replace(func.lower(func.coalesce(column, "")), "^https?://", ""),
+            "/",
+            1,
+        ),
+        "^www.",
+        "",
+    )
+
+
+def _sdr_conflict_stmt():
+    """Contact-vs-account SDR conflicts (both slots set, different), grouped
+    per (account, conflicting contact-SDR) pair with the prospect count."""
+    return (
+        select(
+            Company.id.label("company_id"),
+            Company.name.label("company_name"),
+            Company.sdr_id.label("company_sdr_id"),
+            Company.sdr_name.label("company_sdr_name"),
+            Contact.sdr_id.label("contact_sdr_id"),
+            Contact.sdr_name.label("contact_sdr_name"),
+            func.count(Contact.id).label("prospect_count"),
+        )
+        .select_from(Contact)
+        .join(Company, Company.id == Contact.company_id)
+        .where(
+            Company.deleted_at.is_(None),
+            Contact.sdr_id.is_not(None),
+            Company.sdr_id.is_not(None),
+            Contact.sdr_id != Company.sdr_id,
+        )
+        .group_by(
+            Company.id,
+            Company.name,
+            Company.sdr_id,
+            Company.sdr_name,
+            Contact.sdr_id,
+            Contact.sdr_name,
+        )
+        .order_by(Company.name.asc(), Contact.sdr_name.asc())
+    )
+
+
+def _misattached_stmt():
+    """Misattached-prospect candidates: the contact's email domain matches
+    neither the account's dominant contact domain (>=3 contacts strong, ALL
+    domains counted — freemail included, exactly like the script) nor the
+    account's own normalized domain, and is not freemail itself. A suggested
+    home is attached when a live company's domain equals the contact's email
+    domain (the same exact-match rule the repair script's P3 relink used)."""
+    edom = _contact_email_domain()
+    cd = (
+        select(
+            Contact.company_id.label("company_id"),
+            edom.label("edom"),
+            func.count().label("n"),
+            func.row_number()
+            .over(partition_by=Contact.company_id, order_by=func.count().desc())
+            .label("rn"),
+        )
+        .where(Contact.email.like("%@%"), Contact.company_id.is_not(None))
+        .group_by(Contact.company_id, edom)
+        .subquery("cd")
+    )
+    dom = (
+        select(
+            cd.c.company_id.label("company_id"),
+            cd.c.edom.label("dominant"),
+            cd.c.n.label("n"),
+        )
+        .where(cd.c.rn == 1)
+        .subquery("dom")
+    )
+    suggested = aliased(Company)
+    contact_domain = _contact_email_domain()
+    return (
+        select(
+            Contact.id.label("contact_id"),
+            Contact.first_name.label("contact_first_name"),
+            Contact.last_name.label("contact_last_name"),
+            Contact.email.label("contact_email"),
+            contact_domain.label("contact_domain"),
+            Contact.sdr_name.label("contact_sdr_name"),
+            Company.id.label("current_company_id"),
+            Company.name.label("current_company_name"),
+            Company.domain.label("current_company_domain"),
+            dom.c.dominant.label("company_dominant_domain"),
+            dom.c.n.label("dominant_contact_count"),
+            suggested.id.label("suggested_company_id"),
+            suggested.name.label("suggested_company_name"),
+            suggested.domain.label("suggested_company_domain"),
+        )
+        .select_from(Contact)
+        .join(Company, Company.id == Contact.company_id)
+        .join(dom, dom.c.company_id == Company.id)
+        .outerjoin(
+            suggested,
+            and_(
+                func.lower(suggested.domain) == contact_domain,
+                suggested.id != Company.id,
+                suggested.deleted_at.is_(None),
+            ),
+        )
+        .where(
+            Company.deleted_at.is_(None),
+            Contact.email.like("%@%"),
+            dom.c.n >= 3,
+            contact_domain != dom.c.dominant,
+            ~contact_domain.like(func.concat("%.", dom.c.dominant)),
+            contact_domain != _normalized_company_domain(Company.domain),
+            contact_domain.not_in(_DATA_HEALTH_FREEMAIL),
+        )
+        .order_by(Company.name.asc(), Contact.email.asc())
+    )
+
+
+def _domain_correction_stmt():
+    """Real-domain correction candidates: the freemail-excluded dominant
+    contact-email domain disagrees with (and is not a subdomain of) the
+    account's own normalized domain. Placeholder *.unknown accounts are
+    excluded — those are the repair script's auto-adoption path, not manual
+    review. Flags whether another live account already owns the suggestion."""
+    edom = _contact_email_domain()
+    cd = (
+        select(
+            Contact.company_id.label("company_id"),
+            edom.label("edom"),
+            func.count().label("n"),
+            func.row_number()
+            .over(partition_by=Contact.company_id, order_by=func.count().desc())
+            .label("rn"),
+        )
+        .where(
+            Contact.email.like("%@%"),
+            Contact.company_id.is_not(None),
+            edom.not_in(_DATA_HEALTH_FREEMAIL),
+        )
+        .group_by(Contact.company_id, edom)
+        .subquery("cd_corp")
+    )
+    stats = (
+        select(
+            cd.c.company_id.label("company_id"),
+            func.sum(cd.c.n).label("contacts"),
+            func.max(case((cd.c.rn == 1, cd.c.edom))).label("dominant"),
+        )
+        .group_by(cd.c.company_id)
+        .subquery("stats")
+    )
+    other = aliased(Company)
+    normalized_current = _normalized_company_domain(Company.domain)
+    taken = (
+        select(other.id)
+        .where(
+            func.lower(other.domain) == stats.c.dominant,
+            other.id != Company.id,
+            other.deleted_at.is_(None),
+        )
+        .exists()
+    )
+    return (
+        select(
+            Company.id.label("company_id"),
+            Company.name.label("company_name"),
+            Company.domain.label("current_domain"),
+            stats.c.dominant.label("suggested_domain"),
+            stats.c.contacts.label("evidence_count"),
+            taken.label("suggested_domain_taken"),
+        )
+        .select_from(Company)
+        .join(stats, stats.c.company_id == Company.id)
+        .where(
+            Company.deleted_at.is_(None),
+            ~Company.domain.like("%.unknown"),
+            stats.c.dominant != normalized_current,
+            ~stats.c.dominant.like(func.concat("%.", normalized_current)),
+        )
+        .order_by(stats.c.contacts.desc(), Company.name.asc())
+    )
+
+
+@router.get("/data-health")
+async def get_sourcing_data_health(
+    _admin: AdminUser,
+    session: DBSession = None,
+    limit: int = Query(default=200, ge=1, le=2000, description="Max rows returned PER SECTION; totals always count the full set."),
+):
+    """Admin-only, strictly read-only data-quality report for Account Sourcing.
+
+    Three sections, ported 1:1 from the 2026-08-16 prod repair script's
+    manual-review queries: SDR conflicts (contact SDR != account SDR),
+    misattached-prospect candidates (email domain matches neither the account
+    domain nor its dominant contact domain), and real-domain corrections
+    (dominant corporate contact domain disagrees with the account's domain).
+    Soft-deleted companies are excluded everywhere. Rows are actioned via the
+    EXISTING merge / company-update / assignment endpoints — this endpoint
+    never writes anything.
+    """
+    generated_at = datetime.utcnow()
+
+    async def _count(stmt) -> int:
+        return (
+            await session.execute(
+                select(func.count()).select_from(stmt.order_by(None).subquery())
+            )
+        ).scalar_one()
+
+    sdr_stmt = _sdr_conflict_stmt()
+    sdr_total = await _count(sdr_stmt)
+    sdr_rows = (await session.execute(sdr_stmt.limit(limit))).all()
+
+    mis_stmt = _misattached_stmt()
+    mis_total = await _count(mis_stmt)
+    mis_rows = (await session.execute(mis_stmt.limit(limit))).all()
+
+    dc_stmt = _domain_correction_stmt()
+    dc_total = await _count(dc_stmt)
+    dc_rows = (await session.execute(dc_stmt.limit(limit))).all()
+
+    return {
+        "generated_at": generated_at,
+        "sdr_conflicts": {
+            "total": sdr_total,
+            "rows": [
+                {
+                    "company_id": str(row.company_id),
+                    "company_name": row.company_name,
+                    "company_sdr_id": str(row.company_sdr_id),
+                    "company_sdr_name": row.company_sdr_name,
+                    "contact_sdr_id": str(row.contact_sdr_id),
+                    "contact_sdr_name": row.contact_sdr_name,
+                    "prospect_count": int(row.prospect_count or 0),
+                }
+                for row in sdr_rows
+            ],
+        },
+        "misattached": {
+            "total": mis_total,
+            "rows": [
+                {
+                    "contact_id": str(row.contact_id),
+                    "contact_name": f"{row.contact_first_name or ''} {row.contact_last_name or ''}".strip(),
+                    "contact_email": row.contact_email,
+                    "contact_domain": row.contact_domain,
+                    "contact_sdr_name": row.contact_sdr_name,
+                    "current_company_id": str(row.current_company_id),
+                    "current_company_name": row.current_company_name,
+                    "current_company_domain": row.current_company_domain,
+                    "company_dominant_domain": row.company_dominant_domain,
+                    "dominant_contact_count": int(row.dominant_contact_count or 0),
+                    "suggested_company_id": str(row.suggested_company_id) if row.suggested_company_id else None,
+                    "suggested_company_name": row.suggested_company_name,
+                    "suggested_company_domain": row.suggested_company_domain,
+                    "evidence": (
+                        f"email domain '{row.contact_domain}' matches neither the account's dominant "
+                        f"contact domain '{row.company_dominant_domain}' ({int(row.dominant_contact_count or 0)} contacts) "
+                        f"nor its domain '{row.current_company_domain}'"
+                    ),
+                }
+                for row in mis_rows
+            ],
+        },
+        "domain_corrections": {
+            "total": dc_total,
+            "rows": [
+                {
+                    "company_id": str(row.company_id),
+                    "company_name": row.company_name,
+                    "current_domain": row.current_domain,
+                    "suggested_domain": row.suggested_domain,
+                    "evidence_count": int(row.evidence_count or 0),
+                    "suggested_domain_taken": bool(row.suggested_domain_taken),
+                }
+                for row in dc_rows
+            ],
+        },
+    }
+
+
 @router.get("/export")
 async def export_sourced_companies(
     _user: CurrentUser,
     session: DBSession = None,
-    assigned_rep: str | None = Query(default=None),
-    assigned_rep_email: str | None = Query(default=None),
-    disposition: str | None = Query(default=None),
-    batch_id: UUID | None = Query(default=None),
-    prospects_min: int | None = Query(default=None, ge=0),
-    prospects_max: int | None = Query(default=None, ge=0),
-    company_ids: str | None = Query(default=None, description="Comma-separated company UUIDs to export (selected rows only)"),
+    filters: CompanySourcingFilters = Depends(),
+    sort: str | None = Query(default=None, description="Sort key: created_at | name | icp_score | prospect_count | enriched_at. Default created_at."),
+    order: str | None = Query(default=None, description="Sort direction: asc | desc. Defaults to desc (name: asc)."),
 ):
     """Export sourced companies and preserved source columns as CSV.
 
-    Accepts the same `prospects_min`/`prospects_max` bounds as the list
-    endpoint so the user can "download the filtered list" without the
-    frontend having to enumerate every visible company id. Pass
-    `company_ids` (comma-separated) to export only the selected rows.
+    Shares ``CompanySourcingFilters`` (and the base visibility) with the list
+    endpoint via ``Depends``, so "download the filtered list" exports EXACTLY
+    the population the accounts table shows — same filters, same base set —
+    and the two can never drift again. `sort`/`order` match the list too, so a
+    sorted export comes out in the order the user sees. Pass `company_ids`
+    (comma-separated) to export only the selected rows.
     """
-    stmt = (
-        select(Company)
-        .where(Company.sourcing_batch_id.isnot(None))
-        .where(company_visibility_filter(_user.id, _user.role == "admin"))
-        .order_by(Company.created_at.desc())
-    )
-    selected_ids = _parse_uuid_list(company_ids)
-    if selected_ids:
-        stmt = stmt.where(Company.id.in_(selected_ids))
-    if assigned_rep:
-        stmt = stmt.where(Company.assigned_rep == assigned_rep)
-    if assigned_rep_email:
-        stmt = stmt.where(Company.assigned_rep_email == assigned_rep_email)
-    if disposition:
-        stmt = stmt.where(Company.disposition == disposition)
-    if batch_id:
-        stmt = stmt.where(Company.sourcing_batch_id == batch_id)
-
-    if prospects_min is not None or prospects_max is not None:
-        prospect_count_sub = (
-            select(Contact.company_id, func.count(Contact.id).label("cnt"))
-            .group_by(Contact.company_id)
-            .subquery()
-        )
-        prospect_count = func.coalesce(prospect_count_sub.c.cnt, 0)
-        stmt = stmt.outerjoin(prospect_count_sub, Company.id == prospect_count_sub.c.company_id)
-        if prospects_min is not None:
-            stmt = stmt.where(prospect_count >= prospects_min)
-        if prospects_max is not None:
-            stmt = stmt.where(prospect_count <= prospects_max)
+    stmt = apply_company_sort(build_sourced_companies_stmt(_user, filters), sort, order)
 
     companies = (await session.execute(stmt)).scalars().all()
     rows = [_company_export_row(company) for company in companies]

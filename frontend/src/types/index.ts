@@ -267,6 +267,11 @@ export interface Deal {
   meeting_booked_from?: string | null;
   days_in_stage: number;
   stage_entered_at?: string;
+  // Stall detection — computed server-side from the workspace's per-stage
+  // stuck thresholds (business-day dwell). null threshold = no threshold
+  // configured for the current stage (or the stage is closed).
+  stall_threshold_days?: number | null;
+  is_stalled?: boolean;
   last_activity_at?: string;
   stakeholder_count: number;
   owner_id?: string;

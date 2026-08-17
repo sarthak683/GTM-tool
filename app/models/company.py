@@ -107,6 +107,14 @@ class Company(CompanyBase, table=True):
     # lower(domain) unique index is partial on deleted_at IS NULL (migration
     # 114) so the domain can be reused by a new account.
     deleted_at: Optional[datetime] = Field(default=None, index=True)
+    # Merge back-pointer: set on the LOSER at merge time (migration 115) so a
+    # link to a merged-away account can say "this is now <winner>" instead of a
+    # bare 404. Always paired with deleted_at. Rows merged before 115 have NULL
+    # here — they read as a plain delete, which is the honest fallback. FK is
+    # ON DELETE SET NULL: hard-deleting a winner must not cascade the loser.
+    merged_into_id: Optional[UUID] = Field(
+        default=None, foreign_key="companies.id", index=True
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -159,6 +167,7 @@ class CompanyRead(CompanyBase):
     id: UUID
     additional_domains: Optional[Any] = None
     deleted_at: Optional[datetime] = None
+    merged_into_id: Optional[UUID] = None
     tech_stack: Optional[Any] = None
     icp_score: Optional[int] = None
     icp_tier: Optional[str] = None

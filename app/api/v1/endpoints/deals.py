@@ -20,7 +20,7 @@ from app.models.user import User
 from app.repositories.deal import DealRepository, deal_visibility_filter
 from app.schemas.common import PaginatedResponse
 from app.services.company_stage_milestones import record_deal_stage_milestone
-from app.services.deal_stage_history import record_stage_transition
+from app.services.deal_stage_history import CLOSE_REASONS, record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
 from app.services.permissions import can_view_all_deals
@@ -73,6 +73,55 @@ def _summarize_text_change(label: str, value: str | None) -> str:
     return f"{label} updated: {preview}"
 
 
+# ── Win/loss close reasons ───────────────────────────────────────────────────
+
+# Stages whose transitions carry a close reason. Every other target stage
+# ignores/nulls the reason so system moves and ordinary lane changes stay
+# reason-less.
+_CLOSE_REASON_STAGES = frozenset({"closed_won", "closed_lost"})
+
+
+def _normalize_close_reason(
+    target_stage: str, reason: str | None, reason_detail: str | None
+) -> tuple[str | None, str | None]:
+    """Validate and normalize the win/loss reason for a stage move.
+
+    - closed_lost REQUIRES a reason (422 otherwise);
+    - closed_won: reason optional;
+    - any other target stage: reason/detail are ignored (nulled).
+    Reasons must come from the shared CLOSE_REASONS enum — the win/loss
+    rollup matches on exactly those values.
+    """
+    reason = (reason or "").strip() or None
+    detail = (reason_detail or "").strip() or None
+    if target_stage not in _CLOSE_REASON_STAGES:
+        return None, None
+    if reason is not None and reason not in CLOSE_REASONS:
+        raise ValidationError(f"Invalid close reason. Must be one of: {sorted(CLOSE_REASONS)}")
+    if target_stage == "closed_lost" and reason is None:
+        raise ValidationError("A close reason is required when moving a deal to closed_lost.")
+    return reason, detail
+
+
+def _close_qualification(
+    deal: Deal, target_stage: str, reason: str, reason_detail: str | None, at: datetime
+) -> dict:
+    """Deal.qualification with the close reason merged in.
+
+    Returns a NEW dict — in-place mutation of the JSONB attribute is a silent
+    no-op (no change event, nothing persisted). ``close_reason`` holds the
+    enum value; ``close_reason_detail`` the optional free text. The
+    ``close_outcome`` / ``closed_reason_at`` keys mirror what the drawer's
+    old free-text flow wrote, so existing readers keep working.
+    """
+    qualification = dict(deal.qualification or {})
+    qualification["close_reason"] = reason
+    qualification["close_reason_detail"] = reason_detail
+    qualification["close_outcome"] = "won" if target_stage == "closed_won" else "lost"
+    qualification["closed_reason_at"] = at.isoformat()
+    return qualification
+
+
 # ── Board ────────────────────────────────────────────────────────────────────
 
 @router.get("/board", response_model=dict[str, list[DealRead]])
@@ -121,6 +170,71 @@ async def list_deals(
         order_by=(Deal.created_at.desc(), Deal.id.desc()),
     )
     return PaginatedResponse.build(items, total, pagination.skip, pagination.limit)
+
+
+# ── Trash ────────────────────────────────────────────────────────────────────
+# ROUTE ORDER: "/trash" MUST stay above "/{deal_id}" — FastAPI matches in
+# declaration order, so a literal segment declared after the UUID param route
+# never gets reached (the request 422s on uuid parsing instead).
+
+
+class DealTrashRow(BaseModel):
+    id: UUID
+    name: str
+    stage: Optional[str] = None
+    amount: Optional[float] = None  # Deal.value, surfaced under the API's name
+    company_name: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+
+
+class DealRestoreResponse(BaseModel):
+    id: UUID
+    name: str
+    tasks_reopened: int
+
+
+@router.get("/trash", response_model=list[DealTrashRow])
+async def list_deal_trash(
+    session: DBSession,
+    _admin: AdminUser,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Soft-deleted deals, newest deletion first (admin).
+
+    Includes deals that went down with a soft-deleted company — restoring the
+    ACCOUNT brings those back in one step (POST /companies/{id}/restore), which
+    is usually what you want; restoring one from here revives a single deal
+    under a still-deleted account, where it stays invisible on the board.
+    """
+    from app.models.company import Company
+
+    rows = (
+        await session.execute(
+            select(
+                Deal.id,
+                Deal.name,
+                Deal.stage,
+                Deal.value,
+                Deal.deleted_at,
+                Company.name.label("company_name"),
+            )
+            .outerjoin(Company, Company.id == Deal.company_id)
+            .where(Deal.deleted_at.is_not(None))
+            .order_by(Deal.deleted_at.desc(), Deal.id)
+            .limit(limit)
+        )
+    ).all()
+    return [
+        DealTrashRow(
+            id=row.id,
+            name=row.name,
+            stage=row.stage,
+            amount=float(row.value) if row.value is not None else None,
+            company_name=row.company_name,
+            deleted_at=row.deleted_at,
+        )
+        for row in rows
+    ]
 
 
 # ── Create ───────────────────────────────────────────────────────────────────
@@ -204,6 +318,11 @@ class BulkDealUpdate(BaseModel):
     deal_ids: list[UUID]
     # stage: move all selected deals to this stage (validated per pipeline_type)
     stage: Optional[str] = None
+    # Win/loss close reason (shared CLOSE_REASONS enum) + optional free text.
+    # Required when stage=closed_lost, optional for closed_won, ignored for
+    # every other stage. Applies to ALL selected deals.
+    reason: Optional[str] = None
+    reason_detail: Optional[str] = None
     # add_tags: union these tags into each deal's existing tags (no removals)
     add_tags: Optional[list[str]] = None
     # reassign=True applies assigned_to_id (which may be None to unassign);
@@ -262,6 +381,15 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
             if payload.stage not in valid_cache[deal.pipeline_type]:
                 raise ValidationError(f"Invalid stage. Must be one of: {sorted(valid_cache[deal.pipeline_type])}")
 
+    # Close reason: validated up-front (before any mutation) so a missing
+    # reason on a closed_lost bulk move 422s with nothing changed.
+    close_reason: Optional[str] = None
+    close_reason_detail: Optional[str] = None
+    if payload.stage:
+        close_reason, close_reason_detail = _normalize_close_reason(
+            payload.stage, payload.reason, payload.reason_detail
+        )
+
     for deal_id in payload.deal_ids:
         deal = deals_by_id.get(deal_id)
         if deal is None:
@@ -287,6 +415,12 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
         if not update_data:
             continue
 
+        if stage_changed and close_reason:
+            # New dict per deal (JSONB in-place mutation is a silent no-op).
+            update_data["qualification"] = _close_qualification(
+                deal, payload.stage, close_reason, close_reason_detail, now
+            )
+
         update_data["updated_at"] = now
         upd = await repo.update(deal, update_data)
         updated += 1
@@ -304,6 +438,7 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
             await record_stage_transition(
                 session, deal_id=deal_id, from_stage=previous_stage, to_stage=upd.stage,
                 changed_by_id=_user.id, source="bulk_update", changed_at=upd.stage_entered_at,
+                reason=close_reason,
             )
 
     await session.commit()
@@ -508,9 +643,18 @@ async def auto_fill_meddpicc(deal_id: UUID, session: DBSession, _user: CurrentUs
 
 # ── Stage move ───────────────────────────────────────────────────────────────
 
+class DealStageMoveRequest(BaseModel):
+    stage: Optional[str] = None
+    # Win/loss close reason (shared CLOSE_REASONS enum) + optional free text.
+    # Required when stage=closed_lost, optional for closed_won, ignored for
+    # every other target stage.
+    reason: Optional[str] = None
+    reason_detail: Optional[str] = None
+
+
 @router.patch("/{deal_id}/stage", response_model=DealRead)
-async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: CurrentUser):
-    new_stage = body.get("stage")
+async def move_stage(deal_id: UUID, body: DealStageMoveRequest, session: DBSession, _user: CurrentUser):
+    new_stage = body.stage
     if not new_stage:
         raise ValidationError("stage is required")
 
@@ -527,6 +671,10 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
     old_stage = deal.stage
     if new_stage == old_stage:
         return await repo.get_with_joins(deal_id)
+
+    close_reason, close_reason_detail = _normalize_close_reason(
+        new_stage, body.reason, body.reason_detail
+    )
 
     transition_at = datetime.utcnow()
     # Audit rows FIRST, then repo.update (which commits) — one transaction, so
@@ -548,13 +696,21 @@ async def move_stage(deal_id: UUID, body: dict, session: DBSession, _user: Curre
         changed_by_id=_user.id,
         source="stage_move",
         changed_at=transition_at,
+        reason=close_reason,
     )
-    await repo.update(deal, {
+    update_data: dict = {
         "stage": new_stage,
         "stage_entered_at": transition_at,
         "days_in_stage": 0,
         "updated_at": transition_at,
-    })
+    }
+    if close_reason:
+        # New dict, never in-place (JSONB mutation without reassignment is a
+        # silent no-op that persists nothing).
+        update_data["qualification"] = _close_qualification(
+            deal, new_stage, close_reason, close_reason_detail, transition_at
+        )
+    await repo.update(deal, update_data)
 
     await record_deal_stage_milestone(
         session,
@@ -579,6 +735,10 @@ async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
     every historical outcome metric built on that history. Now the deal just
     leaves current-state surfaces via deleted_at; open system tasks on it are
     dismissed so they don't nag about an invisible deal.
+
+    Reversible: GET /deals/trash lists what is in here and
+    POST /deals/{id}/restore brings a deal back (Settings -> Trash in the UI).
+    The tasks dismissed above stay dismissed — see the restore docstring.
     """
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
@@ -597,6 +757,38 @@ async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
             .execution_options(synchronize_session=False)
         )
         await session.commit()
+
+
+@router.post("/{deal_id}/restore", response_model=DealRestoreResponse)
+async def restore_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
+    """Bring a soft-deleted deal back onto the board (admin).
+
+    Restores the DEAL ROW ONLY. Its activities, stage history, milestones and
+    contact links were never removed by the soft delete, so they are already
+    attached and come back with it — the board, pipeline value and stage
+    history all read correctly again the moment deleted_at clears.
+
+    What does NOT come back: the open tasks ``delete_deal`` dismissed. They stay
+    dismissed on purpose — a task's due date does not pause while the deal sits
+    in the trash, so re-opening them would hand the owner a pile of
+    already-overdue nags instead of a working deal. The task rows and their
+    comments are intact; re-open the ones that still matter from the task
+    center.
+
+    A deal whose COMPANY is still soft-deleted restores fine but stays hidden
+    on company-scoped surfaces — restore the account instead
+    (POST /companies/{id}/restore), which brings its deals with it.
+    """
+    repo = DealRepository(session)
+    deal = await repo.get_or_raise(deal_id)
+    if deal.deleted_at is None:
+        raise NotFoundError(f"Deal {deal_id} is not in the trash")
+
+    deal.deleted_at = None
+    deal.updated_at = datetime.utcnow()
+    session.add(deal)
+    await session.commit()
+    return DealRestoreResponse(id=deal.id, name=deal.name, tasks_reopened=0)
 
 
 # ── Deal Contacts ────────────────────────────────────────────────────────────

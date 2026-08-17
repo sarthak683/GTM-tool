@@ -1,4 +1,4 @@
-"""Company lifecycle operations: soft-delete and merge.
+"""Company lifecycle operations: soft-delete, restore, and merge.
 
 Both exist to replace what used to be manual SQL (or a destructive cascade):
 
@@ -7,13 +7,18 @@ Both exist to replace what used to be manual SQL (or a destructive cascade):
   never rewrite. Its live deals are soft-deleted with it and their open system
   tasks dismissed (a task pointing at an invisible deal is a ghost nag).
 
+- ``restore_company``: the way back out. Soft-delete used to be a one-way door
+  (the only undo was a manual ``UPDATE ... SET deleted_at = NULL``); this
+  reverses the parts that are safely reversible and documents, in its own
+  docstring, exactly what stays put.
+
 - ``merge_companies``: the IRIS/Dayforce-class fix. Everything the loser owns
   moves to the winner, the loser's domain (plus its aliases) become winner
   alias domains — so every domain matcher keeps resolving old addresses to the
-  surviving account — and the loser is soft-deleted with an audit trail on
-  both rows.
+  surviving account — the loser is soft-deleted with an audit trail on both
+  rows, and ``merged_into_id`` records where it went.
 
-Callers commit; both functions only stage changes on the session.
+Callers commit; these functions only stage changes on the session.
 """
 from __future__ import annotations
 
@@ -227,10 +232,102 @@ async def merge_companies(session: AsyncSession, winner: Company, loser: Company
     session.add(winner)
 
     loser.deleted_at = now
+    # Back-pointer so a link to the merged-away account can say WHERE it went
+    # (GET /companies/{id}/tombstone) instead of 404-ing into silence.
+    loser.merged_into_id = winner.id
     loser.updated_at = now
     session.add(loser)
 
     return moved
+
+
+async def restore_company(session: AsyncSession, company: Company) -> dict:
+    """Undo ``soft_delete_company`` as far as it is safely undoable.
+
+    WHAT COMES BACK
+      - The company row itself (``deleted_at`` -> NULL), which is most of the
+        restore: contacts kept their rows AND their ``company_id`` through the
+        delete, and prospect/reminder visibility is QUERY-LEVEL gating on the
+        parent account (see ``ContactRepository.active_account_contact_filter``
+        and ``company_visibility_filter``). No per-contact state was rewritten,
+        so clearing ``deleted_at`` un-hides every prospect for free.
+      - The deals that this delete took down with it. ``soft_delete_company``
+        stamps company and deals with the SAME ``datetime.utcnow()`` value, so
+        ``Deal.deleted_at == company.deleted_at`` identifies exactly the deals
+        that died WITH the account — and leaves a deal an admin deleted on its
+        own, before or after, still deleted. Microsecond precision makes a
+        false match effectively impossible.
+
+    WHAT DOES NOT COME BACK (deliberate)
+      - Tasks dismissed by the delete. They stay dismissed. The rows are intact
+        and their comment history is readable, but re-opening them would
+        resurrect nags whose due dates are now long past — noise, not recovery.
+        Re-open individually from the task center if one still matters.
+      - ``merged_into_id`` is cleared: restoring a merged loser makes it a live
+        standalone account again, so the "this is now X" pointer would be a
+        lie. NOTE the data is NOT un-merged — the rows that moved to the winner
+        stay on the winner, and the loser's domains stay in the winner's alias
+        list. Restoring a merge loser gives you back an EMPTY shell account,
+        which is why the API surfaces the merge target in the confirm step.
+        Its old domain also stays on the winner's alias list, so the restored
+        account and the winner both claim it — legal (the unique index only
+        covers PRIMARY domains) but ambiguous, and primary beats alias in
+        ``get_by_domain``, so new matches route to the restored shell. Drop the
+        alias from the winner if that is not what you wanted.
+      - Instantly campaigns: none were touched. Company soft-delete never
+        called ``apply_account_disable_effects`` (that is the not_a_fit/dnd
+        park path), so there is no external outreach state to un-pause.
+
+    Caller validates admin + that the row is actually soft-deleted, and commits.
+    """
+    deleted_at = company.deleted_at
+    now = datetime.utcnow()
+
+    company.deleted_at = None
+    company.merged_into_id = None
+    company.updated_at = now
+    session.add(company)
+
+    deals_restored = 0
+    if deleted_at is not None:
+        result = await session.execute(
+            sa_update(Deal)
+            .where(Deal.company_id == company.id, Deal.deleted_at == deleted_at)
+            .values(deleted_at=None, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        deals_restored = int(result.rowcount or 0)
+
+    return {"deals_restored": deals_restored, "tasks_reopened": 0}
+
+
+async def live_company_with_domain(
+    session: AsyncSession, domain: str, exclude_id
+) -> str | None:
+    """Name of the LIVE company already holding ``domain`` as its primary, if any.
+
+    The ``lower(domain)`` unique index is partial on ``deleted_at IS NULL``
+    (migration 114) precisely so a deleted account's domain can be re-used —
+    which means a restore can collide with whatever took the slot. Callers use
+    this to 409 with a readable message instead of letting the flush die on an
+    IntegrityError nobody can decode.
+    """
+    from sqlalchemy import func
+
+    normalized = (domain or "").strip().lower()
+    if not normalized:
+        return None
+    return (
+        await session.execute(
+            select(Company.name)
+            .where(
+                Company.id != exclude_id,
+                Company.deleted_at.is_(None),
+                func.lower(Company.domain) == normalized,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 # Deferred model imports for the plain-company_id re-point loop. Kept in one

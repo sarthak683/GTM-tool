@@ -1,7 +1,8 @@
-"""Pure-logic tests for ``_resolve_analytics_window`` (Fix 7).
+"""Pure-logic tests for ``_resolve_analytics_window`` (Fix 7) and the
+activity-bucket granularity derived from its output.
 
-No database, Redis, or app lifespan is touched: the function under test is a
-small, deterministic date helper. We assert that
+No database, Redis, or app lifespan is touched: the functions under test are
+small, deterministic date helpers. We assert that
 
   * malformed ``from_date``/``to_date`` raise HTTP 422 instead of bubbling a
     raw ``ValueError`` (which previously 500'd /sales-dashboard and
@@ -14,7 +15,11 @@ from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.analytics import _resolve_analytics_window, _rolling_period_starts
+from app.api.v1.endpoints.analytics import (
+    _activity_bucket_granularity,
+    _resolve_analytics_window,
+    _rolling_period_starts,
+)
 
 
 class ResolveAnalyticsWindowTests(unittest.TestCase):
@@ -57,6 +62,43 @@ class ResolveAnalyticsWindowTests(unittest.TestCase):
         self.assertEqual(start.time().isoformat(), "00:00:00")
         self.assertEqual(start.date(), before.date())
         self.assertGreaterEqual(end, start)
+
+    def test_short_presets_resolve_to_daily_granularity(self) -> None:
+        # Every short preset the frontend ships (Today/2D/3D/5D/1W/2W) must
+        # bucket daily. The old `window_days == 7` check collapsed 1/2/3/5/14
+        # into a single "Week of …" bar.
+        for days in (1, 2, 3, 5, 7, 14):
+            start, end = _resolve_analytics_window(days, None, None)
+            self.assertEqual(
+                _activity_bucket_granularity(start, end), "daily",
+                f"window_days={days} should bucket daily",
+            )
+
+    def test_long_presets_resolve_to_weekly_granularity(self) -> None:
+        for days in (28, 90, 36500):
+            start, end = _resolve_analytics_window(days, None, None)
+            self.assertEqual(
+                _activity_bucket_granularity(start, end), "weekly",
+                f"window_days={days} should bucket weekly",
+            )
+
+    def test_explicit_date_range_overrides_window_days_for_granularity(self) -> None:
+        # from/to override the window entirely, so granularity must follow the
+        # RESOLVED span — a 3-day custom range is daily even with the default
+        # window_days=90 still present in the query string.
+        start, end = _resolve_analytics_window(90, "2026-01-01", "2026-01-03")
+        self.assertEqual(_activity_bucket_granularity(start, end), "daily")
+        start, end = _resolve_analytics_window(7, "2026-01-01", "2026-03-01")
+        self.assertEqual(_activity_bucket_granularity(start, end), "weekly")
+
+    def test_granularity_boundary_is_14_days(self) -> None:
+        # Exactly 14 resolved days → daily; one more day → weekly.
+        self.assertEqual(
+            _activity_bucket_granularity(datetime(2026, 1, 1), datetime(2026, 1, 15)), "daily"
+        )
+        self.assertEqual(
+            _activity_bucket_granularity(datetime(2026, 1, 1), datetime(2026, 1, 16)), "weekly"
+        )
 
     def test_rolling_period_starts_returns_daily_buckets_for_1_week_window(self) -> None:
         start = datetime(2026, 1, 1, 10, 30)

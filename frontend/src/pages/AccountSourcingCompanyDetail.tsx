@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import { trashApi, type CompanyTombstone } from "../lib/api/trash";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
@@ -759,6 +760,14 @@ export default function AccountSourcingCompanyDetail() {
   const [company, setCompany] = useState<Company | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  // Why the account fetch dead-ended, when it does. The detail fetch 404s for a
+  // soft-deleted account by design, which used to render a bare "Company not
+  // found" even when the account had simply been MERGED into another one —
+  // reps re-created accounts they had just been merged out of. Filled from
+  // GET /companies/{id}/tombstone in `load`'s catch. Declared here with the
+  // other page state, far above the early returns (see the hook-order note
+  // further down).
+  const [tombstone, setTombstone] = useState<CompanyTombstone | null>(null);
 
   const [re, setRe] = useState(false);
   const [icpResearching, setIcpResearching] = useState(false);
@@ -818,6 +827,21 @@ export default function AccountSourcingCompanyDetail() {
       ]);
       setCompany(c);
       setContacts(ct);
+      setTombstone(null);
+    } catch {
+      // The fetch failed — most often a 404 because the account was deleted or
+      // merged away. Ask the tombstone endpoint which it was so the not-found
+      // state can point at the surviving account instead of dead-ending.
+      // Any authenticated role may read it; a genuine bad id 404s here too and
+      // falls through to the plain "Company not found" screen, and a live
+      // account answers {deleted:false} so a transient failure on a REFETCH
+      // shows nothing new (we deliberately keep whatever is already loaded
+      // rather than blanking a working page over one bad response).
+      try {
+        setTombstone(await trashApi.companyTombstone(id));
+      } catch {
+        setTombstone(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -1119,6 +1143,84 @@ export default function AccountSourcingCompanyDetail() {
       <div style={pageStyle}>
         <div style={{ ...wrapStyle, ...cardStyle, padding: 18 }}>
           <SkeletonList rows={5} />
+        </div>
+      </div>
+    );
+  }
+
+  // Deleted or merged away: say so, and say where it went. Plain 404s (bad id,
+  // never existed) keep the original not-found card below. No hooks here —
+  // this is render-only branching, safely below the hook block above.
+  if (!company && tombstone?.deleted) {
+    const mergedName = tombstone.merged_into_name;
+    const mergedId = tombstone.merged_into_id;
+    const deletedOn = tombstone.deleted_at ? formatDate(tombstone.deleted_at) : null;
+    return (
+      <div style={pageStyle}>
+        <div style={{ ...wrapStyle, display: "grid", gap: 14 }}>
+          <button
+            onClick={() => nav(-1)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, background: "none",
+              border: "none", padding: 0, cursor: "pointer", color: colors.sub,
+              fontSize: 12, fontWeight: 600, justifySelf: "start",
+            }}
+          >
+            <ArrowLeft size={14} />
+            Back
+          </button>
+          <div style={{ ...cardStyle, padding: 24, display: "grid", gap: 12, justifyItems: "start" }}>
+            <div
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7, padding: "4px 10px",
+                borderRadius: 999, background: colors.bg, border: `1px solid ${colors.border}`,
+                color: colors.sub, fontSize: 11, fontWeight: 700,
+              }}
+            >
+              <Building2 size={13} />
+              {mergedName ? "Merged account" : "Deleted account"}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: colors.text, lineHeight: 1.5 }}>
+              {mergedName ? (
+                <>
+                  {tombstone.name ? `"${tombstone.name}" was` : "This account was"} merged into{" "}
+                  <span style={{ color: "#4d7c0f" }}>{mergedName}</span>
+                </>
+              ) : (
+                <>
+                  {tombstone.name ? `"${tombstone.name}" was` : "This account was"} deleted
+                  {deletedOn ? ` on ${deletedOn}` : ""}
+                </>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: colors.sub, lineHeight: 1.6, maxWidth: 560 }}>
+              {mergedName ? (
+                <>
+                  Its contacts, deals, and activity now live on {mergedName}. Old links and
+                  bookmarks to this account will keep landing here.
+                  {deletedOn ? ` Merged ${deletedOn}.` : ""}
+                </>
+              ) : isAdmin ? (
+                "Nothing was destroyed — its contacts, deals, and history are intact. Restore it from Settings → Trash."
+              ) : (
+                "Nothing was destroyed — its history is intact. An admin can restore it from Settings → Trash."
+              )}
+            </div>
+            {mergedName && mergedId ? (
+              <Link
+                to={`/account-sourcing/${mergedId}`}
+                className="crm-button"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 7, background: "#9ace3d",
+                  border: "1px solid #9ace3d", color: "#26400a", fontSize: 12, fontWeight: 700,
+                  padding: "8px 14px", borderRadius: 9, textDecoration: "none", marginTop: 2,
+                }}
+              >
+                Open {mergedName}
+                <ExternalLink size={13} />
+              </Link>
+            ) : null}
+          </div>
         </div>
       </div>
     );

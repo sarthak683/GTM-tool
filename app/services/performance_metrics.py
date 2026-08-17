@@ -26,6 +26,7 @@ from app.models.activity import Activity
 from app.models.deal import Deal
 from app.models.deal_stage_history import DealStageHistory
 from app.models.meeting import Meeting
+from app.services.business_days import business_days_between
 from app.services.metric_definitions import (
     call_unit as _call_unit,
     dedupe_meetings_across_sources,
@@ -670,6 +671,10 @@ async def stuck_deals(
     deals moved by paths that skipped history (now instrumented, but the
     historical rows remain), so a deal could be "stuck" on the scorecard and
     fresh on the board at the same time.
+
+    Dwell is counted in BUSINESS days (Mon-Fri) via ``business_days_between``
+    — the thresholds are documented as business days, and the board's
+    ``is_stalled`` flag uses the same helper, so the two surfaces agree.
     """
     now = now or datetime.utcnow()
     latest = (
@@ -703,7 +708,7 @@ async def stuck_deals(
             continue
         if r.entered_at is None:
             continue
-        dwell_days = (now - r.entered_at).days
+        dwell_days = business_days_between(r.entered_at, now)
         if dwell_days > threshold:
             out.append(
                 {

@@ -281,6 +281,17 @@ class RepActivityRow(BaseModel):
     # Demo reschedules: deal in demo_scheduled stage with close_date_est updated
     # after it was already set. Logged as Activity(type="demo_rescheduled").
     demos_rescheduled: int = 0
+    # Same headline metrics for the equal-length window immediately preceding
+    # window_start, with identical rep/geography scoping — powers the
+    # period-over-period deltas on the leaderboard rows. Follows the prev_*
+    # naming convention established on SalesSummary.
+    prev_total: int = 0
+    prev_calls: int = 0
+    prev_connected_calls: int = 0
+    prev_live_calls: int = 0
+    prev_emails: int = 0
+    prev_linkedin_reachouts: int = 0
+    prev_meetings: int = 0
 
 
 class RepActivityWeekRow(BaseModel):
@@ -356,6 +367,16 @@ class QuotaState(BaseModel):
     configured: bool
     title: str
     message: str
+    # Target maps straight from analytics_settings (key → metric → target;
+    # keys are the settings' grouping — role buckets like "sdr"/"ae" today,
+    # rep ids if an admin configures per-rep maps). All optional so existing
+    # clients and cached payloads keep validating.
+    weekly_targets: Optional[dict[str, dict[str, float]]] = None
+    monthly_targets: Optional[dict[str, dict[str, float]]] = None
+    # Simple team aggregate: per metric, the sum of that metric's target across
+    # every key in the corresponding map — the "team goal line" value.
+    team_weekly_targets: Optional[dict[str, float]] = None
+    team_monthly_targets: Optional[dict[str, float]] = None
 
 
 class SalesHighlightDrilldown(BaseModel):
@@ -400,11 +421,37 @@ class MeetingBucketTotals(BaseModel):
     demo_rescheduled: int = 0
 
 
+class WinLossReason(BaseModel):
+    reason: str
+    count: int
+
+
+class WinLossRollup(BaseModel):
+    """Closed-won / closed-lost outcomes within the resolved window.
+
+    Counted from DealStageHistory transitions (not current stage), deduped per
+    deal with the LATEST in-window closed transition deciding the side, so a
+    reopened-then-reclosed deal counts once.
+    """
+    won_count: int = 0
+    lost_count: int = 0
+    # won / (won + lost); None when the window has no closed outcomes.
+    win_rate: Optional[float] = None
+    won_amount: float = 0.0
+    lost_amount: float = 0.0
+    loss_reasons: list[WinLossReason] = []
+
+
 class SalesDashboardRead(BaseModel):
     generated_at: datetime
     window_days: int
+    # The resolved window, inclusive on both ends — always populated, including
+    # for preset picks where the request carried no explicit dates.
     from_date: Optional[str] = None
     to_date: Optional[str] = None
+    # Bucket size of rep_weekly_activity, derived from the RESOLVED window
+    # (≤14 days → daily), so the client can label the chart correctly.
+    activity_bucket_granularity: Literal["daily", "weekly"] = "weekly"
     summary: SalesSummary
     highlights: list[SalesHighlight]
     rep_activity: list[RepActivityRow]
@@ -424,6 +471,8 @@ class SalesDashboardRead(BaseModel):
     # is counted once here so the week buckets reconcile to the Demo Scheduled
     # total; rep_activity keeps per-rep attribution for the leaderboards.
     meeting_bucket_totals: "MeetingBucketTotals" = None
+    # Window-scoped closed-won/closed-lost rollup. Optional for back-compat.
+    win_loss: Optional[WinLossRollup] = None
 
 
 class SalesActivityDrilldownRow(BaseModel):
@@ -529,6 +578,24 @@ def _rolling_period_starts(start: datetime, end: datetime, *, daily: bool, bucke
     return _rolling_week_starts(start, end)
 
 
+# Windows spanning at most this many days get DAILY activity buckets; anything
+# longer gets weekly buckets. 14 keeps every short preset (Today/2D/3D/5D/1W/2W)
+# on per-day bars instead of collapsing into a single "Week of …" bar.
+_DAILY_BUCKET_MAX_WINDOW_DAYS = 14
+
+
+def _activity_bucket_granularity(window_start: datetime, window_end: datetime) -> Literal["daily", "weekly"]:
+    """Bucket size for the rep-activity chart, derived from the RESOLVED window.
+
+    This must be computed AFTER _resolve_analytics_window, from its output.
+    Deriving it from the raw ``window_days`` param broke two ways: the short
+    presets (1/2/3/5/14 days) fell through the old ``window_days == 7`` check
+    to weekly bucketing, and explicit ``from_date``/``to_date`` overrides were
+    ignored entirely (a 3-day custom range still bucketed weekly).
+    """
+    return "daily" if (window_end - window_start).days <= _DAILY_BUCKET_MAX_WINDOW_DAYS else "weekly"
+
+
 def _resolve_analytics_window(
     window_days: int,
     from_date: Optional[str],
@@ -606,6 +673,94 @@ def _label_for_rep(rep_id: UUID | None, users: dict[UUID, str]) -> tuple[str, Op
     if rep_id and rep_id in users:
         return str(rep_id), rep_id, users[rep_id]
     return "unassigned", None, "Unassigned"
+
+
+# Canonical loss reasons captured on closed-lost transitions (the same enum the
+# frontend close modal writes to DealStageHistory.reason and the deal's
+# qualification->close_reason). Anything else — legacy free text included —
+# rolls up as "unspecified" so the chart never sprays one-off buckets.
+LOSS_REASON_KEYS = {
+    "budget",
+    "timing",
+    "lost_to_competitor",
+    "no_response",
+    "not_a_fit",
+    "pricing",
+    "champion_left",
+    "other",
+}
+
+
+def _loss_reason_key(reason: str | None, qualification) -> str:
+    """Canonical loss-reason bucket for one closed-lost deal.
+
+    Priority: the stage-history row's ``reason``, then the deal's
+    ``qualification->close_reason`` JSONB key; unknown/missing → "unspecified".
+    """
+    key = str(reason or "").strip().lower()
+    if not key and isinstance(qualification, dict):
+        key = str(qualification.get("close_reason") or "").strip().lower()
+    return key if key in LOSS_REASON_KEYS else "unspecified"
+
+
+def _coerce_target_map(raw) -> dict[str, dict[str, float]]:
+    """Defensive copy of a targets blob: keep only numeric metric values."""
+    out: dict[str, dict[str, float]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, metrics in raw.items():
+        if not isinstance(metrics, dict):
+            continue
+        clean: dict[str, float] = {}
+        for metric, value in metrics.items():
+            try:
+                clean[str(metric)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        if clean:
+            out[str(key)] = clean
+    return out
+
+
+def _team_target_totals(targets: dict[str, dict[str, float]]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for metrics in targets.values():
+        for metric, value in metrics.items():
+            totals[metric] = round(totals.get(metric, 0.0) + value, 2)
+    return totals
+
+
+def _build_quota_state(analytics_settings: dict | None) -> QuotaState:
+    """Quota payload from analytics_settings' weekly/monthly target maps.
+
+    ``configured`` is True as soon as ANY positive target exists in either map
+    (the defaults ship with targets, so a fresh workspace is configured). The
+    raw maps plus per-metric team sums ride along so the client can draw goal
+    lines on the rep-activity charts without a second request.
+    """
+    config = analytics_settings or {}
+    weekly = _coerce_target_map(config.get("weekly_targets"))
+    monthly = _coerce_target_map(config.get("monthly_targets"))
+    configured = any(
+        value > 0
+        for metrics in (*weekly.values(), *monthly.values())
+        for value in metrics.values()
+    )
+    if not configured:
+        return QuotaState(
+            configured=False,
+            title="Quota setup required",
+            message="Add rep or team targets to unlock quota attainment and gap-to-goal charts.",
+        )
+    return QuotaState(
+        configured=True,
+        title="Quota targets",
+        message="Targets come from Analytics Settings; goal lines reflect the configured weekly and monthly values.",
+        weekly_targets=weekly,
+        monthly_targets=monthly,
+        team_weekly_targets=_team_target_totals(weekly),
+        team_monthly_targets=_team_target_totals(monthly),
+    )
 
 
 # Our outbound email-sending identities: the primary domain plus the Instantly
@@ -975,6 +1130,116 @@ def _activity_row_is_early_funnel(
             if stages and (stages & advanced_stage_ids) and not (stages & early_funnel_stage_ids):
                 return False
     return True
+
+
+def _headline_activity_counts(
+    activity_rows,
+    *,
+    deal_owner: dict[UUID, UUID | None],
+    contact_owner: dict[UUID, UUID | None],
+    rep_id_by_local: dict[str, UUID],
+    rep_user_ids: set[UUID],
+    filter_rep_ids,
+    users: dict[UUID, str],
+    deal_stage_by_id: dict[UUID, str],
+    contact_company: dict[UUID, UUID | None],
+    company_stages: dict[UUID, set[str]],
+    early_funnel_stage_ids: set[str],
+    advanced_stage_ids: set[str],
+) -> dict[str, dict[str, int]]:
+    """Per-rep HEADLINE counts (calls/connected/live/emails/linkedin/total) for
+    one set of window-scoped activity rows, keyed by rep_key.
+
+    A compact mirror of the counting rules in sales_dashboard's main
+    aggregation loop — same attribution, early-funnel call gate, per-call
+    rollup, and email send classification/dedupe — WITHOUT the weekly buckets
+    and breakdown metrics. It exists so the previous-window leaderboard deltas
+    are computed by the exact rules of the numbers they are compared against.
+    Keep these rules in lockstep with the main loop.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    seen_email_ids: dict[str, set[str]] = {}
+    seen_manual_email_keys: dict[str, set[tuple]] = {}
+    call_rollup: dict[tuple[str, str], dict] = {}
+
+    for row in sorted(activity_rows, key=lambda r: r.created_at or datetime.min):
+        row_rep_id = _activity_rep_id(
+            row,
+            deal_owner=deal_owner,
+            contact_owner=contact_owner,
+            rep_id_by_local=rep_id_by_local,
+        )
+        if not _is_rep(row_rep_id, rep_user_ids):
+            continue
+        if filter_rep_ids and row_rep_id not in filter_rep_ids:
+            continue
+        rep_key, _, _ = _label_for_rep(row_rep_id, users)
+        bucket = counts.setdefault(
+            rep_key,
+            {"calls": 0, "connected_calls": 0, "live_calls": 0, "emails": 0, "linkedin_reachouts": 0, "total": 0},
+        )
+        medium = str(row.medium or "").strip().lower()
+        kind = str(row.type or "").strip().lower()
+        outcome = str(row.call_outcome or "").strip().lower()
+        if medium == "call" or kind == "call":
+            if not _activity_row_is_early_funnel(
+                row,
+                deal_stage_by_id=deal_stage_by_id,
+                contact_company=contact_company,
+                company_stages=company_stages,
+                early_funnel_stage_ids=early_funnel_stage_ids,
+                advanced_stage_ids=advanced_stage_ids,
+            ):
+                continue
+            call_key = str(getattr(row, "call_id", None) or "").strip()
+            call_state = None
+            if call_key:
+                rollup_key = (rep_key, call_key)
+                call_state = call_rollup.get(rollup_key)
+                if call_state is not None:
+                    # Later event row of an already-counted call: only upgrade
+                    # its connected/live outcome.
+                    if outcome in {"connected", "callback", "answered"} and not call_state["connected"]:
+                        call_state["connected"] = True
+                        call_state["bucket"]["connected_calls"] += 1
+                    if outcome in {"connected", "answered"} and not call_state["live"]:
+                        call_state["live"] = True
+                        call_state["bucket"]["live_calls"] += 1
+                    continue
+                call_state = {"bucket": bucket, "connected": False, "live": False}
+                call_rollup[rollup_key] = call_state
+            bucket["calls"] += 1
+            if outcome in {"connected", "callback", "answered"}:
+                if call_state is not None:
+                    call_state["connected"] = True
+                bucket["connected_calls"] += 1
+            if outcome in {"connected", "answered"}:
+                if call_state is not None:
+                    call_state["live"] = True
+                bucket["live_calls"] += 1
+        elif medium == "email" or kind == "email":
+            # Only SENDS count toward the emails total (opens/replies feed the
+            # rate cards, which have no prev_* counterpart).
+            if _email_event_kind(row) != "send":
+                continue
+            msg_id = str(row.email_message_id or "").strip()
+            rep_seen = seen_email_ids.setdefault(rep_key, set())
+            if msg_id and msg_id in rep_seen:
+                continue
+            if msg_id:
+                rep_seen.add(msg_id)
+            if _email_out_bucket(row):
+                manual_key = _manual_email_dedupe_key(row, rep_key)
+                if manual_key:
+                    rep_manual_seen = seen_manual_email_keys.setdefault(rep_key, set())
+                    if manual_key in rep_manual_seen:
+                        continue
+                    rep_manual_seen.add(manual_key)
+                bucket["emails"] += 1
+        elif medium == "linkedin" or kind == "linkedin":
+            bucket["linkedin_reachouts"] += 1
+        bucket["total"] = bucket["calls"] + bucket["emails"] + bucket["linkedin_reachouts"]
+    return counts
 
 
 def _normalize_geography_key(value: str | None) -> str:
@@ -2020,11 +2285,14 @@ async def sales_dashboard(
     from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
     to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
     forecast_granularity: Annotated[str, Query(pattern="^(week|month)$", description="Bucket size for forecast_buckets")] = "month",
+    force_refresh: Annotated[bool, Query(description="Skip the snapshot cache and recompute; the fresh result still reseeds the cache")] = False,
 ):
     filter_rep_ids = rep_id or []
     filter_geographies = {_normalize_geography_key(g) for g in geography if g}
 
     # Snapshot cache — return a recent identical computation if one is fresh.
+    # force_refresh only bypasses the READ; the recomputed snapshot is written
+    # back under the same key so followers get the fresh numbers.
     cache_key = (
         window_days,
         tuple(sorted(str(r) for r in filter_rep_ids)),
@@ -2033,7 +2301,7 @@ async def sales_dashboard(
         to_date,
         forecast_granularity,
     )
-    cached = _dashboard_cache_get(cache_key)
+    cached = None if force_refresh else _dashboard_cache_get(cache_key)
     if cached is not None:
         return cached
 
@@ -2153,7 +2421,11 @@ async def sales_dashboard(
     # still computed over the full window (activities older than this still count
     # toward the leaderboard); only the per-week breakdown is capped so "All time"
     # doesn't generate thousands of weekly buckets per rep.
-    use_daily_activity_buckets = window_days == 7
+    # Bucket size comes from the RESOLVED window span (never the raw
+    # window_days param) so short presets and explicit from/to ranges both get
+    # daily bars — see _activity_bucket_granularity.
+    activity_bucket_granularity = _activity_bucket_granularity(window_start, window_end)
+    use_daily_activity_buckets = activity_bucket_granularity == "daily"
     bucket_end_date = (window_end - timedelta(days=1)).date() if to_date else window_end.date()
     if use_daily_activity_buckets:
         period_starts = _rolling_period_starts(window_start, window_end, daily=True, bucket_end_date=bucket_end_date)
@@ -3489,6 +3761,109 @@ async def sales_dashboard(
                 "pipeline_amount": 0.0,
             }
 
+    # ── Previous-window headline comparison for the leaderboard ──────────────
+    # Equal-length window immediately preceding window_start, same rep and
+    # geography scoping — the leaderboard counterpart of SalesSummary's prev_*
+    # milestone deltas. One extra activities query plus one extra meetings
+    # query in total (never per-rep); the counting rules are shared with the
+    # main loop via _headline_activity_counts.
+    prev_window_len = window_end - window_start
+    prev_window_end = window_start
+    prev_window_start = window_start - prev_window_len
+    prev_activity_rows = (
+        await session.execute(
+            select(
+                Activity.deal_id,
+                Activity.contact_id,
+                Activity.type,
+                Activity.source,
+                Activity.medium,
+                Activity.event_metadata,
+                Activity.created_at,
+                Activity.created_by_id,
+                Activity.call_id,
+                Activity.call_outcome,
+                Activity.email_from,
+                Activity.email_to,
+                Activity.email_cc,
+                Activity.email_bcc,
+                Activity.email_message_id,
+                Activity.email_subject,
+            ).where(
+                # Half-open on the right: window_start belongs to the CURRENT
+                # window, so the boundary instant is never counted twice.
+                Activity.created_at >= prev_window_start,
+                Activity.created_at < prev_window_end,
+            )
+        )
+    ).all()
+    if filter_rep_ids:
+        prev_activity_rows = [
+            row for row in prev_activity_rows
+            if _activity_rep_id(row, deal_owner=deal_owner, contact_owner=contact_owner, rep_id_by_local=rep_id_by_local) in filter_rep_ids
+        ]
+    if filter_geographies:
+        prev_activity_rows = [row for row in prev_activity_rows if row.deal_id in allowed_deal_ids or row.contact_id in allowed_contact_ids]
+    prev_headline_counts = _headline_activity_counts(
+        prev_activity_rows,
+        deal_owner=deal_owner,
+        contact_owner=contact_owner,
+        rep_id_by_local=rep_id_by_local,
+        rep_user_ids=rep_user_ids,
+        filter_rep_ids=filter_rep_ids,
+        users=users,
+        deal_stage_by_id=deal_stage_by_id,
+        contact_company=contact_company_all,
+        company_stages=company_stages,
+        early_funnel_stage_ids=early_funnel_stage_ids,
+        advanced_stage_ids=advanced_stage_ids,
+    )
+    # Previous-window meetings, run through the identical qualification chain as
+    # the current-window meetings metric (CRM link, not cancelled, early-funnel
+    # stage gate, real sources, cross-source dedupe, rep attribution).
+    prev_meeting_rows = (
+        await session.execute(
+            select(
+                Meeting.deal_id,
+                Meeting.company_id,
+                Meeting.owner_user_id,
+                Meeting.scheduled_at,
+                Meeting.created_at,
+                Meeting.status,
+                Meeting.external_source,
+                Meeting.attendees,
+                Meeting.is_internal,
+                Meeting.meeting_type,
+            ).where(
+                Meeting.is_internal.is_(False),
+                or_(Meeting.company_id.isnot(None), Meeting.deal_id.isnot(None)),
+                or_(
+                    (Meeting.scheduled_at >= prev_window_start) & (Meeting.scheduled_at < prev_window_end),
+                    Meeting.scheduled_at.is_(None) & (Meeting.created_at >= prev_window_start) & (Meeting.created_at < prev_window_end),
+                ),
+            )
+        )
+    ).all()
+    if filter_geographies:
+        prev_meeting_rows = [row for row in prev_meeting_rows if row.deal_id in allowed_deal_ids]
+    prev_meeting_candidates = [
+        row
+        for row in prev_meeting_rows
+        if _is_crm_linked_meeting(row)
+        and row.status != "cancelled"
+        and _meeting_within_sales_funnel(row)
+        and str(row.external_source or "").strip().lower() in REAL_MEETING_SOURCES
+    ]
+    prev_meetings_by_rep: dict[str, int] = {}
+    for row in _dedupe_meetings_across_sources(prev_meeting_candidates):
+        for row_rep_id in _meeting_rep_ids(row, deal_owner=deal_owner, user_ids_by_email=user_ids_by_email):
+            if not _is_rep(row_rep_id, rep_user_ids):
+                continue
+            if filter_rep_ids and row_rep_id not in filter_rep_ids:
+                continue
+            prev_rep_key, _, _ = _label_for_rep(row_rep_id, users)
+            prev_meetings_by_rep[prev_rep_key] = prev_meetings_by_rep.get(prev_rep_key, 0) + 1
+
     rep_activity_rows = [
         RepActivityRow(
             key=str(bucket["key"]),
@@ -3532,6 +3907,13 @@ async def sales_dashboard(
             total_prospects=prospect_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             total_mobile_numbers=mobile_count_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
             demos_rescheduled=demos_rescheduled_by_uid.get(bucket["user_id"], 0) if bucket["user_id"] else 0,
+            prev_total=int(prev_headline_counts.get(str(bucket["key"]), {}).get("total", 0)),
+            prev_calls=int(prev_headline_counts.get(str(bucket["key"]), {}).get("calls", 0)),
+            prev_connected_calls=int(prev_headline_counts.get(str(bucket["key"]), {}).get("connected_calls", 0)),
+            prev_live_calls=int(prev_headline_counts.get(str(bucket["key"]), {}).get("live_calls", 0)),
+            prev_emails=int(prev_headline_counts.get(str(bucket["key"]), {}).get("emails", 0)),
+            prev_linkedin_reachouts=int(prev_headline_counts.get(str(bucket["key"]), {}).get("linkedin_reachouts", 0)),
+            prev_meetings=prev_meetings_by_rep.get(str(bucket["key"]), 0),
         )
         for bucket in sorted(
             rep_activity.values(),
@@ -3823,10 +4205,9 @@ async def sales_dashboard(
 
     # Previous window of equal length, immediately before this one — powers the
     # period-over-period trend deltas on the milestone KPI cards. Same rep +
-    # geography filters so the comparison is apples-to-apples.
-    prev_window_len = window_end - window_start
-    prev_window_end = window_start
-    prev_window_start = window_start - prev_window_len
+    # geography filters so the comparison is apples-to-apples. Bounds
+    # (prev_window_start/prev_window_end) were computed above for the
+    # leaderboard prev_* comparison and are shared here.
     prev_stmt = (
         select(
             CompanyStageMilestone.milestone_key,
@@ -3986,11 +4367,82 @@ async def sales_dashboard(
             AccountStatusRow(key="unset", label="No status", count=status_counts["unset"])
         )
 
+    # ── Win/Loss rollup ──────────────────────────────────────────────────────
+    # Wins and losses are TRANSITIONS into closed_won / closed_lost within the
+    # window, read from DealStageHistory rather than the deal's current stage,
+    # so a deal reopened after closing neither lingers in nor vanishes from the
+    # totals. Deduped per deal: the LATEST in-window closed transition decides
+    # which side the deal lands on. Same population rule as the dashboard's
+    # deal scan (live "deal"-pipeline rows only), rep filter in SQL, geography
+    # via _normalize_geography_key in Python — one query total.
+    wl_stmt = (
+        select(
+            DealStageHistory.deal_id,
+            DealStageHistory.to_stage,
+            DealStageHistory.changed_at,
+            DealStageHistory.reason,
+            Deal.value.label("deal_value"),
+            Deal.geography.label("deal_geography"),
+            Deal.qualification.label("deal_qualification"),
+        )
+        .join(Deal, DealStageHistory.deal_id == Deal.id)
+        .where(
+            func.lower(DealStageHistory.to_stage).in_(["closed_won", "closed_lost"]),
+            DealStageHistory.changed_at >= window_start,
+            DealStageHistory.changed_at <= window_end,
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
+        )
+    )
+    if filter_rep_ids:
+        wl_stmt = wl_stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+    wl_rows = (await session.execute(wl_stmt)).all()
+    if filter_geographies:
+        wl_rows = [r for r in wl_rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
+    latest_wl_by_deal: dict[UUID, object] = {}
+    for r in sorted(wl_rows, key=lambda row: row.changed_at):
+        latest_wl_by_deal[r.deal_id] = r
+    wl_won_count = 0
+    wl_lost_count = 0
+    wl_won_amount = 0.0
+    wl_lost_amount = 0.0
+    wl_loss_reason_counts: dict[str, int] = {}
+    for r in latest_wl_by_deal.values():
+        if str(r.to_stage or "").strip().lower() == "closed_won":
+            wl_won_count += 1
+            wl_won_amount += _to_float(r.deal_value)
+        else:
+            wl_lost_count += 1
+            wl_lost_amount += _to_float(r.deal_value)
+            reason_key = _loss_reason_key(r.reason, r.deal_qualification)
+            wl_loss_reason_counts[reason_key] = wl_loss_reason_counts.get(reason_key, 0) + 1
+    wl_closed_total = wl_won_count + wl_lost_count
+    win_loss = WinLossRollup(
+        won_count=wl_won_count,
+        lost_count=wl_lost_count,
+        win_rate=round(wl_won_count / wl_closed_total, 4) if wl_closed_total else None,
+        won_amount=round(wl_won_amount, 2),
+        lost_amount=round(wl_lost_amount, 2),
+        loss_reasons=[
+            WinLossReason(reason=reason, count=count)
+            for reason, count in sorted(wl_loss_reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+    )
+
+    # Echo the window that was RESOLVED, not the raw params — those are null for
+    # every preset pick, which left the client's "as of" strip and its CSV
+    # filenames with no dates in the common case. window_end is exclusive, so
+    # step back to land on the last day actually covered ("now" -> today for the
+    # default branch, to_date + 1 day -> to_date for the explicit one).
+    resolved_from = window_start.date().isoformat()
+    resolved_to = (window_end - timedelta(microseconds=1)).date().isoformat()
+
     result = SalesDashboardRead(
         generated_at=now,
         window_days=window_days,
-        from_date=from_date,
-        to_date=to_date,
+        from_date=resolved_from,
+        to_date=resolved_to,
+        activity_bucket_granularity=activity_bucket_granularity,
         summary=SalesSummary(
             pipeline_amount=round(pipeline_amount, 2),
             weighted_pipeline_amount=round(weighted_pipeline_amount, 2),
@@ -4042,11 +4494,8 @@ async def sales_dashboard(
             direct_sql=meeting_bucket_totals["direct_sql"],
             demo_rescheduled=demos_rescheduled_total,
         ),
-        quota=QuotaState(
-            configured=False,
-            title="Quota setup required",
-            message="Add rep or team targets to unlock quota attainment and gap-to-goal charts.",
-        ),
+        win_loss=win_loss,
+        quota=_build_quota_state(analytics_settings),
     )
     _dashboard_cache_set(cache_key, result)
     return result
@@ -4077,15 +4526,26 @@ async def meeting_bucket_deals(
     ],
     user_id: Annotated[Optional[UUID], Query()] = None,
     window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
-    geography: Annotated[Optional[str], Query()] = None,
+    geography: Annotated[list[str], Query()] = [],
+    from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
+    to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
 ) -> MeetingBucketDealsResponse:
     """Return the individual deals behind each Meetings Booked StatPill.
     Source: demo_scheduled milestones reached within the selected window joined
-    to Meeting.scheduled_at — matches the dashboard pill counts."""
+    to Meeting.scheduled_at — matches the dashboard pill counts.
+
+    The window goes through _resolve_analytics_window — the same workspace-tz,
+    today-counts-as-day-one math as the dashboard tiles — so this list can
+    never disagree with the pill it drills into. The 1w/2w bucket BOUNDARIES
+    stay UTC-midnight based, mirroring the dashboard's meeting_bucket_totals
+    computation exactly.
+    """
+    _tz = workspace_zoneinfo(await get_analytics_settings(session))
+    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date, tz=_tz)
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
     today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     week1_dt = today_dt + timedelta(days=7)
     week2_dt = today_dt + timedelta(days=14)
-    window_start = today_dt - timedelta(days=window_days)
 
     AEUser = aliased(User)
     SDRUser = aliased(User)
@@ -4099,6 +4559,7 @@ async def meeting_bucket_deals(
                 CompanyStageMilestone.deal_id.label("deal_id"),
                 Deal.name.label("deal_name"),
                 Deal.meeting_booked_with.label("meeting_booked_with"),
+                Deal.geography.label("deal_geography"),
                 Meeting.scheduled_at.label("scheduled_at"),
                 AEUser.name.label("ae_name"),
                 SDRUser.name.label("sdr_name"),
@@ -4111,7 +4572,12 @@ async def meeting_bucket_deals(
             .where(
                 CompanyStageMilestone.milestone_key == "demo_scheduled",
                 CompanyStageMilestone.first_reached_at >= window_start,
-                CompanyStageMilestone.first_reached_at <= _utcnow(),
+                CompanyStageMilestone.first_reached_at <= window_end,
+                # Same population rule as the dashboard deal scan: live "deal"-
+                # pipeline rows only (milestones without a deal are skipped in
+                # the loop below anyway).
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
             )
         )
         if user_id is not None:
@@ -4120,6 +4586,10 @@ async def meeting_bucket_deals(
         # Deduplicate by deal_id (a deal may have multiple meetings), keeping the
         # latest scheduled date.
         rows = (await session.execute(stmt)).all()
+        if filter_geographies:
+            # Geography is applied via _normalize_geography_key in Python,
+            # exactly like the dashboard's meeting-bucket aggregation.
+            rows = [r for r in rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
         latest_by_deal: dict[UUID, datetime] = {}
         for row in rows:
             if row.scheduled_at is not None:
@@ -4162,6 +4632,7 @@ async def meeting_bucket_deals(
                 Deal.name.label("deal_name"),
                 Deal.close_date_est.label("close_date_est"),
                 Deal.meeting_booked_with.label("meeting_booked_with"),
+                Deal.geography.label("deal_geography"),
                 AEUser.name.label("ae_name"),
                 Company.sdr_name.label("sdr_name"),
             )
@@ -4172,13 +4643,17 @@ async def meeting_bucket_deals(
             .where(
                 Activity.type == "demo_rescheduled",
                 Activity.created_at >= window_start,
-                Activity.created_at <= _utcnow(),
+                Activity.created_at <= window_end,
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
             )
         )
         if user_id is not None:
             stmt = stmt.where(Activity.created_by_id == user_id)
 
         rows = (await session.execute(stmt)).all()
+        if filter_geographies:
+            rows = [r for r in rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
         for row in rows:
             did = str(row.deal_id)
             if did in seen_deal_ids:
@@ -4274,6 +4749,9 @@ async def meeting_booked_from_deals(
     channel: Annotated[Literal["Email", "LinkedIn", "Call"], Query()],
     user_id: Annotated[Optional[UUID], Query()] = None,
     window_days: Annotated[int, Query(ge=1, le=36500)] = 90,
+    geography: Annotated[list[str], Query()] = [],
+    from_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window start")] = None,
+    to_date: Annotated[Optional[str], Query(description="ISO date YYYY-MM-DD — override window end")] = None,
 ) -> list[MeetingBookedFromDealItem]:
     """Return deals where meeting was booked from the given channel within the window.
 
@@ -4281,10 +4759,14 @@ async def meeting_booked_from_deals(
     For Call: uses activities with demo_scheduled_booked/meeting_confirmed disposition
               (same source as the call_meeting_booked stat) to avoid missing deals
               that pre-date the meeting_booked_from field.
+
+    Window resolution goes through _resolve_analytics_window (workspace tz,
+    today counts as day one, from/to overrides) — the same math as the
+    dashboard stat this list drills into.
     """
-    today_dt = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    window_start = today_dt - timedelta(days=window_days)
-    window_end = _utcnow()
+    _tz = workspace_zoneinfo(await get_analytics_settings(session))
+    window_start, window_end = _resolve_analytics_window(window_days, from_date, to_date, tz=_tz)
+    filter_geographies = {_normalize_geography_key(g) for g in geography if g}
 
     AEUser = aliased(User)
     SDRUser = aliased(User)
@@ -4355,12 +4837,19 @@ async def meeting_booked_from_deals(
                 Deal.name.label("deal_name"),
                 Deal.meeting_booked_with.label("meeting_booked_with"),
                 Deal.meeting_booked_from.label("meeting_booked_from"),
+                Deal.geography.label("deal_geography"),
                 AEUser.name.label("ae_name"),
                 SDRUser.name.label("sdr_name"),
             )
             .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
             .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
-            .where(Deal.id.in_(list(deal_ids)))
+            .where(
+                Deal.id.in_(list(deal_ids)),
+                # Same population rule as the dashboard deal scan: live
+                # "deal"-pipeline rows only.
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
+            )
         )
     else:
         # Email / LinkedIn: use Deal.meeting_booked_from field
@@ -4370,6 +4859,7 @@ async def meeting_booked_from_deals(
                 Deal.name.label("deal_name"),
                 Deal.meeting_booked_with.label("meeting_booked_with"),
                 Deal.meeting_booked_from.label("meeting_booked_from"),
+                Deal.geography.label("deal_geography"),
                 AEUser.name.label("ae_name"),
                 SDRUser.name.label("sdr_name"),
             )
@@ -4379,6 +4869,8 @@ async def meeting_booked_from_deals(
                 Deal.meeting_booked_from == channel,
                 Deal.created_at >= window_start,
                 Deal.created_at <= window_end,
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
             )
         )
         if user_id is not None:
@@ -4387,6 +4879,9 @@ async def meeting_booked_from_deals(
             )
 
     rows = (await session.execute(stmt)).all()
+    if filter_geographies:
+        # Geography via _normalize_geography_key in Python, like the dashboard.
+        rows = [r for r in rows if _normalize_geography_key(r.deal_geography) in filter_geographies]
     seen: set[str] = set()
     result = []
     for row in rows:

@@ -16,7 +16,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 # (instead of re-declaring params) is what guarantees "assign all matching"
 # operates on EXACTLY the set the rep is looking at.
 from app.api.v1.endpoints.contacts import ContactFilters
+
+# Same idea for accounts: the Account Sourcing list/export filter contract +
+# statement builder, so "assign all matching accounts" hits EXACTLY the rows
+# the accounts table shows.
+from app.api.v1.endpoints.account_sourcing import (
+    CompanySourcingFilters,
+    build_sourced_companies_stmt,
+)
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
@@ -114,6 +123,50 @@ def _backfill_company_owner_from_contact(company, user, *, is_sdr: bool) -> bool
     company.assigned_rep_name = user.name
     company.assigned_rep_email = user.email
     return True
+
+
+async def _apply_company_assignment(
+    session,
+    company: Company,
+    user,  # User | None — None = unassign
+    *,
+    is_sdr: bool,
+    current_assigned_id,
+):
+    """Apply one company assignment with the FULL shared semantics: set/clear
+    the slot and cascade to the account's prospects (SDR handoff reset
+    included, via sync_company_*_assignment_to_contacts). Both the id-based
+    bulk endpoint and the filter-wide endpoint run every company through here
+    so the two can never drift. Returns the CascadeResult."""
+    if user:
+        if is_sdr:
+            company.sdr_id = user.id
+            company.sdr_email = user.email
+            company.sdr_name = user.name
+        else:
+            company.assigned_to_id = user.id
+            company.assigned_rep = user.name
+            company.assigned_rep_email = user.email
+            company.assigned_rep_name = user.name
+    else:
+        if is_sdr:
+            company.sdr_id = None
+            company.sdr_email = None
+            company.sdr_name = None
+        else:
+            company.assigned_to_id = None
+            company.assigned_rep = None
+            company.assigned_rep_email = None
+            company.assigned_rep_name = None
+
+    if is_sdr:
+        cascade = await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
+    else:
+        cascade = await sync_company_ae_assignment_to_contacts(session, company, current_assigned_id)
+    company.updated_at = datetime.utcnow()
+    session.add(company)
+    return cascade
+
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -411,34 +464,10 @@ async def bulk_assign_companies(
         ):
             skipped += 1
             continue
-        if user:
-            if is_sdr:
-                company.sdr_id = user.id
-                company.sdr_email = user.email
-                company.sdr_name = user.name
-            else:
-                company.assigned_to_id = user.id
-                company.assigned_rep = user.name
-                company.assigned_rep_email = user.email
-                company.assigned_rep_name = user.name
-        else:
-            if is_sdr:
-                company.sdr_id = None
-                company.sdr_email = None
-                company.sdr_name = None
-            else:
-                company.assigned_to_id = None
-                company.assigned_rep = None
-                company.assigned_rep_email = None
-                company.assigned_rep_name = None
-
-        if is_sdr:
-            cascade = await sync_company_sdr_assignment_to_contacts(session, company, current_assigned_id)
-        else:
-            cascade = await sync_company_ae_assignment_to_contacts(session, company, current_assigned_id)
+        cascade = await _apply_company_assignment(
+            session, company, user, is_sdr=is_sdr, current_assigned_id=current_assigned_id
+        )
         prospects_kept_divergent += len(cascade.kept_divergent)
-        company.updated_at = datetime.utcnow()
-        session.add(company)
         updated += 1
 
     await session.commit()
@@ -633,6 +662,103 @@ async def bulk_assign_contacts_by_filter(
         "companies_backfilled": companies_backfilled,
         "user_id": str(body.user_id) if body.user_id else None,
         "role": role_key,
+    }
+
+
+@router.patch("/companies/by-filter")
+async def bulk_assign_companies_by_filter(
+    body: FilterAssignRequest,
+    session: DBSession,
+    actor: CurrentUser,
+    filters: CompanySourcingFilters = Depends(),
+):
+    """Assign EVERY account matching the current Account Sourcing filters —
+    the accounts twin of ``PATCH /assignments/contacts/by-filter``.
+
+    Shares ``CompanySourcingFilters`` (and the statement builder) with the
+    accounts list/export, so the population can't drift from what the rep is
+    looking at; applies the same hard visibility gate (a non-admin can only
+    mass-assign accounts they can already see), the same admin-or-self-claim
+    permission rule as the id-based bulk endpoint, and runs every company
+    through the same assignment semantics (prospect cascade + SDR handoff
+    reset) via ``_apply_company_assignment`` — never a reimplementation.
+    Mirrors the contacts endpoint's cap (422 past FILTER_ASSIGN_MAX_ROWS) and
+    ``expected_total`` confirm-count check (409 when the set changed size).
+    """
+    is_sdr = (body.role or "ae") == "sdr"
+    role_key = "sdr" if is_sdr else "ae"
+    user = None
+    if body.user_id:
+        user = (await session.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
+        if not user:
+            raise NotFoundError("User not found")
+        _validate_assignment_user(user, role=role_key)
+    if actor.role != "admin" and not (
+        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
+    ):
+        raise ForbiddenError(
+            "Only admins can bulk reassign accounts. You can bulk claim unassigned "
+            f"{role_key.upper()} slots or release your own assignments."
+        )
+
+    stmt = build_sourced_companies_stmt(actor, filters)
+    total = (
+        await session.execute(
+            select(func.count()).select_from(stmt.order_by(None).subquery())
+        )
+    ).scalar_one()
+    if total > FILTER_ASSIGN_MAX_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{total} accounts match — more than the {FILTER_ASSIGN_MAX_ROWS} "
+                "this endpoint will assign in one request. Narrow the filters."
+            ),
+        )
+    if body.expected_total is not None and total != body.expected_total:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The matching set changed: you confirmed {body.expected_total} "
+                f"accounts but {total} match now. Re-check and try again."
+            ),
+        )
+
+    companies = (
+        await session.execute(
+            stmt.order_by(Company.created_at.desc(), Company.id.desc()).limit(FILTER_ASSIGN_MAX_ROWS)
+        )
+    ).scalars().all()
+
+    updated = 0
+    skipped = 0
+    prospects_kept_divergent = 0
+    for company in companies:
+        current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
+        if actor.role != "admin" and not _is_self_claim_or_self_release(
+            actor=actor,
+            target_user_id=body.user_id,
+            current_assigned_id=current_assigned_id,
+            role=role_key,
+        ):
+            skipped += 1
+            continue
+        cascade = await _apply_company_assignment(
+            session, company, user, is_sdr=is_sdr, current_assigned_id=current_assigned_id
+        )
+        prospects_kept_divergent += len(cascade.kept_divergent)
+        updated += 1
+
+    await session.commit()
+    return {
+        "matched": total,
+        "updated": updated,
+        "skipped": skipped,
+        "user_id": str(body.user_id) if body.user_id else None,
+        "role": role_key,
+        # Prospects on these accounts held by a third rep — deliberately not
+        # moved; surfaced so the UI can tell the assigner about the split.
+        "prospects_kept_divergent": prospects_kept_divergent,
     }
 
 
