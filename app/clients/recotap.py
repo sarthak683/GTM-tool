@@ -104,6 +104,63 @@ class RecotapClient:
             body = resp.json()
         return (body or {}).get("data") or {}
 
+    # Recotap rejects a request carrying more than 100 deals (documented limit on
+    # POST /deals). Chunking is the client's job so callers can hand over the
+    # whole changed set without knowing the ceiling.
+    DEAL_BATCH_LIMIT = 100
+
+    async def push_deals(self, deals: list[dict[str, Any]]) -> dict[str, Any]:
+        """POST /deals — upsert by ``externalDealId`` (creates when unknown,
+        updates when matched).
+
+        Splits into DEAL_BATCH_LIMIT-sized requests and merges the per-item
+        results into one envelope. Like POST /accounts this returns HTTP 200 even
+        when individual deals fail, so the caller MUST read ``results[]``; a
+        raise_for_status() alone would report a batch of 100 rejections as
+        success. A failed batch is recorded as failed items rather than aborting
+        the remaining batches — one bad chunk should not strand the rest.
+        """
+        results: list[dict[str, Any]] = []
+        summary = {"total": 0, "upserted": 0, "failed": 0}
+        if not deals:
+            return {"results": results, "summary": summary}
+
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+            for start in range(0, len(deals), self.DEAL_BATCH_LIMIT):
+                chunk = deals[start:start + self.DEAL_BATCH_LIMIT]
+                try:
+                    resp = await http.post(
+                        f"{self.base_url}/deals", headers=self._headers(), json={"deals": chunk}
+                    )
+                    resp.raise_for_status()
+                    body = resp.json() or {}
+                except Exception as exc:
+                    logger.warning(
+                        "recotap push_deals: batch %s-%s failed: %s",
+                        start, start + len(chunk), str(exc)[:200],
+                    )
+                    results.extend(
+                        {"externalDealId": d.get("externalDealId"), "status": "failed",
+                         "error": str(exc)[:200]}
+                        for d in chunk
+                    )
+                    summary["total"] += len(chunk)
+                    summary["failed"] += len(chunk)
+                    continue
+
+                # The documented envelope is flat ({results, summary}); POST
+                # /accounts nests the same shape under "data". Accept both rather
+                # than silently reading zero results off the wrong one.
+                payload = body.get("data") if isinstance(body.get("data"), dict) else body
+                batch_results = payload.get("results") or []
+                results.extend(r for r in batch_results if isinstance(r, dict))
+                batch_summary = payload.get("summary") or {}
+                summary["total"] += int(batch_summary.get("total") or len(chunk))
+                summary["upserted"] += int(batch_summary.get("upserted") or 0)
+                summary["failed"] += int(batch_summary.get("failed") or 0)
+
+        return {"results": results, "summary": summary}
+
     async def update_account(self, rtp_aid: str, fields: dict[str, Any]) -> dict[str, Any]:
         """PUT /accounts/{rtp_aid} — used to set tags on an account that already
         exists in Recotap (POST is insert-only and points here on conflict)."""

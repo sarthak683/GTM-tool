@@ -10,10 +10,25 @@ import type {
 import { BASE, getAuthHeaders, request, requestList, requestPaginated } from "./core";
 
 export interface RecotapSummary {
+  /** Effective stage per account: CRM-derived when a live deal gives us one,
+   *  else Recotap's. `stages_crm` / `stages_recotap` break out the mix — the
+   *  funnel is badged "Powered by Recotap" and used to silently contain both. */
   stages: Record<string, number>;
+  stages_crm: Record<string, number>;
+  stages_recotap: Record<string, number>;
   engagement: Record<string, number>;
+  /** In Recotap but with no usable intent score (Recotap sends 0 for "not
+   *  scored yet", which used to be displayed as Cold). */
+  no_intent: number;
   scored: number;
+  /** = not_in_recotap + in_recotap_unscored. Kept as one number for the header
+   *  line; the two causes are very different and are reported separately. */
   not_scored: number;
+  in_recotap: number;
+  /** Accounts Recotap has never seen — a coverage gap on our side, not a
+   *  scoring delay on theirs. */
+  not_in_recotap: number;
+  in_recotap_unscored: number;
   total: number;
 }
 
@@ -669,6 +684,28 @@ export const accountSourcingApi = {
     );
   },
 
+  /** Push Beacon deals to Recotap (POST /deals, upsert on externalDealId).
+   *  Sends only deals whose payload changed since the last successful push;
+   *  `dryRun` returns the payloads it would send without calling Recotap. The
+   *  nightly `sync_recotap` Celery task is the primary caller — this is the
+   *  manual trigger. */
+  recotapPushDeals: (opts?: { dryRun?: boolean; force?: boolean; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (opts?.dryRun) search.set("dry_run", "true");
+    if (opts?.force) search.set("force", "true");
+    if (opts?.limit) search.set("limit", String(opts.limit));
+    return request<{
+      configured: number;
+      pushed?: number;
+      failed?: number;
+      skipped_unchanged: number;
+      candidates?: number;
+      would_push?: number;
+    }>(
+      `/api/v1/account-sourcing/recotap/push-deals${search.toString() ? `?${search}` : ""}`,
+      { method: "POST" }
+    );
+  },
   recotapRefresh: () =>
     request<{ pull: { pulled: number; configured: number }; seed: { seeded: number } }>(
       "/api/v1/account-sourcing/recotap/refresh",

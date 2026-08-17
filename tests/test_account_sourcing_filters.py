@@ -473,8 +473,17 @@ def test_recotap_summary_uses_the_shared_filters_and_visibility(m):
     assert params["filters"].annotation is m.CompanySourcingFilters
     src = inspect.getsource(m.recotap_summary)
     assert "build_sourced_companies_stmt(" in src
-    # Stage grouping, engagement grouping and `scored` all run over the scoped set.
-    assert src.count("RecotapAccount.company_id.in_(scoped_ids)") == 3
+    # The scope predicate is bound once and reused; assert on the property (every
+    # counting query is scoped) rather than on one spelling of it, so extracting
+    # a local or a helper doesn't fail a guard whose point still holds.
+    assert "in_scope = RecotapAccount.company_id.in_(scoped_ids)" in src
+    # Every `.where(` inside this endpoint must carry the scope. Missing it is
+    # exactly the bug this guard exists for: an unscoped count showed an SDR the
+    # whole workspace's funnel.
+    where_calls = [chunk for chunk in src.split(".where(")[1:]]
+    assert where_calls, "expected the summary to filter its counts"
+    for chunk in where_calls:
+        assert "in_scope" in chunk[:120], f"unscoped .where( in recotap_summary: {chunk[:120]!r}"
     assert "RecotapAccount.company_id.is_not(None)" not in src
     assert "select(func.count()).select_from(scoped)" in src
 
@@ -492,14 +501,46 @@ def test_recotap_summary_counts_distinct_accounts_not_recotap_rows(m):
     made a tile promise more accounts than clicking it actually listed."""
     src = inspect.getsource(m.recotap_summary)
     assert "accounts = func.count(func.distinct(RecotapAccount.company_id))" in src
-    # Stage + engagement groupings and `scored` all use that distinct counter.
-    assert src.count("select(RecotapAccount.journey_stage, accounts)") == 1
-    assert src.count("select(RecotapAccount.engagement, accounts)") == 1
+    # Every aggregate the endpoint selects is that distinct-account counter —
+    # never a bare func.count() over recotap rows, and never RecotapAccount.id.
+    assert "func.count(RecotapAccount" not in src
+    assert "select(RecotapAccount.engagement, accounts)" in src
     # `scored` is counted, never summed from the stage tiles (an account with
     # two rows in different stages would otherwise be double-counted).
     assert "scored += " not in src
     assert "select(accounts).where(" in src
     assert "not_scored" in src
+
+
+def test_recotap_summary_separates_recotap_stages_from_crm_derived_ones(m):
+    """The funnel is badged "Powered by Recotap" but the CRM-derived stage used
+    to be written over Recotap's in the same column: in prod all 22 accounts in
+    the "Customer" tile were CRM-derived while Recotap reported none."""
+    src = inspect.getsource(m.recotap_summary)
+    assert "stages_crm" in src and "stages_recotap" in src
+    # The tiles count the shared effective-stage expression, which is the same
+    # one the list filter matches on — otherwise a tile promises a count the
+    # filter it opens cannot reproduce.
+    assert "recotap_effective_stage_sql()" in src
+
+
+def test_recotap_summary_splits_not_scored_by_reason(m):
+    """One number, 991, read as "Recotap failed to score 991 accounts". In fact
+    829 had no Recotap account at all and only 162 were awaiting a score — a
+    coverage problem and a latency problem, merged so the bigger one hid."""
+    src = inspect.getsource(m.recotap_summary)
+    assert "not_in_recotap" in src and "in_recotap_unscored" in src
+
+
+def test_recotap_summary_reports_accounts_with_no_intent_score(m):
+    """Recotap sends rtp_account_score=0 for an unscored account. That used to
+    be rendered as "Cold" — 132 of prod's 418 Cold accounts had no signal."""
+    src = inspect.getsource(m.recotap_summary)
+    assert "no_intent" in src
+    # Counted against the distinct-account population, never subtracted from the
+    # chips' sum: two rows on one company can land in two chips, so the sum
+    # exceeds the account count and the remainder would go negative.
+    assert "RecotapAccount.engagement.is_not(None)" in src
 
 
 def test_recotap_summary_visibility_matches_the_accounts_list(m, admin_user):

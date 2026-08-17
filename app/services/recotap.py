@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.recotap import RecotapClient
@@ -65,7 +65,22 @@ def _stable(seed: str, mod: int) -> int:
     return int(hashlib.md5(seed.encode("utf-8")).hexdigest(), 16) % mod
 
 
-def _engagement_for(score: int) -> str:
+def _engagement_for(score: Optional[int]) -> Optional[str]:
+    """Hot/Warm/Cold from rtp_account_score — or None when there is no signal.
+
+    A score of 0 means Recotap has not scored the account yet, NOT that its
+    intent is cold. Returning "Cold" for it put 132 signal-less accounts into the
+    Cold chip in prod (418 shown, 286 real) and made the Account Sourcing
+    engagement counts overstate measured intent by nearly half. An unscored
+    account has no engagement level; the summary reports it under `no_intent`.
+
+    The thresholds assume Recotap's documented 0-100 range. Prod carries a few
+    scores above 100, which land in Hot — correct, and deliberately not clamped:
+    the value is Recotap's, and rescaling it here would invent a second
+    definition of the score.
+    """
+    if score is None or score <= 0:
+        return None
     if score >= 72:
         return "Hot"
     if score >= 45:
@@ -126,8 +141,9 @@ async def pull_into_db(session: AsyncSession, *, incremental: bool = True) -> di
         row.score = a.get("rtp_account_score")
         # Recotap's payload carries no engagement label — derive Hot/Warm/Cold from
         # the real account score so the UI chip works on pulled (non-seeded) data.
-        if row.score is not None:
-            row.engagement = _engagement_for(row.score)
+        # Assigned unconditionally: when an account's score drops back to 0/None
+        # the stale label must clear, not linger from the previous pull.
+        row.engagement = _engagement_for(row.score)
         row.advertising_activity_score = a.get("rtp_advertising_activity_score")
         row.website_intent_score = a.get("rtp_website_intent_score")
         row.g2_intent_score = a.get("rtp_g2_intent_score")
@@ -166,10 +182,10 @@ async def seed_mock_signals(session: AsyncSession, *, overwrite: bool = False) -
         if not domain:
             continue
         row = await _get_or_create_row(session, domain)
-        # Preserve rows that carry real pulled data (pull sets pulled_at); only
-        # those should be left untouched. Newly-created or seed rows have no
-        # pulled_at, so they get (re)populated.
-        if (row.pulled_at is not None or row.source == "crm") and not overwrite:
+        # Preserve rows that carry real pulled data (pull sets pulled_at) or a
+        # real CRM-derived stage; only those should be left untouched. Newly-
+        # created or seed rows have neither, so they get (re)populated.
+        if (row.pulled_at is not None or row.crm_journey_stage is not None) and not overwrite:
             row.company_id = row.company_id or company.id
             continue
         score = 20 + _stable(domain + "score", 80)  # 20-99
@@ -192,6 +208,33 @@ async def seed_mock_signals(session: AsyncSession, *, overwrite: bool = False) -
     return {"seeded": seeded}
 
 
+def effective_journey_stage_sql():
+    """THE SQL definition of the displayed journey stage: the CRM-derived stage
+    when present, else Recotap's.
+
+    Shared by the list filter and the funnel counts so a tile can never promise a
+    number the filter won't reproduce — the Python twin is
+    ``effective_journey_stage`` below, and both must stay COALESCE(crm, recotap).
+    ``nullif('')`` because an empty string is a missing stage, not a stage.
+    """
+    return func.coalesce(
+        func.nullif(RecotapAccount.crm_journey_stage, ""),
+        func.nullif(RecotapAccount.journey_stage, ""),
+    )
+
+
+def effective_journey_stage(row: RecotapAccount) -> tuple[Optional[str], Optional[str]]:
+    """(stage, source) for display — the CRM-derived stage when a live deal gives
+    us one, else Recotap's intent stage. A deal is direct evidence of where the
+    account actually is, so it wins; the source is returned alongside so the UI
+    never implies Recotap said something it didn't."""
+    if row.crm_journey_stage:
+        return row.crm_journey_stage, "crm"
+    if row.journey_stage:
+        return row.journey_stage, "recotap"
+    return None, None
+
+
 async def signals_by_domain(session: AsyncSession, domains: list[str]) -> dict[str, RecotapAccountRead]:
     """Return {normalized_domain: RecotapAccountRead} for the given domains —
     used to enrich the Account Sourcing list/detail."""
@@ -201,7 +244,18 @@ async def signals_by_domain(session: AsyncSession, domains: list[str]) -> dict[s
     rows = (
         await session.execute(select(RecotapAccount).where(RecotapAccount.domain.in_(norm)))
     ).scalars().all()
-    return {r.domain: RecotapAccountRead.model_validate(r) for r in rows}
+    out: dict[str, RecotapAccountRead] = {}
+    for r in rows:
+        read = RecotapAccountRead.model_validate(r)
+        stage, stage_source = effective_journey_stage(r)
+        # `journey_stage` on the read model is the EFFECTIVE stage so existing
+        # callers keep rendering something; the unmixed values travel alongside.
+        read.journey_stage = stage
+        read.journey_stage_source = stage_source
+        read.recotap_journey_stage = r.journey_stage
+        read.crm_journey_stage = r.crm_journey_stage
+        out[r.domain] = read
+    return out
 
 
 # ── Beacon → Recotap: push CRM deal-stage status as account tags ─────────────
@@ -395,40 +449,75 @@ def crm_journey_stage(stages: list[str]) -> Optional[str]:
 
 async def sync_crm_journey(session: AsyncSession) -> dict[str, int]:
     """Write each company's deal-derived journey stage onto its recotap_accounts
-    row (preferred over Recotap's intent stage; marks source='crm'). Creates a
-    row by domain when none exists, so the Buying Journey band reflects real deal
-    progress even where Recotap has no data. Clears a stale CRM-derived stage
-    when a company no longer has a mappable deal."""
+    row, into ``crm_journey_stage``.
+
+    It used to write ``journey_stage`` — the column holding Recotap's own
+    intent-derived stage — and flip ``source`` to 'crm'. Recotap's value was
+    destroyed on every refresh, so a funnel badged "Powered by Recotap" was
+    reporting Beacon's deal stages for 94 of 338 scored accounts in prod, and
+    every one of the 22 accounts in the "Customer" tile was CRM-derived (Recotap
+    reported no Customers at all). The two stages now live in separate columns
+    and are counted separately.
+
+    Still creates a row by domain when none exists, so the Buying Journey band
+    reflects deal progress even where Recotap has no account — but only for a
+    real domain. Without that guard this path created rows for placeholder
+    domains like ``vistex.unknown``, which cannot exist in Recotap; five such
+    rows in prod double-counted their company in the funnel, since the same
+    company also had a row under its real domain.
+
+    Clears a stale CRM stage when a company no longer has a mappable deal.
+    """
     deal_rows = (
-        await session.execute(select(Deal.company_id, Deal.stage).where(Deal.company_id.is_not(None)))
+        await session.execute(
+            select(Deal.company_id, Deal.stage).where(
+                Deal.company_id.is_not(None),
+                # Prospect-pipeline rows and soft-deleted deals are not deal
+                # progress; counting them advanced accounts that have no live deal.
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
+            )
+        )
     ).all()
     stages_by_company: dict = {}
     for cid, stage in deal_rows:
         stages_by_company.setdefault(cid, []).append(str(stage or "").strip().lower())
-    companies = (await session.execute(select(Company.id, Company.domain, Company.name))).all()
+    companies = (
+        await session.execute(
+            select(Company.id, Company.domain, Company.name).where(Company.deleted_at.is_(None))
+        )
+    ).all()
     set_count = 0
     cleared = 0
+    skipped_invalid = 0
     for cid, domain_raw, name in companies:
         domain = normalize_domain(domain_raw)
         if not domain:
             continue
         js = crm_journey_stage(stages_by_company.get(cid, []))
         if js is None:
-            # Reset only previously CRM-derived rows; leave Recotap/seed rows be.
+            # Clear a previously-derived CRM stage; never touch journey_stage,
+            # which belongs to Recotap.
             existing = (
                 await session.execute(select(RecotapAccount).where(RecotapAccount.domain == domain))
             ).scalar_one_or_none()
-            if existing is not None and existing.source == "crm":
-                existing.journey_stage = None
+            if existing is not None and existing.crm_journey_stage is not None:
+                existing.crm_journey_stage = None
                 existing.updated_at = datetime.utcnow()
                 cleared += 1
             continue
+        if not is_pushable_domain(domain):
+            skipped_invalid += 1
+            continue
         row = await _get_or_create_row(session, domain)
-        row.journey_stage = js
-        row.source = "crm"
+        row.crm_journey_stage = js
         row.company_id = row.company_id or cid
         row.name = row.name or name
         row.updated_at = datetime.utcnow()
         set_count += 1
     await session.commit()
-    return {"crm_journey_set": set_count, "crm_journey_cleared": cleared}
+    return {
+        "crm_journey_set": set_count,
+        "crm_journey_cleared": cleared,
+        "crm_journey_skipped_invalid_domain": skipped_invalid,
+    }

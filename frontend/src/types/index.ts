@@ -103,7 +103,16 @@ export interface RecotapSignals {
   domain: string;
   name?: string | null;
   rtp_aid?: string | null;
+  /** Effective stage: the CRM-derived one when a live deal gives us one, else
+   *  Recotap's. `journey_stage_source` says which, so a badge reading "Powered
+   *  by Recotap" can stop taking credit for Beacon's own deal stages. */
   journey_stage?: string | null;
+  journey_stage_source?: "crm" | "recotap" | null;
+  recotap_journey_stage?: string | null;
+  crm_journey_stage?: string | null;
+  /** rtp_account_score. Recotap documents 0-100 but sends values above it; 0
+   *  means "not scored yet", which is why `engagement` is null rather than
+   *  "Cold" for those accounts. */
   score?: number | null;
   engagement?: string | null;
   icp_fit?: string | null;

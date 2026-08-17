@@ -66,12 +66,16 @@ from app.services.icp_scorer import score_company
 from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
 from app.services.recotap import (
+    effective_journey_stage_sql as recotap_effective_stage_sql,
     normalize_domain as recotap_domain,
     pull_into_db as recotap_pull,
     push_crm_status as recotap_push_status,
     seed_mock_signals as recotap_seed,
     signals_by_domain as recotap_signals,
     sync_crm_journey as recotap_crm_sync,
+)
+from app.services.recotap_deals import (
+    push_deals as recotap_push_deals,
 )
 
 router = APIRouter(prefix="/account-sourcing", tags=["account-sourcing"])
@@ -282,17 +286,23 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
     # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
     # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
     # accounts with no Recotap row or an empty/null stage.
+    #
+    # Matches on the EFFECTIVE stage (CRM-derived when a live deal gives us one,
+    # else Recotap's), which is the same expression the funnel tiles count — the
+    # tiles are this filter's control, so any divergence shows up directly as a
+    # tile whose count doesn't match the list it opens.
     if filters.journey_stage:
         stages = [s.strip() for s in str(filters.journey_stage).split(",") if s.strip()]
         want_not_scored = "not_scored" in stages
         real_stages = [s for s in stages if s != "not_scored"]
+        effective_stage = recotap_effective_stage_sql()
         journey_clauses = []
         if real_stages:
             journey_clauses.append(
                 Company.id.in_(
                     select(RecotapAccount.company_id).where(
                         RecotapAccount.company_id.is_not(None),
-                        RecotapAccount.journey_stage.in_(real_stages),
+                        effective_stage.in_(real_stages),
                     )
                 )
             )
@@ -301,8 +311,7 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
                 Company.id.notin_(
                     select(RecotapAccount.company_id).where(
                         RecotapAccount.company_id.is_not(None),
-                        RecotapAccount.journey_stage.is_not(None),
-                        RecotapAccount.journey_stage != "",
+                        effective_stage.is_not(None),
                     )
                 )
             )
@@ -1936,6 +1945,19 @@ async def recotap_summary(
     Every counter is a DISTINCT ACCOUNT count, not a recotap-row count: a
     company can carry more than one ``recotap_accounts`` row, and counting rows
     made a tile promise more accounts than clicking it produced.
+
+    ``stages`` counts the EFFECTIVE stage (CRM-derived when a live deal gives us
+    one, else Recotap's) — the same expression the list filter matches on. The
+    tiles used to be labelled "Powered by Recotap" while silently containing both
+    kinds, because the CRM stage was written over Recotap's in a single column;
+    ``stages_recotap`` / ``stages_crm`` now report the split, so the badge can
+    tell the truth.
+
+    ``not_scored`` is likewise split. Prod showed one number, 991 — which read as
+    "Recotap has failed to score 991 of our accounts". In fact 829 of those had
+    no Recotap account at all (we never pushed them), and only 162 were known to
+    Recotap and awaiting a score. Those are a coverage problem and a latency
+    problem respectively, and merging them hid the larger one.
     """
     stmt = build_sourced_companies_stmt(
         _user, dataclass_replace(filters, journey_stage=None)
@@ -1943,36 +1965,44 @@ async def recotap_summary(
     scoped = stmt.subquery()
     scoped_ids = select(scoped.c.id)
     accounts = func.count(func.distinct(RecotapAccount.company_id))
+    in_scope = RecotapAccount.company_id.in_(scoped_ids)
+    effective_stage = recotap_effective_stage_sql()
 
     total = (await session.execute(select(func.count()).select_from(scoped))).scalar_one()
-    stage_rows = (
-        await session.execute(
-            select(RecotapAccount.journey_stage, accounts)
-            .where(RecotapAccount.company_id.in_(scoped_ids))
-            .group_by(RecotapAccount.journey_stage)
-        )
-    ).all()
-    stages = {s: 0 for s in RECOTAP_JOURNEY_STAGES}
-    for stage, cnt in stage_rows:
-        if stage and stage in stages:
-            stages[stage] = cnt
+
+    async def _stage_counts(expr) -> dict[str, int]:
+        rows = (
+            await session.execute(
+                select(expr, accounts).where(in_scope).group_by(expr)
+            )
+        ).all()
+        out = {s: 0 for s in RECOTAP_JOURNEY_STAGES}
+        for stage, cnt in rows:
+            if stage and stage in out:
+                out[stage] = cnt
+        return out
+
+    stages = await _stage_counts(effective_stage)
+    stages_crm = await _stage_counts(func.nullif(RecotapAccount.crm_journey_stage, ""))
+    stages_recotap = await _stage_counts(func.nullif(RecotapAccount.journey_stage, ""))
+
     # `scored` is counted separately rather than summed from `stages`: an account
     # with two recotap rows in different stages appears in both tiles, so the sum
     # would over-count it and understate `not_scored`. This mirrors EXACTLY the
     # population the list's `journey_stage=not_scored` filter excludes.
     scored = (
         await session.execute(
-            select(accounts).where(
-                RecotapAccount.company_id.in_(scoped_ids),
-                RecotapAccount.journey_stage.is_not(None),
-                RecotapAccount.journey_stage != "",
-            )
+            select(accounts).where(in_scope, effective_stage.is_not(None))
         )
     ).scalar_one()
+    # Accounts we have handed to Recotap at all — the denominator that separates
+    # "Recotap hasn't scored it" from "Recotap has never seen it".
+    in_recotap = (await session.execute(select(accounts).where(in_scope))).scalar_one()
+
     eng_rows = (
         await session.execute(
             select(RecotapAccount.engagement, accounts)
-            .where(RecotapAccount.company_id.in_(scoped_ids))
+            .where(in_scope)
             .group_by(RecotapAccount.engagement)
         )
     ).all()
@@ -1980,11 +2010,29 @@ async def recotap_summary(
     for eng, cnt in eng_rows:
         if eng and eng in engagement:
             engagement[eng] = cnt
+    # Counted against the same distinct-account population as the chips rather
+    # than subtracted from their sum: the 5 companies carrying two recotap rows
+    # can land in two different chips, so `Hot + Warm + Cold` exceeds the number
+    # of accounts and the leftover would go negative.
+    with_intent = (
+        await session.execute(
+            select(accounts).where(in_scope, RecotapAccount.engagement.is_not(None))
+        )
+    ).scalar_one()
+
     return {
         "stages": stages,
+        "stages_crm": stages_crm,
+        "stages_recotap": stages_recotap,
         "engagement": engagement,
+        # Accounts inside Recotap with no usable rtp_account_score (Recotap sends
+        # 0 for "not scored yet", which used to be rendered as Cold).
+        "no_intent": max(0, in_recotap - with_intent),
         "scored": scored,
         "not_scored": max(0, total - scored),
+        "in_recotap": in_recotap,
+        "not_in_recotap": max(0, total - in_recotap),
+        "in_recotap_unscored": max(0, in_recotap - scored),
         "total": total,
     }
 
@@ -2001,6 +2049,24 @@ async def push_recotap_crm_status(
     (test runs); `dry_run=true` returns the exact payloads it WOULD send WITHOUT
     writing anything to Recotap."""
     return await recotap_push_status(session, limit=limit, dry_run=dry_run)
+
+
+@router.post("/recotap/push-deals")
+async def push_recotap_deals(
+    _user: CurrentUser,
+    session: DBSession = None,
+    limit: int | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+):
+    """Push Beacon deals to Recotap's ``POST /deals`` (upsert on externalDealId).
+
+    Sends only deals whose payload changed since the last successful push, plus
+    any that previously failed. `force=true` re-sends everything (use after a
+    Recotap-side reset), `limit` caps a test run, and `dry_run=true` returns the
+    exact payloads it WOULD send without calling Recotap or writing push state.
+    """
+    return await recotap_push_deals(session, limit=limit, force=force, dry_run=dry_run)
 
 
 @router.put("/companies/{company_id}", response_model=CompanyRead)

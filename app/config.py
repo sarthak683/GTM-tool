@@ -206,6 +206,10 @@ class Settings(BaseSettings):
     RECOTAP_CRM_STAGE_FIELD_KEY: str = ""
     # Optional static segment id to group pushed accounts into. Empty = no segment.
     RECOTAP_PUSH_SEGMENT_ID: str = ""
+    # Currency sent with every pushed deal (POST /deals dealCurrencyCode). Deals
+    # carry no per-deal currency in this CRM — `value` is a bare Numeric — so one
+    # workspace-wide code is the honest representation. Empty omits the field.
+    RECOTAP_DEAL_CURRENCY: str = "USD"
 
     @property
     def recotap_base_url(self) -> str:

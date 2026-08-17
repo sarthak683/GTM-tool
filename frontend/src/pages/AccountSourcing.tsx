@@ -333,18 +333,39 @@ function JourneyFunnel({
   const stages = JOURNEY_STAGE_ORDER;
   const maxCount = Math.max(1, ...stages.map((s) => summary.stages[s] ?? 0));
   const eng = summary.engagement || {};
+  const fromRecotap = summary.stages_recotap || {};
+  const fromCrm = summary.stages_crm || {};
+  // How many of the scored accounts Recotap actually scored. The rest are
+  // CRM-derived: before the two stages were split apart, every account in the
+  // "Customer" tile was CRM-derived while Recotap reported no Customers at all,
+  // and the band still said "Powered by Recotap".
+  const recotapScored = stages.reduce((n, s) => n + (fromRecotap[s] ?? 0), 0);
   return (
     <div style={{ border: "1px solid #e3ebf4", borderRadius: 16, background: "linear-gradient(180deg,#fbfdff,#eff5ff)", padding: "16px 18px", marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 15, fontWeight: 800, color: "#16273d" }}>Buying Journey</span>
-          <span style={{ fontSize: 10, fontWeight: 800, color: "#5b6ef5", background: "#eef0ff", border: "1px solid #dfe3ff", borderRadius: 999, padding: "3px 9px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Powered by Recotap</span>
-          <span style={{ fontSize: 11.5, color: "#7f8fa5" }}>{summary.scored} scored · {summary.not_scored} not scored</span>
+          <span
+            title={`${recotapScored} of ${summary.scored} scored accounts carry a stage from Recotap; the other ${Math.max(0, summary.scored - recotapScored)} are derived from their live deal in Beacon.`}
+            style={{ fontSize: 10, fontWeight: 800, color: "#5b6ef5", background: "#eef0ff", border: "1px solid #dfe3ff", borderRadius: 999, padding: "3px 9px", textTransform: "uppercase", letterSpacing: "0.05em" }}
+          >Recotap + CRM</span>
+          <span
+            title={`${summary.not_in_recotap} of these accounts are not in Recotap at all; ${summary.in_recotap_unscored} are in Recotap but not yet scored.`}
+            style={{ fontSize: 11.5, color: "#7f8fa5" }}
+          >
+            {summary.scored} scored · {summary.not_in_recotap} not in Recotap · {summary.in_recotap_unscored} awaiting score
+          </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {(["Hot", "Warm", "Cold"] as const).map((k) => (
             <span key={k} style={{ fontSize: 11, fontWeight: 700, color: ENGAGEMENT_STYLE[k].color, background: ENGAGEMENT_STYLE[k].bg, border: `1px solid ${ENGAGEMENT_STYLE[k].border}`, borderRadius: 999, padding: "3px 9px" }}>{k} {eng[k] ?? 0}</span>
           ))}
+          {summary.no_intent > 0 ? (
+            <span
+              title="In Recotap but with no intent score yet. These used to be counted as Cold, which overstated measured intent."
+              style={{ fontSize: 11, fontWeight: 700, color: NEUTRAL_BADGE.color, background: NEUTRAL_BADGE.bg, border: `1px solid ${NEUTRAL_BADGE.border}`, borderRadius: 999, padding: "3px 9px" }}
+            >No score {summary.no_intent}</span>
+          ) : null}
           <button type="button" onClick={onSync} disabled={syncing} style={{ fontSize: 11.5, fontWeight: 700, color: "#24567e", background: "#fff", border: "1px solid #cbd9ec", borderRadius: 8, padding: "5px 10px", cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
             <RefreshCw size={12} className={syncing ? "animate-spin" : undefined} />{syncing ? "Syncing…" : "Sync Recotap"}
           </button>
@@ -356,12 +377,20 @@ function JourneyFunnel({
           const s = JOURNEY_STAGE_STYLE[stage] ?? NEUTRAL_BADGE;
           const isActive = active.includes(stage);
           const pct = Math.round((count / maxCount) * 100);
+          // Where this tile's accounts got their stage. The two are counted over
+          // the same accounts, so they don't sum to `count` — an account with a
+          // live deal has both, and the CRM one wins for display.
+          const rtp = fromRecotap[stage] ?? 0;
+          const crm = fromCrm[stage] ?? 0;
           return (
             <button
               key={stage}
               type="button"
               onClick={() => onToggle(stage)}
-              title={`${count} account${count === 1 ? "" : "s"} · ${stage}`}
+              title={
+                `${count} account${count === 1 ? "" : "s"} · ${stage}\n` +
+                `${crm} from a live Beacon deal, ${rtp} from Recotap intent`
+              }
               style={{
                 textAlign: "left",
                 border: `1.5px solid ${isActive ? s.color : s.border}`,
@@ -384,6 +413,9 @@ function JourneyFunnel({
               <div style={{ height: 5, borderRadius: 999, background: "#eef2f7", overflow: "hidden" }}>
                 <div style={{ width: `${pct}%`, height: "100%", background: s.color, borderRadius: 999 }} />
               </div>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: "#9aa7b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {crm} deal · {rtp} intent
+              </span>
             </button>
           );
         })}
@@ -547,7 +579,14 @@ function CompanyCard({
           <span style={{ background: "#f4f7fb", color: colors.sub, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{disposition}</span>
         ) : null}
         {rtp?.journey_stage ? (
-          <span title="Recotap journey stage" style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>{rtp.journey_stage}</span>
+          <span
+            title={
+              rtp.journey_stage_source === "crm"
+                ? "Journey stage derived from this account's most advanced live deal in Beacon"
+                : "Recotap journey stage (intent-derived)"
+            }
+            style={{ background: journeyStyle.bg, color: journeyStyle.color, border: `1px solid ${journeyStyle.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}
+          >{rtp.journey_stage}</span>
         ) : null}
         {rtp?.engagement ? (
           <span title="Recotap buying intent (engagement, from account score)" style={{ background: engagementStyle.bg, color: engagementStyle.color, border: `1px solid ${engagementStyle.border}`, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>Intent · {rtp.engagement}</span>

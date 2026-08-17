@@ -27,6 +27,11 @@ celery_app = Celery(
         # zippy_docs.storage only (model + session), never the document
         # generators — the worker still has no reason to import python-docx.
         "app.tasks.zippy_documents",
+        # Beacon <-> Recotap. The integration had no schedule at all before this:
+        # the pull ran only on a UI button press and the account push last ran
+        # 2026-06-26, so the Account Sourcing funnel presented stale data as live
+        # ABM intent.
+        "app.tasks.recotap",
     ],
 )
 
@@ -89,6 +94,22 @@ celery_app.conf.update(
         "purge-expired-zippy-documents": {
             "task": "app.tasks.zippy_documents.purge_expired_zippy_documents",
             "schedule": crontab(hour=3, minute=30),
+        },
+        # Pull Recotap signals, derive CRM journey stages, push accounts + deals.
+        # 04:00 UTC (09:30 IST) so the funnel is current before the India pod
+        # starts, and clear of the 02:00/03:30 jobs above. The task self-skips
+        # when no API key is configured, so it is inert in dev and sandbox.
+        "sync-recotap-daily": {
+            "task": "app.tasks.recotap.sync_recotap",
+            "schedule": crontab(hour=4, minute=0),
+        },
+        # Weekly full re-pull. Recotap's incremental lastSync window never
+        # reports deletions, so without a periodic complete pass an account
+        # removed on their side would linger in our copy forever.
+        "sync-recotap-full-weekly": {
+            "task": "app.tasks.recotap.sync_recotap",
+            "schedule": crontab(hour=4, minute=30, day_of_week=0),
+            "kwargs": {"full": True},
         },
         "reconcile-recent-deal-tasks": {
             "task": "app.tasks.health.reconcile_recent_deal_tasks",
