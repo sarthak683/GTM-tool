@@ -77,6 +77,10 @@ REAL_MEETING_SOURCES = {"", "google_calendar", "tldv", "manual"}
 # Roles that count as a sales rep in activity analytics. Admins (and any other
 # role) are NOT reps — their emails/calls/meetings must not inflate rep metrics
 # or appear as a rep row. User.role is one of: admin | ae | sdr.
+# Beacon Readout (the "highlights" strip on Sales Analytics). Disabled
+# 2026-08-17 at the user's request; set True to bring the card back.
+SHOW_BEACON_READOUT = False
+
 REP_ROLES = {"ae", "sdr"}
 DEFAULT_SALES_ANALYTICS_EMAILS = {"jacob@beacon.li"}
 
@@ -4172,71 +4176,81 @@ async def sales_dashboard(
         for r in milestone_summary_rows
     ]
 
+    # ── Beacon Readout — DISABLED ────────────────────────────────────────────
+    # Turned off at the user's request (2026-08-17). The card is hidden in
+    # SalesAnalytics.tsx and the endpoint now returns an empty list, so the
+    # frontend's `data.highlights.length > 0` guard keeps it off screen.
+    #
+    # Kept behind a flag rather than block-commented so it stays syntax-checked,
+    # type-checked and greppable — dead code that no tool can see rots. Flip
+    # SHOW_BEACON_READOUT back to True to restore it; nothing else was removed,
+    # and the drilldown endpoints it fed are untouched.
     highlights: list[SalesHighlight] = []
-    if rep_activity_rows:
-        top_rep = rep_activity_rows[0]
-        if top_rep.total > 0:
+    if SHOW_BEACON_READOUT:
+        if rep_activity_rows:
+            top_rep = rep_activity_rows[0]
+            if top_rep.total > 0:
+                highlights.append(
+                    SalesHighlight(
+                        key="top_rep_activity",
+                        message=f"{top_rep.rep_name} leads activity with {top_rep.total} touches in the last {window_days} days.",
+                        title=f"{top_rep.rep_name} owned deals",
+                        subtitle="Current pipeline owned by the rep highlighted in the readout.",
+                        drilldown=SalesHighlightDrilldown(rep_user_id=top_rep.user_id),
+                    )
+                )
+        if velocity_rows:
+            slowest_stage = velocity_rows[0]
             highlights.append(
                 SalesHighlight(
-                    key="top_rep_activity",
-                    message=f"{top_rep.rep_name} leads activity with {top_rep.total} touches in the last {window_days} days.",
-                    title=f"{top_rep.rep_name} owned deals",
-                    subtitle="Current pipeline owned by the rep highlighted in the readout.",
-                    drilldown=SalesHighlightDrilldown(rep_user_id=top_rep.user_id),
+                    key="slowest_stage",
+                    message=f"{slowest_stage.label} is the slowest stage, averaging {slowest_stage.average_days_in_stage:.1f} days in stage.",
+                    title=f"{slowest_stage.label} deal aging",
+                    subtitle="Deals in the slowest stage, sorted by time spent in stage.",
+                    drilldown=SalesHighlightDrilldown(stage_key=slowest_stage.key),
                 )
             )
-    if velocity_rows:
-        slowest_stage = velocity_rows[0]
-        highlights.append(
-            SalesHighlight(
-                key="slowest_stage",
-                message=f"{slowest_stage.label} is the slowest stage, averaging {slowest_stage.average_days_in_stage:.1f} days in stage.",
-                title=f"{slowest_stage.label} deal aging",
-                subtitle="Deals in the slowest stage, sorted by time spent in stage.",
-                drilldown=SalesHighlightDrilldown(stage_key=slowest_stage.key),
-            )
-        )
-    if overdue_close_count > 0:
-        highlights.append(
-            SalesHighlight(
-                key="overdue_close_dates",
-                message=f"{overdue_close_count} open deals have overdue close dates and need forecast cleanup.",
-                title="Overdue close dates",
-                subtitle="Open deals whose expected close date is already in the past.",
-                drilldown=SalesHighlightDrilldown(overdue_close_date=True),
-            )
-        )
-    if missing_close_date_count > 0:
-        highlights.append(
-            SalesHighlight(
-                key="missing_close_dates",
-                message=f"{missing_close_date_count} active deals are missing an expected close date.",
-                title="Missing close dates",
-                subtitle="Active deals that still do not have an expected close date.",
-                drilldown=SalesHighlightDrilldown(missing_close_date=True),
-            )
-        )
-    if forecast_rows:
-        strongest_month = max(forecast_rows, key=lambda row: row.weighted_amount)
-        if strongest_month.weighted_amount > 0:
+        if overdue_close_count > 0:
             highlights.append(
                 SalesHighlight(
-                    key="strongest_forecast_month",
-                    message=f"{strongest_month.label} carries the strongest weighted forecast at ${strongest_month.weighted_amount:,.0f}.",
-                    title=f"{strongest_month.label} forecast coverage",
-                    subtitle="Deals expected to close in the strongest weighted forecast month.",
-                    drilldown=SalesHighlightDrilldown(close_month=strongest_month.key),
+                    key="overdue_close_dates",
+                    message=f"{overdue_close_count} open deals have overdue close dates and need forecast cleanup.",
+                    title="Overdue close dates",
+                    subtitle="Open deals whose expected close date is already in the past.",
+                    drilldown=SalesHighlightDrilldown(overdue_close_date=True),
                 )
             )
-    if not highlights:
-        highlights.append(
-            SalesHighlight(
-                key="no_signal_yet",
-                message="Sales analytics is live, but the workspace needs more activity data before trends stand out.",
-                title="Beacon Readout",
-                subtitle="No related records are available for this readout item yet.",
+        if missing_close_date_count > 0:
+            highlights.append(
+                SalesHighlight(
+                    key="missing_close_dates",
+                    message=f"{missing_close_date_count} active deals are missing an expected close date.",
+                    title="Missing close dates",
+                    subtitle="Active deals that still do not have an expected close date.",
+                    drilldown=SalesHighlightDrilldown(missing_close_date=True),
+                )
             )
-        )
+        if forecast_rows:
+            strongest_month = max(forecast_rows, key=lambda row: row.weighted_amount)
+            if strongest_month.weighted_amount > 0:
+                highlights.append(
+                    SalesHighlight(
+                        key="strongest_forecast_month",
+                        message=f"{strongest_month.label} carries the strongest weighted forecast at ${strongest_month.weighted_amount:,.0f}.",
+                        title=f"{strongest_month.label} forecast coverage",
+                        subtitle="Deals expected to close in the strongest weighted forecast month.",
+                        drilldown=SalesHighlightDrilldown(close_month=strongest_month.key),
+                    )
+                )
+        if not highlights:
+            highlights.append(
+                SalesHighlight(
+                    key="no_signal_yet",
+                    message="Sales analytics is live, but the workspace needs more activity data before trends stand out.",
+                    title="Beacon Readout",
+                    subtitle="No related records are available for this readout item yet.",
+                )
+            )
 
     average_deal_size = round(pipeline_amount / active_deals, 2) if active_deals else 0.0
 

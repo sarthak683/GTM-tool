@@ -2,6 +2,10 @@ import "./sales-analytics-refresh.css";
 import { formatDateOnly, parseDateOnly } from "../lib/utils";
 
 // ── Visibility flags — set to false to hide, true to show ────────────────────
+// Beacon Readout is also gated server-side (SHOW_BEACON_READOUT in
+// app/api/v1/endpoints/analytics.py, which now returns an empty highlights
+// list). Both must be flipped to bring the card back.
+const SHOW_BEACON_READOUT   = false;
 const SHOW_DEAL_VELOCITY    = false;
 const SHOW_FORECAST_VIEW    = false;
 const SHOW_MONTHLY_FUNNEL   = false;
@@ -3740,7 +3744,7 @@ export default function SalesAnalytics() {
           )}
 
 
-          {data.highlights.length > 0 && (
+          {SHOW_BEACON_READOUT && data.highlights.length > 0 && (
             <HighlightsCard highlights={data.highlights} onOpenHighlight={handleOpenHighlight} />
           )}
 
