@@ -34,6 +34,7 @@ from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.task import Task
 from app.services.activity_signal_classifier import detect_latest_intent_from_segments
+from app.services.zippy_tagging import BEACON_SENDING_DOMAINS
 from app.models.user import User
 from app.models.user_email_connection import UserEmailConnection
 from app.services.prospect_hygiene import is_valid_prospect_candidate
@@ -163,8 +164,8 @@ def _domain_from_email(addr: str) -> str:
 
 
 # All sending domains that belong to Beacon — treat as internal regardless of
-# which specific domain the connected inbox uses.
-_ALL_BEACON_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+# which specific domain the connected inbox uses. Single source of truth is
+# zippy_tagging.BEACON_SENDING_DOMAINS; a local copy here drifted before.
 
 
 def _is_internal_address(addr: str, internal_domain: str) -> bool:
@@ -172,7 +173,7 @@ def _is_internal_address(addr: str, internal_domain: str) -> bool:
     return bool(
         addr
         and addr_domain
-        and (addr_domain == internal_domain or addr_domain in _ALL_BEACON_DOMAINS)
+        and (addr_domain == internal_domain or addr_domain in BEACON_SENDING_DOMAINS)
     )
 
 
@@ -191,7 +192,7 @@ def _normalize_beacon_sender(addr: str | None) -> str | None:
     if not addr or "@" not in addr:
         return addr
     local, domain = addr.rsplit("@", 1)
-    if domain.strip().lower() in _ALL_BEACON_DOMAINS:
+    if domain.strip().lower() in BEACON_SENDING_DOMAINS:
         return f"{local}@beacon.li"
     return addr
 

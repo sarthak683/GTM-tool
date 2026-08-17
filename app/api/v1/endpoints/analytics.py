@@ -1952,7 +1952,12 @@ async def sales_activity_drilldown(
             if done_deal_ids_dd:
                 for dr in (
                     await session.execute(
-                        select(Deal.id, Deal.name, Deal.company_id).where(Deal.id.in_(done_deal_ids_dd))
+                        # Deal.sdr_id is required for the deal-first attribution
+                        # below; without it this drilldown could only see
+                        # Company.sdr_id and disagreed with the tile it opens.
+                        select(Deal.id, Deal.name, Deal.company_id, Deal.sdr_id).where(
+                            Deal.id.in_(done_deal_ids_dd)
+                        )
                     )
                 ).all():
                     done_deal_rows_dd[dr.id] = dr
@@ -1982,7 +1987,13 @@ async def sales_activity_drilldown(
                 cid = dr.company_id
                 if not cid:
                     continue
-                if done_comp_sdr_dd.get(cid) != rep_id:
+                # SDR: deal.sdr_id takes priority, fall back to Company.sdr_id —
+                # identical to the demos_done TILE and to the demos_scheduled
+                # drilldown above. This branch previously used Company.sdr_id
+                # alone, so a deal whose own sdr_id differed from its company's
+                # was counted in the tile but missing from this drilldown.
+                sdr_id_dd = dr.sdr_id or done_comp_sdr_dd.get(cid)
+                if sdr_id_dd != rep_id:
                     continue
                 if filter_geographies:
                     region_key = _normalize_geography_key(done_comp_region_dd.get(cid))

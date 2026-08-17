@@ -7,14 +7,16 @@ mounting it without touching any v1 files.
 """
 from fastapi import APIRouter
 
+# Kept alphabetical so a new endpoint module has one obvious insertion point and
+# a duplicate is visible on sight. `knowledge` and `drive` were each listed twice
+# here, and the second `drive` include below registered all 7 of its routes a
+# second time.
 from app.api.v1.endpoints import (
     account_sourcing,
     activities,
     admin_health,
-    analytics,
     aircall,
-    email_sync,
-    personal_email_sync,
+    analytics,
     angel_mapping,
     assignments,
     auth,
@@ -27,20 +29,22 @@ from app.api.v1.endpoints import (
     data_room,
     deals,
     drive,
-    execution_tracker,
+    email_sync,
     enrichment,
-    intelligence,
+    execution_tracker,
     global_search,
+    intelligence,
     knowledge,
     meetings,
     notifications,
     outreach,
     performance,
+    personal_email_sync,
     prospecting,
     push,
     reminders,
-    sales_resources,
     sales_reports,
+    sales_resources,
     settings,
     signals,
     tasks,
@@ -48,8 +52,6 @@ from app.api.v1.endpoints import (
     webhooks,
     workspace,
     zippy,
-    knowledge,
-    drive,
 )
 
 router = APIRouter()
@@ -94,4 +96,3 @@ router.include_router(notifications.router)
 router.include_router(workspace.router)
 router.include_router(knowledge.router)
 router.include_router(zippy.router)
-router.include_router(drive.router)

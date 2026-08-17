@@ -59,3 +59,7 @@ deploy/**/values-*.local.yaml
 
 # Prod-repair review exports contain live prospect PII — never commit
 scripts/prod-repair/review-*/
+
+# Vite writes these transient config bundles next to vite.config.ts on every
+# dev-server start. Two had been committed; they are build output, not source.
+frontend/vite.config.ts.timestamp-*.mjs

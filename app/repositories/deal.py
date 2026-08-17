@@ -7,7 +7,10 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_, select, text, true
+# NB: do not re-add `text` here. Three helpers below use `text` as a local
+# string variable, so importing sqlalchemy's `text` shadows it and any raw-SQL
+# call in those scopes would silently receive a str instead.
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -17,7 +20,7 @@ from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.contact import Contact
 from app.models.company import Company
 from app.models.deal import (
-    ALL_STAGES, Deal, DealContact, DealContactRead, DealRead,
+    Deal, DealContact, DealContactRead, DealRead,
     compute_meddpicc_score,
 )
 from app.models.user import User

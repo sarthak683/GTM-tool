@@ -28,6 +28,7 @@ from app.models.reminder import Reminder, ReminderCreate, ReminderRead, Reminder
 from app.models.call_recording import CallRecording, CallRecordingRead
 from app.models.notification import Notification, NotificationRead, NOTIFICATION_TYPES
 from app.models.job_health import JobHealth
+from app.models.push_subscription import PushSubscription, PushSubscriptionRead
 from app.models.recotap import RecotapAccount, RecotapAccountRead, RecotapDealPush
 from app.models.task import (
     Task, TaskCreate, TaskRead, TaskUpdate,
@@ -62,6 +63,7 @@ __all__ = [
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",
     "CallRecording", "CallRecordingRead",
     "Notification", "NotificationRead", "NOTIFICATION_TYPES",
+    "JobHealth",
     "Task", "TaskCreate", "TaskRead", "TaskUpdate",
     "TaskComment", "TaskCommentCreate", "TaskCommentRead",
     "ZippyConversation", "ZippyConversationRead",
@@ -71,5 +73,3 @@ __all__ = [
     "PushSubscription", "PushSubscriptionRead",
     "RecotapAccount", "RecotapAccountRead", "RecotapDealPush",
 ]
-
-from app.models.push_subscription import PushSubscription, PushSubscriptionRead  # noqa: E402,F401

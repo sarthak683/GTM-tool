@@ -50,14 +50,15 @@ from sqlalchemy.orm import sessionmaker
 
 from app.celery_app import celery_app
 from app.config import settings
+from app.services.zippy_tagging import BEACON_SENDING_DOMAINS
 
 logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-# Keep in step with BEACON_SENDING_DOMAINS (analytics) and _ALL_BEACON_DOMAINS
-# (personal_email_sync) — beaconli.co was missing here, so an attendee on that
-# domain was not recognised as internal.
-BEACON_DOMAINS = {"beacon.li", "beaconli.co", "beaconli.com"}
+# Beacon's sending domains now come from the one canonical set. This used to be
+# a third private copy kept in sync by hand, and the sync failed: beaconli.co
+# was missing here, so an attendee on that domain was not recognised as
+# internal. Importing removes the obligation rather than restating it.
 FREE_EMAIL_PROVIDERS = {
     "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
     "icloud.com", "protonmail.com", "googlemail.com",
@@ -87,7 +88,7 @@ def _domain_from_email(addr: str) -> str:
 
 
 def _is_internal(email: str) -> bool:
-    return _domain_from_email(email) in BEACON_DOMAINS
+    return _domain_from_email(email) in BEACON_SENDING_DOMAINS
 
 
 async def _get_ae_name(

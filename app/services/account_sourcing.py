@@ -2750,58 +2750,6 @@ async def re_enrich_contact_service(contact_id: UUID, session: AsyncSession) -> 
     return contact
 
 
-
-
-async def process_batch(batch_id: UUID, session: AsyncSession) -> SourcingBatch | None:
-    """Process all companies in a sourcing batch through tiered enrichment."""
-    batch = await session.get(SourcingBatch, batch_id)
-    if not batch:
-        return None
-
-    batch.status = "processing"
-    batch.updated_at = datetime.utcnow()
-    session.add(batch)
-    await session.commit()
-
-    # Get all companies in this batch
-    result = await session.execute(
-        select(Company).where(Company.sourcing_batch_id == batch_id)
-    )
-    companies = result.scalars().all()
-
-    processed = 0
-    failed = int(batch.failed_rows or 0)
-    total_companies = len(companies)
-    for index, company in enumerate(companies, start=1):
-        try:
-            # Give each company a fresh session so one failure or stale ORM state
-            # does not poison the rest of the batch.
-            logger.info(f"Batch {batch_id}: starting company {index}/{total_companies} -> {company.name} ({company.domain})")
-            async with AsyncSessionLocal() as company_session:
-                await enrich_company_tiered(company.id, company_session)
-            logger.info(f"Batch {batch_id}: finished company {index}/{total_companies} -> {company.name}")
-        except Exception as e:
-            logger.error("Batch enrichment failed for %s: %s", company.name, safe_error_message(e))
-            errors = batch.error_log or []
-            errors.append({"company": company.name, "error": safe_error_message(e)})
-            batch.error_log = errors
-            failed += 1
-
-        processed = index
-        batch.processed_rows = processed
-        batch.failed_rows = failed
-        batch.updated_at = datetime.utcnow()
-        session.add(batch)
-        await session.commit()
-
-    batch.status = "failed" if failed == total_companies and total_companies > 0 else "completed"
-    batch.updated_at = datetime.utcnow()
-    session.add(batch)
-    await session.commit()
-    await session.refresh(batch)
-    return batch
-
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _apply_apollo(company: Company, data: dict) -> None:
