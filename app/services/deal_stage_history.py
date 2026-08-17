@@ -22,11 +22,26 @@ from app.models.deal_stage_history import DealStageHistory
 CLOSE_REASONS: tuple[str, ...] = (
     "budget",
     "timing",
+    # The prospect decided to build it themselves. Kept distinct from
+    # lost_to_competitor, which means we lost to a *vendor*: "they built it
+    # in-house" is a different loss with a different counter-play, and it is the
+    # largest real loss mode in this pipeline — six of the free-text reasons
+    # written before this list existed say exactly that, and the sales library
+    # carries a Build vs Buy deck and a "Beacon vs In-House AI Agents"
+    # battlecard for it. Without its own value it was being filed under
+    # "lost_to_competitor" or "other" and could not be counted.
+    "built_in_house",
     "lost_to_competitor",
     "no_response",
     "not_a_fit",
     "pricing",
     "champion_left",
+    # The two exits the Sales Lifecycle SOP marks "RCA-relevant" — the POC that
+    # did not succeed, and the negotiation where terms were never agreed. The
+    # SOP asks for a root-cause analysis at both, which was impossible while
+    # neither could be recorded.
+    "poc_failed",
+    "terms_not_agreed",
     "other",
 )
 

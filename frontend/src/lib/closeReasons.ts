@@ -7,11 +7,18 @@
 export const CLOSE_REASONS = [
   { value: "budget", label: "Budget" },
   { value: "timing", label: "Timing" },
+  // Distinct from "Lost to competitor", which means we lost to a vendor. This
+  // is the largest real loss mode in the pipeline and has its own counter-play
+  // (the Build vs Buy deck), so it needs its own number.
+  { value: "built_in_house", label: "Built in-house" },
   { value: "lost_to_competitor", label: "Lost to competitor" },
   { value: "no_response", label: "No response" },
   { value: "not_a_fit", label: "Not a fit" },
   { value: "pricing", label: "Pricing" },
   { value: "champion_left", label: "Champion left" },
+  // The Sales Lifecycle SOP's two "RCA-relevant exit points".
+  { value: "poc_failed", label: "POC unsuccessful" },
+  { value: "terms_not_agreed", label: "Terms not agreed" },
   { value: "other", label: "Other" },
 ] as const;
 

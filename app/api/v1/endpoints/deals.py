@@ -19,6 +19,7 @@ from app.models.deal import (
 from app.models.user import User
 from app.repositories.deal import DealRepository, deal_visibility_filter
 from app.schemas.common import PaginatedResponse
+from app.services.close_reason_backfill import backfill_close_reasons
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import CLOSE_REASONS, record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
@@ -191,6 +192,28 @@ class DealRestoreResponse(BaseModel):
     id: UUID
     name: str
     tasks_reopened: int
+
+
+@router.post("/backfill-close-reasons", response_model=dict)
+async def backfill_deal_close_reasons(
+    session: DBSession,
+    _admin: AdminUser,
+    dry_run: bool = Query(True, description="Preview only. Defaults to TRUE — nothing is written unless you pass dry_run=false."),
+    limit: int | None = Query(None, ge=1, le=1000),
+):
+    """Structure historical free-text close reasons onto the enum (admin).
+
+    The close-reason dropdown shipped on 2026-08-17; every reason written before
+    that is prose sitting in the enum's field. This moves the prose to
+    ``close_reason_detail`` and puts the matching enum value in
+    ``close_reason`` — nothing is overwritten, and rows the rules cannot place
+    confidently are returned under ``unmatched`` for a human rather than being
+    filed as "other".
+
+    Dry-run by default. Run it once to read the proposals, then again with
+    ``dry_run=false`` if they look right.
+    """
+    return await backfill_close_reasons(session, dry_run=dry_run, limit=limit)
 
 
 @router.get("/trash", response_model=list[DealTrashRow])

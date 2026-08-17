@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import func
@@ -261,7 +260,10 @@ async def apply_auto_call_level(session, meeting, *, commit: bool = False) -> Op
 
     meeting.call_level = suggestion.level
     meeting.call_level_source = "auto" if suggestion.level else None
-    meeting.updated_at = datetime.utcnow()
+    # Deliberately does NOT touch `updated_at`. A derived classification is not
+    # a change to the meeting's content, and `Meeting.updated_at.desc()` is the
+    # tiebreak sort in global search and the task lookups — backfilling 1,463
+    # rows would stamp them all with one timestamp and flatten that ordering.
     session.add(meeting)
     if commit:
         await session.commit()
