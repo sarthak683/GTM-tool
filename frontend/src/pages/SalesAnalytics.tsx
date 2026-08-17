@@ -53,7 +53,6 @@ import {
   type SalesDashboard,
   type SalesAccountStatusRow,
   type SalesForecastRow,
-  type SalesFunnelStep,
   type SalesPipelineOwnerRow,
   type MilestoneDealRow,
   type MeetingBucketDeal,
@@ -64,7 +63,6 @@ import {
   type SalesRepWeeklyActivityRow,
   type SalesStageBucket,
   type SalesVelocityRow,
-  type SalesWinLoss,
 } from "../lib/api";
 import { getCachedUsers } from "../lib/cachedFetch";
 import { accountStatusOption } from "../lib/accountStatus";
@@ -222,25 +220,6 @@ const exportBtnCompactStyle: React.CSSProperties = {
 // Filename-safe slug: lowercase, non-alphanumerics collapsed to a single dash.
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-// Loss-reason keys the backend emits, mapped to display labels. Anything
-// unrecognized falls back to a prettified version of the raw key so a new
-// backend reason never renders as a blank chip.
-const LOSS_REASON_LABELS: Record<string, string> = {
-  budget: "Budget",
-  timing: "Timing",
-  lost_to_competitor: "Lost to competitor",
-  no_response: "No response",
-  not_a_fit: "Not a fit",
-  pricing: "Pricing",
-  champion_left: "Champion left",
-  other: "Other",
-  unspecified: "Unspecified",
-};
-
-function lossReasonLabel(key: string): string {
-  return LOSS_REASON_LABELS[key] ?? key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
 // 11px uppercase group labels for the compact filter bar.
@@ -2412,98 +2391,6 @@ function MonthlyUniqueFunnelView({ rows }: { rows: MonthlyUniqueFunnelRow[] }) {
   );
 }
 
-// Lead → Meeting → Proposal → Closed Won funnel with step-to-step conversion.
-// Surfaces the conversion_funnel the backend already computes (previously it
-// shipped in the payload but was never rendered). Replaces the dead quota panel.
-function ConversionFunnelView({ steps }: { steps: SalesFunnelStep[] }) {
-  if (!steps || steps.length === 0) {
-    return <p className="crm-muted" style={{ margin: 0 }}>No funnel data yet for this window.</p>;
-  }
-  const max = Math.max(...steps.map((s) => s.count), 1);
-  const first = steps[0]?.count ?? 0;
-  const last = steps[steps.length - 1]?.count ?? 0;
-  const overall = first > 0 ? Math.round((last / first) * 100) : null;
-  const colors = ["#bfe08a", "#9ace3d", "#6fae27", "#4d7c0f"];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "8px 14px", borderRadius: 12, background: "#f1f9e2", border: "1px solid #d8ecb4", color: "#4d7c0f", fontSize: 13, fontWeight: 800 }}>
-        <Trophy size={15} />
-        Lead → Won conversion: {overall === null ? "—" : `${overall}%`}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {steps.map((step, i) => {
-          const pct = step.count > 0 ? Math.max((step.count / max) * 100, 6) : 0;
-          const color = colors[i % colors.length];
-          return (
-            <div key={step.key} style={{ display: "grid", gridTemplateColumns: "minmax(86px, 0.5fr) minmax(120px, 2fr) auto", gap: 12, alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{step.label}</span>
-              <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden" }}>
-                <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: color, transition: "width 240ms ease" }} />
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", whiteSpace: "nowrap" }}>
-                <span style={{ fontSize: 14, fontWeight: 800, color: "#142335", fontVariantNumeric: "tabular-nums" }}>{step.count}</span>
-                {typeof step.conversion_from_previous === "number" && (
-                  <span title={`${step.conversion_from_previous}% of the previous step converted here`} style={{ fontSize: 11, fontWeight: 700, color: "#68788d", background: "#f7f9fc", border: "1px solid #e3e9f2", borderRadius: 999, padding: "2px 8px" }}>
-                    {step.conversion_from_previous}%
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Closed-won / closed-lost outcomes inside the resolved window, with the
-// loss-reason mix underneath. Reason capture ships in the same release, so
-// "Unspecified" legitimately dominates until reps start filling it in.
-function WinLossView({ winLoss }: { winLoss: SalesWinLoss }) {
-  const won = winLoss.won_count ?? 0;
-  const lost = winLoss.lost_count ?? 0;
-  const winRate = winLoss.win_rate == null ? null : Math.round(winLoss.win_rate * 100);
-  const reasons = (winLoss.loss_reasons ?? []).filter((r) => (r.count ?? 0) > 0);
-  const maxReason = Math.max(...reasons.map((r) => r.count), 1);
-
-  const tiles: Array<{ label: string; value: string; sub: string; color: string; bg: string; border: string }> = [
-    { label: "Won", value: String(won), sub: formatShortCurrency(winLoss.won_amount), color: "#4d7c0f", bg: "#f3fbe3", border: "#d8ecb4" },
-    { label: "Lost", value: String(lost), sub: formatShortCurrency(winLoss.lost_amount), color: "#b94343", bg: "#fdeeee", border: "#f4cfd0" },
-    { label: "Win rate", value: winRate === null ? "—" : `${winRate}%`, sub: `${won + lost} closed`, color: "#142335", bg: "#f7f9fc", border: "#e3e9f2" },
-  ];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-        {tiles.map((tile) => (
-          <div key={tile.label} style={{ borderRadius: 10, background: tile.bg, border: `1px solid ${tile.border}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: tile.color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{tile.label}</span>
-            <span style={{ fontSize: 21, lineHeight: 1, fontWeight: 800, color: "#142335", fontVariantNumeric: "tabular-nums" }}>{tile.value}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d" }}>{tile.sub}</span>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.06em" }}>Loss reasons</span>
-        {reasons.length === 0 ? (
-          <p className="crm-muted" style={{ margin: 0, fontSize: 12 }}>No losses recorded in this window.</p>
-        ) : (
-          reasons.map((reason) => (
-            <div key={reason.reason} style={{ display: "grid", gridTemplateColumns: "minmax(96px, 0.9fr) minmax(80px, 2fr) auto", gap: 10, alignItems: "center" }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>{lossReasonLabel(reason.reason)}</span>
-              <div style={{ height: 8, borderRadius: 999, background: "#eef2f8", overflow: "hidden" }}>
-                <div style={{ width: `${Math.max((reason.count / maxReason) * 100, 6)}%`, height: "100%", borderRadius: 999, background: "#e29a9a" }} />
-              </div>
-              <span style={{ fontSize: 12, fontWeight: 800, color: "#68788d", fontVariantNumeric: "tabular-nums" }}>{reason.count}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
 interface MultiSelectOption {
   value: string;
   label: string;
@@ -3019,12 +2906,6 @@ export default function SalesAnalytics() {
   }), [windowDays, fromDate, toDate, repFilter, geographyFilter, refreshNonce]);
 
   const activityGranularity = data?.activity_bucket_granularity === "daily" ? "daily" : "weekly";
-
-  // An all-zero win/loss card is noise, not information — hide it until the
-  // window actually contains a closed deal.
-  const showWinLoss = Boolean(
-    data?.win_loss && ((data.win_loss.won_count ?? 0) > 0 || (data.win_loss.lost_count ?? 0) > 0),
-  );
 
   // The rows the Forecast chart actually renders: custom uses the fetched rows;
   // week/month read straight from the already-loaded dashboard payload.
@@ -3725,23 +3606,6 @@ export default function SalesAnalytics() {
                 bucketScopeLabel={card.label === "Demo Scheduled" ? scopeLabelFor() : undefined}
               />
             ))}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>
-            {showWinLoss && (
-              <SectionCard
-                title="Win / Loss"
-                subtitle="Deals that closed inside this window, split won versus lost, with the reason mix behind the losses."
-              >
-                <WinLossView winLoss={data.win_loss as SalesWinLoss} />
-              </SectionCard>
-            )}
-            <SectionCard
-              title="Conversion Funnel"
-              subtitle="Step-to-step conversion through the pipeline for this window. Each badge is the share of the previous step that made it here."
-            >
-              <ConversionFunnelView steps={data.conversion_funnel} />
-            </SectionCard>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>

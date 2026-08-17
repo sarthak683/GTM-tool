@@ -1,18 +1,16 @@
-"""Pure-logic tests for the sales-dashboard quota payload and the win/loss
-reason bucketing.
+"""Pure-logic tests for the sales-dashboard quota payload.
 
 No database, Redis, or app lifespan is touched: ``_build_quota_state`` reads a
-plain analytics-settings dict and ``_loss_reason_key`` normalizes strings, so
-both are tested as deterministic helpers (same pattern as
-``test_analytics_window.py``).
+plain analytics-settings dict, so it is tested as a deterministic helper (same
+pattern as ``test_analytics_window.py``).
+
+This module previously also covered ``_loss_reason_key`` / ``LOSS_REASON_KEYS``.
+Both were deleted along with the Win/Loss card and the ``win_loss`` response
+field, so those tests went with them.
 """
 import unittest
 
-from app.api.v1.endpoints.analytics import (
-    LOSS_REASON_KEYS,
-    _build_quota_state,
-    _loss_reason_key,
-)
+from app.api.v1.endpoints.analytics import _build_quota_state
 
 
 class BuildQuotaStateTests(unittest.TestCase):
@@ -60,28 +58,6 @@ class BuildQuotaStateTests(unittest.TestCase):
         self.assertTrue(quota.configured)
         self.assertEqual(quota.weekly_targets, {"sdr": {"calls_connected": 150.0}})
         self.assertEqual(quota.monthly_targets, {})
-
-
-class LossReasonKeyTests(unittest.TestCase):
-    def test_enum_values_pass_through(self) -> None:
-        for reason in LOSS_REASON_KEYS:
-            self.assertEqual(_loss_reason_key(reason, None), reason)
-
-    def test_stage_history_reason_wins_over_qualification(self) -> None:
-        self.assertEqual(
-            _loss_reason_key("pricing", {"close_reason": "timing"}), "pricing"
-        )
-
-    def test_falls_back_to_qualification_close_reason(self) -> None:
-        self.assertEqual(_loss_reason_key(None, {"close_reason": "budget"}), "budget")
-        self.assertEqual(_loss_reason_key("  ", {"close_reason": "Timing"}), "timing")
-
-    def test_unknown_or_missing_reasons_bucket_as_unspecified(self) -> None:
-        self.assertEqual(_loss_reason_key(None, None), "unspecified")
-        self.assertEqual(_loss_reason_key("", {}), "unspecified")
-        self.assertEqual(_loss_reason_key("they ghosted us", None), "unspecified")
-        self.assertEqual(_loss_reason_key(None, {"close_reason": "free text"}), "unspecified")
-        self.assertEqual(_loss_reason_key(None, "not-a-dict"), "unspecified")
 
 
 if __name__ == "__main__":

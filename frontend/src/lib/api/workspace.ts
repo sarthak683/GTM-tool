@@ -505,13 +505,6 @@ export type SalesForecastRow = {
   weighted_amount: number;
 };
 
-export type SalesFunnelStep = {
-  key: string;
-  label: string;
-  count: number;
-  conversion_from_previous?: number | null;
-};
-
 export type MonthlyUniqueFunnelRow = {
   month_key: string;
   label: string;
@@ -534,22 +527,6 @@ export type SalesQuotaState = {
   // Per-metric sum across every key of the matching map — the "team goal line".
   team_weekly_targets?: Record<string, number> | null;
   team_monthly_targets?: Record<string, number> | null;
-};
-
-// Closed-won / closed-lost rollup for the resolved window.
-export type SalesWinLossReason = {
-  reason: string;
-  count: number;
-};
-
-export type SalesWinLoss = {
-  won_count: number;
-  lost_count: number;
-  /** won / (won + lost) — null when the window has no closed outcomes. */
-  win_rate: number | null;
-  won_amount: number;
-  lost_amount: number;
-  loss_reasons: SalesWinLossReason[];
 };
 
 export type SalesHighlightDrilldown = {
@@ -588,7 +565,6 @@ export type SalesDashboard = {
   forecast_by_week?: SalesForecastRow[];
   forecast_buckets?: SalesForecastRow[];
   forecast_granularity?: "week" | "month";
-  conversion_funnel: SalesFunnelStep[];
   monthly_unique_funnel: MonthlyUniqueFunnelRow[];
   accounts_by_status?: SalesAccountStatusRow[];
   quota: SalesQuotaState;
@@ -599,8 +575,6 @@ export type SalesDashboard = {
     direct_sql: number;
     demo_rescheduled: number;
   };
-  /** Window-scoped closed-won/closed-lost rollup. Null on older payloads. */
-  win_loss?: SalesWinLoss | null;
 };
 
 export type SalesAccountStatusRow = {
