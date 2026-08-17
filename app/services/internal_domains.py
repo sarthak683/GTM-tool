@@ -38,6 +38,30 @@ async def get_internal_domains(session: AsyncSession) -> set[str]:
     return domains
 
 
+def external_attendees(
+    attendees: Iterable[dict[str, Any]] | None, internal_domains: set[str]
+) -> list[dict[str, Any]]:
+    """Just the prospect-side attendees.
+
+    The SOP's L1/L2/L3 rule counts the customer's people — every call also has a
+    Beacon rep or two on the invite, so counting everyone would push every 1:1
+    into "2+ attendees" and misclassify it as L2. An attendee with no usable
+    email is dropped rather than assumed external: we cannot place them, and
+    guessing inflates the count in the direction that changes the answer.
+    """
+    out: list[dict[str, Any]] = []
+    for attendee in attendees or []:
+        if not isinstance(attendee, dict):
+            continue
+        email = str(attendee.get("email") or "").strip().lower()
+        if "@" not in email:
+            continue
+        domain = _normalize_domain(email.split("@", 1)[1])
+        if domain and domain not in internal_domains:
+            out.append(attendee)
+    return out
+
+
 def is_internal_only(attendees: Iterable[dict[str, Any]], internal_domains: set[str]) -> bool:
     """
     True iff every attendee with a usable email belongs to an internal domain.

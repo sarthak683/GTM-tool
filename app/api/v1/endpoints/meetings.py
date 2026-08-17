@@ -14,6 +14,12 @@ from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.user import User
 from app.repositories.meeting import MeetingRepository
+from app.services.call_levels import (
+    CALL_LEVELS,
+    apply_auto_call_level,
+    normalize_call_level,
+    suggest_for_meeting,
+)
 from app.services.deal_stages import get_configured_deal_stages
 from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.meeting_automation import _collect_recipient_ids
@@ -344,6 +350,18 @@ async def _classify_internal_from_attendees(session: DBSession, attendees) -> Op
     return is_internal_only(attendees, internal_domains)
 
 
+async def _with_call_level_suggestion(session: DBSession, meeting: Meeting) -> MeetingRead:
+    """Attach what the CURRENT attendee list implies about L1/L2/L3.
+
+    Detail responses only — the list endpoint returns the stored `call_level`
+    without this, because computing it per row would add a contact lookup per
+    meeting to a paginated query for a field the list only renders as a badge.
+    """
+    read = MeetingRead.model_validate(meeting, from_attributes=True)
+    read.call_level_suggestion = (await suggest_for_meeting(session, meeting)).as_dict()
+    return read
+
+
 @router.post("/", response_model=MeetingRead, status_code=201)
 async def create_meeting(payload: MeetingCreate, session: DBSession, current_user: CurrentUser):
     data = payload.model_dump()
@@ -376,7 +394,11 @@ async def create_meeting(payload: MeetingCreate, session: DBSession, current_use
     internal_flag = await _classify_internal_from_attendees(session, data.get("attendees"))
     if internal_flag is not None:
         data["is_internal"] = internal_flag
-    return await MeetingRepository(session).create(data)
+    meeting = await MeetingRepository(session).create(data)
+    # Classify straight away so the AE walks into the prep call with a starting
+    # point rather than a blank field (SOP stage 04).
+    await apply_auto_call_level(session, meeting, commit=True)
+    return await _with_call_level_suggestion(session, meeting)
 
 
 class RelinkResult(BaseModel):
@@ -410,7 +432,104 @@ async def relink_unlinked(
 
 @router.get("/{meeting_id}", response_model=MeetingRead)
 async def get_meeting(meeting_id: UUID, session: DBSession, current_user: CurrentUser):
-    return await MeetingRepository(session).get_or_raise(meeting_id)
+    meeting = await MeetingRepository(session).get_or_raise(meeting_id)
+    return await _with_call_level_suggestion(session, meeting)
+
+
+@router.post("/backfill-call-levels", response_model=dict)
+async def backfill_call_levels(
+    session: DBSession,
+    current_user: CurrentUser,
+    limit: int = Query(2000, ge=1, le=20000),
+    dry_run: bool = Query(False),
+):
+    """Classify meetings that have no L1/L2/L3 yet (admin).
+
+    The classification only started being written when this shipped, so ~1,463
+    historical meetings carry nothing. Backfilling makes the historical mix
+    queryable — "how do L3 calls convert against L1" is the question the SOP's
+    whole prep-call stage exists to inform, and it needs history to answer.
+
+    Idempotent and re-runnable: only rows with a NULL ``call_level`` are
+    considered, and ``apply_auto_call_level`` skips anything an AE set by hand.
+    """
+    await require_workspace_permission(session, current_user, "manage_workspace_settings")
+    meetings = list((await session.execute(
+        select(Meeting).where(Meeting.call_level.is_(None)).limit(limit)
+    )).scalars().all())
+
+    counts: dict[str, int] = {"L1": 0, "L2": 0, "L3": 0, "not_a_client_call": 0}
+    low_confidence = 0
+    for meeting in meetings:
+        suggestion = await suggest_for_meeting(session, meeting)
+        counts[suggestion.level or "not_a_client_call"] += 1
+        if suggestion.level and suggestion.confidence == "low":
+            low_confidence += 1
+        if not dry_run:
+            await apply_auto_call_level(session, meeting)
+    if not dry_run:
+        await session.commit()
+    return {
+        "dry_run": dry_run,
+        "scanned": len(meetings),
+        "classified": counts,
+        # Surfaced rather than buried: these are the ones whose attendee titles
+        # we could not see, so an AE should confirm them at the prep call.
+        "low_confidence": low_confidence,
+    }
+
+
+class CallLevelUpdate(BaseModel):
+    """`level: null` clears a manual override and hands the meeting back to the
+    classifier — otherwise an AE who mis-clicked would be stuck with it, since
+    a manual value is deliberately immune to re-sync."""
+
+    level: Optional[str] = None
+
+
+@router.put("/{meeting_id}/call-level", response_model=MeetingRead)
+async def set_meeting_call_level(
+    meeting_id: UUID,
+    payload: CallLevelUpdate,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    """Set the L1/L2/L3 classification for a call (Sales Lifecycle SOP stage 04).
+
+    This is the AE's judgement from the prep call and it outranks the
+    classifier: it is stamped `manual` and no later attendee sync will move it.
+    Send `{"level": null}` to drop back to the automatic suggestion.
+    """
+    meeting = await MeetingRepository(session).get_or_raise(meeting_id)
+
+    if payload.level is None:
+        meeting.call_level_source = None
+        meeting.call_level_set_by_id = None
+        meeting.call_level_set_at = None
+        meeting.call_level = None
+        meeting.updated_at = datetime.utcnow()
+        session.add(meeting)
+        await session.commit()
+        # Re-derive immediately so clearing an override never leaves the field
+        # blank — the SOP wants a level on every client call.
+        await apply_auto_call_level(session, meeting, commit=True)
+        return await _with_call_level_suggestion(session, meeting)
+
+    level = normalize_call_level(payload.level)
+    if level is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"call level must be one of {', '.join(CALL_LEVELS)}",
+        )
+    meeting.call_level = level
+    meeting.call_level_source = "manual"
+    meeting.call_level_set_by_id = current_user.id
+    meeting.call_level_set_at = datetime.utcnow()
+    meeting.updated_at = datetime.utcnow()
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+    return await _with_call_level_suggestion(session, meeting)
 
 
 @router.get("/{meeting_id}/recording-url", response_model=dict)

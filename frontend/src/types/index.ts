@@ -675,8 +675,32 @@ export interface Meeting {
   next_steps?: string;
   manually_linked?: boolean;
   is_internal?: boolean;
+  /** Sales Lifecycle SOP stage 04 — the AE classifies each client call from the
+   *  invite's attendee list, and the level sets how the call is run. */
+  call_level?: CallLevel | null;
+  /** "manual" means an AE decided at the prep call; sync never overwrites it. */
+  call_level_source?: "auto" | "manual" | null;
+  call_level_set_by_id?: string | null;
+  call_level_set_at?: string | null;
+  /** Computed per request from the CURRENT attendee list — detail responses
+   *  only, so it is absent on list rows. */
+  call_level_suggestion?: CallLevelSuggestion | null;
   created_at: string;
   updated_at: string;
+}
+
+export type CallLevel = "L1" | "L2" | "L3";
+
+export interface CallLevelSuggestion {
+  level: CallLevel | null;
+  /** "low" means the attendee titles could not all be read, so an SVP+ may be
+   *  present and the level could actually be higher. Only 3.4% of attendees
+   *  carry a title, so this is the common case — show it, don't hide it. */
+  confidence: "high" | "low";
+  rationale: string;
+  external_count: number;
+  titles_known: number;
+  senior_attendees: string[];
 }
 
 export interface SalesResource {

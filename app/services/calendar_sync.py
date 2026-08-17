@@ -32,6 +32,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
+from app.services.call_levels import apply_auto_call_level
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +369,11 @@ async def sync_calendar_events(
                     new_matched = sum(1 for a in attendees_payload if a.get("matched"))
                     if new_matched >= existing_matched:
                         existing.attendees = attendees_payload
+                        # The invite list just changed, so the SOP's L1/L2/L3
+                        # reading of it may have too — someone accepting turns a
+                        # 1:1 into a group call. Manual classifications set at
+                        # the prep call are left alone.
+                        await apply_auto_call_level(session, existing)
                         changed = True
                 if changed:
                     existing.updated_at = now
@@ -415,6 +421,10 @@ async def sync_calendar_events(
                         source_id,
                     )
                     continue
+                # Classify the upcoming call. This is the SOP's actual use case:
+                # the AE opens the meeting at the prep call and finds L1/L2/L3
+                # already proposed from the invite, rather than a blank field.
+                await apply_auto_call_level(session, meeting)
                 logger.info(
                     "calendar_sync: created meeting '%s' (deal=%s, company=%s, start=%s)",
                     event.title,

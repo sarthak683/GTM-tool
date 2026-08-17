@@ -7,6 +7,7 @@ import type {
   Contact,
   CrmImportResponse,
   Deal,
+  CallLevel,
   Meeting,
   MeetingPrepMonitor,
   ProspectImportResponse,
@@ -635,6 +636,14 @@ export const meetingsApi = {
       body: JSON.stringify(data),
     }),
   delete: (id: string) => request<void>(`/api/v1/meetings/${id}`, { method: "DELETE" }),
+  /** Set the SOP's L1/L2/L3 classification for a call. Stamped `manual`, so no
+   *  later attendee sync will move it. Pass `null` to hand the call back to the
+   *  automatic classifier. */
+  setCallLevel: (id: string, level: CallLevel | null) =>
+    request<Meeting>(`/api/v1/meetings/${id}/call-level`, {
+      method: "PUT",
+      body: JSON.stringify({ level }),
+    }),
   generatePreBrief: (id: string) =>
     request<{ meeting_id: string; pre_brief: string }>(`/api/v1/meetings/${id}/pre-brief`, {
       method: "POST",

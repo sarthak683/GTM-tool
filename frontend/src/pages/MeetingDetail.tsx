@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { ZippyDocDropdown } from "../components/zippy/ZippyDocDropdown";
 import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
+import CallLevelCard from "../components/meetings/CallLevelCard";
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
 import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
@@ -958,6 +959,11 @@ export default function MeetingDetail() {
             />
           </div>
         </div>
+
+        {/* SOP stage 04: the AE classifies the call at the prep call, and the
+            level dictates how it is run — so it sits with the prep checklist,
+            not buried further down the page. */}
+        <CallLevelCard meeting={meeting} onChange={setMeeting} />
 
         <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
           <div style={{ border: "1px solid #dbe7f5", background: "#f8fbff", borderRadius: 16, padding: 16, display: "grid", gap: 10 }}>

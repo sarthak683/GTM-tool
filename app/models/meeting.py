@@ -82,6 +82,17 @@ class Meeting(MeetingBase, table=True):
     # Set at sync time; backfilled by migration 055.  The UI hides these from
     # the default Meetings and Pre-Meeting views.
     is_internal: bool = Field(default=False, index=True)
+    # Sales Lifecycle SOP stage 04: the AE classifies each upcoming client call
+    # L1/L2/L3 from the invite's attendee list, and that sets how the call is
+    # run. Lives on the meeting, not the deal, because one deal runs several
+    # calls with different audiences. See app.services.call_levels.
+    call_level: Optional[str] = Field(default=None, index=True)   # L1 | L2 | L3
+    # "auto" = classifier, "manual" = an AE decided at the prep call. Attendee
+    # lists keep changing as people accept and decline, so the classifier
+    # re-runs on every sync — and must never overwrite a manual value.
+    call_level_source: Optional[str] = None
+    call_level_set_by_id: Optional[UUID] = None
+    call_level_set_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -112,6 +123,16 @@ class MeetingRead(MeetingBase):
     next_steps: Optional[str] = None
     intel_email_sent_at: Optional[datetime] = None
     is_internal: bool = False
+    call_level: Optional[str] = None
+    call_level_source: Optional[str] = None
+    call_level_set_by_id: Optional[UUID] = None
+    call_level_set_at: Optional[datetime] = None
+    # Computed per request, never stored: what the CURRENT attendee list implies
+    # ({level, confidence, rationale, external_count, titles_known,
+    # senior_attendees}). A stored confidence would go stale the moment someone
+    # accepted the invite, and its whole job is to tell the AE whether the
+    # suggestion can be trusted right now. Populated by the meetings endpoints.
+    call_level_suggestion: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
 

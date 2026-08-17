@@ -20,6 +20,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
+from app.services.call_levels import apply_auto_call_level
 from app.services.internal_domains import get_internal_domains, is_internal_only
 from app.services.tasks import refresh_system_tasks_for_entity
 
@@ -936,6 +937,10 @@ async def sync_tldv_meeting(
     if rep_owner_id and not meeting.owner_user_id:
         meeting.owner_user_id = rep_owner_id
     meeting.attendees = attendee_payloads
+    # Re-derive the SOP's L1/L2/L3 classification from the attendee list we just
+    # wrote. Skips any meeting an AE classified by hand at the prep call — see
+    # apply_auto_call_level.
+    await apply_auto_call_level(session, meeting)
     meeting.raw_notes = highlights_text or None
     meeting.ai_summary = ai_bundle.get("summary") or None
     meeting.next_steps = "\n".join(ai_bundle.get("next_steps") or action_items) or None
