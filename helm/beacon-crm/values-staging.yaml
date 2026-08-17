@@ -7,6 +7,13 @@
 # Images are NOT pinned here on purpose — pass them per deploy so the tag is
 # explicit and immutable. See .claude/skills/crm-deployment/SKILL.md.
 
+ingress:
+  # The chart's configmap renders GOOGLE_REDIRECT_URI, FRONTEND_URL, and
+  # CORS_ORIGINS from ingress.host. It must be the real staging host, not the
+  # placeholder "beacon.example.com" in values.yaml — otherwise Google OAuth
+  # redirects/callbacks point at a dead host and login 401s.
+  host: "gtm.staging2.beacon.li"
+
 backend:
   env:
     # Staging must NOT be "production". That flag gates two things in

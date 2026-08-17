@@ -67,7 +67,7 @@ services:
       - .env
     environment:
       <<: *common-env
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/v1/auth/google/callback}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/v1/auth/google/callback}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
     depends_on:
