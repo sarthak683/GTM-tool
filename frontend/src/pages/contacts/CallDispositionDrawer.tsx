@@ -14,6 +14,7 @@ import {
 import { shouldSyncContactStatusToAccount } from "../../lib/contactStatusSync";
 import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } from "./CallRecordingPanel";
 import { PreCallIntelPanel } from "./PreCallIntelPanel";
+import { canonicalTimezone, formatTimezoneLabel } from "./timezones";
 import LogLinkedInDialog from "../../components/LogLinkedInDialog";
 import TaskCenterModal from "../../components/tasks/TaskCenterModal";
 
@@ -28,16 +29,6 @@ function defaultFollowupLocalString(): string {
   target.setHours(10, 0, 0, 0);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
-}
-
-function canonicalTimezone(value?: string | null): string {
-  if (!value) return "";
-  return value.includes("/") ? value : value;
-}
-
-function formatTimezoneLabel(value?: string | null): string {
-  if (!value) return "";
-  return value.replace(/^.*\//, "").replace(/_/g, " ").toUpperCase();
 }
 
 function personaChipStyle(personaType?: string): { bg: string; fg: string; border: string; label: string } {
