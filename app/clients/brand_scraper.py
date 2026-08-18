@@ -95,7 +95,11 @@ def _find_logo(soup: BeautifulSoup, base_url: str) -> str:
 
     # 2. <link rel="icon" ...> / apple-touch-icon
     for rel in ("apple-touch-icon", "icon", "shortcut icon"):
-        tag = soup.find("link", rel=lambda r: r and rel in r)  # type: ignore[arg-type]
+        # `rel=rel` binds this iteration's value. Without it the lambda closes
+        # over the loop variable, which happens to work here only because
+        # soup.find() calls it synchronously — it would silently match the last
+        # rel if that ever became lazy.
+        tag = soup.find("link", rel=lambda r, rel=rel: r and rel in r)  # type: ignore[arg-type]
         if tag and tag.get("href"):
             return urljoin(base_url, tag["href"])
 

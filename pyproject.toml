@@ -44,13 +44,36 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Deliberately lenient so `ruff check .` is GREEN on the existing ~211-file
-# codebase while still catching things that are actually broken:
-#   E9  - syntax errors (IndentationError, SyntaxError, ...)
-#   F63 - invalid use in tests / comparisons (e.g. assert on a tuple literal)
-#   F7  - statement-level mistakes (break/continue/return outside a loop/func)
-#   F82 - undefined name (typos, missing imports referenced at runtime)
-# None of these flag style/formatting, so they will not fail CI on legacy code,
-# but they do catch real, runtime-breaking defects in new code.
-select = ["E9", "F63", "F7", "F82"]
+# Every rule here is currently at ZERO across app/, so the gate is green today
+# and its only job is to stop regressions. Each was chosen by measuring this
+# codebase, not copied from a template.
+#
+#   E9     - syntax errors (IndentationError, SyntaxError, ...)
+#   F63    - invalid comparisons (e.g. assert on a tuple literal)
+#   F7     - statement-level mistakes (break/continue/return outside a loop)
+#   F82    - undefined name (typos, missing imports referenced at runtime)
+#   F811   - redefinition of an unused name. This is the rule that would have
+#            caught `drive` being imported twice in api/v1/router.py, which
+#            registered all 7 /drive routes a second time, and the sqlalchemy
+#            `text` import in repositories/deal.py that was shadowed by a local
+#            string variable in three helpers.
+#   F632   - `is` against a literal. Always a bug; silently False.
+#   E711   - `== None` instead of `is None`.
+#   E713/4 - `not x in y` / `not x is y`.
+#   B023   - a closure capturing a loop variable. clients/brand_scraper.py had
+#            one that worked only because the callback happened to be invoked
+#            synchronously.
+select = ["E9", "F63", "F7", "F82", "F811", "F632", "E711", "E713", "E714", "B023"]
+
+# Deliberately NOT selected, with reasons — do not "tidy" these in later:
+#   B008 (49 hits) - flags FastAPI's `Depends()` / `Query()` / `File()` in
+#          argument defaults. That IS the framework's idiom here; the rule is
+#          right about plain Python and wrong about FastAPI.
+#   E712 (4 hits)  - suggests rewriting `Column == False` as `not Column`. On a
+#          SQLAlchemy column that invokes __bool__ instead of building a SQL
+#          expression, so the "fix" breaks the query. See
+#          services/account_sourcing.py `Contact.email_verified == False`.
+#   F401 (89), F841 (17), B904 (49), PIE794 (21) - real but numerous; they need
+#          a cleanup pass before they can gate, and gating them while red would
+#          just train everyone to ignore the output again.
 ignore = []
