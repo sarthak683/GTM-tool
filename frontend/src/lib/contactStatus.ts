@@ -37,16 +37,3 @@ export const CONTACT_STATUS_OPTIONS: ContactStatusOption[] = [
   { value: "not_interested", label: "Not interested", color: "#64748b", bg: "#f1f5f9" },
 ];
 
-const STATUS_BY_VALUE: Record<string, ContactStatusOption> = Object.fromEntries(
-  CONTACT_STATUS_OPTIONS.map((option) => [option.value, option]),
-);
-
-export function contactStatusLabel(value?: string | null): string {
-  if (!value) return "No status";
-  return STATUS_BY_VALUE[value]?.label ?? value;
-}
-
-export function contactStatusOption(value?: string | null): ContactStatusOption | null {
-  if (!value) return null;
-  return STATUS_BY_VALUE[value] ?? null;
-}

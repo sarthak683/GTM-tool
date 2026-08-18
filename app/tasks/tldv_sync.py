@@ -9,11 +9,11 @@ newer than that timestamp (incremental mode).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta
 
 from app.celery_app import celery_app
+from app.tasks._runner import run_async_task as _run_async_task
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +23,6 @@ logger = logging.getLogger(__name__)
 # sync interval: the cost of overlap is a few deduped rows, the cost of a gap is
 # a permanently missing meeting.
 CURSOR_OVERLAP = timedelta(hours=6)
-
-
-def _run_async_task(coro):
-    """Run a coroutine inside a fresh event loop with orderly shutdown."""
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(coro)
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending:
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        return result
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
 
 
 @celery_app.task(name="app.tasks.tldv_sync.sync_tldv_meetings")

@@ -209,18 +209,6 @@ def _find(row: dict, field: str) -> str:
     return ""
 
 
-def _find_any_phone(row: dict) -> str:
-    """Last-resort phone lookup: any column whose normalized header contains
-    'phone'. A workbook with two "Phone" columns (direct + mobile — common in
-    Apollo / Sales Nav exports) is de-collided by the parser to 'phone' and
-    'phone 2'; 'phone 2' matches no fixed alias, so without this fallback a
-    contact whose number sits only in the second column loses it on import."""
-    for key, val in row.items():
-        if "phone" in key and str(val).strip():
-            return str(val).strip()
-    return ""
-
-
 def _find_person_linkedin(row: dict) -> str:
     """Last-resort person-LinkedIn lookup: any column whose normalized header
     contains 'linkedin' — excluding company pages and activity/posts columns —
@@ -375,11 +363,6 @@ def _split_semistructured_list(value: str) -> list[str]:
 
 def _has_nonempty_text(value: str) -> bool:
     return bool((value or "").strip())
-
-
-def _has_meaningful_text(value: str) -> bool:
-    normalized = (value or "").strip().lower()
-    return normalized not in {"", "-", "n/a", "na", "unknown"}
 
 
 def _normalize_signal_text(value: str) -> str:
@@ -1805,8 +1788,6 @@ def account_priority_snapshot(company: Company) -> dict[str, Any]:
 
 
 _PAID_CACHE_TTL_HOURS = 24 * 14
-_BATCH_PARALLELISM = 3
-
 _PRIORITY_TITLE_HINTS = (
     "director of engineering",
     "engineering director",
@@ -2762,110 +2743,6 @@ def _apply_apollo(company: Company, data: dict) -> None:
         value = data.get(field)
         if value is not None:
             setattr(company, field, value)
-
-
-async def _create_contacts(company: Company, contacts_data: list[dict], session: AsyncSession) -> int:
-    """Create contact records from Apollo search results, skipping duplicates.
-    Returns count of newly created contacts."""
-    from app.clients.claude_enrichment import classify_contact_persona
-
-    created = 0
-    for c in contacts_data:
-        try:
-            if not is_priority_stakeholder_candidate(c):
-                continue
-            company_warm_paths = (
-                company.prospecting_profile.get("warm_paths")
-                if isinstance(company.prospecting_profile, dict)
-                and isinstance(company.prospecting_profile.get("warm_paths"), list)
-                else []
-            )
-            best_warm_path = company_warm_paths[0] if company_warm_paths else None
-            uploaded_company_row = _company_import_raw_row(company)
-            email = (c.get("email") or "").strip() or None
-            first = (c.get("first_name") or "").strip()
-            last = (c.get("last_name") or "").strip()
-
-            if not first and not last:
-                continue
-
-            # Email is the strongest dedupe key when present because it remains
-            # stable across title changes and repeated imports.
-            if email:
-                existing = await session.execute(
-                    select(Contact).where(func.lower(Contact.email) == email.strip().lower()).limit(1)
-                )
-                if existing.scalars().first():
-                    continue
-
-            # Fall back to name + company when the provider has not given us an
-            # email address yet.
-            if first and last:
-                existing = await session.execute(
-                    select(Contact).where(
-                        Contact.company_id == company.id,
-                        Contact.first_name == first,
-                        Contact.last_name == last,
-                    ).limit(1)
-                )
-                if existing.scalars().first():
-                    continue
-
-            contact = Contact(
-                first_name=first,
-                last_name=last,
-                email=email,
-                title=(c.get("title") or None),
-                seniority=(c.get("seniority") or None),
-                linkedin_url=(c.get("linkedin_url") or None),
-                phone=(c.get("phone") or None),
-                company_id=company.id,
-                enriched_at=datetime.utcnow(),
-                enrichment_data=c,
-                assigned_rep_email=company.assigned_rep_email,
-                outreach_lane=company.recommended_outreach_lane,
-                sequence_status="ready" if email else "research_needed",
-                instantly_status="ready" if email else "missing_email",
-                warm_intro_strength=_parse_int(str(best_warm_path.get("strength") or "")) if isinstance(best_warm_path, dict) else None,
-                warm_intro_path=best_warm_path if isinstance(best_warm_path, dict) else None,
-                conversation_starter=company.prospecting_profile.get("conversation_starter") if isinstance(company.prospecting_profile, dict) else None,
-                personalization_notes=company.why_now,
-                talking_points=(company.outreach_plan or {}).get("next_best_action") and [str((company.outreach_plan or {}).get("next_best_action"))] or None,
-            )
-            contact.enrichment_data = {
-                **(contact.enrichment_data if isinstance(contact.enrichment_data, dict) else {}),
-                **({"raw_row": uploaded_company_row} if uploaded_company_row else {}),
-                "source_company_context": {
-                    "recommended_outreach_strategy": company.prospecting_profile.get("recommended_outreach_strategy") if isinstance(company.prospecting_profile, dict) else None,
-                    "warm_paths": company_warm_paths,
-                    "account_thesis": company.account_thesis,
-                    "why_now": company.why_now,
-                    "beacon_angle": company.beacon_angle,
-                },
-            }
-
-            # Classify persona
-            try:
-                company_ctx = f"{company.name} - {company.industry or 'Unknown'}"
-                contact.persona_type = await classify_contact_persona(
-                    contact.title or "", contact.seniority, company_ctx
-                )
-                contact.persona = _canonical_persona(contact.persona, contact.persona_type)
-            except Exception:
-                from app.services.persona_classifier import classify_persona
-                contact.persona = classify_persona(contact)
-
-            refresh_contact_sequence_plan(contact, company)
-            session.add(contact)
-            created += 1
-
-        except Exception as e:
-            logger.warning("Skipping contact %s %s: %s", first, last, safe_error_message(e))
-            continue
-
-    if created:
-        await session.commit()
-    return created
 
 
 _SENIORITY_RANK = {

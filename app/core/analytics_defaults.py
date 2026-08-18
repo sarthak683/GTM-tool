@@ -100,20 +100,6 @@ DEFAULT_CONVERSION_TRANSITIONS: list[dict[str, str]] = [
 ]
 
 
-# Stages that count as "outcomes" for the scorecard.
-OUTCOME_STAGES: dict[str, str] = {
-    "demo_scheduled": "demos_booked",
-    "demo_done": "demos_done",
-    "qualified_lead": "qualified_leads",
-    "poc_agreed": "pocs_procured",
-    "poc_wip": "pocs_wip",
-    "poc_done": "pocs_done",
-    "closed_won": "closed_won",
-    "closed_lost": "closed_lost",
-    "not_a_fit": "disqualified",
-}
-
-
 def build_default_analytics_settings() -> dict:
     """Compose the full default analytics_settings JSON blob."""
     return {

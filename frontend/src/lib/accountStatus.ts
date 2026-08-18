@@ -39,11 +39,6 @@ const STATUS_BY_VALUE: Record<string, AccountStatusOption> = Object.fromEntries(
   ACCOUNT_STATUS_OPTIONS.map((option) => [option.value, option]),
 );
 
-export function accountStatusLabel(value?: string | null): string {
-  if (!value) return "No status";
-  return STATUS_BY_VALUE[value]?.label ?? value;
-}
-
 export function accountStatusOption(value?: string | null): AccountStatusOption | null {
   if (!value) return null;
   return STATUS_BY_VALUE[value] ?? null;

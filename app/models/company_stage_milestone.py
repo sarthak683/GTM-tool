@@ -6,15 +6,6 @@ from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
-MILESTONE_KEYS = (
-    "demo_done",
-    "poc_agreed",
-    "poc_wip",
-    "poc_done",
-    "closed_won",
-)
-
-
 class CompanyStageMilestone(SQLModel, table=True):
     __tablename__ = "company_stage_milestones"
     __table_args__ = (

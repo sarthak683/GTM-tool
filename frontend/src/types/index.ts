@@ -816,12 +816,6 @@ export interface OutreachTemplateStep {
   prompt_hint?: string | null;
 }
 
-export interface OutreachTimingStep {
-  step_number: number;
-  day: number;
-  channel: "email" | "call" | "linkedin";
-}
-
 export interface OutreachContentSettings {
   general_prompt: string;
   linkedin_prompt: string;

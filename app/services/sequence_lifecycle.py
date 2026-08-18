@@ -89,17 +89,6 @@ def _activity_payload(activity: Activity) -> dict[str, Any]:
 #                   (Instantly push likely broken)
 #   completed:      campaign finished all steps
 
-_TERMINAL_CONTACT_STATES = {
-    "replied",
-    "meeting_booked",
-    "not_interested",
-    "unsubscribed",
-    "bounced",
-    "completed",
-    "interested",
-}
-
-
 def _channel_of_step_record(step: OutreachStep) -> str:
     try:
         return (step.channel or "email").strip().lower()

@@ -11,13 +11,9 @@ from app.models.meeting import to_naive_utc
 
 
 TASK_ENTITY_TYPES = {"company", "contact", "deal"}
-TASK_TYPES = {"manual", "system"}
 TASK_STATUSES = {"open", "completed", "dismissed"}
 TASK_PRIORITIES = {"low", "medium", "high"}
 TASK_ASSIGNED_ROLES = {"admin", "ae", "sdr"}
-TASK_TRACKS = {"sales_ai", "critical", "hygiene", "manual"}
-
-
 class TaskBase(SQLModel):
     entity_type: str
     entity_id: UUID = Field(index=True)

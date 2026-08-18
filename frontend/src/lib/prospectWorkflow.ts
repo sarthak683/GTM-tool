@@ -12,13 +12,6 @@ export type CallDispositionOption = {
   accountStatus?: ContactStatusValue;
 };
 
-export const CALL_OUTCOME_OPTIONS = [
-  { value: "attempted", label: "Attempted — no answer" },
-  { value: "voicemail", label: "Left voicemail" },
-  { value: "connected", label: "Connected — spoke live" },
-  { value: "callback", label: "Callback requested" },
-] as const;
-
 export const CALL_DISPOSITION_OPTIONS: CallDispositionOption[] = [
   {
     value: "demo_scheduled_booked",
@@ -115,25 +108,6 @@ export const CALL_DISPOSITION_FILTER_OPTIONS = [
   ...CALL_DISPOSITION_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
 ];
 
-export const CALL_REPLY_DISPOSITIONS = new Set([
-  "demo_scheduled_booked",
-  "interested_follow_up_required",
-  "meeting_confirmed",
-  "call_back_later_rescheduled",
-  "redirected_other_icp",
-]);
-
-export const CALL_MEETING_DISPOSITIONS = new Set([
-  "demo_scheduled_booked",
-  "meeting_confirmed",
-]);
-
-export const CALL_BLOCKED_DISPOSITIONS = new Set([
-  "connected_not_interested",
-  "do_not_contact_dnc",
-  "contact_poor_fit",
-]);
-
 // LinkedIn outcomes a rep can log, with the progress-bar color each maps to.
 // Single source of truth — the logger picker, the timeline label, and the
 // ProgressCell LinkedIn lane all read from here.
@@ -155,7 +129,6 @@ export const LINKEDIN_STATUS_OPTIONS: ReadonlyArray<{
   { value: "meeting_rejected", label: "Meeting rejected", color: "red" },
 ];
 
-const LINKEDIN_STATUS_LABELS = new Map(LINKEDIN_STATUS_OPTIONS.map((option) => [option.value, option.label]));
 const LINKEDIN_STATUS_COLORS = new Map(LINKEDIN_STATUS_OPTIONS.map((option) => [option.value, option.color]));
 
 /** Progress-bar outcome color for a logged LinkedIn status (null = no motion). */
@@ -167,11 +140,6 @@ export function linkedinOutcomeColor(status?: string | null): LinkedinOutcomeCol
 export function formatCallDisposition(value?: string | null): string {
   if (!value) return "Unreviewed";
   return CALL_DISPOSITION_LABELS.get(value) ?? value.replace(/_/g, " ");
-}
-
-export function formatLinkedinStatus(value?: string | null): string {
-  if (!value || value === "none") return "No LinkedIn motion";
-  return LINKEDIN_STATUS_LABELS.get(value) ?? value.replace(/_/g, " ");
 }
 
 export function deriveSequenceStatusFromCallDisposition(
@@ -223,37 +191,3 @@ export type NextAction = {
   channel: "email" | "call" | "linkedin" | "deal" | "none";
 };
 
-export function getNextAction(contact: {
-  sequence_status?: string | null;
-  call_status?: string | null;
-  call_disposition?: string | null;
-  linkedin_status?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  linkedin_url?: string | null;
-}): NextAction {
-  const seq = contact.sequence_status ?? "";
-  const disp = contact.call_disposition ?? "";
-  const li = contact.linkedin_status ?? "";
-
-  if (seq === "meeting_booked") return { label: "Create deal", priority: "high", channel: "deal" };
-  if (disp === "demo_scheduled_booked" || disp === "meeting_confirmed") return { label: "Create deal / confirm calendar", priority: "high", channel: "deal" };
-  if (seq === "replied") return { label: "Reply & book call", priority: "high", channel: "email" };
-  if (disp === "interested_follow_up_required" || disp === "call_back_later_rescheduled") return { label: "Follow-up call", priority: "high", channel: "call" };
-  if (disp === "do_not_contact_dnc" || disp === "connected_not_interested" || disp === "contact_poor_fit") return { label: "Remove from sequence", priority: "low", channel: "none" };
-  if (seq === "not_interested") return { label: "Archive or find champion", priority: "low", channel: "none" };
-  if (seq === "queued_instantly" || seq === "sent") {
-    if (!contact.phone) return { label: "Wait for reply", priority: "low", channel: "email" };
-    return { label: "Call while email warms", priority: "medium", channel: "call" };
-  }
-  if (li === "accepted" && seq !== "replied") return { label: "Send LinkedIn message", priority: "medium", channel: "linkedin" };
-  if (li === "none" || !li) {
-    if (contact.linkedin_url) return { label: "Send LinkedIn request", priority: "medium", channel: "linkedin" };
-  }
-  if (seq === "ready" || seq === "") {
-    if (!contact.email) return { label: "Find email", priority: "high", channel: "none" };
-    return { label: "Launch email sequence", priority: "high", channel: "email" };
-  }
-  if (seq === "research_needed") return { label: "Enrich contact data", priority: "medium", channel: "none" };
-  return { label: "Review & action", priority: "low", channel: "none" };
-}

@@ -1,36 +1,11 @@
-import asyncio
 import logging
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from app.celery_app import celery_app
+from app.tasks._runner import run_async_task as _run_async_task
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async_task(coro):
-    """Run a coroutine inside a fresh event loop with orderly shutdown.
-
-    The previous implementation just called loop.run_until_complete then
-    loop.close, but aiohttp's connector leaves background keepalive tasks
-    alive past close() and they crash the next invocation with
-    "Future attached to a different loop". Mirrors the helper in
-    tldv_sync.py / instantly_sync.py / personal_email_sync.py.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(coro)
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending:
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        return result
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
 
 
 @celery_app.task(name="app.tasks.sales_reports.send_us_pod_call_report")

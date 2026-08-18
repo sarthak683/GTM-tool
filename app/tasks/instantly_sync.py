@@ -5,7 +5,6 @@ Runs every 15 minutes as a fallback for webhook delivery gaps.
 Updates contact sequence_status, instantly_status, and email tracking
 counts for all contacts linked to active Instantly campaigns.
 """
-import asyncio
 import logging
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -26,6 +25,7 @@ from app.services.sdr_reassignment import (
     open_timestamp_within_assignment,
     status_within_assignment,
 )
+from app.tasks._runner import run_async_task as _run_async_task
 
 logger = logging.getLogger(__name__)
 
@@ -333,31 +333,6 @@ async def _backfill_synced_email_events(
                 logger.exception("instantly backfill: account_status bump failed for contact %s", contact.id)
 
     return created
-
-
-def _run_async_task(coro):
-    """Run a coroutine inside a fresh event loop with orderly shutdown.
-
-    Without the explicit shutdown_asyncgens + pending-task cancel, aiohttp's
-    connector keeps background tasks alive that try to call back into the
-    closed loop on the next Celery run, raising
-    "Future attached to a different loop" and silently killing every
-    beat-scheduled invocation. Mirrors the helper in tldv_sync.py.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(coro)
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending:
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        return result
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
 
 
 @celery_app.task(

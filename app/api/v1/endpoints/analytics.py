@@ -592,10 +592,6 @@ def _resolve_analytics_window(
     return window_start, window_end
 
 
-def _stage_probability(stage_id: str) -> float:
-    return DEFAULT_STAGE_PROBABILITIES.get(stage_id, 0.0)
-
-
 def _stage_meta(stage_map: dict[str, dict[str, str]], stage_id: str) -> dict[str, str]:
     return stage_map.get(
         stage_id,
@@ -723,16 +719,6 @@ def _reported_email_from(row) -> str:
     return str(getattr(row, "email_from", None) or "").strip()
 
 
-def _is_instantly_email(row) -> bool:
-    source = str(getattr(row, "source", None) or "").strip().lower()
-    external_source = str(getattr(row, "external_source", None) or "").strip().lower()
-    return (
-        source == "instantly"
-        or external_source.startswith("instantly")
-        or _email_from_domain(row) in INSTANTLY_DOMAINS
-    )
-
-
 def _email_out_bucket(row) -> Literal["manual", "instantly"] | None:
     """
     Emails Out bucket rule, in priority order:
@@ -774,10 +760,6 @@ def _email_out_bucket(row) -> Literal["manual", "instantly"] | None:
     if domain in INSTANTLY_DOMAINS:
         return "instantly"
     return None
-
-
-def _should_count_as_email_out(row) -> bool:
-    return _email_out_bucket(row) is not None
 
 
 def _email_addresses(value: str | None) -> list[str]:
@@ -921,10 +903,6 @@ def _activity_rep_id(
                 pass
 
     return deal_owner.get(row.deal_id) or contact_owner.get(row.contact_id) or row.created_by_id
-
-
-def _meeting_rep_id(row, *, deal_owner: dict[UUID, UUID | None]) -> UUID | None:
-    return row.owner_user_id or deal_owner.get(row.deal_id)
 
 
 def _is_crm_linked_meeting(row) -> bool:
@@ -1175,14 +1153,6 @@ def _normalize_geography_key(value: str | None) -> str:
     if raw in {"india", "in", "apac", "asia pacific", "asia-pacific", "anz", "australia", "new zealand", "singapore", "japan", "rest of world", "rest of the world", "row"}:
         return "Rest of the World"
     return "Rest of the World"
-
-
-def _contact_meeting_signal(contact_row) -> bool:
-    status_blob = " ".join(
-        str(value or "").strip().lower()
-        for value in (contact_row.outreach_lane, contact_row.sequence_status, contact_row.instantly_status)
-    )
-    return any(marker in status_blob for marker in HOT_MEETING_MARKERS)
 
 
 def _rolling_month_keys(months: int, *, end: date | None = None) -> list[str]:

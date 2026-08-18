@@ -11,30 +11,12 @@ inbox.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app.celery_app import celery_app
+from app.tasks._runner import run_async_task as _run_async_task
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async_task(coro):
-    """Same orderly-shutdown helper used by tldv_sync and instantly_sync."""
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(coro)
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending:
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        return result
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
 
 
 @celery_app.task(

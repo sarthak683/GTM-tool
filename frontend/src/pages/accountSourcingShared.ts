@@ -1,6 +1,5 @@
 import { CSSProperties } from "react";
 
-import type { Company } from "../types";
 
 export const colors = {
   bg: "#f4f7fb",
@@ -108,29 +107,6 @@ export function formatBatchStage(stage?: string, status?: string): string {
     cancelled: "Cancelled",
   };
   return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "Unknown";
-}
-
-export function getIcpAnalysis(company: Company): Record<string, unknown> | undefined {
-  const cache = company.enrichment_cache;
-  if (!cache || typeof cache !== "object") return undefined;
-  const entry = (cache as Record<string, unknown>).icp_analysis;
-  if (!entry || typeof entry !== "object") return undefined;
-  const data = (entry as Record<string, unknown>).data;
-  return data && typeof data === "object" ? (data as Record<string, unknown>) : (entry as Record<string, unknown>);
-}
-
-export function getSalesPlay(company: Company): Record<string, unknown> | undefined {
-  const profile = company.prospecting_profile;
-  if (profile && typeof profile === "object") {
-    const salesPlay = (profile as Record<string, unknown>).sales_play;
-    if (salesPlay && typeof salesPlay === "object") return salesPlay as Record<string, unknown>;
-  }
-  const cache = company.enrichment_cache;
-  if (!cache || typeof cache !== "object") return undefined;
-  const icpEntry = (cache as Record<string, unknown>).icp_analysis;
-  if (!icpEntry || typeof icpEntry !== "object") return undefined;
-  const salesPlay = (icpEntry as Record<string, unknown>).sales_play;
-  return salesPlay && typeof salesPlay === "object" ? (salesPlay as Record<string, unknown>) : undefined;
 }
 
 export function asText(value: unknown): string | undefined {

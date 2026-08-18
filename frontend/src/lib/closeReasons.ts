@@ -22,12 +22,6 @@ export const CLOSE_REASONS = [
   { value: "other", label: "Other" },
 ] as const;
 
-export type CloseReason = (typeof CLOSE_REASONS)[number]["value"];
-
-/** Stages whose moves carry a close reason. Required for closed_lost,
- * optional for closed_won; the backend ignores reasons on any other stage. */
-export const CLOSE_REASON_STAGES = ["closed_won", "closed_lost"] as const;
-
 export function isCloseReasonStage(stageId: string): boolean {
   return stageId === "closed_won" || stageId === "closed_lost";
 }

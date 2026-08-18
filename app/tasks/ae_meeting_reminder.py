@@ -55,21 +55,15 @@ from app.services.zippy_tagging import BEACON_SENDING_DOMAINS
 logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-# Beacon's sending domains now come from the one canonical set. This used to be
-# a third private copy kept in sync by hand, and the sync failed: beaconli.co
-# was missing here, so an attendee on that domain was not recognised as
-# internal. Importing removes the obligation rather than restating it.
+# NB: Beacon's own sending domains are imported (BEACON_SENDING_DOMAINS above),
+# not restated here. This module used to keep a third private copy in sync by
+# hand and the sync failed — beaconli.co went missing, so attendees on that
+# domain were not recognised as internal.
 FREE_EMAIL_PROVIDERS = {
     "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
     "icloud.com", "protonmail.com", "googlemail.com",
 }
 
-# Deal stages that mean "a real pipeline deal exists, skip this meeting"
-_PIPELINE_STAGES_TO_SKIP = frozenset([
-    "demo_done", "qualified_lead", "poc_agreed", "poc_wip", "poc_done",
-    "commercial_negotiation", "msa_review", "workshop",
-    "closed_won", "closed_lost",
-])
 _INCLUDE_STAGE = "demo_scheduled"
 
 

@@ -127,17 +127,6 @@ def _is_placeholder_summary(value: str | None) -> bool:
 # Internal-domain detection now lives in app.services.internal_domains and
 # reads from workspace_settings.  The helpers below remain as thin aliases for
 # call sites elsewhere in this module that already use them.
-async def _internal_domains_async(session: AsyncSession) -> set[str]:
-    return await get_internal_domains(session)
-
-
-async def _is_internal_only_attendee_set_async(
-    session: AsyncSession, attendees: list[dict[str, Any]]
-) -> bool:
-    internal = await get_internal_domains(session)
-    return is_internal_only(attendees, internal)
-
-
 def _infer_meeting_type(title: str, summary: str, transcript: str) -> str:
     text = " ".join(part.lower() for part in [title, summary, transcript] if part)
     if "poc" in text or "pilot" in text:
@@ -308,82 +297,6 @@ async def _match_single_deal_for_company(session: AsyncSession, company_id: UUID
     if len(candidates) == 1:
         return candidates[0]
     return None
-
-
-async def _match_company_from_title(session: AsyncSession, title: str) -> Company | None:
-    candidates = _extract_title_candidates(title)
-    if not candidates:
-        return None
-    for candidate in candidates:
-        result = await session.execute(
-            select(Company)
-            .where(Company.name.ilike(f"%{candidate}%"))
-            .order_by(Company.updated_at.desc())
-            .limit(1)
-        )
-        company = result.scalar_one_or_none()
-        if company:
-            return company
-    return None
-
-
-async def _match_deal_from_title(session: AsyncSession, title: str, company: Company | None = None) -> Deal | None:
-    candidates = _extract_title_candidates(title)
-    if company and company.id:
-        result = await session.execute(
-            select(Deal)
-            .where(Deal.company_id == company.id)
-            .order_by(
-                Deal.stage.not_in(["closed_won", "closed_lost"]).desc(),
-                Deal.last_activity_at.desc().nullslast(),
-                Deal.updated_at.desc(),
-            )
-            .limit(1)
-        )
-        deal = result.scalar_one_or_none()
-        if deal:
-            return deal
-    for candidate in candidates:
-        result = await session.execute(
-            select(Deal)
-            .where(Deal.name.ilike(f"%{candidate}%"))
-            .order_by(
-                Deal.stage.not_in(["closed_won", "closed_lost"]).desc(),
-                Deal.last_activity_at.desc().nullslast(),
-                Deal.updated_at.desc(),
-            )
-            .limit(1)
-        )
-        deal = result.scalar_one_or_none()
-        if deal:
-            return deal
-    return None
-
-
-async def _match_recent_gmail_deal(session: AsyncSession, attendee_emails: list[str]) -> Deal | None:
-    if not attendee_emails:
-        return None
-    conditions = []
-    for email in attendee_emails:
-        conditions.extend(
-            [
-                Activity.email_from == email,
-                Activity.email_to.ilike(f"%{email}%"),
-                Activity.email_cc.ilike(f"%{email}%"),
-            ]
-        )
-    result = await session.execute(
-        select(Deal)
-        .join(Activity, Activity.deal_id == Deal.id)
-        .where(
-            Activity.source == "gmail_sync",
-            Activity.deal_id.isnot(None),
-            or_(*conditions),
-        )
-        .order_by(Activity.created_at.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
 
 
 async def _is_tldv_sync_enabled(session: AsyncSession) -> bool:
