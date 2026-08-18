@@ -185,11 +185,15 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
   { key: "title", label: "Title" },
   { key: "email", label: "Email", required: true },
   { key: "progress", label: "Progress", required: true },
+  // Action sits here, not last. Reps work the Call / Email / Log / LinkedIn
+  // buttons constantly and the reference columns after it rarely; with Action
+  // last the table was 2217px wide in 1142px of space and the buttons started
+  // 466px past the right edge, so every row needed a horizontal scroll.
+  { key: "action", label: "Action", required: true },
   { key: "comments", label: "Comments" },
   { key: "timezone", label: "Timezone" },
   { key: "ae", label: "AE" },
   { key: "sdr", label: "SDR" },
-  { key: "action", label: "Action", required: true },
 ] as const;
 
 type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
@@ -377,6 +381,28 @@ function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey
   } catch {
     return DEFAULT_CONTACT_TABLE_COLUMNS;
   }
+}
+
+// Saved layouts predate Action being moved left, and the Customize menu only
+// toggles visibility, so a rep cannot reorder it back themselves. Reposition
+// once, remembered by a flag, then never touch their order again.
+const COLUMN_ORDER_MIGRATION_KEY = "crm.contacts.tableColumns.actionMovedLeft";
+
+function migrateActionColumnLeft(columns: ContactTableColumnKey[]): ContactTableColumnKey[] {
+  try {
+    if (localStorage.getItem(COLUMN_ORDER_MIGRATION_KEY)) return columns;
+    localStorage.setItem(COLUMN_ORDER_MIGRATION_KEY, "1");
+  } catch {
+    return columns;
+  }
+  const actionIdx = columns.indexOf("action");
+  const progressIdx = columns.indexOf("progress");
+  // Only move it when it currently sits after Progress; if someone has already
+  // got it earlier, leave their layout alone.
+  if (actionIdx === -1 || progressIdx === -1 || actionIdx <= progressIdx + 1) return columns;
+  const without = columns.filter((key) => key !== "action");
+  const at = without.indexOf("progress") + 1;
+  return [...without.slice(0, at), "action" as ContactTableColumnKey, ...without.slice(at)];
 }
 
 export default function Contacts() {
@@ -669,7 +695,7 @@ export default function Contacts() {
   // midnight. Replaces the broken page-bounded contact-derived counter that
   // would show 0 the moment pagination rotated past the just-called rows.
   const [myCallsTodayCount, setMyCallsTodayCount] = useState(0);
-  const [tableColumns, setTableColumns] = useState<ContactTableColumnKey[]>(() => normalizeContactTableColumns(localStorage.getItem("crm.contacts.tableColumns")));
+  const [tableColumns, setTableColumns] = useState<ContactTableColumnKey[]>(() => migrateActionColumnLeft(normalizeContactTableColumns(localStorage.getItem("crm.contacts.tableColumns"))));
   const [draggedColumn, setDraggedColumn] = useState<ContactTableColumnKey | null>(null);
   const [editingTimezoneId, setEditingTimezoneId] = useState<string | null>(null);
   const [timezoneDraft, setTimezoneDraft] = useState("");
@@ -3897,7 +3923,12 @@ export default function Contacts() {
                               case "email":
                                 return (
                                   <td key={column.key}>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+                                    {/* Capped: the address is reference data — the Action column's
+                                        Email button is what reps actually use to open Gmail — but
+                                        an uncapped cell widened to the longest address on the page
+                                        (293px measured) and pushed Action off-screen. Full address
+                                        stays in the title tooltip. */}
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0, maxWidth: 176 }}>
                                       {c.email
                                         ? (
                                           <span
@@ -4046,13 +4077,13 @@ export default function Contacts() {
                               }
                               case "ae":
                                 return (
-                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 104 }}>
                                     <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={c.assigned_to_name || c.assigned_rep_email} onAssigned={() => loadContacts()} role="ae" label="AE" compact />
                                   </td>
                                 );
                               case "sdr":
                                 return (
-                                  <td key={column.key} onClick={(e) => e.stopPropagation()}>
+                                  <td key={column.key} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 104 }}>
                                     <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
                                   </td>
                                 );
