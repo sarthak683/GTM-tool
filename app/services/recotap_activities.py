@@ -22,10 +22,11 @@ Shape notes that drive the code below:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.recotap import RecotapClient
@@ -43,6 +44,21 @@ _WATERMARK_KEY = "recotap_activities_synced_through"
 # Recotap accepts these two and skips everything else.
 _CALL = "call"
 _EMAIL = "email"
+
+
+# A real address, not merely "contains an @". Six prod contacts carry prose in
+# the email column -- "inferred — scott.cravotta@genesys.com", "⚠️ not available
+# — inferred: ...", "skambo@descartes.com ." -- which an `"@" in value` test
+# waves through. Recotap rejects them, and because ONE bad address 400s the
+# whole 50-item batch, those 6 rows failed 1,273 otherwise-good pushes on the
+# first backfill attempt. Validate the shape, and skip rather than poison.
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _clean_email(value: Optional[str]) -> Optional[str]:
+    """Return a syntactically valid address, or None."""
+    email = str(value or "").strip()
+    return email if _EMAIL_RE.match(email) else None
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -94,12 +110,12 @@ def build_activity_payload(
     if not is_pushable_domain(domain):
         return None
 
-    owner_email = str(getattr(owner, "email", "") or "").strip()
-    if "@" not in owner_email:
+    owner_email = _clean_email(getattr(owner, "email", None))
+    if not owner_email:
         return None
 
-    contact_email = str(getattr(contact, "email", "") or "").strip()
-    if "@" not in contact_email:
+    contact_email = _clean_email(getattr(contact, "email", None))
+    if not contact_email:
         return None
 
     contact_obj: dict[str, Any] = {"email": contact_email}
@@ -176,7 +192,20 @@ async def push_activities(
             except ValueError:
                 since = None
 
-    stmt = select(Activity).where(Activity.created_by_id.is_not(None))
+    # Restrict to the two types Recotap accepts, IN SQL. Without this the window
+    # is filled by whatever is oldest, and this CRM's oldest 588 activities are
+    # `import_note`/`note` rows from the original data load — none of them
+    # sendable. The push then sent 0 every run, and because the watermark only
+    # moved on a successful send it never advanced past them: 24,505 real calls
+    # and emails sat behind a permanent block. Filtering here means the window
+    # only ever contains candidates that could plausibly go.
+    stmt = select(Activity).where(
+        Activity.created_by_id.is_not(None),
+        or_(
+            func.lower(func.coalesce(Activity.medium, "")).in_((_CALL, _EMAIL)),
+            func.lower(func.coalesce(Activity.type, "")).in_((_CALL, _EMAIL)),
+        ),
+    )
     if since is not None:
         stmt = stmt.where(Activity.created_at > since)
     rows = (
@@ -229,14 +258,29 @@ async def push_activities(
         }
 
     if not payloads:
+        # Every row in this window was unsendable. Nothing here can become
+        # sendable by waiting, so step the watermark past the window rather than
+        # re-reading the same rows on every future run — that deadlock is what
+        # kept 24,505 activities from ever being pushed.
+        newest_seen = max((a.created_at for a in rows if a.created_at), default=None)
+        if settings_row is not None and newest_seen is not None:
+            sched = dict(settings_row.sync_schedule_settings or {})
+            sched[_WATERMARK_KEY] = newest_seen.isoformat()
+            settings_row.sync_schedule_settings = sched
+            session.add(settings_row)
+            await session.commit()
         return {"configured": 1, "candidates": len(rows), "sent": 0,
-                "unsendable": unsendable, "since": _iso(since)}
+                "unsendable": unsendable, "since": _iso(since),
+                "advanced_past_unsendable_window_to": _iso(newest_seen)}
 
     body = await client.push_sales_activities(payloads)
     summary = body.get("summary") or {}
 
     # Advance only on a run that actually created something, and only to the
-    # newest activity we SENT — never past one we skipped.
+    # newest activity we SENT — never past one we skipped, because a row skipped
+    # for a missing contact email may gain one later. The wholly-unsendable
+    # window is handled separately above; that case cannot resolve itself and
+    # would otherwise wedge the sync permanently.
     if settings_row is not None and newest_sent is not None and int(summary.get("created") or 0) > 0:
         sched = dict(settings_row.sync_schedule_settings or {})
         sched[_WATERMARK_KEY] = newest_sent.isoformat()

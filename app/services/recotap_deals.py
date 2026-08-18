@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.recotap import RecotapClient
@@ -59,6 +59,17 @@ def _iso(value: Any) -> Optional[str]:
         return f"{value.isoformat()}T00:00:00Z"
     except AttributeError:
         return None
+
+
+# Stages that mean "this account is not in play". Recotap is an ABM targeting
+# tool: an account we have written off should stop drawing spend and attention
+# there, so these never go. Measured on prod 2026-08-18 this drops 340 of 689
+# deals (not_a_fit 270, closed_lost 65, churned 5), leaving 349.
+#
+# closed_won is deliberately NOT here — a customer is still a live account for
+# expansion and lookalike targeting, and dropping it would make Recotap think
+# we lost accounts we actually won.
+DEAD_DEAL_STAGES = frozenset({"not_a_fit", "closed_lost", "churned"})
 
 
 def build_deal_payload(
@@ -162,9 +173,13 @@ async def build_deal_payloads(
     Prospect-pipeline rows are excluded: they are not deals, and pushing 400 of
     them would misstate Recotap's pipeline coverage. Soft-deleted deals are
     excluded too — see ``push_deals`` for why they are not resurrected by a
-    later run.
+    later run. Written-off deals are excluded as well (``DEAD_DEAL_STAGES``);
+    Recotap should not keep spending against an account we have dropped.
     """
-    stmt = select(Deal).where(Deal.pipeline_type == "deal")
+    stmt = select(Deal).where(
+        Deal.pipeline_type == "deal",
+        func.lower(func.coalesce(Deal.stage, "")).notin_(tuple(DEAD_DEAL_STAGES)),
+    )
     if not include_deleted:
         stmt = stmt.where(Deal.deleted_at.is_(None))
     if deal_ids:
