@@ -39,6 +39,7 @@ from app.services.meddpicc_updates import (
     get_meddpicc_snapshot,
 )
 from app.services.task_codes import CODE_TO_ACTION, LLM_CODES
+from app.services.task_signals import _stage_reached
 
 logger = logging.getLogger(__name__)
 
@@ -844,9 +845,6 @@ def _validate_proposal(
 
     # Code-specific payload validation — reject silently on malformed shapes.
     if code == "T-STAGE":
-        # Local import: app.services.tasks imports this module, so a module-level
-        # import would create a cycle. _stage_reached is a pure stage-ordering helper.
-        from app.services.tasks import _stage_reached
 
         target = str(payload.get("target_stage") or "").strip()
         if target not in DEAL_STAGES or target == deal.stage:
