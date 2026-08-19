@@ -334,10 +334,41 @@ async def _async_sync() -> dict:
                     matched_aliases = _extract_deal_aliases(all_addrs, inbox)
                     deal_ids: list = []
 
-                    # Zippy-only mode: a message is tracked ONLY if it carries a
-                    # zippy+<deal-alias> address. No alias → not opted-in; skip
-                    # without falling back to contact-email matching.
+                    # Zippy-only mode: no zippy+<alias> in the headers.
+                    #
+                    # This is NOT proof the rep failed to tag the message. It is
+                    # the normal shape of a plain CC to zippy@beacon.li, and the
+                    # ONLY possible shape of a BCC — a BCC'd copy carries no
+                    # trace of the recipient in any header, as the no-deal branch
+                    # below already documents. Skipping outright therefore
+                    # dropped every BCC-tagged send and every rep who CCs plain
+                    # zippy@beacon.li, which is most of them: after this mode was
+                    # switched on in prod, tracked manual sends fell from ~255-370
+                    # a week to 21, and SDRs who own no deal have no alias to use
+                    # in the first place (Awinja owns 0 deals, so there was no
+                    # address that could ever have worked for her).
+                    #
+                    # Being in Zippy's mailbox IS the tag. The sending-address
+                    # guard is what actually enforces zippy-only intent: a
+                    # prospect's reply-all and any other inbound still do not
+                    # count, and no contact-email fallback runs here.
                     if zippy_only and not matched_aliases:
+                        if is_our_sending_address(msg.from_addr):
+                            # Attach to a known prospect when the recipients name
+                            # one, purely so the send lands on their timeline.
+                            tagged_contact = (
+                                await session.execute(
+                                    select(Contact.id).where(
+                                        func.lower(Contact.email).in_(list(all_addrs))
+                                    ).limit(1)
+                                )
+                            ).first()
+                            if await _record_zippy_tagged_email(
+                                session,
+                                msg,
+                                contact_id=tagged_contact.id if tagged_contact else None,
+                            ):
+                                activities_created += 1
                         continue
 
                     if matched_aliases:
