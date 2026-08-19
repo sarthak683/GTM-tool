@@ -85,6 +85,7 @@ export default function AccountSourcingContactDetail() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailInput, setEmailInput] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
+  const [zippyIdCopied, setZippyIdCopied] = useState(false);
   const [editingPhone, setEditingPhone] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneSaving, setPhoneSaving] = useState(false);
@@ -676,6 +677,38 @@ export default function AccountSourcingContactDetail() {
                         </button>
                       </span>
                     )}
+                    {company?.email_cc_alias ? (
+                      <span
+                        className="prospect-detail-secondary-action"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          height: 36,
+                          padding: "0 6px 0 12px",
+                          borderRadius: 10,
+                          border: "1px solid #dbe6f2",
+                          background: "#f8fbff",
+                        }}
+                        title="This account's Zippy ID — CC it on client threads to attribute the email."
+                      >
+                        <Mail size={13} color={colors.sub} />
+                        <span style={{ fontWeight: 700, fontSize: 13, color: colors.text, whiteSpace: "nowrap" }}>
+                          {`zippy+${company.email_cc_alias}@beacon.li`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(`zippy+${company.email_cc_alias}@beacon.li`);
+                            setZippyIdCopied(true);
+                            window.setTimeout(() => setZippyIdCopied(false), 1500);
+                          }}
+                          style={{ height: 26, padding: "0 10px", borderRadius: 8, border: "1px solid #cfe89a", background: colors.primarySoft, color: colors.primary, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          {zippyIdCopied ? "Copied" : "Copy"}
+                        </button>
+                      </span>
+                    ) : null}
                     {editingPhone ? (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <input

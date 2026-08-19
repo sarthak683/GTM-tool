@@ -35,6 +35,7 @@ DATA_ROOM_CATEGORIES = {
     "decks",           # Google Slides / PDFs
     "videos",          # Demo videos (Google Drive)
     "demo_recordings",  # Client call recordings (Google Drive)
+    "post_poc_collaterals",  # Post-POC handoff material (decks, videos, docs)
 }
 
 

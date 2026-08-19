@@ -1,10 +1,11 @@
 """Data Room item model — curated sales assets linked from Google Workspace.
 
 Categories:
-  documentation     — Google Docs
-  decks             — Google Slides / PDFs
-  videos            — Demo videos (Google Drive)
-  demo_recordings   — Client call recordings (Google Drive)
+  documentation          — Google Docs
+  decks                  — Google Slides / PDFs
+  videos                 — Demo videos (Google Drive)
+  demo_recordings        — Client call recordings (Google Drive)
+  post_poc_collaterals   — Post-POC handoff material (decks, videos, docs)
 
 Each item is a title + an embeddable URL (Google Docs/Slides/Drive preview
 links, or a direct PDF). Thumbnails are optional and surfaced on the card.
@@ -18,7 +19,7 @@ from sqlmodel import Field, SQLModel
 
 
 class DataRoomItemBase(SQLModel):
-    category: str  # documentation | decks | videos | demo_recordings
+    category: str  # documentation | decks | videos | demo_recordings | post_poc_collaterals
     title: str
     embed_url: str = Field(sa_column=Column(Text))
     thumbnail_url: Optional[str] = Field(default=None, sa_column=Column(Text))

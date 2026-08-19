@@ -25,10 +25,11 @@ type TabKey = "sales_lifecycle" | DataRoomCategory;
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "sales_lifecycle", label: "Sales Lifecycle" },
-  { key: "documentation", label: "Documentation" },
+  { key: "documentation", label: "Knowledge Pool" },
   { key: "decks", label: "Decks" },
   { key: "videos", label: "Videos" },
   { key: "demo_recordings", label: "Demo Recordings" },
+  { key: "post_poc_collaterals", label: "Post Poc Collaterals" },
 ];
 
 const TAB_DESCRIPTIONS: Record<TabKey, string> = {
@@ -37,6 +38,7 @@ const TAB_DESCRIPTIONS: Record<TabKey, string> = {
   decks: "Pitch and sales decks.",
   videos: "Product demo videos.",
   demo_recordings: "Client call recordings.",
+  post_poc_collaterals: "Post-POC handoff material.",
 };
 
 const isCategory = (key: TabKey): key is DataRoomCategory => key !== "sales_lifecycle";
@@ -81,6 +83,7 @@ export default function DataRoomPage() {
     decks: [],
     videos: [],
     demo_recordings: [],
+    post_poc_collaterals: [],
   });
   const [loadingCategory, setLoadingCategory] = useState<DataRoomCategory | null>(null);
   const [errorByCategory, setErrorByCategory] = useState<Record<DataRoomCategory, string | null>>({
@@ -88,6 +91,7 @@ export default function DataRoomPage() {
     decks: null,
     videos: null,
     demo_recordings: null,
+    post_poc_collaterals: null,
   });
 
   const [previewItem, setPreviewItem] = useState<DataRoomItem | null>(null);

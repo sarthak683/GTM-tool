@@ -103,6 +103,14 @@ class Company(CompanyBase, table=True):
     # the mismatch badge goes quiet for contacts on any alias. Cross-account
     # uniqueness is enforced in the update/merge endpoints.
     additional_domains: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    # "Zippy ID": a per-account email alias (displayed as zippy+<alias>@beacon.li,
+    # mirroring Deal.email_cc_alias) so a rep can hand a contact a single
+    # account-scoped address. Lazily generated + persisted the first time
+    # GET /api/v1/companies/{id} is called (see get_company), not at row
+    # creation, since most companies already existed before this field was
+    # added. Display-only for now: unlike Deal.email_cc_alias, nothing in
+    # app/tasks/email_sync.py matches on this yet.
+    email_cc_alias: Optional[str] = Field(default=None, index=True)
     # Soft-delete: current-state surfaces exclude the row; history (activities,
     # deals' stage history) survives so past scorecards never rewrite. The
     # lower(domain) unique index is partial on deleted_at IS NULL (migration
@@ -167,6 +175,7 @@ class CompanyCreate(CompanyBase):
 class CompanyRead(CompanyBase):
     id: UUID
     additional_domains: Optional[Any] = None
+    email_cc_alias: Optional[str] = None
     deleted_at: Optional[datetime] = None
     merged_into_id: Optional[UUID] = None
     tech_stack: Optional[Any] = None

@@ -160,8 +160,8 @@ class CompanySourcingFilters:
     assigned_rep: str | None = Query(default=None, description="Exact match on the assigned rep display name (legacy export filter).")
     assigned_rep_email: str | None = Query(default=None, description="Exact match on the assigned AE email.")
     owner_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches AE or SDR ownership. Use '__unassigned__' for accounts with neither slot set.")
-    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only.")
-    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only.")
+    ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only. Use '__unassigned__' for accounts with no AE.")
+    sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only. Use '__unassigned__' for accounts with no SDR.")
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage.")
     batch_id: UUID | None = Query(default=None, description="Only accounts attached to this sourcing batch (import).")
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account.")
@@ -278,14 +278,34 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
             stmt = stmt.where(or_(*owner_clauses) if len(owner_clauses) > 1 else owner_clauses[0])
 
     if filters.ae_id:
+        # Same "__unassigned__" sentinel as owner_id above, scoped to the AE
+        # slot only: accounts with no assigned_to_id, OR-ed alongside any real
+        # AE ids so the AE filter can surface accounts that never got one.
         ae_uuids = _parse_uuid_multi(filters.ae_id)
+        ae_unassigned = "__unassigned__" in [
+            part.strip() for part in str(filters.ae_id).split(",")
+        ]
+        ae_clauses = []
         if ae_uuids:
-            stmt = stmt.where(Company.assigned_to_id.in_(ae_uuids))
+            ae_clauses.append(Company.assigned_to_id.in_(ae_uuids))
+        if ae_unassigned:
+            ae_clauses.append(Company.assigned_to_id.is_(None))
+        if ae_clauses:
+            stmt = stmt.where(or_(*ae_clauses) if len(ae_clauses) > 1 else ae_clauses[0])
 
     if filters.sdr_id:
+        # Same sentinel, scoped to the SDR slot only.
         sdr_uuids = _parse_uuid_multi(filters.sdr_id)
+        sdr_unassigned = "__unassigned__" in [
+            part.strip() for part in str(filters.sdr_id).split(",")
+        ]
+        sdr_clauses = []
         if sdr_uuids:
-            stmt = stmt.where(Company.sdr_id.in_(sdr_uuids))
+            sdr_clauses.append(Company.sdr_id.in_(sdr_uuids))
+        if sdr_unassigned:
+            sdr_clauses.append(Company.sdr_id.is_(None))
+        if sdr_clauses:
+            stmt = stmt.where(or_(*sdr_clauses) if len(sdr_clauses) > 1 else sdr_clauses[0])
 
     # Recotap journey-stage filter — joins via recotap_accounts.company_id (set
     # on pull/seed), so no domain-normalization in SQL. "not_scored" matches
@@ -1886,6 +1906,11 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
     if not company or not _can_see_company(company, _user):
         # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
+    # Lazily mint this account's Zippy ID (email_cc_alias) on first read — this
+    # is the primary company-detail route the Account Sourcing / Prospecting
+    # UI hits, so the alias must be minted here too, not just in
+    # app/api/v1/endpoints/companies.py's get_company.
+    company = await CompanyRepository(session).ensure_email_cc_alias(company)
     read = CompanyRead.model_validate(company)
     cache = dict(read.enrichment_cache or {})
     cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)

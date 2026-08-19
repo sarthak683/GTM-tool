@@ -12,7 +12,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight, MessageCircle, MessageSquare, Send,
+  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -5038,6 +5038,17 @@ export default function Contacts() {
                     >
                       <Plus size={12} /> Task
                     </button>
+                    {callContact.linkedin_url && (
+                      <a
+                        href={callContact.linkedin_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", textDecoration: "none" }}
+                        title="Open this prospect's LinkedIn profile"
+                      >
+                        <Linkedin size={12} /> LinkedIn
+                      </a>
+                    )}
                     {callContact.linkedin_url && (
                       <button
                         type="button"

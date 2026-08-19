@@ -194,6 +194,39 @@ class CompanyRepository(BaseRepository[Company]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Company, session)
 
+    @staticmethod
+    def _slugify_alias(name: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+        return slug or "account"
+
+    async def generate_unique_email_cc_alias(self, name: str, *, exclude_id: Optional[UUID] = None) -> str:
+        """Mirrors DealRepository.generate_unique_email_cc_alias, keyed on Company."""
+        base = self._slugify_alias(name)
+        candidate = base
+        suffix = 2
+
+        while True:
+            stmt = select(Company.id).where(Company.email_cc_alias == candidate)
+            if exclude_id:
+                stmt = stmt.where(Company.id != exclude_id)
+            existing = (await self.session.execute(stmt)).first()
+            if not existing:
+                return candidate
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+
+    async def ensure_email_cc_alias(self, company: Company) -> Company:
+        """Lazily generate + persist a Zippy ID (email_cc_alias) if missing.
+
+        Called from GET /api/v1/companies/{id} rather than at row creation,
+        since almost every company already existed before this field was
+        added. A no-op (no extra write) once the alias is set.
+        """
+        if company.email_cc_alias:
+            return company
+        company.email_cc_alias = await self.generate_unique_email_cc_alias(company.name or "account")
+        return await self.save(company)
+
     async def get_by_domain(self, domain: str) -> Optional[Company]:
         # lower() on both sides: the unique index is on lower(domain), so an
         # exact-case miss here followed by an insert dies on IntegrityError.

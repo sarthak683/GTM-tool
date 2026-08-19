@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Building2, Phone, Clock, Mail, Link2, X, Mic, CheckCircle2, Loader2, ArrowRight } from "lucide-react";
+import { Building2, Phone, Clock, Mail, Link2, X, Mic, CheckCircle2, Loader2, ArrowRight, Linkedin } from "lucide-react";
 import type { Activity, Contact } from "../../types";
 import { contactsApi, activitiesApi, remindersApi, pushApi, accountSourcingApi } from "../../lib/api";
 import type { PreCallBrief } from "../../lib/api";
@@ -471,6 +471,22 @@ export default function CallDispositionDrawer({
                   <Mail size={12} /> Email
                 </a>
               )}
+              {contact.linkedin_url ? (
+                <a
+                  href={contact.linkedin_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open this prospect's LinkedIn profile"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700,
+                    padding: "8px 10px", borderRadius: 10,
+                    background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe",
+                    textDecoration: "none",
+                  }}
+                >
+                  <Linkedin size={12} /> LinkedIn
+                </a>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setLinkedinDialogOpen(true)}

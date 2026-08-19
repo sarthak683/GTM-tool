@@ -3439,8 +3439,15 @@ async def sales_dashboard(
                 seen_dr_rep.add(key)
                 demos_rescheduled_by_uid[dr.created_by_id] = demos_rescheduled_by_uid.get(dr.created_by_id, 0) + 1
 
-    # Inject zero rows for seed reps who have no activity in the window
+    # Inject zero rows for seed reps who have no activity in the window. A seed
+    # rep (e.g. the DEFAULT_SALES_ANALYTICS_EMAILS fallback, which always seeds
+    # Jacob so the dashboard is never empty for a fresh workspace) must still
+    # respect the active rep/pod filter — otherwise Jacob (US Pod) shows up as
+    # a zero-activity row under every pod filter, including ROW Pod, which he
+    # is not a member of. Skip a seed uid that the current filter excludes.
     for seed_uid in seed_rep_user_ids:
+        if filter_rep_ids and seed_uid not in filter_rep_ids:
+            continue
         rep_key, rep_user_id, rep_name = _label_for_rep(seed_uid, users)
         if rep_key not in rep_activity:
             rep_activity[rep_key] = {

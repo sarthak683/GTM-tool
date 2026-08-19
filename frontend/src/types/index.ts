@@ -4,6 +4,10 @@ export interface Company {
   domain: string;
   // Alias domains (rebrands/merged accounts) — all matching honors these.
   additional_domains?: string[] | null;
+  // Per-account "Zippy ID": zippy+<email_cc_alias>@beacon.li, lazily minted on
+  // first read of the company. Display-only for now — mirrors
+  // Deal.email_cc_alias but is not (yet) matched by email_sync.
+  email_cc_alias?: string | null;
   // Soft-deleted accounts are hidden everywhere; kept for audit.
   deleted_at?: string | null;
   industry?: string;
@@ -936,7 +940,7 @@ export interface Battlecard {
   updated_at: string;
 }
 
-export type DataRoomCategory = "documentation" | "decks" | "videos" | "demo_recordings";
+export type DataRoomCategory = "documentation" | "decks" | "videos" | "demo_recordings" | "post_poc_collaterals";
 
 export interface DataRoomItem {
   id: string;

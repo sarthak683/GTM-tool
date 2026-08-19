@@ -1286,6 +1286,18 @@ export default function AccountSourcing() {
   // Multi-select SDR Assigned filter: matches sdr_id only.
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
+  // AE/SDR filter options with a leading "Unassigned" sentinel — same pattern
+  // as Prospecting (Contacts.tsx): "__unassigned__" is never a real UUID, so
+  // build_sourced_companies_stmt on the backend detects it on the raw string
+  // and OR's in an IS NULL clause on the matching slot (assigned_to_id for AE,
+  // sdr_id for SDR) alongside any real ids picked.
+  const repFilterOptions = useMemo(
+    () => [
+      { value: "__unassigned__", label: "Unassigned" },
+      ...teamUsers.map((u) => ({ value: u.id, label: u.name || u.email })),
+    ],
+    [teamUsers],
+  );
   const [tierFilter, setTierFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("tier")));
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("disp")));
   const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("status")));
@@ -2572,7 +2584,7 @@ export default function AccountSourcing() {
                   <MultiSelectFilter
                     values={sdrFilter}
                     onChange={setSdrFilter}
-                    options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                    options={repFilterOptions}
                     label="SDR Assigned"
                     allLabel="SDR: All"
                     minWidth={140}
@@ -2728,7 +2740,7 @@ export default function AccountSourcing() {
                     <MultiSelectFilter
                       values={ownerFilter}
                       onChange={setOwnerFilter}
-                      options={teamUsers.map((u) => ({ value: u.id, label: u.name || u.email }))}
+                      options={repFilterOptions}
                       label="AE Assigned"
                       allLabel="AE: All"
                       minWidth={140}

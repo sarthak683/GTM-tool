@@ -359,10 +359,14 @@ async def restore_company_endpoint(company_id: UUID, session: DBSession, _admin:
 
 @router.get("/{company_id}", response_model=CompanyRead)
 async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
-    company = await CompanyRepository(session).get_or_raise(company_id)
+    repo = CompanyRepository(session)
+    company = await repo.get_or_raise(company_id)
     if not _can_see_company(company, _user):
         # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
+    # Lazily mint this account's Zippy ID (email_cc_alias) on first read so
+    # every company gets one without a one-off backfill migration.
+    company = await repo.ensure_email_cc_alias(company)
     return company
 
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, FileText, LoaderCircle, Presentation, Trash2, Video } from "lucide-react";
+import { AlertTriangle, FileText, LoaderCircle, PackageCheck, Presentation, Trash2, Video } from "lucide-react";
 import type { DataRoomCategory, DataRoomItem } from "../../types";
 
 const ACCENT = "#4d7c0f";
@@ -12,6 +12,7 @@ const TYPE_META: Record<DataRoomCategory, { label: string; icon: typeof FileText
   decks: { label: "Google Slides / PDF", icon: Presentation },
   videos: { label: "Demo video", icon: Video },
   demo_recordings: { label: "Call recording", icon: Video },
+  post_poc_collaterals: { label: "Post-POC collateral", icon: PackageCheck },
 };
 
 /**
