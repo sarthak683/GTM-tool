@@ -729,24 +729,31 @@ def _activity_row_is_early_funnel(
     row,
     *,
     deal_stage_by_id: dict[UUID, str],
-    contact_company: dict[UUID, UUID | None],
-    company_stages: dict[UUID, set[str]],
-    early_funnel_stage_ids: set[str],
     advanced_stage_ids: set[str],
 ) -> bool:
+    """Whether a call counts as prospecting activity.
+
+    ONLY a call attached to a deal that has moved past the demo is excluded —
+    that call is the AE working an advanced opportunity, not prospecting.
+
+    A call with no deal attached always counts. This used to also drop
+    contact-level calls whenever ANY deal on the account was advanced, which
+    erased real prospecting: on 2026-08-18 Mahesh logged 62 calls and Sales
+    Analytics showed 52, because 10 dial attempts on Descartes contacts (no deal
+    attached, outcome "attempted") were discarded purely because that account
+    holds one qualified_lead deal. Dialling new contacts at an account that
+    already has an opportunity is still prospecting, and the pod call report —
+    which reps check against — counted all 62.
+
+    Calls genuinely attached to an advanced deal are still excluded, so this is
+    not a blanket widening: across 30 days of prod it recovers 88 calls of 7,288
+    (Mahesh 72, Dyuthith 11, Pravalika 4, Bhavya 1) and leaves Sandeep's
+    advanced-deal calls correctly out.
+    """
     if row.deal_id is not None:
         stage = deal_stage_by_id.get(row.deal_id)
         # Unknown deal → keep rather than silently drop.
         return stage not in advanced_stage_ids if stage is not None else True
-    if row.contact_id is not None:
-        company_id = contact_company.get(row.contact_id)
-        if company_id is not None:
-            stages = company_stages.get(company_id)
-            # Drop only when the whole account has moved past the demo with
-            # nothing early still in flight. A company holding both a poc_wip
-            # and a fresh reprospect deal is still being prospected.
-            if stages and (stages & advanced_stage_ids) and not (stages & early_funnel_stage_ids):
-                return False
     return True
 
 
@@ -803,9 +810,6 @@ def _headline_activity_counts(
             if not _activity_row_is_early_funnel(
                 row,
                 deal_stage_by_id=deal_stage_by_id,
-                contact_company=contact_company,
-                company_stages=company_stages,
-                early_funnel_stage_ids=early_funnel_stage_ids,
                 advanced_stage_ids=advanced_stage_ids,
             ):
                 continue
@@ -2442,9 +2446,6 @@ async def sales_dashboard(
             if not _activity_row_is_early_funnel(
                 row,
                 deal_stage_by_id=deal_stage_by_id,
-                contact_company=contact_company_all,
-                company_stages=company_stages,
-                early_funnel_stage_ids=early_funnel_stage_ids,
                 advanced_stage_ids=advanced_stage_ids,
             ):
                 continue
