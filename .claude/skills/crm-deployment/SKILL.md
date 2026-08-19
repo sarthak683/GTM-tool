@@ -54,15 +54,34 @@ docker buildx create --name builder --driver docker-container --bootstrap
 
 ### ACR credential (user runs this, not Claude)
 
-The registry password must be stored in the macOS Keychain by the user. Claude
-must never write it — it would pass through the transcript and the process table.
+Prefer **Azure AD** — no password exists to store or leak:
+
+```bash
+az login
+az acr login --name beacon
+```
+
+`az acr login` mints a short-lived token and writes it into Docker's credential
+store. `az login` opens a browser, so the user runs both; Claude must not
+authenticate on their behalf.
+
+Note there is no ACR password anywhere in the repo, the `~/Downloads/gtm-helm`
+values files, or the cluster — verified 2026-08-19. Neither namespace holds a
+`dockerconfigjson` secret and no deployment sets `imagePullSecrets`, because
+AKS is **attached** to the registry (`az aks update --attach-acr`): the kubelet's
+managed identity carries `AcrPull` and Azure brokers the token. So the cluster
+never needs a registry credential — only a developer pushing images does. Don't
+go looking for a stored copy; there isn't one.
+
+Legacy fallback, only if the `codebuild` admin password is genuinely needed:
 
 ```bash
 security add-generic-password -a codebuild -s beacon-acr -U -w
 ```
 
 Enter the password at the prompt (omitting a value after `-w` makes `security`
-prompt instead of taking it from the command line).
+prompt instead of taking it from the command line). Claude must never write it —
+it would pass through the transcript and the process table.
 
 ## Environment Map
 
@@ -164,12 +183,35 @@ may carry different tags; the chart takes them independently.
 
 ## Registry Login
 
+Check first — Docker Desktop's credential store usually already holds a working
+token, so no login is needed at all:
+
+```bash
+docker buildx imagetools inspect beacon.azurecr.io/gtm-be:<any-known-tag>
+```
+
+If that prints a manifest, you are authenticated; skip to the build. If it
+fails, log in with Azure AD:
+
+```bash
+az acr login --name beacon
+```
+
+Only if that is unavailable, fall back to the Keychain entry:
+
 ```bash
 security find-generic-password -a codebuild -s beacon-acr -w \
   | docker login beacon.azurecr.io -u codebuild --password-stdin
 ```
 
 Expect `Login Succeeded`. Never echo the password or pass it as an argument.
+
+**A hung `docker login`, credential-helper call, or `imagetools inspect` is
+almost never an auth problem** — it means the Docker daemon is wedged. Docker
+Desktop's UI can report "Engine running" while `com.docker.backend` is dead and
+`~/.docker/run/docker.sock` is a stale socket that refuses connections. Confirm
+with `docker version` (client-only output = wedged) and `pgrep -f com.docker.backend`,
+then fully quit and relaunch Docker Desktop before touching credentials.
 
 ## Build And Push
 
@@ -279,11 +321,30 @@ forget lands in ImagePullBackOff.
 Ambassador Mappings — always pass it with `-f`, or staging loses its routing and
 refuses to start.
 
+**`gtm-staging-beacon-secrets.yaml` is equally mandatory.** It supplies
+`secrets.googleClientId` / `secrets.googleClientSecret`, which the chart's
+`values.yaml` defaults to `""`. Helm re-renders from values on every upgrade —
+it does **not** merge the previous release's values — so omitting this `-f`
+overwrites the live Secret with empty strings rather than leaving it alone.
+`auth.py` then fails closed and every Google login returns 401, and Gmail /
+email-sync OAuth breaks on the same empty credential. This is exactly what
+happened: rev 197 supplied them, rev 198 dropped the `-f`, and staging login was
+dead for ~38 hours across revs 198–206 until rev 207 restored it. Verify after
+any staging upgrade — compare lengths, never print values:
+
+```bash
+kubectl -n gtm get secret gtm-beacon-crm-secret -o jsonpath='{.data.GOOGLE_CLIENT_ID}' | base64 -d | wc -c
+curl -sS -o /dev/null -w "%{http_code}\n" https://gtm.staging2.beacon.li/api/v1/auth/google/login
+```
+
+Expect a non-zero length and `307` (redirect to `accounts.google.com`), not `401`.
+
 ```bash
 export KUBECONFIG=/Users/sarthak/gtm-secrets/beacon-test-kubeconfig.yaml
 cd /Users/sarthak/GTM-tool
 TAG=v0.15-20260814
 helm upgrade gtm ./helm/beacon-crm -n gtm -f ./helm/beacon-crm/values-staging.yaml \
+  -f ~/Downloads/gtm-helm/gtm-staging-beacon-secrets.yaml \
   --set-string backend.image.repository=beacon.azurecr.io/gtm-be       --set-string backend.image.tag=$TAG \
   --set-string frontend.image.repository=beacon.azurecr.io/gtm-fe      --set-string frontend.image.tag=$TAG \
   --set-string worker.image.repository=beacon.azurecr.io/gtm-be        --set-string worker.image.tag=$TAG \
@@ -291,11 +352,13 @@ helm upgrade gtm ./helm/beacon-crm -n gtm -f ./helm/beacon-crm/values-staging.ya
   --set-string beat.image.repository=beacon.azurecr.io/gtm-be          --set-string beat.image.tag=$TAG
 ```
 
-Secrets note: this chart renders its Secret from `values.yaml`, and the live
-release supplies **no** secret overrides — so the committed defaults *are* the
-live values. Confirm before upgrading (compare value lengths, never print
-values); if the live Secret ever diverges from the chart, a Helm upgrade will
-overwrite it.
+Secrets note: this chart renders its Secret from `values.yaml`. As of rev 207
+the live release **does** supply overrides — the two Google OAuth keys, via
+`gtm-staging-beacon-secrets.yaml` above. Every other key still comes from the
+committed defaults, so those defaults *are* the live values for everything else.
+Confirm before upgrading (compare value lengths, never print values); if the
+live Secret ever diverges from what your `-f` set supplies, a Helm upgrade
+overwrites it.
 
 ### Staging — external `gtm` chart
 
