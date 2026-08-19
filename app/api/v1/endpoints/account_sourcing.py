@@ -130,6 +130,14 @@ def _account_sourcing_visibility_filter():
             Company.sourcing_batch_id.isnot(None),
             Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
             select(Deal.id).where(Deal.company_id == Company.id).exists(),
+            # An ASSIGNED account is never hidden from Account Sourcing. Without
+            # this, an account someone owns but that carries no sourcing batch,
+            # no placeholder marker and no deal row was invisible to its own
+            # owner (prod: Sidetrade, owned by an AE and an SDR, reachable by
+            # neither). Ownership is the whole point of this surface, so it
+            # admits the row on its own.
+            Company.assigned_to_id.isnot(None),
+            Company.sdr_id.isnot(None),
         ),
     )
 
