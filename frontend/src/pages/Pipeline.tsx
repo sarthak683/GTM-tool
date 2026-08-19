@@ -85,6 +85,13 @@ const DEFAULT_PROSPECT_FUNNEL: FunnelConfig = {
   mofu: ["in_progress"],
   bofu: ["meeting_booked"],
 };
+// Board stage-column width (was 312). Narrower = more stages on screen, but the
+// deal card's two-up engagement chips ("REP No signal" / "CL No signal") sit
+// inside it and fall off a cliff between 272 and 264: measured in-browser at
+// 1280px, 272 ellipses 0 chips and 264 ellipses 502. Commit 97450f2 fixed those
+// chips to fit their text, so do NOT drop below 272 without re-measuring.
+const BOARD_COLUMN_WIDTH = 272;
+
 const GEO_OPTIONS = ["India", "America", "Rest of the World"] as const;
 // Friendly labels for the standard (create-modal) deal sources. The marketing
 // Source filter shows these plus any other source values actually present on
@@ -1096,9 +1103,9 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
   const isOverdue = Boolean(_closeLocal && _closeLocal < _todayStart);
 
   return (
-    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} style={{ width: "100%", borderRadius: 14, border: selected ? "1.5px solid #9ace3d" : "1px solid #e8eef5", background: selected ? "#f7fce9" : "#fff", boxShadow: selected ? "0 0 0 3px rgba(154,206,61,0.16)" : "0 1px 4px rgba(17,34,68,0.04)", padding: 9, display: "flex", flexDirection: "column", gap: 6 }}>
       {/* Header row: select + grip + name + close date */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
         {onToggleSelect && (
           <input
             type="checkbox"
@@ -1111,7 +1118,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
         )}
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0, cursor: "grab" }} />
         <button type="button" onClick={onClick} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: "#142335", lineHeight: 1.35 }}>{deal.name}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#142335", lineHeight: 1.25 }}>{deal.name}</span>
         </button>
         {deal.close_date_est && (
           <span style={{ fontSize: 11, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
@@ -1120,14 +1127,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
         )}
       </div>
 
-      <button type="button" onClick={onClick} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, textAlign: "left" }}>
+      <button type="button" onClick={onClick} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", gap: 5, textAlign: "left" }}>
         {deal.company_name && (
           <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#68788d", minWidth: 0 }}>
             <Building2 size={11} style={{ flexShrink: 0 }} />
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.company_name}</span>
           </div>
         )}
-        <div style={{ fontSize: 14, fontWeight: 700, color: deal.value ? "#4d7c0f" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2, color: deal.value ? "#4d7c0f" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
         {deal.next_step && (
           <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>
             {deal.next_step}
@@ -1136,7 +1143,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
             )}
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
           <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
           <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
         </div>
@@ -1146,7 +1153,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
       </button>
 
       {/* Footer: avatar + days + contacts + P-tag */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 5, borderTop: "1px solid #f0f4f8" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {deal.assigned_rep_name ? <div title={deal.assigned_rep_name} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
           <div
@@ -1211,8 +1218,8 @@ function LoadingCard({ kind }: { kind: "deal" | "prospect" }) {
 
 function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDelete }: { contact: Contact; company?: Company; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void; onDelete?: () => void }) {
   return (
-    <button type="button" className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+    <button type="button" className="crm-hover-lift" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 14, border: "1px solid #e8eef5", background: "#fff", boxShadow: "0 1px 4px rgba(17,34,68,0.04)", padding: 9, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
         <GripVertical size={12} style={{ color: "#94a3b8", marginTop: 3, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2d3d", lineHeight: 1.3 }}>{contactName(contact)}</div>
@@ -1231,7 +1238,7 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
         {contact.tracking_label && <span style={chip("#effcf6", "#047857", "#bbf7d0")}>{contact.tracking_label}</span>}
         {typeof contact.tracking_score === "number" && <span style={chip("#fff7ed", "#c2410c", "#fed7aa")}>{contact.tracking_score}/100</span>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid #f0f4f8", marginTop: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 5, borderTop: "1px solid #f0f4f8" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {(contact.assigned_to_name || contact.sdr_name) ? <div title={contact.assigned_to_name || contact.sdr_name || ""} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(contact.assigned_to_name || contact.sdr_name || "")}`} style={{ width: 22, height: 22 }}>{getInitials(contact.assigned_to_name || contact.sdr_name || "RP")}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
           <div style={{ fontSize: 11, color: "#68788d" }}>{contact.sequence_status || contact.instantly_status || "ready"}</div>
@@ -1257,7 +1264,7 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
 
 function BoardColumn({ stage, count, totalValue, weightedValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; weightedValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
   return (
-    <div style={{ width: 312, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div style={{ width: BOARD_COLUMN_WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, padding: "0 4px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>

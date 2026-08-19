@@ -82,16 +82,15 @@ import {
 // "All time" is modeled as a very large day-window so the existing
 // window_days → date-range math on the backend keeps working unchanged.
 const ALL_TIME_DAYS = 36500;
-// Short windows only — day-to-day rep coaching happens on days/weeks, not
-// quarters. Longer ranges go through the custom date pickers next to these.
+// Today / week / month / quarter / all — the spans reviews actually happen on.
+// Anything in between goes through the custom date pickers next to these.
+// readWindowDaysParam accepts any positive number, so links bookmarked against
+// the old 2D/3D/5D/2W/4W presets keep working; they just render as "14d".
 const WINDOW_PRESETS = [
   { days: 1, label: "Today" },
-  { days: 2, label: "2D" },
-  { days: 3, label: "3D" },
-  { days: 5, label: "5D" },
   { days: 7, label: "1W" },
-  { days: 14, label: "2W" },
-  { days: 28, label: "4W" },
+  { days: 30, label: "1M" },
+  { days: 90, label: "3M" },
   { days: ALL_TIME_DAYS, label: "All" },
 ] as const;
 const windowPresetLabel = (days: number): string =>
