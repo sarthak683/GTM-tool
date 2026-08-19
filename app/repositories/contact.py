@@ -187,14 +187,26 @@ def _search_tokens(value: str) -> list[str]:
 def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
     """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
 
-    SDR (``role == "sdr"``): OWN-ONLY. An SDR sees a contact ONLY if they own it
-    in either slot (``assigned_to_id`` or ``sdr_id``). NO account-owner clause,
-    NO deal-owner clause, NO unassigned clause — SDRs are hard-restricted to their
-    own prospects everywhere so they can never browse a teammate's (or an
-    unclaimed) prospect.
+    ACCOUNT OWNERSHIP IS THE OUTER GATE ON EVERY BRANCH. Owning the PROSPECT is
+    never on its own enough: a rep reaches a prospect only inside an account
+    that is theirs, or that nobody has claimed at all. Prospect-level ownership
+    is allowed to diverge from the account (the company->contact cascade
+    deliberately keeps a third rep's override — see ``CascadeResult``), so
+    without this gate a bulk prospect assignment silently opens a window into a
+    teammate's account: 48 of DayForce's 98 prospects sat with a second SDR, so
+    that account appeared in their Prospecting list even though it was owned
+    end-to-end by another SDR.
+
+    SDR (``role == "sdr"``): account-gated own-only. An SDR sees a contact if
+    they own it in either slot (``assigned_to_id`` or ``sdr_id``) AND the account
+    is theirs or unclaimed, OR they are on the account itself (which keeps a
+    teammate-held prospect inside their account from being orphaned). NO
+    deal-owner clause, NO unassigned clause — SDRs still never browse an
+    unclaimed prospect or reach into a teammate's account.
 
     Every other non-admin role (AE etc.): a non-admin may see a contact if they
-    own it in either slot, OR they are the AE **or SDR** on the contact's COMPANY
+    own it in either slot **inside an account that is theirs or unclaimed**, OR
+    they are the AE **or SDR** on the contact's COMPANY
     (account-scoped: whoever owns the account sees every prospect inside it,
     including ones a teammate is assigned at the prospect level — e.g. the account
     SDR sees prospects the AE holds), OR they own a DEAL on the contact's company
@@ -207,21 +219,35 @@ def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
     inline `.in_()` form in ``list_with_company_name`` (which supports a multi-id
     list).
     """
-    if (role or "").lower() == "sdr":
-        return or_(
-            Contact.assigned_to_id == user_id,
-            Contact.sdr_id == user_id,
-        )
     from app.models.deal import Deal
+
+    owns_account = Contact.company_id.in_(
+        select(Company.id).where(
+            or_(Company.assigned_to_id == user_id, Company.sdr_id == user_id)
+        )
+    )
+    # Unclaimed in BOTH slots. A half-owned account (one slot filled by someone
+    # else) is still somebody's account and stays closed.
+    account_unclaimed = Contact.company_id.in_(
+        select(Company.id).where(
+            Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)
+        )
+    )
+    owns_contact_in_scope = and_(
+        or_(Contact.assigned_to_id == user_id, Contact.sdr_id == user_id),
+        or_(Contact.company_id.is_(None), owns_account, account_unclaimed),
+    )
+    if (role or "").lower() == "sdr":
+        # Own prospects inside their own/unclaimed accounts, PLUS every prospect
+        # inside an account they own. The second half is not a widening — it is
+        # what keeps the gate from orphaning rows: a prospect held by SDR-A
+        # inside SDR-B's account would otherwise be invisible to A (foreign
+        # account) AND to B (not the prospect owner), leaving it worked by
+        # nobody. Whoever is on the ACCOUNT can always see inside it.
+        return or_(owns_contact_in_scope, owns_account)
     return or_(
-        Contact.assigned_to_id == user_id,
-        Contact.sdr_id == user_id,
-        Contact.company_id.in_(
-            select(Company.id).where(Company.assigned_to_id == user_id)
-        ),
-        Contact.company_id.in_(
-            select(Company.id).where(Company.sdr_id == user_id)
-        ),
+        owns_contact_in_scope,
+        owns_account,
         Contact.company_id.in_(
             select(Deal.company_id).where(
                 Deal.assigned_to_id == user_id, Deal.company_id.is_not(None)
@@ -742,35 +768,51 @@ class ContactRepository(BaseRepository[Contact]):
         owner_unassigned = _has_unassigned(owner_id)
 
         # Hard server-side visibility gate (NOT user-selectable): when set, the
-        # viewer may see prospects they own (either ownership slot), prospects in
-        # an account they own as AE (account-scoped — an AE sees everything inside
-        # their accounts, incl. SDR-sourced prospects not yet handed over), or
-        # unowned prospects (both slots empty). Admins/granted users bypass this
+        # viewer may see prospects they own (either ownership slot) INSIDE an
+        # account that is theirs or unclaimed, prospects in an account they own
+        # (account-scoped — the account owner sees everything inside their
+        # accounts, incl. prospects a teammate holds), or unowned prospects
+        # (both slots empty; non-SDR only). Admins/granted users bypass this
         # by passing restrict_to_owner_id=None. ANDed with every other filter.
         # Keep in lockstep with contact_visibility_filter() above.
         restrict_ids = _parse_uuid_values(restrict_to_owner_id)
         if restrict_ids:
-            if (restrict_to_role or "").lower() == "sdr":
-                # SDR own-only: an SDR sees ONLY prospects they own in either slot.
-                # NO account-owner, NO deal-owner, NO unassigned clause. Lockstep
-                # with the SDR branch in contact_visibility_filter().
-                visibility_filter = or_(
-                    Contact.assigned_to_id.in_(restrict_ids),
-                    Contact.sdr_id.in_(restrict_ids),
+            from app.models.deal import Deal
+
+            # Account ownership gates prospect ownership on BOTH branches —
+            # lockstep with contact_visibility_filter().
+            owns_account = Contact.company_id.in_(
+                select(Company.id).where(
+                    or_(
+                        Company.assigned_to_id.in_(restrict_ids),
+                        Company.sdr_id.in_(restrict_ids),
+                    )
                 )
-            else:
-                from app.models.deal import Deal
-                visibility_filter = or_(
+            )
+            account_unclaimed = Contact.company_id.in_(
+                select(Company.id).where(
+                    Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)
+                )
+            )
+            owns_contact_in_scope = and_(
+                or_(
                     Contact.assigned_to_id.in_(restrict_ids),
                     Contact.sdr_id.in_(restrict_ids),
-                    Contact.company_id.in_(
-                        select(Company.id).where(Company.assigned_to_id.in_(restrict_ids))
-                    ),
-                    # Account SDR sees every prospect on accounts they own, even ones
-                    # the AE holds at the prospect level. Lockstep with contact_visibility_filter().
-                    Contact.company_id.in_(
-                        select(Company.id).where(Company.sdr_id.in_(restrict_ids))
-                    ),
+                ),
+                or_(Contact.company_id.is_(None), owns_account, account_unclaimed),
+            )
+            if (restrict_to_role or "").lower() == "sdr":
+                # Own prospects inside their own/unclaimed accounts, plus every
+                # prospect inside an account they own (so a teammate-held
+                # prospect on their account is not orphaned). NO deal-owner,
+                # NO unassigned clause.
+                visibility_filter = or_(owns_contact_in_scope, owns_account)
+            else:
+                visibility_filter = or_(
+                    owns_contact_in_scope,
+                    # Account AE or SDR sees every prospect on accounts they own,
+                    # even ones a teammate holds at the prospect level.
+                    owns_account,
                     # Deal owner (e.g. the AE running the demo/POC) sees the account's
                     # prospects even when the company/contacts sit with the sourcing
                     # SDR or another company AE. Lockstep with contact_visibility_filter().

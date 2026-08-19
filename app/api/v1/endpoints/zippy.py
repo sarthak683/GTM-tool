@@ -495,11 +495,19 @@ async def list_company_names(
     session: DBSession,
     current_user: CurrentUser,
 ) -> list[str]:
-    """Return all company names for fuzzy matching in the Zippy composer."""
+    """Return the caller's visible company names for fuzzy matching in the Zippy composer.
+
+    Account-scoped like every other company-browse surface: this fed the
+    composer the FULL account list to any authenticated user, which leaked the
+    names of accounts the caller cannot otherwise see.
+    """
     from app.models.company import Company
+    from app.repositories.company import company_visibility_filter
 
     result = await session.execute(
-        sm_select(Company.name).order_by(Company.name)
+        sm_select(Company.name)
+        .where(company_visibility_filter(current_user.id, current_user.role == "admin"))
+        .order_by(Company.name)
     )
     names = [row[0] for row in result.all() if row[0]]
     return names
