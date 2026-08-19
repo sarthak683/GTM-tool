@@ -121,11 +121,26 @@ def _account_sourcing_visibility_filter():
     hidden_clickup_import = Company.enrichment_sources.contains(
         {"clickup_import": {"hidden_from_account_sourcing": True}}
     )
+    # Ownership beats every hiding rule below: if someone is assigned to an
+    # account they must be able to see it. Reused in both clauses.
+    is_assigned = or_(Company.assigned_to_id.isnot(None), Company.sdr_id.isnot(None))
     return and_(
         # NULL-safe negation: `NULL @> x` is NULL and `NOT NULL` is still NULL,
         # which fails the WHERE — so a company with no enrichment_sources at
         # all silently vanished from Account Sourcing. IS NULL must pass.
-        or_(Company.enrichment_sources.is_(None), ~hidden_clickup_import),
+        #
+        # `is_assigned` is here because a ClickUp-imported account that is
+        # hidden AND assigned was findable in quick search (which applies only
+        # company_visibility_filter) while missing from the owner's account
+        # list, which reads as "the CRM lost my account". Prod hit this twice in
+        # one day — Aurionpro and Turtlemint, both owned by an AE and an SDR.
+        # Migrations 119/121 cleared the existing rows; this keeps the next
+        # ClickUp import from recreating them.
+        or_(
+            Company.enrichment_sources.is_(None),
+            ~hidden_clickup_import,
+            is_assigned,
+        ),
         or_(
             Company.sourcing_batch_id.isnot(None),
             Company.enrichment_sources.contains({"prospect_import_placeholder": {}}),
@@ -136,8 +151,7 @@ def _account_sourcing_visibility_filter():
             # owner (prod: Sidetrade, owned by an AE and an SDR, reachable by
             # neither). Ownership is the whole point of this surface, so it
             # admits the row on its own.
-            Company.assigned_to_id.isnot(None),
-            Company.sdr_id.isnot(None),
+            is_assigned,
         ),
     )
 
