@@ -30,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company import Company
 from app.models.meeting import Meeting
+from app.services.deal_linker import FREE_EMAIL_PROVIDERS
+from app.services.internal_domains import get_internal_domains
 from app.services.tldv_sync import (
     _ensure_deal_contact,
     _match_company_from_domains,
@@ -37,6 +39,7 @@ from app.services.tldv_sync import (
     _match_deal_from_contacts,
     _match_single_deal_for_company,
     _normalize_domain,
+    is_multi_party_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,6 +77,23 @@ async def _resolve_link(
             _normalize_domain(email.split("@", 1)[1]) for email in emails if "@" in email
         )
     )
+
+    # An event with three or more outside companies in it belongs to no single
+    # account. This backfill deliberately mirrors live ingest, so it inherits
+    # the guard rather than restating it — otherwise the nightly re-link would
+    # simply re-create the links the repair migration just undid.
+    #
+    # Counted over EXTERNAL domains only. Unlike tldv_sync, _attendee_emails()
+    # here keeps internal addresses, so a routine two-party call reads as
+    # {beacon.li, acme.com} and a single personal Gmail attendee would push it
+    # to three — blocking exactly the meetings this backfill exists to rescue.
+    internal_domains = await get_internal_domains(session)
+    external_domains = [
+        d for d in domains
+        if d and d not in internal_domains and d not in FREE_EMAIL_PROVIDERS
+    ]
+    if is_multi_party_event(external_domains):
+        return None, None, []
 
     company = await _match_company_from_domains(session, domains)
     contacts = await _match_contacts(session, emails)

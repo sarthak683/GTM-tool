@@ -244,6 +244,35 @@ async def _match_contacts(session: AsyncSession, attendee_emails: list[str]) -> 
     return result.scalars().all()
 
 
+# A meeting whose external attendees span this many distinct company domains is
+# a multi-party event — a board review, a webinar, an accelerator session — not a
+# call with one account, and it must never be auto-attributed to a deal.
+#
+# Prod ran without this and put four of Beacon's OWN board/MIS reviews onto a
+# client deal (IQVIA 2), which then dragged 103 unrelated emails onto it,
+# including the company's Series A correspondence — visible to every user,
+# because the pipeline is workspace-wide. The path is subtle: linking is
+# domain-first, but _match_company_from_domains() returns None unless the
+# attendees share EXACTLY ONE external domain, so a five-domain board meeting
+# resolves to no company at all. That is precisely when the
+# `deal.company_id != company.id` guard below cannot fire, leaving the
+# contact-derived deal unchallenged — and the meeting then ADOPTS that deal's
+# company. The harder a meeting was to identify, the more freely it attached.
+#
+# Threshold measured against all 1,443 prod meetings: 1,294 carry exactly one
+# external domain and 63 carry two (a customer plus their advisor, investor or
+# note-taker — EQT on the Peak3 deal, Treelife on the Zellis MSA), all
+# legitimate. Only 8 meetings ever reached three, and every one of those that
+# had been auto-linked was part of this bug. Three is where real meetings stop
+# and multi-party events begin.
+MULTI_PARTY_DOMAIN_THRESHOLD = 3
+
+
+def is_multi_party_event(external_domains: list[str]) -> bool:
+    """True when attendee domains say 'event', not 'account meeting'."""
+    return len(external_domains) >= MULTI_PARTY_DOMAIN_THRESHOLD
+
+
 async def _match_deal_from_contacts(session: AsyncSession, contact_ids: list[UUID]) -> Deal | None:
     if not contact_ids:
         return None
@@ -758,6 +787,19 @@ async def sync_tldv_meeting(
         matched_contact_ids = []
         company = None
         deal = None
+    elif is_multi_party_event(attendee_domains):
+        # Multi-party event: attendees from three or more outside companies. We
+        # still record it (and still match contacts so attendees resolve in the
+        # UI), but we refuse to guess an owner. A human can attach it, which
+        # sets manually_linked and is never second-guessed here.
+        matched_contacts = await _match_contacts(session, attendee_emails)
+        matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]
+        company = None
+        deal = None
+        logger.info(
+            "tldv_sync: meeting %r spans %d external domains — left unlinked (multi-party)",
+            str(meeting_payload.get("name") or "")[:80], len(attendee_domains),
+        )
     else:
         matched_contacts = await _match_contacts(session, attendee_emails)
         matched_contact_ids = [contact.id for contact in matched_contacts if contact.id]

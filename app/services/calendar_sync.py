@@ -33,6 +33,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.services.call_levels import apply_auto_call_level
+from app.services.tldv_sync import is_multi_party_event
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,25 @@ async def sync_calendar_events(
                 if e != user_email and _domain_from_email(e) != user_domain
             ]
 
+            # Three or more outside companies in the room means this is an
+            # event, not an account meeting — record it, but never guess an
+            # owner. Google Calendar carries the same defect tldv_sync had:
+            # Pass 1 below takes a deal straight from a matched contact, and
+            # Pass 2 only overrules it when the domains resolve to EXACTLY one
+            # company — which a five-domain board review never does. Three of
+            # the four Beacon board meetings that landed on the IQVIA 2 deal
+            # came through this path. See tldv_sync.MULTI_PARTY_DOMAIN_THRESHOLD
+            # for how the threshold was measured.
+            external_domains = list(dict.fromkeys(
+                d for d in (_domain_from_email(addr) for addr in external_attendees)
+                if d and d not in FREE_EMAIL_PROVIDERS
+            ))
+            if is_multi_party_event(external_domains):
+                logger.info(
+                    "calendar_sync: %r spans %d external domains — left unlinked (multi-party)",
+                    (event.title or "")[:80], len(external_domains),
+                )
+
             matched_deal_id: UUID | None = None
             matched_company_id: UUID | None = None
             domain_matched_company_id: UUID | None = None
@@ -211,7 +231,7 @@ async def sync_calendar_events(
                     matched_contact_ids.append(cid)
 
             deal_ids: list[UUID] = []
-            if matched_contact_ids:
+            if matched_contact_ids and not is_multi_party_event(external_domains):
                 dc_rows = (await session.execute(
                     select(DealContact.deal_id).where(
                         DealContact.contact_id.in_(matched_contact_ids)
@@ -239,7 +259,7 @@ async def sync_calendar_events(
                     continue
                 if domain in company_domain_map:
                     domain_company_ids.add(company_domain_map[domain][0])
-            if len(domain_company_ids) == 1:
+            if len(domain_company_ids) == 1 and not is_multi_party_event(external_domains):
                 domain_matched_company_id = next(iter(domain_company_ids))
                 matched_company_id = domain_matched_company_id
                 if matched_deal_id:
