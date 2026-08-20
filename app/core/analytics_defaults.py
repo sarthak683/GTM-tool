@@ -42,6 +42,17 @@ DEFAULT_MONTHLY_TARGETS: dict[str, dict[str, int]] = {
     },
 }
 
+# SDR SQL target for the Incentive tab, per window granularity. `per_rep` holds
+# admin-set overrides: {sdr_id (str) -> {period -> target}}, checked before
+# falling back to the base value here. Empty by default — every SDR uses the
+# workspace-wide target until an admin overrides them individually.
+DEFAULT_INCENTIVE_TARGETS: dict = {
+    "week": 2,
+    "month": 7,
+    "quarter": 21,
+    "per_rep": {},
+}
+
 
 # RAG bands are percentages of target.  Green >= green_min, Amber in
 # [amber_min, green_min), Red < amber_min.  A single band applies to every
@@ -105,6 +116,7 @@ def build_default_analytics_settings() -> dict:
     return {
         "weekly_targets": DEFAULT_WEEKLY_TARGETS,
         "monthly_targets": DEFAULT_MONTHLY_TARGETS,
+        "incentive_targets": DEFAULT_INCENTIVE_TARGETS,
         "rag_bands": DEFAULT_RAG_BANDS,
         "stuck_thresholds_days": DEFAULT_STUCK_THRESHOLDS_DAYS,
         "stage_probabilities": DEFAULT_STAGE_PROBABILITIES,

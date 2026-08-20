@@ -228,12 +228,27 @@ export const performanceApi = {
     if (params.period) qs.set("period", params.period);
     return request<LeaderboardResponse>(`/api/v1/performance/leaderboards?${qs.toString()}`);
   },
-  getIncentives: (params: { anchor?: string }) => {
+  getIncentives: (params: { period?: "week" | "month" | "quarter"; anchor?: string; repIds?: string[] }) => {
     const qs = new URLSearchParams();
+    if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
+    for (const id of params.repIds ?? []) qs.append("rep_id", id);
     const tail = qs.toString();
     return request<IncentiveResponse>(`/api/v1/performance/incentives${tail ? `?${tail}` : ""}`);
   },
+  getIncentiveDeals: (params: { sdr_id: string; period?: "week" | "month" | "quarter"; anchor?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("sdr_id", params.sdr_id);
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    return request<IncentiveDealsResponse>(`/api/v1/performance/incentives/deals?${qs.toString()}`);
+  },
+  // Admin-only on the backend (AdminUser dependency) — a non-admin call 403s.
+  setIncentiveTarget: (sdrId: string, patch: { period: "week" | "month" | "quarter"; target: number | null }) =>
+    request<IncentiveTargetResponse>(`/api/v1/performance/incentives/targets/${sdrId}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
 };
 
 export type IncentiveRow = {
@@ -252,6 +267,29 @@ export type IncentiveResponse = {
   period_end: string;
   target: number;
   rows: IncentiveRow[];
+};
+
+export type IncentiveDealRow = {
+  deal_id: string;
+  deal_name: string;
+  ae_name: string;
+  sdr_name: string;
+  date: string | null;
+  source: "direct_sql" | "converted";
+};
+
+export type IncentiveDealsResponse = {
+  sdr_id: string;
+  sdr_name: string;
+  period_label: string;
+  rows: IncentiveDealRow[];
+};
+
+export type IncentiveTargetResponse = {
+  sdr_id: string;
+  period: "week" | "month" | "quarter";
+  target: number;
+  is_override: boolean;
 };
 
 export type RedAlertDeal = {

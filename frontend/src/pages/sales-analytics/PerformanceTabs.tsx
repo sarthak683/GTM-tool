@@ -62,6 +62,8 @@ import {
   type ScorecardMetric,
   type ScorecardResponse,
   type IncentiveResponse,
+  type IncentiveDealRow,
+  type IncentiveDealsResponse,
 } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
@@ -2378,27 +2380,129 @@ export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?
   );
 }
 
+// ── Incentive deals drilldown modal ────────────────────────────────────────
+
+function IncentiveDealsModal({
+  sdrName,
+  periodLabel,
+  loading,
+  error,
+  rows,
+  onClose,
+}: {
+  sdrName: string;
+  periodLabel: string;
+  loading: boolean;
+  error: string | null;
+  rows: IncentiveDealRow[];
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(15,26,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(4px)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(860px, 100%)", maxHeight: "86vh", background: "#fff", borderRadius: 18, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 40px 80px rgba(10,22,40,0.25)" }}
+      >
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7556cb", textTransform: "uppercase" }}>SQL — Drilldown · {periodLabel}</p>
+            <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
+              {sdrName}
+              {!loading && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>· {rows.length} deal{rows.length === 1 ? "" : "s"}</span>}
+            </h3>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {rows.length > 0 && (
+              <button
+                type="button"
+                onClick={() => dlCsv(
+                  `incentive-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
+                  ["Deal", "AE", "SDR", "Date of Conversion"],
+                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date)]),
+                )}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <button type="button" onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, background: "#f4f6fa", border: "1px solid #e0e6ef", color: "#5d6f84", fontSize: 18, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center" }}>×</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {loading && (
+            <div style={{ padding: 40, textAlign: "center", color: "#aab4c2" }}>Loading…</div>
+          )}
+          {error && !loading && (
+            <div style={{ padding: 40, textAlign: "center", color: "#c0392b" }}>{error}</div>
+          )}
+          {!loading && !error && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
+                  {["Deal", "AE", "SDR", "Date of Conversion"].map((h) => (
+                    <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.deal_id}-${r.source}`} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
+                    <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1d2b3a" }}>{r.deal_name || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.ae_name || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.sdr_name || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(r.date)}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={4} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Incentive tab ──────────────────────────────────────────────────────────
 
 function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFilterScope }) {
+  const { isAdmin } = useAuth();
   const [data, setData] = useState<IncentiveResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [period, setPeriod] = useState<"week" | "month" | "quarter">("month");
+  const [openSdr, setOpenSdr] = useState<{ sdr_id: string; sdr_name: string } | null>(null);
+  const [dealsData, setDealsData] = useState<IncentiveDealsResponse | null>(null);
+  const [dealsLoading, setDealsLoading] = useState(false);
+  const [dealsError, setDealsError] = useState<string | null>(null);
+  const [editingSdrId, setEditingSdrId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [savingSdrId, setSavingSdrId] = useState<string | null>(null);
+  const [targetError, setTargetError] = useState<string | null>(null);
 
-  // /performance/incentives only takes an `anchor` date — it always reports a
-  // whole calendar period, so the one dimension of the global bar it can honour
-  // is WHICH period. An explicit custom end date anchors it; the day-window
-  // presets are deliberately ignored, since anchoring "7 days ago" would silently
-  // report the previous month whenever the window straddles a month boundary.
+  // /performance/incentives reports a whole calendar period (week/month/quarter,
+  // chosen below) anchored at a single date — it doesn't support the global bar's
+  // arbitrary day-window/custom-range filters. An explicit custom end date still
+  // anchors which week/month/quarter is shown; the day-window presets are
+  // deliberately ignored, since anchoring "7 days ago" would silently report the
+  // wrong period whenever the window straddles a period boundary.
   const anchor = filters.toDate;
-  const { refreshNonce } = filters;
+  const { refreshNonce, repIds } = filters;
+  const repIdsKey = repIds.join(",");
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
-      .getIncentives({ anchor })
+      .getIncentives({ period, anchor, repIds })
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -2412,27 +2516,83 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
     return () => {
       cancelled = true;
     };
-  }, [anchor, refreshNonce]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, anchor, refreshNonce, repIdsKey]);
 
-  const target = data?.target ?? 0;
+  // Admin-only: save a per-SDR target override for the active period. `target:
+  // null` clears the override, reverting the row to the workspace base target.
+  // The backend 403s this for non-admins — isAdmin only controls whether the
+  // edit UI is offered, it isn't the enforcement.
+  const saveTarget = (sdrId: string, target: number | null) => {
+    setSavingSdrId(sdrId);
+    setTargetError(null);
+    performanceApi
+      .setIncentiveTarget(sdrId, { period, target })
+      .then((res) => {
+        setData((prev) =>
+          prev
+            ? { ...prev, rows: prev.rows.map((r) => (r.sdr_id === sdrId ? { ...r, target: res.target, attainment: res.target ? r.sql_total / res.target : null } : r)) }
+            : prev,
+        );
+        setEditingSdrId(null);
+      })
+      .catch((e: Error) => setTargetError(e.message))
+      .finally(() => setSavingSdrId(null));
+  };
+
+  useEffect(() => {
+    if (!openSdr) return;
+    let cancelled = false;
+    setDealsLoading(true);
+    setDealsError(null);
+    performanceApi
+      .getIncentiveDeals({ sdr_id: openSdr.sdr_id, period, anchor })
+      .then((payload) => {
+        if (!cancelled) setDealsData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setDealsError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setDealsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openSdr, period, anchor]);
+
+  const baseTarget = data?.target ?? 0;
   const totalSql = data?.rows.reduce((sum, r) => sum + r.sql_total, 0) ?? 0;
   const hitting = data?.rows.filter((r) => (r.attainment ?? 0) >= 1).length ?? 0;
+  const gridCols = isAdmin
+    ? "minmax(140px, 1.1fr) 90px 90px 90px 1.2fr 110px 100px"
+    : "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px";
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
         title="SDR Incentive — SQL Target"
-        subtitle={`${data?.period_label ?? "…"} · target ${target}`}
         action={
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <SegmentedControl
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { value: "week", label: "Week" },
+                { value: "month", label: "Month" },
+                { value: "quarter", label: "Quarter" },
+              ]}
+            />
             <Pill tone="blue"><Trophy size={12} /> {data?.period_label}</Pill>
             <Pill tone="green"><CheckCircle2 size={12} /> {hitting}/{data?.rows.length ?? 0} on target</Pill>
-            <Pill tone="amber"><Medal size={12} /> {totalSql} total SQL</Pill>
+            <Pill tone="amber"><Medal size={12} /> {totalSql} total</Pill>
           </div>
         }
       >
         {loading && <Loading />}
         {error && <ErrorBanner message={error} />}
+        {targetError && <ErrorBanner message={targetError} />}
         {data && data.rows.length === 0 && (
           <div style={{ padding: 24, border: `1px dashed ${PALETTE.hairline}`, borderRadius: 14, background: "#fafcff", textAlign: "center", color: PALETTE.muted, fontSize: 13 }}>
             No SDRs found yet. Add users with the SDR role to see the incentive board.
@@ -2440,28 +2600,42 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
         )}
         {data && data.rows.length > 0 && (
           <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-            <div style={{ display: "grid", gap: 10, minWidth: 760 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
+            <div style={{ display: "grid", gap: 10, minWidth: isAdmin ? 840 : 760 }}>
+              <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
                 <span>Rep</span>
                 <span style={{ textAlign: "right" }}>Direct SQL</span>
                 <span style={{ textAlign: "right" }}>Converted</span>
-                <span style={{ textAlign: "right" }}>Total SQL</span>
+                <span style={{ textAlign: "right" }}>Total</span>
                 <span>Progress vs target</span>
+                {isAdmin && <span style={{ textAlign: "right" }}>Target</span>}
                 <span style={{ textAlign: "right" }}>Attainment</span>
               </div>
               {data.rows.map((row) => {
+                const rowTarget = row.target;
                 const attainment = row.attainment ?? 0;
-                const pct = target > 0 ? Math.min((row.sql_total / target) * 100, 100) : 0;
+                const pct = rowTarget > 0 ? Math.min((row.sql_total / rowTarget) * 100, 100) : 0;
                 const rag = attainment >= 1 ? "green" : attainment >= 0.7 ? "amber" : "red";
                 const tint = RAG_TINT[rag];
+                const isEditing = editingSdrId === row.sdr_id;
+                const isOverride = rowTarget !== baseTarget;
+                const isSaving = savingSdrId === row.sdr_id;
                 return (
                   <div
                     key={row.sdr_id}
-                    style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, border: `1px solid ${PALETTE.hairline}`, background: "#fff" }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name });
+                      }
+                    }}
+                    style={{ display: "grid", gridTemplateColumns: gridCols, gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, border: `1px solid ${PALETTE.hairline}`, background: "#fff", cursor: "pointer" }}
                   >
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 800, color: PALETTE.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.sdr_name}</div>
-                      <div style={{ fontSize: 11, color: PALETTE.subtle, marginTop: 2 }}>{row.sql_total >= target ? "Target hit" : `${target - row.sql_total} to go`}</div>
+                      <div style={{ fontSize: 11, color: PALETTE.subtle, marginTop: 2 }}>{row.sql_total >= rowTarget ? "Target hit" : `${rowTarget - row.sql_total} to go`}</div>
                     </div>
                     <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.direct_sql}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.converted}</span>
@@ -2470,8 +2644,67 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
                       <div style={{ flex: 1, height: 10, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
                         <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: tint.dot }} />
                       </div>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: PALETTE.muted, width: 34, textAlign: "right" }}>{Math.round(pct)}%</span>
                     </div>
+                    {isAdmin && (
+                      <div onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
+                        {isEditing ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                            <input
+                              autoFocus
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  const v = Number(editValue);
+                                  if (Number.isFinite(v) && v >= 0) saveTarget(row.sdr_id, v);
+                                } else if (e.key === "Escape") {
+                                  setEditingSdrId(null);
+                                }
+                              }}
+                              disabled={isSaving}
+                              style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: `1px solid ${PALETTE.hairline}`, fontSize: 13, textAlign: "right" }}
+                            />
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={() => {
+                                const v = Number(editValue);
+                                if (Number.isFinite(v) && v >= 0) saveTarget(row.sdr_id, v);
+                              }}
+                              style={{ padding: "3px 8px", borderRadius: 6, border: "none", background: "#1d4ed8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                            >
+                              {isSaving ? "…" : "Save"}
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSdrId(row.sdr_id);
+                                setEditValue(String(rowTarget));
+                              }}
+                              title="Click to set a target for this rep"
+                              style={{ padding: "2px 8px", borderRadius: 6, border: `1px dashed ${PALETTE.hairline}`, background: "transparent", fontSize: 13, fontWeight: 700, color: PALETTE.text, cursor: "pointer" }}
+                            >
+                              {rowTarget}
+                            </button>
+                            {isOverride && (
+                              <button
+                                type="button"
+                                onClick={() => saveTarget(row.sdr_id, null)}
+                                style={{ padding: 0, border: "none", background: "transparent", fontSize: 10, fontWeight: 600, color: "#1d4ed8", cursor: "pointer" }}
+                              >
+                                Reset
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div style={{ textAlign: "right" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, background: tint.bg, border: `1px solid ${tint.border}`, color: tint.text, fontSize: 11, fontWeight: 800 }}>
                         <span style={{ width: 6, height: 6, borderRadius: 999, background: tint.dot }} />
@@ -2485,6 +2718,20 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
           </div>
         )}
       </Panel>
+      {openSdr && (
+        <IncentiveDealsModal
+          sdrName={openSdr.sdr_name}
+          periodLabel={dealsData?.period_label ?? data?.period_label ?? "…"}
+          loading={dealsLoading}
+          error={dealsError}
+          rows={dealsData?.rows ?? []}
+          onClose={() => {
+            setOpenSdr(null);
+            setDealsData(null);
+            setDealsError(null);
+          }}
+        />
+      )}
     </div>
   );
 }

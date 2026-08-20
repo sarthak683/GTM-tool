@@ -55,6 +55,13 @@ def pod_rep_emails(pod_key: str) -> list[str]:
     return [r["email"].lower() for r in pod["reps"]] if pod else []
 
 
+def all_pod_rep_emails() -> set[str]:
+    """Every rep email across every pod — the roster allowlist for surfaces
+    that must show only current pod members, not every DB row with a matching
+    role (stale/test accounts don't belong to a pod and get filtered out)."""
+    return {r["email"].lower() for pod in POD_DEFINITIONS.values() for r in pod["reps"]}
+
+
 def pod_ae_emails(pod_key: str) -> list[str]:
     pod = get_pod(pod_key)
     return [e.lower() for e in pod.get("ae_emails", [])] if pod else []

@@ -731,7 +731,7 @@ async def get_leaderboard(
 class IncentiveRow(BaseModel):
     sdr_id: str
     sdr_name: str
-    direct_sql: int  # Output-section Direct SQL bucket (demo_scheduled + VP/SVP/Chief booked)
+    direct_sql: int  # deals that reached the demo_scheduled milestone in-period with a VP/SVP/Chief meeting
     converted: int   # deals that moved demo_done → qualified_lead within the period
     sql_total: int   # union of the two, deduped by deal id
     target: float    # monthly SQL target for the SDR role
@@ -750,60 +750,91 @@ class IncentiveResponse(BaseModel):
 async def get_incentives(
     session: DBSession,
     current_user: CurrentUser,
+    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    rep_id: Annotated[
+        list[UUID],
+        Query(description="Page's active rep filter — e.g. the pod buttons, which set this to a pod's rep ids. Repeatable; empty means all pod SDRs."),
+    ] = [],
 ):
     """Per-SDR SQL leaderboard for the Incentive view.
 
     SQL = (Direct SQL bucket) + (deals that moved demo_done → qualified_lead in
     the period), unioned and deduped by deal id so the two sources never
-    double-count the same deal. Target defaults to 7/month and is overridable
-    via analytics_settings.monthly_targets.sdr.qualified_leads.
+    double-count the same deal. The target is a flat per-window figure from
+    analytics_settings.incentive_targets (week=2, month=7, quarter=21 by
+    default) — NOT prorated — with an optional per-SDR override in
+    incentive_targets.per_rep[sdr_id][period], settable only by admins via
+    PUT /incentives/targets/{sdr_id}.
+
+    The roster is scoped to POD_DEFINITIONS (app.core.pods) on top of
+    role == "sdr" — a stale/test account that still carries the sdr role but
+    isn't on either pod roster is filtered out. `rep_id` narrows further to a
+    specific pod (or any rep subset) — the same param the page's POD buttons
+    already populate via the shared rep filter.
     """
     from sqlalchemy import func
 
+    from app.core.pods import all_pod_rep_emails
     from app.models.company import Company
+    from app.models.company_stage_milestone import CompanyStageMilestone
     from app.models.deal import Deal
     from app.models.deal_stage_history import DealStageHistory
-    from app.models.meeting import Meeting
 
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period("month", anchor=anchor, tz_name=settings.get("workspace_timezone"))
-    target = float(settings.get("monthly_targets", {}).get("sdr", {}).get("qualified_leads", 7) or 7)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    incentive_targets = settings.get("incentive_targets") or {}
+    base_target = float(incentive_targets.get(period, {"week": 2, "month": 7, "quarter": 21}[period]))
+    per_rep_targets = incentive_targets.get("per_rep") or {}
 
+    roster_emails = all_pod_rep_emails()
     sdr_users = (await session.execute(
         select(User).where(User.is_active == True, User.role == "sdr")  # noqa: E712
     )).scalars().all()
+    sdr_users = [u for u in sdr_users if (u.email or "").strip().lower() in roster_emails]
+    filter_rep_ids = [r for r in rep_id if r]
+    if filter_rep_ids:
+        sdr_users = [u for u in sdr_users if u.id in filter_rep_ids]
     sdr_ids = {u.id for u in sdr_users}
 
-    # Direct SQL bucket — mirrors the Output-section definition in analytics.py:
-    # demo_scheduled deals with a VP/SVP/Chief meeting booked, attributed to the
-    # deal's SDR (and the assigned AE when they are themselves an SDR), deduped
-    # per rep by deal id.
+    # Direct SQL bucket — mirrors the "Meetings Booked" drilldown definition in
+    # analytics.py: any deal that *ever reached* the demo_scheduled milestone
+    # within the period with a VP/SVP/Chief meeting, attributed to the deal's
+    # SDR (and the assigned AE when they are themselves an SDR). This is a
+    # historical count — it does not require the deal to still be sitting in
+    # demo_scheduled today, so a deal that has since converted still counts
+    # here as well as in "converted" (the sql_total union dedupes it).
     _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
     direct_rows = (await session.execute(
-        select(Deal.id, Deal.assigned_to_id, Deal.sdr_id)
-        .join(Meeting, Meeting.deal_id == Deal.id)
+        select(CompanyStageMilestone.deal_id, Deal.assigned_to_id, Deal.sdr_id)
+        .join(Deal, CompanyStageMilestone.deal_id == Deal.id)
         .where(
-            Deal.stage == "demo_scheduled",
+            CompanyStageMilestone.milestone_key == "demo_scheduled",
+            CompanyStageMilestone.first_reached_at >= p.start,
+            CompanyStageMilestone.first_reached_at < p.end,
             Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
-            Meeting.scheduled_at.is_not(None),
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
         )
     )).all()
     direct_sql_deals: dict[UUID, set[UUID]] = {}
     seen_direct: set[tuple[UUID, UUID]] = set()
     for r in direct_rows:
+        if r.deal_id is None:
+            continue
         for uid in (r.sdr_id, r.assigned_to_id):
             if not uid or uid not in sdr_ids:
                 continue
-            key = (uid, r.id)
+            key = (uid, r.deal_id)
             if key in seen_direct:
                 continue
             seen_direct.add(key)
-            direct_sql_deals.setdefault(uid, set()).add(r.id)
+            direct_sql_deals.setdefault(uid, set()).add(r.deal_id)
 
     # Converted — deals that entered qualified_lead within the month (the
     # "moved from demo_done to Qualified Lead" signal). Attribution matches the
     # dashboard's demos_converted: deal.sdr_id takes priority, then company.sdr_id.
+    # Same live-population guard as Direct SQL: live "deal"-pipeline rows only.
     conv_hist = (await session.execute(
         select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
             func.lower(DealStageHistory.to_stage) == "qualified_lead",
@@ -812,12 +843,18 @@ async def get_incentives(
         )
     )).all()
     conv_deal_ids = {r.deal_id for r in conv_hist}
+    conv_deal_company: dict[UUID, UUID | None] = {}
     conv_deal_sdr: dict[UUID, UUID | None] = {}
     conv_company_sdr: dict[UUID, UUID | None] = {}
     if conv_deal_ids:
         deal_rows = (await session.execute(
-            select(Deal.id, Deal.company_id, Deal.sdr_id).where(Deal.id.in_(conv_deal_ids))
+            select(Deal.id, Deal.company_id, Deal.sdr_id).where(
+                Deal.id.in_(conv_deal_ids),
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
+            )
         )).all()
+        conv_deal_ids = {r.id for r in deal_rows}
         conv_deal_company = {r.id: r.company_id for r in deal_rows}
         conv_deal_sdr = {r.id: r.sdr_id for r in deal_rows}
         company_ids = {cid for cid in conv_deal_company.values() if cid}
@@ -839,6 +876,8 @@ async def get_incentives(
         direct_set = direct_sql_deals.get(u.id, set())
         conv_set = converted_deals.get(u.id, set())
         sql_total = len(direct_set | conv_set)
+        rep_override = (per_rep_targets.get(str(u.id)) or {}).get(period)
+        target = float(rep_override) if rep_override is not None else base_target
         rows.append(IncentiveRow(
             sdr_id=str(u.id),
             sdr_name=u.name,
@@ -854,8 +893,228 @@ async def get_incentives(
         period_label=p.label,
         period_start=p.start,
         period_end=p.end,
-        target=target,
+        target=base_target,
         rows=rows,
+    )
+
+
+class IncentiveDealRow(BaseModel):
+    deal_id: str
+    deal_name: str
+    ae_name: str
+    sdr_name: str
+    date: Optional[str]  # meeting date for direct_sql rows, conversion date for converted rows
+    source: Literal["direct_sql", "converted"]
+
+
+class IncentiveDealsResponse(BaseModel):
+    sdr_id: str
+    sdr_name: str
+    period_label: str
+    rows: list[IncentiveDealRow]
+
+
+@router.get("/incentives/deals", response_model=IncentiveDealsResponse)
+async def get_incentive_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    sdr_id: Annotated[UUID, Query()],
+    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+):
+    """Deal-level drilldown behind one SDR's Incentive row.
+
+    Same population + attribution rules as get_incentives, but returns the
+    individual deals instead of counts, each tagged with which bucket it came
+    from. A deal that qualifies for both buckets appears twice (once per
+    source) — the incentive board's sql_total already dedupes for the count,
+    this endpoint is for "show me why this number is what it is."
+    """
+    from sqlalchemy import func, or_
+    from sqlalchemy.orm import aliased
+
+    from app.models.company import Company
+    from app.models.company_stage_milestone import CompanyStageMilestone
+    from app.models.deal import Deal
+    from app.models.deal_stage_history import DealStageHistory
+    from app.models.meeting import Meeting
+
+    settings = await get_analytics_settings(session)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+
+    sdr = (await session.execute(select(User).where(User.id == sdr_id))).scalar_one_or_none()
+    if sdr is None:
+        raise HTTPException(status_code=404, detail="SDR not found")
+
+    AEUser = aliased(User)
+    SDRUser = aliased(User)
+    _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
+    rows: list[IncentiveDealRow] = []
+
+    # Direct SQL — mirrors get_incentives' direct_sql bucket.
+    direct_hits = (await session.execute(
+        select(
+            CompanyStageMilestone.deal_id,
+            Deal.name.label("deal_name"),
+            AEUser.name.label("ae_name"),
+            SDRUser.name.label("sdr_name"),
+            Meeting.scheduled_at,
+        )
+        .select_from(CompanyStageMilestone)
+        .join(Deal, CompanyStageMilestone.deal_id == Deal.id)
+        .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+        .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+        .outerjoin(Meeting, Meeting.deal_id == CompanyStageMilestone.deal_id)
+        .where(
+            CompanyStageMilestone.milestone_key == "demo_scheduled",
+            CompanyStageMilestone.first_reached_at >= p.start,
+            CompanyStageMilestone.first_reached_at < p.end,
+            Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
+            or_(Deal.sdr_id == sdr_id, Deal.assigned_to_id == sdr_id),
+        )
+    )).all()
+    latest_meeting_by_deal: dict[UUID, datetime] = {}
+    for r in direct_hits:
+        if r.scheduled_at is not None:
+            cur = latest_meeting_by_deal.get(r.deal_id)
+            if cur is None or r.scheduled_at > cur:
+                latest_meeting_by_deal[r.deal_id] = r.scheduled_at
+    seen_direct: set[UUID] = set()
+    for r in direct_hits:
+        if r.deal_id is None or r.deal_id in seen_direct:
+            continue
+        seen_direct.add(r.deal_id)
+        sat = latest_meeting_by_deal.get(r.deal_id)
+        rows.append(IncentiveDealRow(
+            deal_id=str(r.deal_id),
+            deal_name=r.deal_name or "",
+            ae_name=r.ae_name or "Unassigned",
+            sdr_name=r.sdr_name or "",
+            date=sat.date().isoformat() if sat else None,
+            source="direct_sql",
+        ))
+
+    # Converted — mirrors get_incentives' converted bucket (deal.sdr_id takes
+    # priority, then company.sdr_id).
+    conv_hist = (await session.execute(
+        select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+            func.lower(DealStageHistory.to_stage) == "qualified_lead",
+            DealStageHistory.changed_at >= p.start,
+            DealStageHistory.changed_at < p.end,
+        )
+    )).all()
+    conv_deal_ids = {r.deal_id for r in conv_hist}
+    conv_changed_at = {r.deal_id: r.changed_at for r in conv_hist}
+    if conv_deal_ids:
+        deal_rows = (await session.execute(
+            select(
+                Deal.id,
+                Deal.name.label("deal_name"),
+                Deal.company_id,
+                Deal.sdr_id,
+                AEUser.name.label("ae_name"),
+                SDRUser.name.label("sdr_name"),
+            )
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+            .where(
+                Deal.id.in_(conv_deal_ids),
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
+            )
+        )).all()
+        company_ids = {r.company_id for r in deal_rows if r.company_id}
+        company_sdr: dict[UUID, tuple[UUID | None, str | None]] = {}
+        if company_ids:
+            comp_rows = (await session.execute(
+                select(Company.id, Company.sdr_id, SDRUser.name)
+                .outerjoin(SDRUser, Company.sdr_id == SDRUser.id)
+                .where(Company.id.in_(company_ids))
+            )).all()
+            company_sdr = {r.id: (r.sdr_id, r[2]) for r in comp_rows}
+        for r in deal_rows:
+            effective_sdr_id = r.sdr_id
+            effective_sdr_name = r.sdr_name
+            if not effective_sdr_id and r.company_id in company_sdr:
+                effective_sdr_id, effective_sdr_name = company_sdr[r.company_id]
+            if effective_sdr_id != sdr_id:
+                continue
+            changed_at = conv_changed_at.get(r.id)
+            rows.append(IncentiveDealRow(
+                deal_id=str(r.id),
+                deal_name=r.deal_name or "",
+                ae_name=r.ae_name or "Unassigned",
+                sdr_name=effective_sdr_name or sdr.name,
+                date=changed_at.date().isoformat() if changed_at else None,
+                source="converted",
+            ))
+
+    return IncentiveDealsResponse(
+        sdr_id=str(sdr_id),
+        sdr_name=sdr.name,
+        period_label=p.label,
+        rows=rows,
+    )
+
+
+class IncentiveTargetPatch(BaseModel):
+    period: Literal["week", "month", "quarter"]
+    # None clears the override for that period, reverting the SDR to the
+    # workspace base target (incentive_targets.week/month/quarter).
+    target: Optional[float] = None
+
+
+class IncentiveTargetResponse(BaseModel):
+    sdr_id: str
+    period: Literal["week", "month", "quarter"]
+    target: float
+    is_override: bool  # false means this SDR is back on the workspace base target
+
+
+@router.put("/incentives/targets/{sdr_id}", response_model=IncentiveTargetResponse)
+async def set_incentive_target(
+    sdr_id: UUID,
+    patch: IncentiveTargetPatch,
+    session: DBSession,
+    current_user: AdminUser,
+):
+    """Admin-only: set (or clear) one SDR's SQL target for one window.
+
+    Every other viewer only ever reads this value through GET /incentives —
+    AdminUser on this route is what keeps the column editable for admins and
+    read-only for everyone else.
+    """
+    sdr = (await session.execute(select(User).where(User.id == sdr_id, User.role == "sdr"))).scalar_one_or_none()
+    if sdr is None:
+        raise HTTPException(status_code=404, detail="SDR not found")
+
+    settings = await get_analytics_settings(session)
+    incentive_targets = dict(settings.get("incentive_targets") or {})
+    per_rep = {k: dict(v) for k, v in (incentive_targets.get("per_rep") or {}).items()}
+    rep_key = str(sdr_id)
+    rep_overrides = dict(per_rep.get(rep_key) or {})
+    if patch.target is None:
+        rep_overrides.pop(patch.period, None)
+    else:
+        rep_overrides[patch.period] = patch.target
+    if rep_overrides:
+        per_rep[rep_key] = rep_overrides
+    else:
+        per_rep.pop(rep_key, None)
+    incentive_targets["per_rep"] = per_rep
+    updated_settings = await update_analytics_settings(session, {"incentive_targets": incentive_targets})
+
+    updated_targets = updated_settings.get("incentive_targets") or {}
+    base_target = float(updated_targets.get(patch.period, {"week": 2, "month": 7, "quarter": 21}[patch.period]))
+    rep_override = (updated_targets.get("per_rep", {}).get(rep_key) or {}).get(patch.period)
+    target = float(rep_override) if rep_override is not None else base_target
+    return IncentiveTargetResponse(
+        sdr_id=rep_key,
+        period=patch.period,
+        target=target,
+        is_override=rep_override is not None,
     )
 
 
