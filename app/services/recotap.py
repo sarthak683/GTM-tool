@@ -11,10 +11,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.recotap import RecotapClient
@@ -29,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 _ICP_FIT_LABELS = ["Strong fit", "Good fit", "Moderate fit", "Low fit"]
 
+# How many successful account pushes push_crm_status() reports individually.
+# Failures are never sampled — they are the reason anyone reads `results`.
+_RESULT_SAMPLE = 50
+
 
 def normalize_domain(value: Optional[str]) -> str:
     d = (value or "").strip().lower()
@@ -38,6 +44,18 @@ def normalize_domain(value: Optional[str]) -> str:
     if d.startswith("www."):
         d = d[4:]
     return d
+
+
+def normalize_company_name(value: Optional[str]) -> str:
+    """Case- and whitespace-insensitive company name, for the last-resort link.
+
+    Deliberately conservative — lowercase, collapsed whitespace, trailing
+    punctuation removed, and nothing else. It does NOT strip Inc/Ltd/GmbH or
+    fuzzy-match, because a wrong link puts one account's buying intent on a
+    different account, which is worse than no link at all. `link_recotap_accounts`
+    additionally refuses any name that more than one live company answers to.
+    """
+    return re.sub(r"\s+", " ", (value or "").strip().lower()).strip(" .,")
 
 
 # Domains we must never push to Recotap. Many CRM accounts (esp. ClickUp imports)
@@ -89,6 +107,22 @@ def _engagement_for(score: Optional[int]) -> Optional[str]:
     return "Cold"
 
 
+def _external_company_id(external_id: Optional[str], live_ids: set):
+    """Beacon company UUID out of Recotap's ``externalId``, or None.
+
+    Recotap echoes back whatever string we sent, so this has to tolerate junk
+    and stale ids for companies that have since been deleted.
+    """
+    raw = (external_id or "").strip()
+    if not raw:
+        return None
+    try:
+        cid = UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return cid if cid in live_ids else None
+
+
 def _to_dt(value) -> Optional[datetime]:
     if not value:
         return None
@@ -105,6 +139,141 @@ async def _get_or_create_row(session: AsyncSession, domain: str) -> RecotapAccou
     if row is None:
         row = RecotapAccount(domain=domain)
         session.add(row)
+    return row
+
+
+async def link_recotap_accounts(session: AsyncSession) -> dict[str, int]:
+    """Attach every unlinked ``recotap_accounts`` row to its Beacon company.
+
+    THE join between the two systems. It used to be a single expression —
+    ``company_by_domain.get(domain)`` inside ``pull_into_db`` — which fails the
+    moment Recotap and Beacon disagree about an account's domain, and they
+    disagree often: Recotap holds Ironclad as ``ironcladapp.com`` and Manhattan
+    Associates as ``manh.com`` while the CRM holds ``ironclad.com`` and
+    ``manhattanassociates.com``. In production that stranded 116 of 605 Recotap
+    accounts with ``company_id IS NULL``, so their intent — including an
+    Opportunity-stage account and the highest-scoring account in the tenant —
+    could not appear anywhere in Account Sourcing.
+
+    Three keys, most authoritative first:
+
+    1. ``externalId`` — the Beacon company UUID that ``_push_one`` sends on every
+       push and ``pull_into_db`` reads back on every pull. Domain-independent, so
+       once an account has round-tripped the link survives either side renaming
+       or correcting its domain. This is the key the integration should settle on.
+    2. Normalized domain.
+    3. Exact normalized company name, and only when exactly ONE live company
+       answers to it. This is the fallback that recovers the accounts the first
+       two cannot, and the ambiguity guard is what keeps it safe.
+
+    Runs over ALL unlinked rows on every sync rather than only the rows the pull
+    returned. ``pull_into_db`` is incremental, so it re-links only what Recotap
+    reported as changed; a company created in Beacon *after* its Recotap row was
+    pulled would otherwise stay orphaned until Recotap happened to touch that
+    account again.
+    """
+    rows = (
+        await session.execute(
+            select(RecotapAccount).where(RecotapAccount.company_id.is_(None))
+        )
+    ).scalars().all()
+    out = {"candidates": len(rows), "by_external_id": 0, "by_domain": 0, "by_name": 0, "unlinked": 0}
+    if not rows:
+        return out
+
+    companies = (
+        await session.execute(
+            select(Company.id, Company.domain, Company.name).where(Company.deleted_at.is_(None))
+        )
+    ).all()
+    live_ids: set = set()
+    by_domain: dict[str, object] = {}
+    name_hits: dict[str, list] = {}
+    for cid, domain_raw, name in companies:
+        live_ids.add(cid)
+        d = normalize_domain(domain_raw)
+        # First writer wins: two companies sharing a domain is a dedup problem,
+        # not a linking decision to make here.
+        if d and d not in by_domain:
+            by_domain[d] = cid
+        n = normalize_company_name(name)
+        if n:
+            name_hits.setdefault(n, []).append(cid)
+
+    for row in rows:
+        cid = None
+        key = None
+        ext = (row.external_id or "").strip()
+        if ext:
+            try:
+                candidate = UUID(ext)
+            except (ValueError, AttributeError, TypeError):
+                candidate = None
+            if candidate is not None and candidate in live_ids:
+                cid, key = candidate, "by_external_id"
+        if cid is None:
+            hit = by_domain.get(normalize_domain(row.domain))
+            if hit is not None:
+                cid, key = hit, "by_domain"
+        if cid is None:
+            hits = name_hits.get(normalize_company_name(row.name)) or []
+            # Exactly one, or we do not guess. Three prod rows all named
+            # "Northstar Technologies" would otherwise race for one company.
+            if len(hits) == 1:
+                cid, key = hits[0], "by_name"
+        if cid is None:
+            out["unlinked"] += 1
+            continue
+        row.company_id = cid
+        row.updated_at = datetime.utcnow()
+        out[key] += 1
+
+    await session.commit()
+    return out
+
+
+async def _row_for_company(
+    session: AsyncSession, company_id, domain: str, *, create: bool = True
+) -> Optional[RecotapAccount]:
+    """The ``recotap_accounts`` row that belongs to this company.
+
+    Keyed on ``company_id`` first and the domain only as a fallback. Looking up
+    by domain alone is what let one company own two rows: ``sync_crm_journey``
+    and ``_push_one`` both did ``_get_or_create_row(company.domain)``, so an
+    account Recotap already held under a different domain got a second,
+    signal-less row minted beside it under ours.
+    """
+    if company_id is not None:
+        owned = (
+            await session.execute(
+                select(RecotapAccount)
+                .where(RecotapAccount.company_id == company_id)
+                .order_by(
+                    # Prefer the row Recotap actually knows about, then the one
+                    # carrying signal, so we write onto the live account rather
+                    # than a stub sitting next to it.
+                    RecotapAccount.rtp_aid.is_(None),
+                    RecotapAccount.score.desc().nullslast(),
+                )
+            )
+        ).scalars().all()
+        for row in owned:
+            if row.domain == domain:
+                return row
+        if owned:
+            return owned[0]
+    if not create:
+        # dry_run must not write. _get_or_create_row() adds to the session, and
+        # any later commit on that session — the request's own, for an endpoint
+        # that dry-runs and then does something else — would persist rows for a
+        # push that never happened.
+        return (
+            await session.execute(
+                select(RecotapAccount).where(RecotapAccount.domain == domain)
+            )
+        ).scalar_one_or_none()
+    row = await _get_or_create_row(session, domain)
+    row.company_id = row.company_id or company_id
     return row
 
 
@@ -127,8 +296,13 @@ async def pull_into_db(session: AsyncSession, *, incremental: bool = True) -> di
     if incremental and settings_row is not None and isinstance(settings_row.sync_schedule_settings, dict):
         last_sync = settings_row.sync_schedule_settings.get("recotap_last_sync_at")
     accounts = await client.get_accounts(limit=100, last_sync=last_sync)
-    companies = (await session.execute(select(Company.id, Company.domain))).all()
+    companies = (
+        await session.execute(
+            select(Company.id, Company.domain).where(Company.deleted_at.is_(None))
+        )
+    ).all()
     company_by_domain = {normalize_domain(d): cid for cid, d in companies if d}
+    live_company_ids = {cid for cid, _ in companies}
     pulled = 0
     for a in accounts:
         domain = normalize_domain(a.get("domain"))
@@ -152,7 +326,15 @@ async def pull_into_db(session: AsyncSession, *, incremental: bool = True) -> di
         row.last_account_date = _to_dt(a.get("rtp_last_account_date"))
         row.raw = a
         row.source = "recotap"
-        row.company_id = company_by_domain.get(domain) or row.company_id
+        # externalId is the Beacon company UUID we sent on the push, so it beats
+        # the domain: it survives either side correcting an account's domain,
+        # which the domain-only join did not. Rows this leaves unlinked are
+        # picked up by link_recotap_accounts(), which also tries the name.
+        row.company_id = (
+            _external_company_id(row.external_id, live_company_ids)
+            or company_by_domain.get(domain)
+            or row.company_id
+        )
         row.pulled_at = datetime.utcnow()
         row.updated_at = datetime.utcnow()
         pulled += 1
@@ -236,26 +418,113 @@ def effective_journey_stage(row: RecotapAccount) -> tuple[Optional[str], Optiona
     return None, None
 
 
-async def signals_by_domain(session: AsyncSession, domains: list[str]) -> dict[str, RecotapAccountRead]:
-    """Return {normalized_domain: RecotapAccountRead} for the given domains —
-    used to enrich the Account Sourcing list/detail."""
-    norm = {normalize_domain(d) for d in domains if d}
-    if not norm:
+def _merge_rows(rows: list[RecotapAccount]) -> RecotapAccount:
+    """Collapse one company's ``recotap_accounts`` rows into a single view.
+
+    A company can legitimately carry more than one row — Recotap holds Manhattan
+    Associates as ``manh.com`` (score 52, Aware) while our own push created
+    ``manhattanassociates.com`` (score 0, no stage) — and picking either one
+    alone loses half the account: the domain-keyed lookup returned the stub and
+    the drawer showed no intent at all for an account Recotap had scored Warm.
+
+    Merged field by field on the same rule the columns already imply: the
+    strongest signal wins (max score, most advanced stage), and identity fields
+    take the first row that has one. The result is never persisted — it exists
+    to be read.
+    """
+    if len(rows) == 1:
+        return rows[0]
+    best = max(rows, key=lambda r: (r.score or 0, r.pulled_at or datetime.min))
+    merged = RecotapAccount(domain=best.domain, company_id=best.company_id)
+
+    def _first(attr):
+        for r in rows:
+            v = getattr(r, attr)
+            if v not in (None, ""):
+                return v
+        return None
+
+    def _max_int(attr):
+        vals = [getattr(r, attr) for r in rows if getattr(r, attr) is not None]
+        return max(vals) if vals else None
+
+    def _furthest(attr):
+        vals = [getattr(r, attr) for r in rows if getattr(r, attr) in RECOTAP_JOURNEY_STAGES]
+        return max(vals, key=RECOTAP_JOURNEY_STAGES.index) if vals else None
+
+    for attr in ("rtp_aid", "name", "external_id", "icp_fit", "hq_location", "tags", "raw"):
+        setattr(merged, attr, _first(attr))
+    for attr in ("score", "advertising_activity_score", "website_intent_score",
+                 "g2_intent_score", "bombora_intent_score"):
+        setattr(merged, attr, _max_int(attr))
+    merged.journey_stage = _furthest("journey_stage")
+    merged.crm_journey_stage = _furthest("crm_journey_stage")
+    # Re-derived rather than copied: engagement is a function of the score, and
+    # the merged score is not necessarily the score any single row carried.
+    merged.engagement = _engagement_for(merged.score)
+    dates = [r.last_account_date for r in rows if r.last_account_date]
+    merged.last_account_date = max(dates) if dates else None
+    merged.source = best.source
+    merged.pulled_at = max([r.pulled_at for r in rows if r.pulled_at], default=None)
+    return merged
+
+
+def _to_read(row: RecotapAccount) -> RecotapAccountRead:
+    read = RecotapAccountRead.model_validate(row)
+    stage, stage_source = effective_journey_stage(row)
+    # `journey_stage` on the read model is the EFFECTIVE stage so existing
+    # callers keep rendering something; the unmixed values travel alongside.
+    read.journey_stage = stage
+    read.journey_stage_source = stage_source
+    read.recotap_journey_stage = row.journey_stage
+    read.crm_journey_stage = row.crm_journey_stage
+    return read
+
+
+async def signals_by_company(
+    session: AsyncSession, companies: list[tuple]
+) -> dict:
+    """Return {company_id: RecotapAccountRead} for the given (id, domain) pairs.
+
+    Keyed on the company, not the domain. The domain-keyed version could only
+    ever find a signal when Recotap and Beacon spelled the account the same way,
+    so the 116 production accounts Recotap held under a different domain — among
+    them the Opportunity-stage one — rendered as "no Recotap data" on both the
+    list and the detail drawer. The domain is still passed and still matched, as
+    a fallback for a row that has not been linked yet.
+    """
+    ids = {cid for cid, _ in companies if cid is not None}
+    domains = {normalize_domain(d) for _, d in companies if d}
+    if not ids and not domains:
         return {}
+    clauses = []
+    if ids:
+        clauses.append(RecotapAccount.company_id.in_(ids))
+    if domains:
+        clauses.append(RecotapAccount.domain.in_(domains))
     rows = (
-        await session.execute(select(RecotapAccount).where(RecotapAccount.domain.in_(norm)))
+        await session.execute(
+            select(RecotapAccount).where(or_(*clauses) if len(clauses) > 1 else clauses[0])
+        )
     ).scalars().all()
-    out: dict[str, RecotapAccountRead] = {}
+
+    by_company: dict = {}
+    by_domain: dict[str, list] = {}
     for r in rows:
-        read = RecotapAccountRead.model_validate(r)
-        stage, stage_source = effective_journey_stage(r)
-        # `journey_stage` on the read model is the EFFECTIVE stage so existing
-        # callers keep rendering something; the unmixed values travel alongside.
-        read.journey_stage = stage
-        read.journey_stage_source = stage_source
-        read.recotap_journey_stage = r.journey_stage
-        read.crm_journey_stage = r.crm_journey_stage
-        out[r.domain] = read
+        if r.company_id is not None:
+            by_company.setdefault(r.company_id, []).append(r)
+        else:
+            by_domain.setdefault(r.domain, []).append(r)
+
+    out: dict = {}
+    for cid, domain in companies:
+        owned = list(by_company.get(cid) or [])
+        # An unlinked row matching this company's domain still belongs to it —
+        # link_recotap_accounts() will claim it on the next sync, and until then
+        # the UI should not pretend the signal does not exist.
+        owned += by_domain.get(normalize_domain(domain), []) if domain else []
+        if owned:
+            out[cid] = _to_read(_merge_rows(owned))
     return out
 
 
@@ -413,6 +682,29 @@ async def register_deal_stages(session: AsyncSession) -> dict:
         return {"status": "error", "error": str(exc)[:200]}
 
 
+async def _recotap_domain_by_company(session: AsyncSession) -> dict:
+    """{company_id: the domain Recotap already holds this account under}.
+
+    Only rows Recotap itself produced count — a row rtp_aid identifies. A row we
+    minted locally carries our own spelling, so treating it as authoritative
+    would just re-confirm the guess that caused the split in the first place.
+    Highest score breaks a tie, on the same "strongest signal is the real
+    account" rule `_merge_rows` uses.
+    """
+    rows = (
+        await session.execute(
+            select(RecotapAccount.company_id, RecotapAccount.domain, RecotapAccount.score)
+            .where(RecotapAccount.company_id.is_not(None), RecotapAccount.rtp_aid.is_not(None))
+            .order_by(RecotapAccount.score.desc().nullslast())
+        )
+    ).all()
+    out: dict = {}
+    for cid, domain, _score in rows:
+        if cid not in out and domain:
+            out[cid] = domain
+    return out
+
+
 async def _push_one(
     client: RecotapClient,
     session: AsyncSession,
@@ -429,11 +721,20 @@ async def _push_one(
     error-string parsing / separate PUT. When RECOTAP_CRM_STAGE_FIELD_KEY is set we
     send the stage as a structured custom field; otherwise we fall back to the
     legacy 'CRM: ...' tag. dry_run builds the payload without calling Recotap."""
+    # Resolved before the payload is built, because whether we may send an empty
+    # tag list depends on what this account already carries.
+    row = await _row_for_company(session, company.id, domain, create=not dry_run)
     acct: dict = {"domain": domain, "name": company.name, "externalId": str(company.id)}
     if field_key and stage_value:
         acct["customFields"] = {field_key: stage_value}
-    else:
-        acct["tags"] = [tag] if tag else []
+    elif tag:
+        acct["tags"] = [tag]
+    elif row is not None and row.tags:
+        # Only an account that HAS a CRM tag gets an empty list, to clear a stage
+        # it no longer holds. Sending `tags: []` for every stage-less account —
+        # which is what the old unconditional else did once accounts without a
+        # deal became pushable — would wipe tags Recotap holds from its own side.
+        acct["tags"] = []
 
     if dry_run:
         return {"domain": domain, "name": company.name, "status": "dry_run", "payload": acct}
@@ -449,7 +750,6 @@ async def _push_one(
         logger.warning("recotap push: status=%s domain=%s error=%s",
                        status, domain, str(item.get("error"))[:200])
 
-    row = await _get_or_create_row(session, domain)
     row.rtp_aid = rtp_aid or row.rtp_aid
     if "tags" in acct:
         row.tags = acct["tags"]
@@ -469,11 +769,24 @@ async def push_crm_status(
     company_ids: Optional[list] = None,
     dry_run: bool = False,
 ) -> dict:
-    """Push CRM deal-stage status to Recotap for every company with a mapped stage.
+    """Push every live Beacon account to Recotap, carrying its CRM deal stage.
+
     The stage is sent as a custom field when RECOTAP_CRM_STAGE_FIELD_KEY is set,
     else as the legacy 'CRM: ...' tag, via an upsert (POST create-or-update).
     `limit`/`company_ids` scope a test run; `dry_run=True` returns the payloads it
-    WOULD send WITHOUT calling Recotap (safe to run anywhere, key not required)."""
+    WOULD send WITHOUT calling Recotap (safe to run anywhere, key not required).
+
+    It used to push ONLY companies whose deals mapped to a stage, skipping the
+    rest with a bare `continue`. That is why 412 production accounts with a
+    perfectly valid domain had no Recotap row at all: 222 with no deal yet and
+    190 whose only deals sat in cold/nurture/on_hold/reprospect or a closed
+    stage. Those are precisely the accounts ABM intent is supposed to warm up —
+    an account we have not worked yet is the one where knowing it is reading our
+    ads matters most — and Recotap cannot score an account it has never been
+    told about. Since the push is also how our `externalId` reaches Recotap, the
+    skip additionally denied those accounts the one join key that survives a
+    domain disagreement.
+    """
     client = RecotapClient()
     if not dry_run and not client.configured():
         return {"configured": 0, "pushed": 0, "results": []}
@@ -489,43 +802,68 @@ async def push_crm_status(
     stages_by_company: dict = {}
     for cid, stage in deal_rows:
         stages_by_company.setdefault(cid, []).append(stage)
-    q = select(Company)
+    # Soft-deleted companies were being pushed too — select(Company) has no
+    # deleted_at guard of its own, so a trashed account kept being re-upserted
+    # into Recotap every night.
+    q = select(Company).where(Company.deleted_at.is_(None))
     if company_ids:
         q = q.where(Company.id.in_(company_ids))
     companies = (await session.execute(q)).scalars().all()
-    results = []
+    # Where Recotap ALREADY holds an account for this company, push to the domain
+    # Recotap knows it by. POST /accounts upserts on domain, so sending our own
+    # spelling for an account they hold as manh.com creates a SECOND account in
+    # their tenant rather than updating the first — which is exactly how prod
+    # ended up with manhattanassociates.com (score 0, no stage) sitting beside
+    # manh.com (score 52, Aware) for one company, splitting its signal in two.
+    push_domain_by_company = await _recotap_domain_by_company(session)
+    results: list[dict] = []
+    dropped_ok_results = 0
     pushed = 0
     skipped_invalid = 0
-    for company in companies:
-        stage_list = stages_by_company.get(company.id, [])
-        tag = crm_status_tag(stage_list)
-        stage_value = crm_stage_value(stage_list)
-        if not tag and not stage_value:
-            continue
-        domain = normalize_domain(company.domain)
-        if not is_pushable_domain(domain):
-            # Placeholder/import-artifact domain (e.g. "*.unknown", numeric IDs) —
-            # never push it; it would create a junk account in Recotap's tenant.
-            skipped_invalid += 1
-            continue
-        try:
-            outcome = await _push_one(
-                client, session, company, domain,
-                tag=tag, stage_value=stage_value, field_key=field_key, dry_run=dry_run,
-            )
-        except Exception as exc:  # one account's network/API failure shouldn't abort the batch
-            outcome = {"domain": domain, "name": company.name, "status": "error", "error": str(exc)[:160]}
-        results.append(outcome)
-        if outcome.get("status") in ("created", "updated", "dry_run"):
-            pushed += 1
-        if limit and pushed >= limit:
-            break
+    async with AsyncExitStack() as stack:
+        if not dry_run:
+            # One connection for the whole run. At 70 accounts a night the
+            # per-call AsyncClient was merely wasteful; at 1,155 it is a TLS
+            # handshake per account and most of the job's wall clock.
+            await stack.enter_async_context(client.session())
+        for company in companies:
+            stage_list = stages_by_company.get(company.id, [])
+            tag = crm_status_tag(stage_list)
+            stage_value = crm_stage_value(stage_list)
+            domain = push_domain_by_company.get(company.id) or normalize_domain(company.domain)
+            if not is_pushable_domain(domain):
+                # Placeholder/import-artifact domain (e.g. "*.unknown", numeric IDs) —
+                # never push it; it would create a junk account in Recotap's tenant.
+                skipped_invalid += 1
+                continue
+            try:
+                outcome = await _push_one(
+                    client, session, company, domain,
+                    tag=tag, stage_value=stage_value, field_key=field_key, dry_run=dry_run,
+                )
+            except Exception as exc:  # one account's network/API failure shouldn't abort the batch
+                outcome = {"domain": domain, "name": company.name, "status": "error", "error": str(exc)[:160]}
+            ok = outcome.get("status") in ("created", "updated", "dry_run")
+            # Every failure is kept; successes are capped. The full list is now
+            # 1,155 dicts, which is a large Celery result and a large HTTP
+            # response for information nobody reads when the run went fine.
+            # `results_truncated` says so rather than letting the list quietly
+            # look complete.
+            if not ok or len([r for r in results if r.get("status") in ("created", "updated", "dry_run")]) < _RESULT_SAMPLE:
+                results.append(outcome)
+            elif ok:
+                dropped_ok_results += 1
+            if ok:
+                pushed += 1
+            if limit and pushed >= limit:
+                break
     if not dry_run:
         await session.commit()
     return {
         "configured": int(client.configured()),
         "pushed": pushed,
         "skipped_invalid_domain": skipped_invalid,
+        "results_truncated": dropped_ok_results,
         "dry_run": dry_run,
         "field_key": field_key,
         # True when the stage went as a structured custom field rather than the
@@ -610,31 +948,56 @@ async def sync_crm_journey(session: AsyncSession) -> dict[str, int]:
     set_count = 0
     cleared = 0
     skipped_invalid = 0
+    # Every row a company owns, so the CRM stage is written to exactly one of
+    # them and cleared from the rest. Keyed by company rather than by domain
+    # because a company can own a row under a domain that is not its own.
+    owned_rows: dict = {}
+    for row in (await session.execute(
+        select(RecotapAccount).where(RecotapAccount.company_id.is_not(None))
+    )).scalars().all():
+        owned_rows.setdefault(row.company_id, []).append(row)
+
     for cid, domain_raw, name in companies:
         domain = normalize_domain(domain_raw)
         if not domain:
             continue
         js = crm_journey_stage(stages_by_company.get(cid, []))
+        siblings = list(owned_rows.get(cid) or [])
         if js is None:
             # Clear a previously-derived CRM stage; never touch journey_stage,
             # which belongs to Recotap.
-            existing = (
-                await session.execute(select(RecotapAccount).where(RecotapAccount.domain == domain))
-            ).scalar_one_or_none()
-            if existing is not None and existing.crm_journey_stage is not None:
-                existing.crm_journey_stage = None
-                existing.updated_at = datetime.utcnow()
+            stale = [r for r in siblings if r.crm_journey_stage is not None]
+            if not stale:
+                unowned = (
+                    await session.execute(
+                        select(RecotapAccount).where(
+                            RecotapAccount.domain == domain,
+                            RecotapAccount.company_id.is_(None),
+                        )
+                    )
+                ).scalars().all()
+                stale = [r for r in unowned if r.crm_journey_stage is not None]
+            for row in stale:
+                row.crm_journey_stage = None
+                row.updated_at = datetime.utcnow()
                 cleared += 1
             continue
         if not is_pushable_domain(domain):
             skipped_invalid += 1
             continue
-        row = await _get_or_create_row(session, domain)
+        row = await _row_for_company(session, cid, domain)
         row.crm_journey_stage = js
         row.company_id = row.company_id or cid
         row.name = row.name or name
         row.updated_at = datetime.utcnow()
         set_count += 1
+        # Exactly one row per company carries the CRM stage. Without this, a
+        # company whose two rows were both written in earlier runs would show up
+        # twice in stages_crm and count itself twice in the funnel.
+        for other in siblings:
+            if other is not row and other.crm_journey_stage is not None:
+                other.crm_journey_stage = None
+                other.updated_at = datetime.utcnow()
     await session.commit()
     return {
         "crm_journey_set": set_count,

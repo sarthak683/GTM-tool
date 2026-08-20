@@ -10,11 +10,16 @@ fresh as the last person who thought to press a button are wrong by construction
 Order matters and is the same as the manual refresh endpoint:
 
 1. ``pull_into_db`` — Recotap's account signals in (incremental via lastSync).
-2. ``sync_crm_journey`` — derive each account's stage from its most advanced live
+2. ``link_recotap_accounts`` — attach every still-orphaned Recotap row to its
+   Beacon company by externalId, domain, then unambiguous name. Separate from
+   the pull because the pull is incremental and only re-links what it fetched,
+   so a company created after its Recotap row was pulled would never be joined.
+3. ``sync_crm_journey`` — derive each account's stage from its most advanced live
    deal into ``crm_journey_stage``. Must follow the pull, which rewrites the
-   sibling ``journey_stage`` column.
-3. ``push_crm_status`` — Beacon → Recotap account tags / custom field.
-4. ``push_deals`` — Beacon → Recotap deals, changed ones only.
+   sibling ``journey_stage`` column, and the link, which decides which row the
+   stage is written onto.
+4. ``push_crm_status`` — Beacon → Recotap account tags / custom field.
+5. ``push_deals`` — Beacon → Recotap deals, changed ones only.
 
 Every step is reported with its own counters, and a failure in one does not
 abort the rest: a Recotap outage during the push should not also cost us the
@@ -41,6 +46,7 @@ async def _sync(full: bool) -> dict[str, Any]:
     from app.database import task_session
     from app.clients.recotap import RecotapClient
     from app.services.recotap import (
+        link_recotap_accounts,
         pull_into_db,
         push_crm_status,
         register_deal_stages,
@@ -60,6 +66,7 @@ async def _sync(full: bool) -> dict[str, Any]:
     # every later statement on it would raise on.
     for key, fn in (
         ("pull", lambda s: pull_into_db(s, incremental=not full)),
+        ("link", link_recotap_accounts),
         ("crm_journey", sync_crm_journey),
         # Before the account push, because push_crm_status resolves the CRM-stage
         # custom field and we want the stage taxonomy registered alongside it.

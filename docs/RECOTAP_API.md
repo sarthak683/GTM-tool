@@ -59,6 +59,39 @@ UPDATED rather than rejected — without it Recotap answers `status=failed` with
 read per-item `status` (`created` / `updated` / `failed`) in `data.results[]`.
 We never push placeholder/junk domains (guarded by `is_pushable_domain`).
 
+**Scope:** every live company with a real domain, whether or not it has a deal.
+It used to be only companies whose deals mapped to a CRM stage, which left 412
+prod accounts unknown to Recotap — and an account Recotap has never been told
+about cannot be scored, which is backwards for the accounts we have not worked
+yet.
+
+**Which domain we send:** if Recotap already holds an account for this company
+(`recotap_accounts.rtp_aid IS NOT NULL`), we push to **Recotap's** domain, not
+the CRM's. `POST /accounts` upserts on domain, so sending our own spelling for an
+account they hold as `manh.com` creates a *second* account rather than updating
+the first. Prod carried exactly that: `manhattanassociates.com` (score 0, no
+stage) beside `manh.com` (score 52, Aware), one company's signal split in two.
+
+### Account identity — how a Recotap account finds its Beacon company
+
+`recotap_accounts.company_id` is the join, and `link_recotap_accounts()` resolves
+it on every sync using three keys, most authoritative first:
+
+| # | Key | Why |
+|---|-----|-----|
+| 1 | `externalId` → Beacon company UUID | We send it on every push and read it back on every pull. Domain-independent, so the link survives either side correcting a domain. **This is the key the integration should settle on.** |
+| 2 | Normalized domain | Scheme/`www.` stripped, lowercased. |
+| 3 | Exact normalized company name | Only when exactly ONE live company answers to it. Recovers accounts the first two cannot — Recotap's `ironcladapp.com` against the CRM's `ironclad.com`. |
+
+The name pass refuses ambiguity by design: three prod rows are all named
+"Northstar Technologies", and a wrong link puts one account's buying intent on a
+different account.
+
+A company may legitimately own more than one row. `_merge_rows()` collapses them
+for display — max score, furthest stage, engagement re-derived from the merged
+score — and `sync_crm_journey` keeps the CRM-derived stage on exactly one of
+them so the funnel cannot count a company twice.
+
 ### POST /deals
 Body:
 ```

@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 import httpx
 
+from contextlib import asynccontextmanager
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,21 @@ class RecotapClient:
         # Set from the latest GET /accounts response so callers can persist it and
         # request only changes next time (incremental pull via lastSync).
         self.last_sync_timestamp: Optional[str] = None
+        # Optional connection reused across a whole run — see session(). Without
+        # it every push_accounts() call opens a fresh AsyncClient, which means a
+        # new TCP + TLS handshake per account. That was invisible while the push
+        # sent 70 accounts a night; it is not at 1,155.
+        self._http: Optional[httpx.AsyncClient] = None
+
+    @asynccontextmanager
+    async def session(self):
+        """Reuse one HTTP connection for every call made inside the block."""
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+            self._http = http
+            try:
+                yield self
+            finally:
+                self._http = None
 
     def configured(self) -> bool:
         return bool(self.api_key)
@@ -98,6 +115,10 @@ class RecotapClient:
         payload: dict[str, Any] = {"accounts": accounts, "upsert": upsert}
         if segment_id:
             payload["segmentId"] = segment_id
+        if self._http is not None:
+            resp = await self._http.post(f"{self.base_url}/accounts", headers=self._headers(), json=payload)
+            resp.raise_for_status()
+            return (resp.json() or {}).get("data") or {}
         async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
             resp = await http.post(f"{self.base_url}/accounts", headers=self._headers(), json=payload)
             resp.raise_for_status()

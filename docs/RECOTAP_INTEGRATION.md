@@ -80,7 +80,7 @@ The ABM account list **and** the pulled scores — one row per account.
 | `domain` | str, indexed | dedup key (lowercased, www-stripped) — mirrors Recotap's dedup |
 | `name` | str | |
 | `external_id` | str nullable | our reference id we send as `externalId` |
-| `company_id` | uuid FK → companies, **nullable** | optional read-only cross-reference; **no** behavioral coupling (Open Decision D5) |
+| `company_id` | uuid FK → companies, **nullable** | **THE join to the CRM** — resolved by `link_recotap_accounts()` on every sync (externalId → domain → unambiguous name). Account Sourcing reads signals by company, not by domain. See `docs/RECOTAP_API.md` §Account identity. |
 | `tags` | jsonb | |
 | `segment_id` | str nullable | Recotap segment assignment |
 | `score` | int nullable | ← `rtp_account_score` (0–100) |

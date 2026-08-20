@@ -67,11 +67,11 @@ from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contact
 from app.models.recotap import RECOTAP_ENGAGEMENT_LEVELS, RECOTAP_JOURNEY_STAGES, RecotapAccount
 from app.services.recotap import (
     effective_journey_stage_sql as recotap_effective_stage_sql,
-    normalize_domain as recotap_domain,
+    link_recotap_accounts as recotap_link,
     pull_into_db as recotap_pull,
     push_crm_status as recotap_push_status,
     seed_mock_signals as recotap_seed,
-    signals_by_domain as recotap_signals,
+    signals_by_company as recotap_signals,
     register_deal_stages as recotap_register_deal_stages,
     sync_crm_journey as recotap_crm_sync,
 )
@@ -1642,9 +1642,9 @@ async def list_sourced_companies(
         )
     ).scalars().all()
     reads = [CompanyRead.model_validate(company) for company in items]
-    sig = await recotap_signals(session, [company.domain for company in items])
+    sig = await recotap_signals(session, [(company.id, company.domain) for company in items])
     for read, company in zip(reads, items):
-        read.recotap = sig.get(recotap_domain(company.domain))
+        read.recotap = sig.get(company.id)
     return PaginatedResponse.build(items=reads, total=total, skip=page.skip, limit=page.limit)
 
 
@@ -1937,8 +1937,8 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
     cache = dict(read.enrichment_cache or {})
     cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)
     read.enrichment_cache = cache
-    sig = await recotap_signals(session, [company.domain])
-    read.recotap = sig.get(recotap_domain(company.domain))
+    sig = await recotap_signals(session, [(company.id, company.domain)])
+    read.recotap = sig.get(company.id)
     return read
 
 
@@ -1965,10 +1965,14 @@ async def refresh_recotap_signals(
     # re-pull (useful as a periodic safety net since lastSync omits deletions).
     pulled = await recotap_pull(session, incremental=not full)
     seeded = await recotap_seed(session, overwrite=overwrite) if do_seed else {"seeded": 0}
+    # Claim every orphaned Recotap row before the CRM stage is derived — the link
+    # decides which row a company's stage is written onto, and an unlinked row
+    # renders as "no Recotap data" no matter how much signal it carries.
+    linked = await recotap_link(session)
     # Always derive journey stage from CRM deal progress LAST, so it wins over
     # Recotap's intent stage for accounts with an active deal.
     crm = await recotap_crm_sync(session)
-    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed, "crm_journey": crm}
+    return {"pull": pulled, "seed": seeded, "seeded_mock": do_seed, "link": linked, "crm_journey": crm}
 
 
 @router.get("/recotap/summary")

@@ -36,13 +36,10 @@ STAGE_SETTINGS = [
 ]
 
 
-def gate(row, *, deal_stage_by_id=None, contact_company=None, company_stages=None):
+def gate(row, *, deal_stage_by_id=None):
     return _activity_row_is_early_funnel(
         row,
         deal_stage_by_id=deal_stage_by_id or {},
-        contact_company=contact_company or {},
-        company_stages=company_stages or {},
-        early_funnel_stage_ids=EARLY,
         advanced_stage_ids=ADVANCED,
     )
 
@@ -88,63 +85,24 @@ class ActivityCallExclusionTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 self.assertTrue(gate(row, deal_stage_by_id={deal_id: stage}))
 
-    def test_excludes_call_for_company_with_only_late_stage_deals(self) -> None:
-        contact_id = UUID("00000000-0000-0000-0000-000000000003")
-        company_id = UUID("00000000-0000-0000-0000-000000000004")
-        row = SimpleNamespace(deal_id=None, contact_id=contact_id)
+    def test_a_call_with_no_deal_always_counts(self) -> None:
+        """The account-level half of this gate is gone. It used to drop a
+        contact-level call whenever ANY deal on the account was advanced, which
+        erased real prospecting: on 2026-08-18 Mahesh logged 62 calls and Sales
+        Analytics showed 52, because 10 dial attempts on Descartes contacts —
+        no deal attached — were discarded purely because that account holds one
+        qualified_lead deal. Dialling new contacts at an account that already
+        has an opportunity is still prospecting.
 
-        self.assertFalse(
-            gate(
-                row,
-                contact_company={contact_id: company_id},
-                company_stages={company_id: {"poc_agreed", "poc_wip", "closed_won"}},
-            )
-        )
-
-    def test_includes_call_for_company_with_early_stage_deals(self) -> None:
-        contact_id = UUID("00000000-0000-0000-0000-000000000005")
-        company_id = UUID("00000000-0000-0000-0000-000000000006")
-        row = SimpleNamespace(deal_id=None, contact_id=contact_id)
-
-        self.assertTrue(
-            gate(
-                row,
-                contact_company={contact_id: company_id},
-                company_stages={company_id: {"demo_scheduled", "poc_agreed"}},
-            )
-        )
-
-    def test_includes_call_for_company_whose_deals_are_all_cold(self) -> None:
-        contact_id = UUID("00000000-0000-0000-0000-000000000008")
-        company_id = UUID("00000000-0000-0000-0000-000000000009")
-        row = SimpleNamespace(deal_id=None, contact_id=contact_id)
-
-        self.assertTrue(
-            gate(
-                row,
-                contact_company={contact_id: company_id},
-                company_stages={company_id: {"cold", "backlog"}},
-            )
-        )
-
-    def test_includes_call_when_a_late_account_still_has_something_early(self) -> None:
-        contact_id = UUID("00000000-0000-0000-0000-00000000000a")
-        company_id = UUID("00000000-0000-0000-0000-00000000000b")
-        row = SimpleNamespace(deal_id=None, contact_id=contact_id)
-
-        self.assertTrue(
-            gate(
-                row,
-                contact_company={contact_id: company_id},
-                company_stages={company_id: {"poc_wip", "reprospect"}},
-            )
-        )
-
-    def test_includes_call_on_a_fresh_prospect_with_no_deal(self) -> None:
-        contact_id = UUID("00000000-0000-0000-0000-00000000000c")
-        row = SimpleNamespace(deal_id=None, contact_id=contact_id)
-
-        self.assertTrue(gate(row, contact_company={contact_id: None}))
+        There is no longer any account state that can suppress such a call, so
+        the four cases that used to vary company_stages are one case now.
+        """
+        for label in ("fresh prospect", "account mid-POC", "account closed won"):
+            with self.subTest(account=label):
+                row = SimpleNamespace(
+                    deal_id=None, contact_id=UUID("00000000-0000-0000-0000-00000000000c")
+                )
+                self.assertTrue(gate(row))
 
     def test_includes_call_for_unknown_deal(self) -> None:
         row = SimpleNamespace(
