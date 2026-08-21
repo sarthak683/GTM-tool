@@ -15,6 +15,7 @@ import { formatCurrencyAmount } from "../lib/currencies";
 import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
+import { SavedViewsPicker } from "../components/SavedViewsPicker";
 
 type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
@@ -2764,6 +2765,51 @@ export default function Pipeline() {
         <div className="desktop-only pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "16px 14px", gap: 14, overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, position: "relative" }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#142335" }}>Pipeline</div>
+          </div>
+          {/* Saved views — pick a named filter set / save the current one. The
+              picker captures whatever's currently in URL params (stages,
+              assignees, stalled/overdue/missing_close_date/needs_attention,
+              close_month) — non-URL filters (search, geography, tag, …)
+              deliberately aren't persisted yet; the page would need a
+              hand-rolled snapshot/restore for those to come along. */}
+          <div style={{ marginTop: 4 }}>
+            <SavedViewsPicker
+              objectType={tab === "deal" ? "deal" : "prospect"}
+              viewType="kanban"
+              defaultName={tab === "deal" ? "My deal view" : "My prospect view"}
+              filters={Object.fromEntries(
+                searchParams
+                  .toString()
+                  .split("&")
+                  .filter(Boolean)
+                  .map((pair) => {
+                    const eq = pair.indexOf("=");
+                    if (eq === -1) return [decodeURIComponent(pair), ""];
+                    return [decodeURIComponent(pair.slice(0, eq)), decodeURIComponent(pair.slice(eq + 1))];
+                  }),
+              )}
+              onApply={(filters) => {
+                // Replace the URL params the page actually reads on hydrate
+                // (see the useEffect above that mirrors URL → state). Other
+                // URL keys are dropped — `new=deal`, `deal=…`, etc. — so
+                // applying a view doesn't open the create modal or the
+                // drawer on top of the board.
+                const next = new URLSearchParams();
+                const allowedKeys = new Set([
+                  "stage", "assignee", "stalled", "overdue",
+                  "missing_close_date", "needs_attention", "close_month",
+                ]);
+                for (const [k, v] of Object.entries(filters)) {
+                  if (!allowedKeys.has(k)) continue;
+                  if (Array.isArray(v)) {
+                    for (const item of v) next.append(k, String(item));
+                  } else if (v != null && v !== "") {
+                    next.set(k, String(v));
+                  }
+                }
+                setSearchParams(next, { replace: true });
+              }}
+            />
             <div style={{ position: "relative", flexShrink: 0 }}>
               <button
                 type="button"

@@ -43,6 +43,7 @@ from app.api.v1.endpoints import (
     prospecting,
     push,
     reminders,
+    saved_views,
     sales_reports,
     sales_resources,
     settings,
@@ -91,6 +92,7 @@ router.include_router(personal_email_sync.router)
 router.include_router(drive.router)
 router.include_router(push.router)
 router.include_router(reminders.router)
+router.include_router(saved_views.router)
 router.include_router(call_recordings.router)
 router.include_router(notifications.router)
 router.include_router(workspace.router)
