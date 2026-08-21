@@ -10,6 +10,7 @@ import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
+import { formatCurrencyAmount } from "../lib/currencies";
 import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
@@ -663,7 +664,7 @@ function FunnelSettingsModal({
 }
 
 function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" });
+  const [form, setForm] = useState({ name: "", company_id: "", value: "", currency_code: "USD", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
@@ -727,6 +728,7 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
         stage: form.stage,
         company_id: form.company_id || undefined,
         value: form.value ? Number(form.value) : undefined,
+        currency_code: form.currency_code || "USD",
         close_date_est: form.close_date_est || undefined,
         priority_tag: form.priority_tag || undefined,
         assigned_to_id: form.assigned_to_id || undefined,
@@ -1134,7 +1136,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.company_name}</span>
           </div>
         )}
-        <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2, color: deal.value ? "#4d7c0f" : "#b4c3d4" }}>{formatCurrency(deal.value)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2, color: deal.value ? "#4d7c0f" : "#b4c3d4" }}>{formatCurrencyAmount(deal.value, deal.currency_code)}</div>
         {deal.next_step && (
           <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 500, lineHeight: 1.3 }}>
             {deal.next_step}
@@ -3109,7 +3111,7 @@ export default function Pipeline() {
                         <div style={{ fontSize: 12, color: "#71859b" }}>{deal.company_id ? companyMap.get(deal.company_id)?.name ?? "Unknown" : "No company"}</div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                        <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrency(deal.value)}</span>
+                        <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrencyAmount(deal.value, deal.currency_code)}</span>
                         {(() => { const p = deal.priority_tag; return p ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: p === "P0" ? "#fef2f2" : p === "P1" ? "#fffbeb" : "#f1f5f9", color: p === "P0" ? "#b91c1c" : p === "P1" ? "#92400e" : "#475569", border: `1px solid ${p === "P0" ? "#fecaca" : p === "P1" ? "#fde68a" : "#cbd5e1"}` }}>{p}</span> : null; })()}
                       </div>
                     </div>

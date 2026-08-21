@@ -3,7 +3,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_validator
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -40,6 +40,9 @@ class CompanyBase(SQLModel):
     vertical: Optional[str] = None
     employee_count: Optional[int] = None
     arr_estimate: Optional[float] = None
+    # ISO 4217 currency code for `arr_estimate`. Defaults to USD for
+    # consistency with Deal.currency_code; the picker in the UI is curated.
+    arr_estimate_currency: Optional[str] = Field(default="USD", sa_column=Column(String(3), nullable=True, server_default="USD"))
     funding_stage: Optional[str] = None
     region: Optional[str] = None  # e.g. "US", "EU", "APAC"
     headquarters: Optional[str] = None  # e.g. "Paris, France"
@@ -286,6 +289,7 @@ class CompanyUpdate(SQLModel):
     vertical: Optional[str] = None
     employee_count: Optional[int] = None
     arr_estimate: Optional[float] = None
+    arr_estimate_currency: Optional[str] = None
     funding_stage: Optional[str] = None
     region: Optional[str] = None
     headquarters: Optional[str] = None

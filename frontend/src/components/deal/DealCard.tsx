@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { Clock3, ArrowRight } from "lucide-react";
 import type { Deal } from "../../types";
 import { formatCurrency } from "../../lib/utils";
+import { formatCurrencyAmount } from "../../lib/currencies";
 
 const HEALTH_COLOR: Record<string, string> = {
   green:  "#10B981",
@@ -41,7 +42,7 @@ function DealCard({ deal, companyName }: DealCardProps) {
       </div>
 
       <div className="deal-card-footer flex items-center justify-between mt-4 pt-4 border-t border-[#e6edf5]">
-        <span className="text-[17px] font-extrabold text-[#1f2a37] tabular">{formatCurrency(deal.value)}</span>
+        <span className="text-[17px] font-extrabold text-[#1f2a37] tabular">{formatCurrencyAmount(deal.value, deal.currency_code)}</span>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-[12px] text-[#6f849a]">
             <Clock3 className="h-3.5 w-3.5" />

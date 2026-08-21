@@ -14,6 +14,7 @@ export interface Company {
   vertical?: string;
   employee_count?: number;
   arr_estimate?: number;
+  arr_estimate_currency?: string;
   funding_stage?: string;
   tech_stack?: Record<string, unknown>;
   region?: string;
@@ -260,6 +261,7 @@ export interface Deal {
   stage: string;
   priority: string;
   value?: number;
+  currency_code?: string;
   close_date_est?: string;
   health: string;
   health_score?: number;

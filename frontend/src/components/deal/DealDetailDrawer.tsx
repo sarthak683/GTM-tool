@@ -14,6 +14,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { useToast } from "../../lib/ToastContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../../lib/utils";
+import { SUPPORTED_CURRENCY_CODES, getCurrencyOption, formatCurrencyAmount } from "../../lib/currencies";
 import { CLOSE_REASONS, isCloseReasonStage } from "../../lib/closeReasons";
 import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
 import TaskCenterModal from "../tasks/TaskCenterModal";
@@ -359,7 +360,7 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
   return (
     <div style={{ border: "1px solid #e3ebf4", borderRadius: 14, background: "#fff", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0, boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-        {stat("Amount", deal.value != null ? formatCurrency(deal.value) : "—")}
+        {stat("Amount", deal.value != null ? formatCurrencyAmount(deal.value, deal.currency_code) : "—")}
         <div style={{ minWidth: 110, flex: "1 1 110px" }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>Close date</div>
           {editingCloseDate ? (
@@ -1187,7 +1188,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                   {
                     label: "Business Proposal",
                     icon: <FileText size={14} />,
-                    message: `Create a business proposal for ${deal.company_name ?? "this account"}. Deal stage: ${stageLabel}. AE: ${deal.assigned_rep_name ?? "unassigned"}. Deal value: ${deal.value != null ? formatCurrency(deal.value) : "not set"}.`,
+                    message: `Create a business proposal for ${deal.company_name ?? "this account"}. Deal stage: ${stageLabel}. AE: ${deal.assigned_rep_name ?? "unassigned"}. Deal value: ${deal.value != null ? formatCurrencyAmount(deal.value, deal.currency_code) : "not set"}.`,
                   },
                   {
                     label: "NDA",
@@ -1413,26 +1414,44 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               </FieldRow>
             )}
 
-            {/* Amount */}
-            <FieldRow label="Amount" icon={<span style={{ fontSize: 13, fontWeight: 700 }}>$</span>}>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={amountInput}
-                onFocus={() => {
-                  setAmountFocused(true);
-                  setAmountInput(deal.value == null ? "" : String(Number(deal.value)));
-                }}
-                onChange={(e) => setAmountInput(e.target.value)}
-                onBlur={(e) => {
-                  setAmountFocused(false);
-                  const nextValue = parseCurrencyInput(e.target.value);
-                  setAmountInput(formatEditableCurrency(nextValue));
-                  patchDeal({ value: nextValue } as Partial<Deal>);
-                }}
-                style={{ ...fieldInputStyle }}
-                placeholder="$0.00"
-              />
+            {/* Amount + currency. The currency dropdown commits on every change
+                (not on blur) so a deal that flips from USD → INR immediately
+                renders with the ₹ symbol everywhere downstream. */}
+            <FieldRow label="Amount" icon={<span style={{ fontSize: 13, fontWeight: 700 }}>{getCurrencyOption(deal.currency_code).symbol}</span>}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={amountInput}
+                  onFocus={() => {
+                    setAmountFocused(true);
+                    setAmountInput(deal.value == null ? "" : String(Number(deal.value)));
+                  }}
+                  onChange={(e) => setAmountInput(e.target.value)}
+                  onBlur={(e) => {
+                    setAmountFocused(false);
+                    const nextValue = parseCurrencyInput(e.target.value);
+                    setAmountInput(formatEditableCurrency(nextValue));
+                    patchDeal({ value: nextValue } as Partial<Deal>);
+                  }}
+                  style={{ ...fieldInputStyle, flex: 1, minWidth: 0 }}
+                  placeholder={`${getCurrencyOption(deal.currency_code).symbol}0.00`}
+                />
+                <select
+                  value={deal.currency_code ?? "USD"}
+                  onChange={(e) => patchDeal({ currency_code: e.target.value } as Partial<Deal>)}
+                  title="Currency"
+                  style={{ ...fieldInputStyle, width: 96, padding: "8px 6px", fontWeight: 700 }}
+                >
+                  {SUPPORTED_CURRENCY_CODES.filter((c) => c.group === "popular").map((c) => (
+                    <option key={c.code} value={c.code}>{c.code}</option>
+                  ))}
+                  <option disabled>─────</option>
+                  {SUPPORTED_CURRENCY_CODES.filter((c) => c.group === "other").map((c) => (
+                    <option key={c.code} value={c.code}>{c.code}</option>
+                  ))}
+                </select>
+              </div>
             </FieldRow>
 
             {/* Close date. Commit on BLUR (or Enter), not per keystroke — the

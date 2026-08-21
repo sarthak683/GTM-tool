@@ -1,13 +1,11 @@
 import type { Company } from "../types";
+import { formatCurrencyAmount } from "./currencies";
 
+// Back-compat shim — old callers that don't know about currencies still get
+// a USD-formatted string. New callers should use formatCurrencyAmount(value, code)
+// from lib/currencies directly when they have a currency code to pass.
 export function formatCurrency(value?: number | null): string {
-  if (value == null) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
+  return formatCurrencyAmount(value, "USD");
 }
 
 export function isPlaceholderDomain(value?: string | null): boolean {

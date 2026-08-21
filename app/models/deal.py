@@ -4,7 +4,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_validator
-from sqlalchemy import Column, Numeric, Text
+from sqlalchemy import Column, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -95,6 +95,11 @@ class Deal(DealBase, table=True):
     external_source: Optional[str] = Field(default=None, index=True)
     external_source_id: Optional[str] = Field(default=None, index=True)
     value: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(15, 2)))
+    # ISO 4217 currency code for `value`. Defaults to USD so existing rows
+    # stay single-currency until reps edit a deal and pick a different one.
+    # See SUPPORTED_CURRENCY_CODES in frontend/src/lib/currencies.ts for the
+    # canonical list (we store anything, but the picker is curated).
+    currency_code: Optional[str] = Field(default="USD", sa_column=Column(String(3), nullable=True, server_default="USD"))
     qualification: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     tags: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -135,6 +140,7 @@ class DealCreate(SQLModel):
     assigned_to_id: Optional[UUID] = None
     sdr_id: Optional[UUID] = None
     value: Optional[Decimal] = None
+    currency_code: Optional[str] = None
     close_date_est: Optional[date] = None
     department: Optional[str] = None
     geography: Optional[str] = None
@@ -170,6 +176,7 @@ class DealRead(DealBase):
     deleted_at: Optional[datetime] = None
     email_cc_alias: Optional[str] = None
     value: Optional[Decimal] = None
+    currency_code: Optional[str] = None
     qualification: Optional[Any] = None
     tags: list[str] = []
     description: Optional[str] = None
@@ -225,6 +232,7 @@ class DealUpdate(SQLModel):
     assigned_to_id: Optional[UUID] = None  # AE
     sdr_id: Optional[UUID] = None          # SDR
     value: Optional[Decimal] = None
+    currency_code: Optional[str] = None
     close_date_est: Optional[date] = None
     health: Optional[str] = None
     health_score: Optional[int] = None
