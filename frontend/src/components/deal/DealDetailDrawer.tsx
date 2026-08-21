@@ -23,6 +23,7 @@ import ProvenanceBar from "../ProvenanceBar";
 import UnifiedTimeline from "../UnifiedTimeline";
 import ReplyComposer, { type ReplyContext } from "../ReplyComposer";
 import DealCallLogger from "./DealCallLogger";
+import { RichTextEditor, RichTextDisplay } from "../RichTextEditor";
 
 interface Props {
   deal: Deal;
@@ -466,16 +467,18 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
               </span>
             ) : null}
           </div>
-          <textarea
-            key={`qual-${deal.id}-${deal.qualification_reason ?? ""}`}
-            defaultValue={deal.qualification_reason ?? ""}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (v !== (deal.qualification_reason ?? "")) onPatch({ qualification_reason: v || null } as unknown as Partial<Deal>);
+          <RichTextEditor
+            key={`qual-${deal.id}-${(deal.qualification_reason ?? "").slice(0, 64)}`}
+            value={deal.qualification_reason}
+            onChange={(html) => {
+              const v = html.trim();
+              if (v !== (deal.qualification_reason ?? "")) {
+                onPatch({ qualification_reason: v || null } as unknown as Partial<Deal>);
+              }
             }}
             placeholder="Why is this deal qualified? Capture the qualification criteria / reason…"
-            rows={2}
-            style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, color: "#16273d", border: `1px solid ${qualificationDue && !deal.qualification_reason ? "#fde68a" : "#d5e0ec"}`, borderRadius: 8, padding: "8px 10px", outline: "none", fontFamily: "inherit", resize: "vertical" }}
+            minHeight={70}
+            contentClassName={undefined}
           />
         </div>
       ) : null}
@@ -1755,18 +1758,17 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             </div>
           </div>
 
-          {/* Description */}
+          {/* Description — rich text (bold/italic/lists/links). Stores sanitized
+              HTML in the same `description` text column; old plain-text values
+              render unchanged because the browser collapses them as one
+              paragraph inside the contenteditable. */}
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#5e738b", marginBottom: 8 }}>Description</div>
-            <textarea
-              defaultValue={deal.description ?? ""}
-              onBlur={(e) => patchDeal({ description: e.target.value || null } as Partial<Deal>)}
-              placeholder="Add notes about this deal..."
-              style={{
-                width: "100%", minHeight: 80, borderRadius: 12, border: "1px solid #dbe6f2",
-                padding: 12, fontSize: 13, resize: "vertical", outline: "none",
-                fontFamily: "inherit",
-              }}
+            <RichTextEditor
+              value={deal.description}
+              onChange={(html) => patchDeal({ description: html || null } as Partial<Deal>)}
+              placeholder="Add notes about this deal…"
+              minHeight={100}
             />
           </div>
           </div>
