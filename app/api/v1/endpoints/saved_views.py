@@ -77,7 +77,7 @@ async def _unset_other_defaults(
             session.add(row)
 
 
-@router.get("/", response_model=list[SavedViewRead])
+@router.get("", response_model=list[SavedViewRead])
 async def list_saved_views(
     session: DBSession,
     _user: CurrentUser,
@@ -95,7 +95,7 @@ async def list_saved_views(
     return [_to_read(r) for r in rows]
 
 
-@router.post("/", response_model=SavedViewRead, status_code=201)
+@router.post("", response_model=SavedViewRead, status_code=201)
 async def create_saved_view(
     payload: SavedViewCreate,
     session: DBSession,
