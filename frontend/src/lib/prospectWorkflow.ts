@@ -111,7 +111,8 @@ export const CALL_DISPOSITION_FILTER_OPTIONS = [
 // LinkedIn outcomes a rep can log, with the progress-bar color each maps to.
 // Single source of truth — the logger picker, the timeline label, and the
 // ProgressCell LinkedIn lane all read from here.
-//   sent           → yellow (request/InMail out, no response yet)
+//   sent           → yellow (connection request out, no response yet)
+//   inmail         → yellow (paid InMail DM out, no response yet)
 //   accepted       → blue   (connection accepted, conversation open)
 //   follow_up      → blue   (back-and-forth in flight)
 //   meeting_booked → green  (positive outcome)
@@ -123,6 +124,7 @@ export const LINKEDIN_STATUS_OPTIONS: ReadonlyArray<{
   color: LinkedinOutcomeColor;
 }> = [
   { value: "sent", label: "Sent", color: "yellow" },
+  { value: "inmail", label: "In mail", color: "yellow" },
   { value: "accepted", label: "Accepted", color: "blue" },
   { value: "follow_up", label: "Follow-up", color: "blue" },
   { value: "meeting_booked", label: "Meeting booked", color: "green" },
@@ -181,7 +183,7 @@ export function deriveSequenceStatusFromLinkedinStatus(
   if (currentStatus === "meeting_booked") return currentStatus;
   if (linkedinStatus === "meeting_rejected") return "not_interested";
   if (linkedinStatus === "follow_up") return "replied"; // active conversation
-  // sent / accepted are early touches — don't move the funnel on their own.
+  // sent / inmail / accepted are early touches — don't move the funnel on their own.
   return currentStatus ?? undefined;
 }
 

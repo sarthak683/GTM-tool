@@ -494,7 +494,13 @@ body {
   min-height: 64px;
   position: sticky;
   top: 0;
-  z-index: 20;
+  /* Stacking context for the user menu / notification popovers. Must sit above
+   * the highest page-level sibling (SalesAnalytics .sa-filter-bar is z-index
+   * 30; Tasks/MeetingDetail popovers can be 30–40) — otherwise the dropdown
+   * can render behind page content even though its own z-index is 100+. Modals
+   * (60+) and toasts (2000) still win because they use position: fixed and
+   * escape into the root stacking context. */
+  z-index: 50;
   background: rgba(250, 252, 255, 0.86);
   border-bottom: 1px solid rgba(222, 230, 240, 0.95);
   backdrop-filter: blur(10px);

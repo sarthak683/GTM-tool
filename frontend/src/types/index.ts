@@ -193,7 +193,7 @@ export interface Contact {
   // `call_back_later_rescheduled` dispositions. Cleared automatically when
   // the disposition changes to something that doesn't imply a follow-up.
   next_followup_at?: string;
-  linkedin_status?: string;   // none | sent | accepted | follow_up | meeting_booked | meeting_rejected
+  linkedin_status?: string;   // none | sent | inmail | accepted | follow_up | meeting_booked | meeting_rejected
   linkedin_last_at?: string;
   timezone?: string;
   created_at: string;

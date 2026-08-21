@@ -213,7 +213,7 @@ class ContactFilters:
     sequence_status: Optional[str] = Query(default=None)
     call_disposition: Optional[str] = Query(default=None, description="Filter by one or more call dispositions")
     email_state: Optional[str] = Query(default=None, description="has_email | missing_email | verified | unverified")
-    linkedin_status: Optional[str] = Query(default=None, description="Filter by one or more LinkedIn statuses: sent | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted")
+    linkedin_status: Optional[str] = Query(default=None, description="Filter by one or more LinkedIn statuses: sent | inmail | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted")
     sort_by: Optional[str] = Query(default=None, description="Sort key: name | first_name | last_name | company | email | title | created_at.")
     sort_dir: Optional[str] = Query(default=None, description="Sort direction: asc | desc. Defaults to asc.")
     ae_id: Optional[str] = Query(default=None, description="Filter by one or more assigned AE user IDs")

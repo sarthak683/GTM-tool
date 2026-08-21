@@ -705,7 +705,7 @@ class ContactRepository(BaseRepository[Contact]):
                 count_stmt = count_stmt.where(disposition_filter)
 
         # LinkedIn-status filter — mirrors call_disposition. Named values are
-        # sent / accepted / follow_up / meeting_booked / meeting_rejected;
+        # sent / inmail / accepted / follow_up / meeting_booked / meeting_rejected;
         # "not_contacted" matches prospects with no LinkedIn touch logged yet
         # (status null/empty/"none").
         linkedin_status_values = _parse_multi_query(linkedin_status)

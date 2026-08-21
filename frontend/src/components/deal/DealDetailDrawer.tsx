@@ -4,7 +4,7 @@ import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
-  Shield, BarChart2, ClipboardList, Presentation, Megaphone,
+  Shield, BarChart2, ClipboardList, Presentation, Megaphone, Pencil, Check, XCircle,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
 import { accountSourcingApi, dealsApi, contactsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
@@ -13,7 +13,7 @@ import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import { useToast } from "../../lib/ToastContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
-import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials } from "../../lib/utils";
+import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../../lib/utils";
 import { CLOSE_REASONS, isCloseReasonStage } from "../../lib/closeReasons";
 import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
 import TaskCenterModal from "../tasks/TaskCenterModal";
@@ -313,13 +313,22 @@ function EngagementPanel({
  * At-a-glance status strip for the deal Overview — surfaces the facts an AE
  * needs first (amount, close date, stage age, health, and the Next Step with an
  * overdue/due chip) so they don't have to scroll into the form or hop tabs.
- * Read-only summary; editing stays in the Deal Details form below.
+ * Close date is click-to-edit here so the rep can push/extend a deadline
+ * without scrolling; full edit lives in the Deal Details form below as well.
  */
 function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatch: (data: Partial<Deal>) => void; qualificationDue: boolean }) {
   const [draft, setDraft] = useState("");
+  const [editingCloseDate, setEditingCloseDate] = useState(false);
+  const [closeDateDraft, setCloseDateDraft] = useState(deal.close_date_est ?? "");
   const healthColor =
     deal.health === "green" ? "#15803d" : deal.health === "yellow" ? "#c2410c" : deal.health === "red" ? "#be123c" : "#64748b";
   const due = dueLabel(deal.next_step_due_at);
+  // Show overdue close dates in red — the same "today vs. close date" check
+  // DealCard uses, kept local-calendar-correct.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const closeLocal = parseDateOnly(deal.close_date_est);
+  const isCloseOverdue = Boolean(closeLocal && closeLocal < todayStart);
   const stat = (label: string, value: string, color?: string, title?: string) => (
     <div title={title} style={{ minWidth: 78, flex: "1 1 78px" }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
@@ -332,11 +341,64 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
     onPatch({ next_step: text } as Partial<Deal>);
     setDraft("");
   };
+  const beginEditCloseDate = () => {
+    setCloseDateDraft(deal.close_date_est ?? "");
+    setEditingCloseDate(true);
+  };
+  const cancelEditCloseDate = () => {
+    setCloseDateDraft(deal.close_date_est ?? "");
+    setEditingCloseDate(false);
+  };
+  const commitCloseDate = () => {
+    const next = closeDateDraft || null;
+    if ((next ?? "") !== (deal.close_date_est ?? "")) {
+      onPatch({ close_date_est: next } as Partial<Deal>);
+    }
+    setEditingCloseDate(false);
+  };
   return (
     <div style={{ border: "1px solid #e3ebf4", borderRadius: 14, background: "#fff", padding: "12px 14px", display: "grid", gap: 10, flexShrink: 0, boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         {stat("Amount", deal.value != null ? formatCurrency(deal.value) : "—")}
-        {stat("Close date", deal.close_date_est ? formatDateOnly(deal.close_date_est) : "—")}
+        <div style={{ minWidth: 110, flex: "1 1 110px" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>Close date</div>
+          {editingCloseDate ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <input
+                type="date"
+                value={closeDateDraft}
+                onChange={(e) => setCloseDateDraft(e.target.value)}
+                onBlur={commitCloseDate}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") cancelEditCloseDate();
+                }}
+                autoFocus
+                style={{ fontSize: 13, fontWeight: 700, color: "#16273d", border: "1px solid #c7d4e3", borderRadius: 8, padding: "5px 8px", outline: "none", fontFamily: "inherit", minHeight: 30 }}
+              />
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commitCloseDate} title="Save close date" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #bbf7d0", background: "#ecfdf3", color: "#15803d", cursor: "pointer" }}>
+                <Check size={13} />
+              </button>
+              {deal.close_date_est && (
+                <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onPatch({ close_date_est: undefined } as Partial<Deal>); setEditingCloseDate(false); }} title="Clear close date" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #fecdd3", background: "#fff1f2", color: "#be123c", cursor: "pointer" }}>
+                  <XCircle size={13} />
+                </button>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={beginEditCloseDate}
+              title="Edit close date"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 2, padding: "2px 6px 2px 0", border: "none", background: "transparent", cursor: "pointer", color: isCloseOverdue ? "#dc2626" : "#16273d", font: "inherit" }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>
+                {deal.close_date_est ? formatDateOnly(deal.close_date_est) : <span style={{ color: "#94a3b8", fontWeight: 700 }}>Set date</span>}
+              </span>
+              <Pencil size={11} style={{ color: "#94a3b8", flexShrink: 0 }} />
+            </button>
+          )}
+        </div>
         {stat(
           "Stage age",
           deal.days_in_stage != null ? `${deal.days_in_stage}d` : "—",
@@ -1377,7 +1439,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 date input fires onChange for every segment the rep types, so
                 typing "2026-03-15" used to send three PATCHes with partial
                 dates, each one a stage-history-adjacent write and a re-render. */}
-            <FieldRow label="Date of Meeting" icon={<CalendarDays size={13} />}>
+            <FieldRow label="Close date" icon={<CalendarDays size={13} />}>
               <input
                 type="date"
                 defaultValue={deal.close_date_est ?? ""}

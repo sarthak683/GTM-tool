@@ -5637,7 +5637,8 @@ export default function Contacts() {
                   ))}
                 </div>
                 <div style={{ marginTop: 8, fontSize: 12, color: "#7a96b0" }}>
-                  {linkedinStatus === "sent" && "You sent a connection request or InMail."}
+                  {linkedinStatus === "sent" && "You sent a connection request."}
+                  {linkedinStatus === "inmail" && "You sent a paid InMail message — no connection needed."}
                   {linkedinStatus === "accepted" && "They accepted your request — ready to message."}
                   {linkedinStatus === "follow_up" && "Conversation in flight — you followed up."}
                   {linkedinStatus === "meeting_booked" && "A meeting is on the calendar from this thread."}

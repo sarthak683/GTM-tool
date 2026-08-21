@@ -82,13 +82,22 @@ export default function AssignDropdown({
   };
 
   if (!canAssign) {
-    // Roles outside the sales team get a read-only label.
+    // Roles outside the sales team get a read-only label. Same overflow rules
+    // as the interactive chip below so a long name can't bleed into adjacent
+    // cells when the column is narrow.
     return currentAssignedName ? (
       <span
+        title={currentAssignedName}
         style={{
           fontSize: compact ? "11px" : "13px",
           color: "#1f6feb",
           fontWeight: 500,
+          display: "inline-block",
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          verticalAlign: "bottom",
         }}
       >
         {currentAssignedName}
@@ -101,11 +110,18 @@ export default function AssignDropdown({
   }
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    // Constrain to parent cell width — long names like "Sipra sonali Palta"
+    // would otherwise overflow the SDR/AE column's maxWidth and visually
+    // collide with the next column (the COMMENTS cell used to bleed into it).
+    // The button itself keeps whiteSpace: nowrap so the name never wraps, and
+    // overflow: hidden + textOverflow ellipsis shows a truncated chip with a
+    // tooltip on hover so the full name stays discoverable.
+    <div style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={loading}
+        title={currentAssignedName || (label ?? "Assign")}
         style={{
           display: "flex",
           alignItems: "center",
@@ -119,10 +135,15 @@ export default function AssignDropdown({
           cursor: "pointer",
           fontWeight: 500,
           whiteSpace: "nowrap",
+          maxWidth: "100%",
+          minWidth: 0,
+          overflow: "hidden",
         }}
       >
-        <UserPlus size={compact ? 12 : 14} />
-        {loading ? "..." : currentAssignedName || (label ?? "Assign")}
+        <UserPlus size={compact ? 12 : 14} style={{ flexShrink: 0 }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+          {loading ? "..." : currentAssignedName || (label ?? "Assign")}
+        </span>
       </button>
 
       {open && (

@@ -280,7 +280,7 @@ function getCallChannel(contact: Contact): ChannelState {
 // LinkedIn lane. Reads `contact.linkedin_status` (set by the inline logger)
 // through the shared `linkedinOutcomeColor` map so the dot colors stay in sync
 // with the logger options:
-//   sent → yellow · accepted/follow_up → blue · meeting_booked → green ·
+//   sent/inmail → yellow · accepted/follow_up → blue · meeting_booked → green ·
 //   meeting_rejected → red. Every motion implies an initial outreach dot.
 function getLinkedinChannel(contact: Contact): ChannelState {
   const status = contact.linkedin_status || "";
@@ -313,6 +313,10 @@ function getLinkedinChannel(contact: Contact): ChannelState {
     case "meeting_rejected":
       terminalDot = { color: "red", title: "Meeting rejected" };
       label = "Meeting rejected"; sub = "Declined on LinkedIn";
+      break;
+    case "inmail":
+      dots[0] = { color: "yellow", title: "LinkedIn InMail sent" };
+      label = "In mail"; sub = "Awaiting reply";
       break;
     case "sent":
     default:

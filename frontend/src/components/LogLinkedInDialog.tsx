@@ -5,11 +5,12 @@ import { LINKEDIN_STATUS_OPTIONS, deriveSequenceStatusFromLinkedinStatus } from 
 
 // Use the same outcome taxonomy as the prospecting-table logger so logging from
 // the detail pages updates `linkedin_status` and drives the same progress-bar
-// lane (sent/accepted/follow_up/meeting_booked/meeting_rejected).
+// lane (sent/inmail/accepted/follow_up/meeting_booked/meeting_rejected).
 const ACTION_OPTIONS = LINKEDIN_STATUS_OPTIONS;
 
 const ACTION_HINTS: Record<string, string> = {
-  sent: "You sent a connection request or InMail.",
+  sent: "You sent a connection request.",
+  inmail: "You sent a paid InMail message — no connection needed.",
   accepted: "They accepted your request — ready to message.",
   follow_up: "Conversation in flight — you followed up.",
   meeting_booked: "A meeting is on the calendar from this thread.",
