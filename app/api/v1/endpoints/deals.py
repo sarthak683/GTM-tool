@@ -1,9 +1,11 @@
 import logging
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 
@@ -25,6 +27,7 @@ from app.services.deal_stage_history import CLOSE_REASONS, record_stage_transiti
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
 from app.services.permissions import can_view_all_deals
+from app.services.realtime import broadcaster
 from app.services.timeline import build_deal_timeline
 
 logger = logging.getLogger(__name__)
@@ -137,6 +140,35 @@ async def deal_board(
         pipeline_type,
         user_id=_user.id,
         is_admin=view_all,
+    )
+
+
+@router.get("/board/stream")
+async def deal_board_stream(_user: CurrentUser):
+    """Server-Sent Events stream of deal-board changes.
+
+    Pushes a lightweight event (kind + deal_id + stage) whenever a deal is
+    created, updated, moved, or deleted anywhere in the workspace. The client
+    treats each event as a "refetch the board" signal — the stream carries no
+    payload, so the broker never lags behind the canonical store. A 25s
+    heartbeat keeps corporate proxies from culling idle connections.
+    """
+    async def event_generator():
+        q = await broadcaster.subscribe()
+        try:
+            async for chunk in broadcaster.stream(q):
+                yield chunk
+        finally:
+            await broadcaster.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable nginx proxy buffering
+        },
     )
 
 
@@ -332,6 +364,8 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
             logger.exception("deal create: account_status bump failed for %s", deal.company_id)
     await session.commit()
 
+    broadcaster.publish_deal_change("deal.created", str(deal.id), deal.stage)
+
     return await DealRepository(session).get_with_joins(deal.id) or deal
 
 
@@ -465,6 +499,8 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
             )
 
     await session.commit()
+    for deal_id in updated:
+        broadcaster.publish_deal_change("deal.updated", str(deal_id))
     return {"updated": updated}
 
 
@@ -648,6 +684,9 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     if stage_changed or changes or close_date_rescheduled or company_changed:
         await session.commit()
 
+    kind = "deal.stage_changed" if stage_changed else "deal.updated"
+    broadcaster.publish_deal_change(kind, str(deal_id), updated.stage)
+
     return await repo.get_with_joins(deal_id) or updated
 
 
@@ -767,6 +806,8 @@ async def move_stage(deal_id: UUID, body: DealStageMoveRequest, session: DBSessi
     )
     await session.commit()
 
+    broadcaster.publish_deal_change("deal.stage_changed", str(deal_id), new_stage)
+
     return await repo.get_with_joins(deal_id)
 
 
@@ -803,6 +844,8 @@ async def delete_deal(deal_id: UUID, session: DBSession, _admin: AdminUser):
             .execution_options(synchronize_session=False)
         )
         await session.commit()
+
+        broadcaster.publish_deal_change("deal.deleted", str(deal_id), deal.stage)
 
 
 @router.post("/{deal_id}/restore", response_model=DealRestoreResponse)

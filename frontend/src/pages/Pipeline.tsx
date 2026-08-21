@@ -8,6 +8,7 @@ import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { CLOSE_REASONS, isCloseReasonStage } from "../lib/closeReasons";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
+import { useBoardStream } from "../hooks/useBoardStream";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { formatCurrencyAmount } from "../lib/currencies";
@@ -1904,6 +1905,13 @@ export default function Pipeline() {
   useEffect(() => {
     loadBoard();
   }, []);
+
+  // Live board sync: any other rep's create/move/delete refetches this board.
+  // Debounced with a short coalescing window so a burst of drags (each firing
+  // an SSE event) collapses into one refetch instead of a thundering herd.
+  useBoardStream(() => {
+    loadDealBoard().catch(() => undefined);
+  });
 
   // Companies (~1000 rows), users, and summary settings rarely change, so load
   // them once on mount instead of refetching on every board reload (loadBoard
