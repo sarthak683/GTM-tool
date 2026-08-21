@@ -236,11 +236,12 @@ export const performanceApi = {
     const tail = qs.toString();
     return request<IncentiveResponse>(`/api/v1/performance/incentives${tail ? `?${tail}` : ""}`);
   },
-  getIncentiveDeals: (params: { sdr_id: string; period?: "week" | "month" | "quarter"; anchor?: string }) => {
+  getIncentiveDeals: (params: { sdr_id: string; period?: "week" | "month" | "quarter"; anchor?: string; bucket?: "direct_sql" | "converted" }) => {
     const qs = new URLSearchParams();
     qs.set("sdr_id", params.sdr_id);
     if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.bucket) qs.set("bucket", params.bucket);
     return request<IncentiveDealsResponse>(`/api/v1/performance/incentives/deals?${qs.toString()}`);
   },
   // Admin-only on the backend (AdminUser dependency) — a non-admin call 403s.
@@ -276,6 +277,7 @@ export type IncentiveDealRow = {
   sdr_name: string;
   date: string | null;
   source: "direct_sql" | "converted";
+  meeting_booked_with: string | null;
 };
 
 export type IncentiveDealsResponse = {

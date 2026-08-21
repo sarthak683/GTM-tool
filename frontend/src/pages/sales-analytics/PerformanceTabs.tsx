@@ -2385,6 +2385,7 @@ export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?
 function IncentiveDealsModal({
   sdrName,
   periodLabel,
+  bucket,
   loading,
   error,
   rows,
@@ -2392,11 +2393,14 @@ function IncentiveDealsModal({
 }: {
   sdrName: string;
   periodLabel: string;
+  bucket: "direct_sql" | "converted";
   loading: boolean;
   error: string | null;
   rows: IncentiveDealRow[];
   onClose: () => void;
 }) {
+  const bucketLabel = bucket === "direct_sql" ? "Direct SQL" : "Converted";
+  const dateHeader = bucket === "direct_sql" ? "Date of Meeting" : "Date of Conversion";
   return (
     <div
       role="dialog"
@@ -2406,11 +2410,11 @@ function IncentiveDealsModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(860px, 100%)", maxHeight: "86vh", background: "#fff", borderRadius: 18, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 40px 80px rgba(10,22,40,0.25)" }}
+        style={{ width: "min(920px, 100%)", maxHeight: "86vh", background: "#fff", borderRadius: 18, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 40px 80px rgba(10,22,40,0.25)" }}
       >
         <div style={{ padding: "18px 22px", borderBottom: "1px solid #ebeff5", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
-            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7556cb", textTransform: "uppercase" }}>SQL — Drilldown · {periodLabel}</p>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7556cb", textTransform: "uppercase" }}>{bucketLabel} — Drilldown · {periodLabel}</p>
             <h3 style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "#1d2b3a" }}>
               {sdrName}
               {!loading && <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 600, color: "#62748a" }}>· {rows.length} deal{rows.length === 1 ? "" : "s"}</span>}
@@ -2421,9 +2425,9 @@ function IncentiveDealsModal({
               <button
                 type="button"
                 onClick={() => dlCsv(
-                  `incentive-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
-                  ["Deal", "AE", "SDR", "Date of Conversion"],
-                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date)]),
+                  `incentive-${bucket}-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
+                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"],
+                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? ""]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -2444,7 +2448,7 @@ function IncentiveDealsModal({
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                  {["Deal", "AE", "SDR", "Date of Conversion"].map((h) => (
+                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"].map((h) => (
                     <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                   ))}
                 </tr>
@@ -2456,10 +2460,11 @@ function IncentiveDealsModal({
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.ae_name || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.sdr_name || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(r.date)}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.meeting_booked_with || "—"}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan={4} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                  <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
                 )}
               </tbody>
             </table>
@@ -2478,7 +2483,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<"week" | "month" | "quarter">("month");
-  const [openSdr, setOpenSdr] = useState<{ sdr_id: string; sdr_name: string } | null>(null);
+  const [openSdr, setOpenSdr] = useState<{ sdr_id: string; sdr_name: string; bucket: "direct_sql" | "converted" } | null>(null);
   const [dealsData, setDealsData] = useState<IncentiveDealsResponse | null>(null);
   const [dealsLoading, setDealsLoading] = useState(false);
   const [dealsError, setDealsError] = useState<string | null>(null);
@@ -2546,7 +2551,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
     setDealsLoading(true);
     setDealsError(null);
     performanceApi
-      .getIncentiveDeals({ sdr_id: openSdr.sdr_id, period, anchor })
+      .getIncentiveDeals({ sdr_id: openSdr.sdr_id, period, anchor, bucket: openSdr.bucket })
       .then((payload) => {
         if (!cancelled) setDealsData(payload);
       })
@@ -2564,7 +2569,6 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
 
   const baseTarget = data?.target ?? 0;
   const totalSql = data?.rows.reduce((sum, r) => sum + r.sql_total, 0) ?? 0;
-  const hitting = data?.rows.filter((r) => (r.attainment ?? 0) >= 1).length ?? 0;
   const gridCols = isAdmin
     ? "minmax(140px, 1.1fr) 90px 90px 90px 1.2fr 110px 100px"
     : "minmax(150px, 1.2fr) 90px 90px 100px 1.4fr 100px";
@@ -2585,7 +2589,6 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
               ]}
             />
             <Pill tone="blue"><Trophy size={12} /> {data?.period_label}</Pill>
-            <Pill tone="green"><CheckCircle2 size={12} /> {hitting}/{data?.rows.length ?? 0} on target</Pill>
             <Pill tone="amber"><Medal size={12} /> {totalSql} total</Pill>
           </div>
         }
@@ -2622,23 +2625,28 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
                 return (
                   <div
                     key={row.sdr_id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name })}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name });
-                      }
-                    }}
-                    style={{ display: "grid", gridTemplateColumns: gridCols, gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, border: `1px solid ${PALETTE.hairline}`, background: "#fff", cursor: "pointer" }}
+                    style={{ display: "grid", gridTemplateColumns: gridCols, gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, border: `1px solid ${PALETTE.hairline}`, background: "#fff" }}
                   >
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 800, color: PALETTE.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.sdr_name}</div>
                       <div style={{ fontSize: 11, color: PALETTE.subtle, marginTop: 2 }}>{row.sql_total >= rowTarget ? "Target hit" : `${rowTarget - row.sql_total} to go`}</div>
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.direct_sql}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: PALETTE.text, textAlign: "right" }}>{row.converted}</span>
+                    <button
+                      type="button"
+                      onClick={() => setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name, bucket: "direct_sql" })}
+                      title="View the deals behind this Direct SQL count"
+                      style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", textAlign: "right", background: "transparent", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}
+                    >
+                      {row.direct_sql}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name, bucket: "converted" })}
+                      title="View the deals behind this Converted count"
+                      style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", textAlign: "right", background: "transparent", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}
+                    >
+                      {row.converted}
+                    </button>
                     <span style={{ fontSize: 16, fontWeight: 800, color: PALETTE.text, textAlign: "right" }}>{row.sql_total}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ flex: 1, height: 10, borderRadius: 999, background: "#edf2f8", overflow: "hidden" }}>
@@ -2722,6 +2730,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
         <IncentiveDealsModal
           sdrName={openSdr.sdr_name}
           periodLabel={dealsData?.period_label ?? data?.period_label ?? "…"}
+          bucket={openSdr.bucket}
           loading={dealsLoading}
           error={dealsError}
           rows={dealsData?.rows ?? []}

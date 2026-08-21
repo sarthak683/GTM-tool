@@ -905,6 +905,7 @@ class IncentiveDealRow(BaseModel):
     sdr_name: str
     date: Optional[str]  # meeting date for direct_sql rows, conversion date for converted rows
     source: Literal["direct_sql", "converted"]
+    meeting_booked_with: Optional[str]  # Deal.meeting_booked_with (VP / SVP / Head-Chief / ...), from the pipeline
 
 
 class IncentiveDealsResponse(BaseModel):
@@ -921,14 +922,18 @@ async def get_incentive_deals(
     sdr_id: Annotated[UUID, Query()],
     period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    bucket: Annotated[
+        Optional[Literal["direct_sql", "converted"]],
+        Query(description="Scope to one bucket — the Incentive row's Direct SQL and Converted numbers each open their own drilldown. Omit to get both (legacy combined view)."),
+    ] = None,
 ):
     """Deal-level drilldown behind one SDR's Incentive row.
 
-    Same population + attribution rules as get_incentives, but returns the
-    individual deals instead of counts, each tagged with which bucket it came
-    from. A deal that qualifies for both buckets appears twice (once per
-    source) — the incentive board's sql_total already dedupes for the count,
-    this endpoint is for "show me why this number is what it is."
+    Same population + attribution rules as get_incentives. `bucket` scopes the
+    result to exactly the deals behind ONE of the row's two numbers, so the
+    modal's deal count always matches the number that was clicked — no
+    dedup-across-buckets ambiguity. Omitting it returns both buckets
+    concatenated (a deal in both still appears twice, once per source).
     """
     from sqlalchemy import func, or_
     from sqlalchemy.orm import aliased
@@ -952,104 +957,110 @@ async def get_incentive_deals(
     rows: list[IncentiveDealRow] = []
 
     # Direct SQL — mirrors get_incentives' direct_sql bucket.
-    direct_hits = (await session.execute(
-        select(
-            CompanyStageMilestone.deal_id,
-            Deal.name.label("deal_name"),
-            AEUser.name.label("ae_name"),
-            SDRUser.name.label("sdr_name"),
-            Meeting.scheduled_at,
-        )
-        .select_from(CompanyStageMilestone)
-        .join(Deal, CompanyStageMilestone.deal_id == Deal.id)
-        .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
-        .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
-        .outerjoin(Meeting, Meeting.deal_id == CompanyStageMilestone.deal_id)
-        .where(
-            CompanyStageMilestone.milestone_key == "demo_scheduled",
-            CompanyStageMilestone.first_reached_at >= p.start,
-            CompanyStageMilestone.first_reached_at < p.end,
-            Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
-            Deal.pipeline_type == "deal",
-            Deal.deleted_at.is_(None),
-            or_(Deal.sdr_id == sdr_id, Deal.assigned_to_id == sdr_id),
-        )
-    )).all()
-    latest_meeting_by_deal: dict[UUID, datetime] = {}
-    for r in direct_hits:
-        if r.scheduled_at is not None:
-            cur = latest_meeting_by_deal.get(r.deal_id)
-            if cur is None or r.scheduled_at > cur:
-                latest_meeting_by_deal[r.deal_id] = r.scheduled_at
-    seen_direct: set[UUID] = set()
-    for r in direct_hits:
-        if r.deal_id is None or r.deal_id in seen_direct:
-            continue
-        seen_direct.add(r.deal_id)
-        sat = latest_meeting_by_deal.get(r.deal_id)
-        rows.append(IncentiveDealRow(
-            deal_id=str(r.deal_id),
-            deal_name=r.deal_name or "",
-            ae_name=r.ae_name or "Unassigned",
-            sdr_name=r.sdr_name or "",
-            date=sat.date().isoformat() if sat else None,
-            source="direct_sql",
-        ))
+    if bucket is None or bucket == "direct_sql":
+        direct_hits = (await session.execute(
+            select(
+                CompanyStageMilestone.deal_id,
+                Deal.name.label("deal_name"),
+                Deal.meeting_booked_with,
+                AEUser.name.label("ae_name"),
+                SDRUser.name.label("sdr_name"),
+                Meeting.scheduled_at,
+            )
+            .select_from(CompanyStageMilestone)
+            .join(Deal, CompanyStageMilestone.deal_id == Deal.id)
+            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+            .outerjoin(Meeting, Meeting.deal_id == CompanyStageMilestone.deal_id)
+            .where(
+                CompanyStageMilestone.milestone_key == "demo_scheduled",
+                CompanyStageMilestone.first_reached_at >= p.start,
+                CompanyStageMilestone.first_reached_at < p.end,
+                Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
+                Deal.pipeline_type == "deal",
+                Deal.deleted_at.is_(None),
+                or_(Deal.sdr_id == sdr_id, Deal.assigned_to_id == sdr_id),
+            )
+        )).all()
+        latest_meeting_by_deal: dict[UUID, datetime] = {}
+        for r in direct_hits:
+            if r.scheduled_at is not None:
+                cur = latest_meeting_by_deal.get(r.deal_id)
+                if cur is None or r.scheduled_at > cur:
+                    latest_meeting_by_deal[r.deal_id] = r.scheduled_at
+        seen_direct: set[UUID] = set()
+        for r in direct_hits:
+            if r.deal_id is None or r.deal_id in seen_direct:
+                continue
+            seen_direct.add(r.deal_id)
+            sat = latest_meeting_by_deal.get(r.deal_id)
+            rows.append(IncentiveDealRow(
+                deal_id=str(r.deal_id),
+                deal_name=r.deal_name or "",
+                ae_name=r.ae_name or "Unassigned",
+                sdr_name=r.sdr_name or "",
+                date=sat.date().isoformat() if sat else None,
+                source="direct_sql",
+                meeting_booked_with=r.meeting_booked_with,
+            ))
 
     # Converted — mirrors get_incentives' converted bucket (deal.sdr_id takes
     # priority, then company.sdr_id).
-    conv_hist = (await session.execute(
-        select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
-            func.lower(DealStageHistory.to_stage) == "qualified_lead",
-            DealStageHistory.changed_at >= p.start,
-            DealStageHistory.changed_at < p.end,
-        )
-    )).all()
-    conv_deal_ids = {r.deal_id for r in conv_hist}
-    conv_changed_at = {r.deal_id: r.changed_at for r in conv_hist}
-    if conv_deal_ids:
-        deal_rows = (await session.execute(
-            select(
-                Deal.id,
-                Deal.name.label("deal_name"),
-                Deal.company_id,
-                Deal.sdr_id,
-                AEUser.name.label("ae_name"),
-                SDRUser.name.label("sdr_name"),
-            )
-            .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
-            .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
-            .where(
-                Deal.id.in_(conv_deal_ids),
-                Deal.pipeline_type == "deal",
-                Deal.deleted_at.is_(None),
+    if bucket is None or bucket == "converted":
+        conv_hist = (await session.execute(
+            select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
+                func.lower(DealStageHistory.to_stage) == "qualified_lead",
+                DealStageHistory.changed_at >= p.start,
+                DealStageHistory.changed_at < p.end,
             )
         )).all()
-        company_ids = {r.company_id for r in deal_rows if r.company_id}
-        company_sdr: dict[UUID, tuple[UUID | None, str | None]] = {}
-        if company_ids:
-            comp_rows = (await session.execute(
-                select(Company.id, Company.sdr_id, SDRUser.name)
-                .outerjoin(SDRUser, Company.sdr_id == SDRUser.id)
-                .where(Company.id.in_(company_ids))
+        conv_deal_ids = {r.deal_id for r in conv_hist}
+        conv_changed_at = {r.deal_id: r.changed_at for r in conv_hist}
+        if conv_deal_ids:
+            deal_rows = (await session.execute(
+                select(
+                    Deal.id,
+                    Deal.name.label("deal_name"),
+                    Deal.company_id,
+                    Deal.sdr_id,
+                    Deal.meeting_booked_with,
+                    AEUser.name.label("ae_name"),
+                    SDRUser.name.label("sdr_name"),
+                )
+                .outerjoin(AEUser, Deal.assigned_to_id == AEUser.id)
+                .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
+                .where(
+                    Deal.id.in_(conv_deal_ids),
+                    Deal.pipeline_type == "deal",
+                    Deal.deleted_at.is_(None),
+                )
             )).all()
-            company_sdr = {r.id: (r.sdr_id, r[2]) for r in comp_rows}
-        for r in deal_rows:
-            effective_sdr_id = r.sdr_id
-            effective_sdr_name = r.sdr_name
-            if not effective_sdr_id and r.company_id in company_sdr:
-                effective_sdr_id, effective_sdr_name = company_sdr[r.company_id]
-            if effective_sdr_id != sdr_id:
-                continue
-            changed_at = conv_changed_at.get(r.id)
-            rows.append(IncentiveDealRow(
-                deal_id=str(r.id),
-                deal_name=r.deal_name or "",
-                ae_name=r.ae_name or "Unassigned",
-                sdr_name=effective_sdr_name or sdr.name,
-                date=changed_at.date().isoformat() if changed_at else None,
-                source="converted",
-            ))
+            company_ids = {r.company_id for r in deal_rows if r.company_id}
+            company_sdr: dict[UUID, tuple[UUID | None, str | None]] = {}
+            if company_ids:
+                comp_rows = (await session.execute(
+                    select(Company.id, Company.sdr_id, SDRUser.name)
+                    .outerjoin(SDRUser, Company.sdr_id == SDRUser.id)
+                    .where(Company.id.in_(company_ids))
+                )).all()
+                company_sdr = {r.id: (r.sdr_id, r[2]) for r in comp_rows}
+            for r in deal_rows:
+                effective_sdr_id = r.sdr_id
+                effective_sdr_name = r.sdr_name
+                if not effective_sdr_id and r.company_id in company_sdr:
+                    effective_sdr_id, effective_sdr_name = company_sdr[r.company_id]
+                if effective_sdr_id != sdr_id:
+                    continue
+                changed_at = conv_changed_at.get(r.id)
+                rows.append(IncentiveDealRow(
+                    deal_id=str(r.id),
+                    deal_name=r.deal_name or "",
+                    ae_name=r.ae_name or "Unassigned",
+                    sdr_name=effective_sdr_name or sdr.name,
+                    date=changed_at.date().isoformat() if changed_at else None,
+                    source="converted",
+                    meeting_booked_with=r.meeting_booked_with,
+                ))
 
     return IncentiveDealsResponse(
         sdr_id=str(sdr_id),
