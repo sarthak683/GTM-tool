@@ -105,14 +105,24 @@ function relativeTime(timestamp?: string): string {
   return `${Math.floor(ageDays)}d ago`;
 }
 
-function formatEditableCurrency(value?: number | null): string {
+function formatEditableCurrency(value?: number | null, currencyCode?: string | null): string {
   if (value == null || Number.isNaN(Number(value))) return "";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+  // The input is editable — keep the symbol visible so a rep always knows
+  // which currency they're editing, but use a plain numeric format (no grouping
+  // separator ambiguity with Intl's thousand-separators in en-US vs. the
+  // decimal the rep typed). Currency codes that Intl doesn't recognize fall
+  // back to no-symbol + a numeric prefix so the input never silently breaks.
+  const code = (currencyCode ?? "USD").toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value));
+  } catch {
+    return `${code} ${Number(value).toFixed(2)}`;
+  }
 }
 
 function parseCurrencyInput(value: string): number | undefined {
@@ -615,8 +625,18 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   // Inline editing states
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(deal.name);
-  const [amountInput, setAmountInput] = useState(formatEditableCurrency(deal.value));
+  const [amountInput, setAmountInput] = useState(formatEditableCurrency(deal.value, deal.currency_code));
   const [amountFocused, setAmountFocused] = useState(false);
+
+  // When the user changes the currency dropdown, re-format the amount input
+  // so the symbol updates inline. Without this, flipping USD → EUR keeps
+  // showing "$100,000.00" because the input is its own state and never
+  // re-derives from `deal.currency_code`.
+  useEffect(() => {
+    if (amountFocused) return;
+    setAmountInput(formatEditableCurrency(deal.value, deal.currency_code));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deal.currency_code]);
   const [showStageMenu, setShowStageMenu] = useState(false);
   // Win/loss capture: moving to CLOSED WON / CLOSED LOST opens a reason
   // prompt before the move. closeReasonDraft holds the shared enum value
@@ -711,7 +731,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     setActiveTab("overview");
     setComment("");
     setAmountFocused(false);
-    setAmountInput(formatEditableCurrency(deal.value));
+    setAmountInput(formatEditableCurrency(deal.value, deal.currency_code));
     setEmailDraftSubject(`Following up on ${deal.name}`);
     setEmailDraftBody("");
     setEmailDraftTo("");
@@ -720,9 +740,9 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
   useEffect(() => {
     if (!amountFocused) {
-      setAmountInput(formatEditableCurrency(deal.value));
+      setAmountInput(formatEditableCurrency(deal.value, deal.currency_code));
     }
-  }, [deal.value, amountFocused]);
+  }, [deal.value, deal.currency_code, amountFocused]);
 
   useEffect(() => {
     if (!companyDropdownOpen) return;
@@ -1434,7 +1454,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                   onBlur={(e) => {
                     setAmountFocused(false);
                     const nextValue = parseCurrencyInput(e.target.value);
-                    setAmountInput(formatEditableCurrency(nextValue));
+                    setAmountInput(formatEditableCurrency(nextValue, deal.currency_code));
                     patchDeal({ value: nextValue } as Partial<Deal>);
                   }}
                   style={{ ...fieldInputStyle, flex: 1, minWidth: 0 }}

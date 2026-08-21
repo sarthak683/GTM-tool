@@ -2482,9 +2482,14 @@ textarea:focus {
 .rte-display a { color: #1f6feb; text-decoration: underline; }
 .rte-display s { color: #94a3b8; }
 
-/* Editor surface — keep plain ProseMirror wrapper styled cleanly. */
+/* Editor surface — keep plain ProseMirror wrapper styled cleanly.
+   Tiptap's Placeholder extension adds `data-placeholder="…"` to the contenteditable
+   and ProseMirror exposes a `p.is-empty` selector that fires only when the
+   first paragraph is empty. Both class names are listed because Tiptap
+   switched which it emits between minor versions. */
 .ProseMirror:focus { outline: none; }
-.ProseMirror p.is-editor-empty:first-child::before {
+.ProseMirror p.is-editor-empty:first-child::before,
+.ProseMirror p.is-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
   color: #9aa8b7;

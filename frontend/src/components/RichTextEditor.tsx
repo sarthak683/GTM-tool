@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import Placeholder from "@tiptap/extension-placeholder";
 import DOMPurify from "dompurify";
 import {
   Bold, Italic, List, ListOrdered, Link as LinkIcon,
@@ -212,7 +213,9 @@ export function RichTextEditor({
   // doesn't render a string literal as HTML (browsers would, but it's safer
   // to keep Tiptap's schema in charge).
   const initialHtml = useMemo(() => {
-    if (!value) return "";
+    // Empty value must be a valid doc, otherwise ProseMirror refuses to mount
+    // and the editor silently shows nothing. Always seed with a paragraph.
+    if (!value) return "<p></p>";
     if (/<[a-z][\s\S]*>/i.test(value)) return value;
     return `<p>${value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`;
   }, []); // initial only — we re-set below if value changes externally
@@ -227,6 +230,13 @@ export function RichTextEditor({
         openOnClick: false,
         autolink: true,
         HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
+      }),
+      // Native placeholder via ProseMirror's data-placeholder + a CSS pseudo
+      // rule. The browser renders the placeholder as soon as the doc is empty,
+      // so we don't need a fragile overlap div on top of the editor surface.
+      Placeholder.configure({
+        placeholder: placeholder ?? "Start typing…",
+        showOnlyWhenEditable: true,
       }),
     ],
     content: initialHtml,
@@ -277,20 +287,6 @@ export function RichTextEditor({
           cursor: readOnly ? "default" : "text",
         }}
       />
-      {placeholder && !value && !editor?.getText() && (
-        <div
-          style={{
-            position: "relative",
-            marginTop: -Math.max(minHeight - 24, 28),
-            marginLeft: 12,
-            color: "#9aa8b7",
-            fontSize: 13,
-            pointerEvents: "none",
-          }}
-        >
-          {placeholder}
-        </div>
-      )}
     </div>
   );
 }
