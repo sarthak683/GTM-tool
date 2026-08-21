@@ -533,6 +533,16 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
         and deal.stage == "demo_scheduled"
     )
 
+    # Any close date edit (set, change, clear) is a visible event in the deal
+    # timeline. The demo-scheduled reschedule branch above keeps its dedicated
+    # `demo_rescheduled` activity for analytics; here we cover every other case
+    # (initial set on a new deal, push/extend on later stages, clearing) so the
+    # AE can see when their forecast date moved and why.
+    close_date_changed = (
+        "close_date_est" in update_data
+        and str(update_data["close_date_est"]) != str(deal.close_date_est)
+    )
+
     # Auto-log field changes
     changes: list[str] = []
     if "value" in update_data and update_data["value"] != deal.value:
@@ -546,6 +556,19 @@ async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _u
     if "commit_to_deal" in update_data and update_data["commit_to_deal"] != deal.commit_to_deal:
         label = "committed" if update_data["commit_to_deal"] else "uncommitted"
         changes.append(f"Deal {label}")
+    if close_date_changed and not close_date_rescheduled:
+        # Suppressed when the demo-rescheduled branch already logs a dedicated
+        # activity for the same write — otherwise the timeline gets two entries
+        # for one edit.
+        old_close = deal.close_date_est.isoformat() if deal.close_date_est else None
+        new_close = update_data["close_date_est"]
+        new_iso = new_close.isoformat() if new_close else None
+        if new_iso and old_close:
+            changes.append(f"Close date changed from {old_close} to {new_iso}")
+        elif new_iso:
+            changes.append(f"Close date set to {new_iso}")
+        else:
+            changes.append(f"Close date cleared (was {old_close})")
     if "next_step" in update_data and update_data["next_step"] != _normalize_optional_text(deal.next_step):
         changes.append(_summarize_text_change("Next step", update_data["next_step"]))
         # Only stamp next_step_updated_at when the text itself changed —
