@@ -921,6 +921,12 @@ class ContactRepository(BaseRepository[Contact]):
                             ),
                         )
                     )
+                elif color == "white":
+                    # "No contact yet" — prospect has zero logged call attempts.
+                    # Mutually exclusive with the other call-outcome colors
+                    # (those all require call_disposition to be set, which only
+                    # happens once a call is logged).
+                    clauses.append(call_attempt_count_subq == 0)
             if clauses:
                 call_color_filter = or_(*clauses) if len(clauses) > 1 else clauses[0]
                 base_stmt = base_stmt.where(call_color_filter)

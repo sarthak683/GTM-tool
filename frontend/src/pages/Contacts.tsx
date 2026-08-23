@@ -155,6 +155,7 @@ const FOLLOWUP_DISPOSITIONS = new Set<string>([
 // the backend's `call_outcome_color` / `email_outcome_color` enums in
 // app/repositories/contact.py — change them together.
 const CALL_OUTCOME_COLOR_OPTIONS: { value: string; label: string }[] = [
+  { value: "white",  label: "\u26AA No contact yet" },
   { value: "yellow", label: "\u{1F7E1} Attempted (no outcome)" },
   { value: "blue",   label: "\u{1F535} Follow-up / callback" },
   { value: "green",  label: "\u{1F7E2} Meeting booked" },

@@ -224,7 +224,7 @@ class ContactFilters:
     company_account_status: Optional[str] = Query(default=None, description="Filter by the ACCOUNT's status (comma-separated, e.g. 'in_progress,meeting_booked'; 'none' = account has no status yet)")
     include_disabled_accounts: bool = Query(default=False, description="Include prospects of disabled (not_a_fit/dnd) accounts. Default false: disabled accounts' prospects are out of the queue everywhere.")
     timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')")
-    call_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by call-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
+    call_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by call-outcome dot color (white | green | red | blue | yellow). Repeatable; OR'd together. 'white' = no contact yet (zero call attempts).")
     email_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together.")
     call_attempts_bucket: Optional[list[str]] = Query(default=None, description="Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together.")
     call_attempt_min: Optional[int] = Query(default=None, ge=0, description="Follow-up count lower bound (inclusive): minimum number of logged calls.")
