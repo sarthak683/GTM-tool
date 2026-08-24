@@ -731,8 +731,8 @@ async def get_leaderboard(
 class IncentiveRow(BaseModel):
     sdr_id: str
     sdr_name: str
-    direct_sql: int  # deals that reached the demo_scheduled milestone in-period with a VP/SVP/Chief meeting
-    converted: int   # deals that moved demo_done → qualified_lead within the period
+    direct_sql: int  # deals that reached the demo_done milestone in-period with a VP/SVP/Chief meeting
+    converted: int   # Director/S. Director/AVP-level deals that moved into qualified_lead within the period
     sql_total: int   # union of the two, deduped by deal id
     target: float    # monthly SQL target for the SDR role
     attainment: Optional[float]  # sql_total / target
@@ -759,9 +759,12 @@ async def get_incentives(
 ):
     """Per-SDR SQL leaderboard for the Incentive view.
 
-    SQL = (Direct SQL bucket) + (deals that moved demo_done → qualified_lead in
-    the period), unioned and deduped by deal id so the two sources never
-    double-count the same deal. The target is a flat per-window figure from
+    SQL = (Direct SQL: demo_done reached with a VP/SVP/Head-Chief meeting) +
+    (Converted: moved into qualified_lead with a Director/S. Director/AVP
+    meeting), unioned and deduped by deal id. The two title tiers are
+    mutually exclusive by design, so in practice a deal only ever lands in
+    one bucket — the union/dedup mainly guards against future title changes.
+    The target is a flat per-window figure from
     analytics_settings.incentive_targets (week=2, month=7, quarter=21 by
     default) — NOT prorated — with an optional per-SDR override in
     incentive_targets.per_rep[sdr_id][period], settable only by admins via
@@ -797,19 +800,19 @@ async def get_incentives(
         sdr_users = [u for u in sdr_users if u.id in filter_rep_ids]
     sdr_ids = {u.id for u in sdr_users}
 
-    # Direct SQL bucket — mirrors the "Meetings Booked" drilldown definition in
-    # analytics.py: any deal that *ever reached* the demo_scheduled milestone
-    # within the period with a VP/SVP/Chief meeting, attributed to the deal's
-    # SDR (and the assigned AE when they are themselves an SDR). This is a
-    # historical count — it does not require the deal to still be sitting in
-    # demo_scheduled today, so a deal that has since converted still counts
-    # here as well as in "converted" (the sql_total union dedupes it).
+    # Direct SQL bucket — any deal that *ever reached* the demo_done milestone
+    # (the demo actually happened, not just booked) within the period with a
+    # VP/SVP/Chief meeting, attributed to the deal's SDR (and the assigned AE
+    # when they are themselves an SDR). This is a historical count — it does
+    # not require the deal to still be sitting in demo_done today, so a deal
+    # that has since converted still counts here as well as in "converted"
+    # (the sql_total union dedupes it).
     _DIRECT_SQL_TITLES = ("VP", "SVP", "Head/Chief")
     direct_rows = (await session.execute(
         select(CompanyStageMilestone.deal_id, Deal.assigned_to_id, Deal.sdr_id)
         .join(Deal, CompanyStageMilestone.deal_id == Deal.id)
         .where(
-            CompanyStageMilestone.milestone_key == "demo_scheduled",
+            CompanyStageMilestone.milestone_key == "demo_done",
             CompanyStageMilestone.first_reached_at >= p.start,
             CompanyStageMilestone.first_reached_at < p.end,
             Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
@@ -831,10 +834,13 @@ async def get_incentives(
             seen_direct.add(key)
             direct_sql_deals.setdefault(uid, set()).add(r.deal_id)
 
-    # Converted — deals that entered qualified_lead within the month (the
-    # "moved from demo_done to Qualified Lead" signal). Attribution matches the
+    # Converted — deals that entered qualified_lead within the month, booked
+    # with a Director/S. Director/AVP-level meeting (the tier below Direct
+    # SQL's VP/SVP/Head-Chief — the two title sets are mutually exclusive, so
+    # a deal can only ever land in one bucket). Attribution matches the
     # dashboard's demos_converted: deal.sdr_id takes priority, then company.sdr_id.
     # Same live-population guard as Direct SQL: live "deal"-pipeline rows only.
+    _CONVERTED_TITLES = ("Director", "S. Director", "AVP")
     conv_hist = (await session.execute(
         select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
             func.lower(DealStageHistory.to_stage) == "qualified_lead",
@@ -852,6 +858,7 @@ async def get_incentives(
                 Deal.id.in_(conv_deal_ids),
                 Deal.pipeline_type == "deal",
                 Deal.deleted_at.is_(None),
+                Deal.meeting_booked_with.in_(list(_CONVERTED_TITLES)),
             )
         )).all()
         conv_deal_ids = {r.id for r in deal_rows}
@@ -973,7 +980,7 @@ async def get_incentive_deals(
             .outerjoin(SDRUser, Deal.sdr_id == SDRUser.id)
             .outerjoin(Meeting, Meeting.deal_id == CompanyStageMilestone.deal_id)
             .where(
-                CompanyStageMilestone.milestone_key == "demo_scheduled",
+                CompanyStageMilestone.milestone_key == "demo_done",
                 CompanyStageMilestone.first_reached_at >= p.start,
                 CompanyStageMilestone.first_reached_at < p.end,
                 Deal.meeting_booked_with.in_(list(_DIRECT_SQL_TITLES)),
@@ -1004,8 +1011,9 @@ async def get_incentive_deals(
                 meeting_booked_with=r.meeting_booked_with,
             ))
 
-    # Converted — mirrors get_incentives' converted bucket (deal.sdr_id takes
-    # priority, then company.sdr_id).
+    # Converted — mirrors get_incentives' converted bucket: Director/S.
+    # Director/AVP-level meeting (deal.sdr_id takes priority, then company.sdr_id).
+    _CONVERTED_TITLES = ("Director", "S. Director", "AVP")
     if bucket is None or bucket == "converted":
         conv_hist = (await session.execute(
             select(DealStageHistory.deal_id, DealStageHistory.changed_at).where(
@@ -1033,6 +1041,7 @@ async def get_incentive_deals(
                     Deal.id.in_(conv_deal_ids),
                     Deal.pipeline_type == "deal",
                     Deal.deleted_at.is_(None),
+                    Deal.meeting_booked_with.in_(list(_CONVERTED_TITLES)),
                 )
             )).all()
             company_ids = {r.company_id for r in deal_rows if r.company_id}
