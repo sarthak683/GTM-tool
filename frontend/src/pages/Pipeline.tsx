@@ -18,14 +18,14 @@ type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
 type PendingDealMove = { dealId: string; dealName: string; fromStage: string; targetStage: string };
-type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
+export type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
 type SummaryCardKey = "active" | "inactive" | "tofu" | "mofu" | "bofu" | "total";
 type PipelineSummarySectionConfig = PipelineSummarySettings["deal"];
 type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
-const DEFAULT_DEAL_STAGES: StageMeta[] = [
+export const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
   { id: "demo_scheduled", label: "DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
   { id: "demo_done", label: "DEMO DONE", group: "active", color: "#1d4ed8" },
@@ -662,8 +662,8 @@ function FunnelSettingsModal({
   );
 }
 
-function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" });
+export function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated, initialCompanyId, initialName, initialAssignedToId }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void; initialCompanyId?: string; initialName?: string; initialAssignedToId?: string }) {
+  const [form, setForm] = useState(() => ({ name: initialName || "", company_id: initialCompanyId || "", value: "", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: initialAssignedToId || "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });

@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import type { ContactEngagementStats, PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
-import type { Activity, Contact, AngelInvestor, AngelMapping, Company, RolePermissionsSettings, User } from "../types";
+import type { Activity, Contact, AngelInvestor, AngelMapping, Company, Deal, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import {
@@ -24,6 +24,7 @@ import {
   formatCallDisposition,
 } from "../lib/prospectWorkflow";
 import { shouldSyncContactStatusToAccount } from "../lib/contactStatusSync";
+import { CreateDealModal, DEFAULT_DEAL_STAGES } from "./Pipeline";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
@@ -1474,6 +1475,14 @@ export default function Contacts() {
     }
   };
 
+  // "Convert to deal" used to create the deal immediately on click, with no
+  // review — a mis-click silently minted a deal. Now it only auto-resolves
+  // the true no-op case (an identically-named deal already exists for this
+  // company: nothing to confirm, just link and go there) and otherwise opens
+  // the same New Deal modal Pipeline uses, pre-filled, so the rep sees and
+  // explicitly confirms the deal before it's created.
+  const [convertDealContact, setConvertDealContact] = useState<Contact | null>(null);
+
   const handleConvertContactToDeal = async (contact: Contact) => {
     if (!contact.company_id) {
       toast.warning("This prospect needs a company before it can be converted to a deal.", "Company required");
@@ -1492,17 +1501,23 @@ export default function Contacts() {
         navigate(`/deals/${duplicate.id}`);
         return;
       }
-      const deal = await dealsApi.create({
-        name: desiredName,
-        company_id: contact.company_id,
-        assigned_to_id: contact.assigned_to_id || undefined,
-        stage: "qualified_lead",
-      });
+      setConvertDealContact(contact);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to check for an existing deal.", "Conversion failed");
+    }
+  };
+
+  const handleConvertDealCreated = async (deal: Deal) => {
+    const contact = convertDealContact;
+    setConvertDealContact(null);
+    if (!contact) return;
+    const contactName = `${contact.first_name} ${contact.last_name}`.trim() || contact.email || "Prospect";
+    try {
       await dealsApi.addContact(deal.id, contact.id, "champion");
       toast.success(`${contactName} was converted into a deal.`, "Deal created");
       navigate("/pipeline");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to convert this prospect into a deal.", "Conversion failed");
+      toast.error(error instanceof Error ? error.message : "Deal was created, but linking the prospect to it failed.", "Link failed");
     }
   };
 
@@ -4569,6 +4584,20 @@ export default function Contacts() {
           entityId={taskContact.id}
           entityLabel={`${taskContact.first_name} ${taskContact.last_name}`.trim() || taskContact.email || "Prospect"}
           onChanged={() => loadContacts()}
+        />
+      ) : null}
+
+      {convertDealContact ? (
+        <CreateDealModal
+          defaultStage="qualified_lead"
+          companies={companyOptions}
+          users={teamUsers}
+          stages={DEFAULT_DEAL_STAGES}
+          initialCompanyId={convertDealContact.company_id ?? undefined}
+          initialName={`${convertDealContact.company_name ?? "Account"} - ${`${convertDealContact.first_name} ${convertDealContact.last_name}`.trim() || convertDealContact.email || "Prospect"}`}
+          initialAssignedToId={convertDealContact.assigned_to_id ?? undefined}
+          onClose={() => setConvertDealContact(null)}
+          onCreated={handleConvertDealCreated}
         />
       ) : null}
 
