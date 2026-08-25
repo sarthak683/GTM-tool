@@ -157,6 +157,15 @@ class ContactRead(ContactBase):
     # Activity rows so the full history is in the timeline / GET /activities.
     latest_comment: Optional[str] = None
     comment_count: int = 0
+    # Last-touch-by-channel: who did it and when, derived from the most recent
+    # Activity row per type (call/email/linkedin), joined to its creator.
+    # Populated by list_with_company_name; not written by clients.
+    last_call_by: Optional[str] = None
+    last_call_touch_at: Optional[datetime] = None
+    last_email_by: Optional[str] = None
+    last_email_touch_at: Optional[datetime] = None
+    last_linkedin_by: Optional[str] = None
+    last_linkedin_touch_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

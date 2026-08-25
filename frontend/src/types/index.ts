@@ -190,6 +190,14 @@ export interface Contact {
   // Latest rep comment + total count (comments are activity rows, type='comment').
   latest_comment?: string | null;
   comment_count?: number;
+  // Last-touch-by-channel: who did it and when, from the most recent Activity
+  // row per type (call/email/linkedin), joined to its creator.
+  last_call_by?: string | null;
+  last_call_touch_at?: string | null;
+  last_email_by?: string | null;
+  last_email_touch_at?: string | null;
+  last_linkedin_by?: string | null;
+  last_linkedin_touch_at?: string | null;
   // Scheduled follow-up datetime for `interested_follow_up_required` /
   // `call_back_later_rescheduled` dispositions. Cleared automatically when
   // the disposition changes to something that doesn't imply a follow-up.

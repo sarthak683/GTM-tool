@@ -333,6 +333,8 @@ class ContactRepository(BaseRepository[Contact]):
         emails_opened: Optional[bool] = None,
         linkedin_active: Optional[bool] = None,
         meetings_booked: Optional[bool] = None,
+        last_touch_type: Optional[str] = None,
+        last_touch_rep_id: Optional[str] = None,
     ):
         """Build the fully-filtered list SELECT + matching COUNT statement.
 
@@ -389,6 +391,42 @@ class ContactRepository(BaseRepository[Contact]):
             .correlate(Contact)
             .scalar_subquery()
         )
+
+        # Last-touch-by-channel: who did the most recent call/email/LinkedIn
+        # activity and when, for the "Last Touch" prospecting column. Two
+        # subqueries per channel (name via join, timestamp alone) rather than
+        # one composite, since a scalar subquery can only return one column —
+        # both are filtered/ordered identically so they resolve to the same row.
+        def _last_touch_subqs(activity_type: str, user_alias):
+            at_subq = (
+                select(Activity.created_at)
+                .where(Activity.contact_id == Contact.id)
+                .where(Activity.type == activity_type)
+                .order_by(Activity.created_at.desc())
+                .limit(1)
+                .correlate(Contact)
+                .scalar_subquery()
+            )
+            by_subq = (
+                select(user_alias.name)
+                .select_from(Activity)
+                .join(user_alias, Activity.created_by_id == user_alias.id)
+                .where(Activity.contact_id == Contact.id)
+                .where(Activity.type == activity_type)
+                .order_by(Activity.created_at.desc())
+                .limit(1)
+                .correlate(Contact)
+                .scalar_subquery()
+            )
+            return at_subq, by_subq
+
+        call_touch_user = aliased(User)
+        email_touch_user = aliased(User)
+        linkedin_touch_user = aliased(User)
+        last_call_at_subq, last_call_by_subq = _last_touch_subqs("call", call_touch_user)
+        last_email_at_subq, last_email_by_subq = _last_touch_subqs("email", email_touch_user)
+        last_linkedin_at_subq, last_linkedin_by_subq = _last_touch_subqs("linkedin", linkedin_touch_user)
+
         # Domain-mismatch FLAG (not filter): true when the prospect's email
         # domain neither equals nor is a subdomain (either direction) of the
         # account's domain. Surfaced as a per-row badge so a mis-linked prospect
@@ -441,6 +479,12 @@ class ContactRepository(BaseRepository[Contact]):
                 call_attempt_count_subq.label("call_attempt_count"),
                 latest_comment_subq.label("latest_comment"),
                 comment_count_subq.label("comment_count"),
+                last_call_by_subq.label("last_call_by"),
+                last_call_at_subq.label("last_call_touch_at"),
+                last_email_by_subq.label("last_email_by"),
+                last_email_at_subq.label("last_email_touch_at"),
+                last_linkedin_by_subq.label("last_linkedin_by"),
+                last_linkedin_at_subq.label("last_linkedin_touch_at"),
             )
             .outerjoin(Company, Contact.company_id == Company.id)
             .outerjoin(ae_user, Contact.assigned_to_id == ae_user.id)
@@ -876,6 +920,26 @@ class ContactRepository(BaseRepository[Contact]):
                 base_stmt = base_stmt.where(sdr_term)
                 count_stmt = count_stmt.where(sdr_term)
 
+        # Last Touch filter: contacts whose MOST RECENT activity of the given
+        # channel was created by one of the given reps. Both a channel and at
+        # least one rep are required — a channel alone ("who last called
+        # anyone") or a rep alone ("show only Jacob's rows") isn't what this
+        # filter means; it only activates fully specified.
+        last_touch_rep_ids = _parse_uuid_values(last_touch_rep_id)
+        if last_touch_type and last_touch_rep_ids:
+            last_touch_by_id_subq = (
+                select(Activity.created_by_id)
+                .where(Activity.contact_id == Contact.id)
+                .where(Activity.type == last_touch_type)
+                .order_by(Activity.created_at.desc())
+                .limit(1)
+                .correlate(Contact)
+                .scalar_subquery()
+            )
+            last_touch_filter = last_touch_by_id_subq.in_(last_touch_rep_ids)
+            base_stmt = base_stmt.where(last_touch_filter)
+            count_stmt = count_stmt.where(last_touch_filter)
+
         # Call-outcome color filter. Each color maps to a set of call_disposition
         # values; "yellow" means "attempts exist but no decisive outcome". The
         # frontend prospect-page uses these to render dot colors.
@@ -1078,6 +1142,8 @@ class ContactRepository(BaseRepository[Contact]):
         emails_opened: Optional[bool] = None,
         linkedin_active: Optional[bool] = None,
         meetings_booked: Optional[bool] = None,
+        last_touch_type: Optional[str] = None,
+        last_touch_rep_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ContactRead], int]:
@@ -1121,6 +1187,8 @@ class ContactRepository(BaseRepository[Contact]):
             emails_opened=emails_opened,
             linkedin_active=linkedin_active,
             meetings_booked=meetings_booked,
+            last_touch_type=last_touch_type,
+            last_touch_rep_id=last_touch_rep_id,
         )
 
         total = (await self.session.execute(count_stmt)).scalar_one()
@@ -1173,6 +1241,12 @@ class ContactRepository(BaseRepository[Contact]):
             call_attempt_count,
             latest_comment,
             comment_count,
+            last_call_by,
+            last_call_touch_at,
+            last_email_by,
+            last_email_touch_at,
+            last_linkedin_by,
+            last_linkedin_touch_at,
         ) in rows:
             read = ContactRead.model_validate(contact)
             read.company_name = company_name
@@ -1183,6 +1257,12 @@ class ContactRepository(BaseRepository[Contact]):
             read.call_attempt_count = int(call_attempt_count or 0)
             read.latest_comment = latest_comment
             read.comment_count = int(comment_count or 0)
+            read.last_call_by = last_call_by
+            read.last_call_touch_at = last_call_touch_at
+            read.last_email_by = last_email_by
+            read.last_email_touch_at = last_email_touch_at
+            read.last_linkedin_by = last_linkedin_by
+            read.last_linkedin_touch_at = last_linkedin_touch_at
             result.append(read)
 
         await apply_contact_tracking(self.session, result)
@@ -1223,6 +1303,8 @@ class ContactRepository(BaseRepository[Contact]):
         emails_opened: Optional[bool] = None,
         linkedin_active: Optional[bool] = None,
         meetings_booked: Optional[bool] = None,
+        last_touch_type: Optional[str] = None,
+        last_touch_rep_id: Optional[str] = None,
     ) -> dict[str, int]:
         """One-query engagement aggregate over the FULL filtered prospect set.
 
@@ -1267,6 +1349,8 @@ class ContactRepository(BaseRepository[Contact]):
             emails_opened=emails_opened,
             linkedin_active=linkedin_active,
             meetings_booked=meetings_booked,
+            last_touch_type=last_touch_type,
+            last_touch_rep_id=last_touch_rep_id,
         )
 
         # Rebuild the aggregate SELECT explicitly (same FROM/JOIN as the count

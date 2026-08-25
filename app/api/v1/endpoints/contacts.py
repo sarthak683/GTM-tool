@@ -240,6 +240,10 @@ class ContactFilters:
     emails_opened: Optional[bool] = Query(default=None, description="true → only prospects with at least one tracked email open (email_open_count > 0).")
     linkedin_active: Optional[bool] = Query(default=None, description="true → only prospects with a logged LinkedIn motion (linkedin_status set and not 'none').")
     meetings_booked: Optional[bool] = Query(default=None, description="true → only prospects whose sequence_status is meeting_booked.")
+    # Last Touch filter: contacts whose MOST RECENT activity of this channel was
+    # created by one of these reps. Both must be set together to take effect.
+    last_touch_type: Optional[str] = Query(default=None, description="call | email | linkedin — which channel's last touch to filter on. Requires last_touch_rep_id.")
+    last_touch_rep_id: Optional[str] = Query(default=None, description="One or more rep user IDs (comma-separated). Requires last_touch_type.")
 
     def as_repo_kwargs(self) -> dict:
         """Filter kwargs for ``ContactRepository.list_with_company_name``."""

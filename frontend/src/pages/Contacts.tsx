@@ -201,6 +201,7 @@ const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: bool
   { key: "timezone", label: "Timezone" },
   { key: "ae", label: "AE" },
   { key: "sdr", label: "SDR" },
+  { key: "last_touch", label: "Last Touch" },
 ] as const;
 
 type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
@@ -301,10 +302,23 @@ function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey
       .map((column) => column.key as ContactTableColumnKey)
       .filter((key) => !present.has(key));
     if (!missing.length) return next;
-    const actionIdx = next.indexOf("action");
+    // "last_touch" gets its own placement rule (between SDR and Comments)
+    // rather than the generic before-Action rule, since it reads naturally
+    // beside the other per-rep reference columns.
+    const lastTouchIdx = missing.indexOf("last_touch");
+    let result = next;
+    if (lastTouchIdx !== -1) {
+      missing.splice(lastTouchIdx, 1);
+      const commentsIdx = result.indexOf("comments");
+      const sdrIdx = result.indexOf("sdr");
+      const insertAt = commentsIdx !== -1 ? commentsIdx : sdrIdx !== -1 ? sdrIdx + 1 : result.length;
+      result = [...result.slice(0, insertAt), "last_touch", ...result.slice(insertAt)];
+    }
+    if (!missing.length) return result;
+    const actionIdx = result.indexOf("action");
     return actionIdx === -1
-      ? [...next, ...missing]
-      : [...next.slice(0, actionIdx), ...missing, ...next.slice(actionIdx)];
+      ? [...result, ...missing]
+      : [...result.slice(0, actionIdx), ...missing, ...result.slice(actionIdx)];
   } catch {
     return DEFAULT_CONTACT_TABLE_COLUMNS;
   }
@@ -342,7 +356,7 @@ export default function Contacts() {
   // (which land on the BARE path with no query string) restores the view
   // instead of resetting everything. Computed once at mount.
   const initParams = useMemo(() => {
-    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "pe", "em", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab"];
+    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "pe", "em", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab", "ltt", "ltr"];
     const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
     if (hasAny) return searchParams;
     try {
@@ -473,6 +487,13 @@ export default function Contacts() {
   );
   const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ae")));
   const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
+  // Last Touch filter: which channel (call/email/linkedin) + which rep(s) did
+  // the MOST RECENT activity of that channel. Both must be set to filter —
+  // a rep alone with no channel picked is ambiguous (which of the 3 columns?).
+  const [lastTouchType, setLastTouchType] = useState<"" | "call" | "email" | "linkedin">(
+    () => (initParams.get("ltt") as "call" | "email" | "linkedin" | null) || ""
+  );
+  const [lastTouchRepFilter, setLastTouchRepFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ltr")));
   // Owner filter — multi-select that matches AE OR SDR ownership for any
   // selected user. Different from ownerScope (binary "mine vs all") and from
   // aeFilter/sdrFilter (role-specific). Sent to backend via owner_id +
@@ -848,6 +869,10 @@ export default function Contacts() {
         : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       companyAccountStatus: accountStatusFilter.length ? accountStatusFilter : undefined,
+      // Last Touch filter: both a channel AND at least one rep must be set —
+      // a rep alone is ambiguous (which of call/email/linkedin?).
+      lastTouchType: lastTouchType && lastTouchRepFilter.length ? lastTouchType : undefined,
+      lastTouchRepId: lastTouchType && lastTouchRepFilter.length ? lastTouchRepFilter : undefined,
       prospectOnly: true,
   });
 
@@ -1101,6 +1126,8 @@ export default function Contacts() {
       sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
       ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
       timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
+      lastTouchType ? next.set("ltt", lastTouchType) : next.delete("ltt");
+      lastTouchRepFilter.length ? next.set("ltr", lastTouchRepFilter.join(",")) : next.delete("ltr");
       companyFilter ? next.set("co", companyFilter) : next.delete("co");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
       // The active "tab" here is route-driven (angel-mapping is its own route),
@@ -1115,7 +1142,7 @@ export default function Contacts() {
       }
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, prospectSort, setSearchParams]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, prospectSort, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -1133,7 +1160,7 @@ export default function Contacts() {
       return;
     }
     setPage(1);
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -1146,7 +1173,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   // Clear the selection when the FILTERS change — the selected prospects may no
   // longer be in the result set, so acting on them would be surprising.
@@ -1169,7 +1196,7 @@ export default function Contacts() {
     emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax,
     nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to,
     companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter,
-    accountStatusFilter, timezoneFilter, tab, searchScope, searchMatch,
+    accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, searchScope, searchMatch,
   ]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
@@ -3036,6 +3063,7 @@ export default function Contacts() {
                 ownerFilter.length ||
                 timezoneFilter.length ||
                 companyFilter ||
+                (lastTouchType && lastTouchRepFilter.length) ||
                 search
               );
               const teamUserOptions = [
@@ -3314,6 +3342,45 @@ export default function Contacts() {
                     </div>{/* end Ownership row */}
                   </div>{/* end Ownership group */}
 
+                  {/* GROUP: Last touch — who did the most recent call/email/
+                      LinkedIn touch. Both a channel and a rep must be picked;
+                      the rep dropdown alone doesn't do anything on its own. */}
+                  {teamUsers.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: "#8294a8", textTransform: "uppercase", letterSpacing: "0.08em", width: 86, flexShrink: 0, lineHeight: 1.25 }}>Last touch</span>
+                      <div className="filter-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", flex: 1 }}>
+                        <select
+                          value={lastTouchType}
+                          onChange={(e) => setLastTouchType(e.target.value as "" | "call" | "email" | "linkedin")}
+                          style={{
+                            height: 34, padding: "0 28px 0 10px", borderRadius: 9,
+                            border: lastTouchType ? "1.5px solid #b8d0f0" : "1px solid #c8d9e8",
+                            background: lastTouchType ? "#eef5ff" : "#fff",
+                            fontSize: 13, color: "#0f2744", outline: "none",
+                            minWidth: 150, cursor: "pointer",
+                          }}
+                        >
+                          <option value="">Activity: Any</option>
+                          <option value="call">Call</option>
+                          <option value="email">Email</option>
+                          <option value="linkedin">LinkedIn</option>
+                        </select>
+                        <MultiSelectFilter
+                          hideLabel
+                          label="Last touch rep"
+                          values={lastTouchRepFilter}
+                          onChange={setLastTouchRepFilter}
+                          options={teamUserOptions}
+                          allLabel="Rep: Any"
+                          minWidth={160}
+                        />
+                        {!lastTouchType && lastTouchRepFilter.length > 0 && (
+                          <span style={{ fontSize: 11, color: "#b45454", alignSelf: "center" }}>Pick an activity type to apply</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* TOOLBAR — sort · columns · count · reset */}
                   <div style={{ height: 1, background: "#eef2f7", margin: "2px 0 0" }} />
                   <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
@@ -3450,6 +3517,7 @@ export default function Contacts() {
                         setOwnerFilter([]);
                         setTimezoneFilter([]);
                         setCompanyFilter("");
+                        setLastTouchType(""); setLastTouchRepFilter([]);
                       }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 5,
@@ -4014,6 +4082,36 @@ export default function Contacts() {
                                     <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
                                   </td>
                                 );
+                              case "last_touch": {
+                                const touches: Array<{ icon: string; by: string | null | undefined; at: string | null | undefined }> = [
+                                  { icon: "📞", by: c.last_call_by, at: c.last_call_touch_at },
+                                  { icon: "✉️", by: c.last_email_by, at: c.last_email_touch_at },
+                                  { icon: "in", by: c.last_linkedin_by, at: c.last_linkedin_touch_at },
+                                ];
+                                return (
+                                  <td key={column.key} style={{ maxWidth: 150 }}>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                      {touches.map((t, i) => (
+                                        <span
+                                          key={i}
+                                          style={{
+                                            fontSize: 11, lineHeight: 1.4, display: "flex", alignItems: "center", gap: 5,
+                                            color: t.by ? "#33485f" : "#aab4c2", fontWeight: t.by ? 600 : 400,
+                                          }}
+                                        >
+                                          <span style={{ fontSize: 10, fontWeight: 800, width: 14, textAlign: "center", opacity: t.by ? 1 : 0.5 }}>{t.icon}</span>
+                                          {t.by ? (
+                                            <>
+                                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 72 }}>{t.by}</span>
+                                              <span style={{ color: "#8aa0b6" }}>· {relativeTimeShort(t.at)}</span>
+                                            </>
+                                          ) : "—"}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                );
+                              }
                               case "action":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
