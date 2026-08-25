@@ -278,6 +278,7 @@ export type IncentiveDealRow = {
   date: string | null;
   source: "direct_sql" | "converted";
   meeting_booked_with: string | null;
+  deal_source: string | null;
 };
 
 export type IncentiveDealsResponse = {
@@ -389,6 +390,7 @@ export type MilestoneDealRow = {
   deal_value: number | null;
   assigned_ae: string | null;
   assigned_sdr: string | null;
+  meeting_booked_with: string | null;
 };
 
 export type SalesDashboardSummary = {
