@@ -2382,6 +2382,13 @@ export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?
 
 // ── Incentive deals drilldown modal ────────────────────────────────────────
 
+// Deal.source is stored lowercase (inbound/outbound/referral/partner/event) —
+// title-case it for display, same values the Pipeline "Deal source" dropdown offers.
+function dealSourceLabel(source: string | null | undefined): string {
+  if (!source) return "—";
+  return source.charAt(0).toUpperCase() + source.slice(1);
+}
+
 function IncentiveDealsModal({
   sdrName,
   periodLabel,
@@ -2426,8 +2433,8 @@ function IncentiveDealsModal({
                 type="button"
                 onClick={() => dlCsv(
                   `incentive-${bucket}-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
-                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"],
-                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? ""]),
+                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"],
+                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? "", dealSourceLabel(r.deal_source)]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -2448,7 +2455,7 @@ function IncentiveDealsModal({
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"].map((h) => (
+                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"].map((h) => (
                     <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                   ))}
                 </tr>
@@ -2461,10 +2468,11 @@ function IncentiveDealsModal({
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.sdr_name || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(r.date)}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.meeting_booked_with || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{dealSourceLabel(r.deal_source)}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                  <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
                 )}
               </tbody>
             </table>

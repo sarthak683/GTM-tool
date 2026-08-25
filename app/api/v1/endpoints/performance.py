@@ -913,6 +913,7 @@ class IncentiveDealRow(BaseModel):
     date: Optional[str]  # meeting date for direct_sql rows, conversion date for converted rows
     source: Literal["direct_sql", "converted"]
     meeting_booked_with: Optional[str]  # Deal.meeting_booked_with (VP / SVP / Head-Chief / ...), from the pipeline
+    deal_source: Optional[str]  # Deal.source (inbound / outbound / referral / partner / event), from the pipeline
 
 
 class IncentiveDealsResponse(BaseModel):
@@ -970,6 +971,7 @@ async def get_incentive_deals(
                 CompanyStageMilestone.deal_id,
                 Deal.name.label("deal_name"),
                 Deal.meeting_booked_with,
+                Deal.source.label("deal_source"),
                 AEUser.name.label("ae_name"),
                 SDRUser.name.label("sdr_name"),
                 Meeting.scheduled_at,
@@ -1009,6 +1011,7 @@ async def get_incentive_deals(
                 date=sat.date().isoformat() if sat else None,
                 source="direct_sql",
                 meeting_booked_with=r.meeting_booked_with,
+                deal_source=r.deal_source,
             ))
 
     # Converted — mirrors get_incentives' converted bucket: Director/S.
@@ -1032,6 +1035,7 @@ async def get_incentive_deals(
                     Deal.company_id,
                     Deal.sdr_id,
                     Deal.meeting_booked_with,
+                    Deal.source.label("deal_source"),
                     AEUser.name.label("ae_name"),
                     SDRUser.name.label("sdr_name"),
                 )
@@ -1069,6 +1073,7 @@ async def get_incentive_deals(
                     date=changed_at.date().isoformat() if changed_at else None,
                     source="converted",
                     meeting_booked_with=r.meeting_booked_with,
+                    deal_source=r.deal_source,
                 ))
 
     return IncentiveDealsResponse(
