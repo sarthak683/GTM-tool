@@ -80,6 +80,10 @@ export type ContactSearchParams = {
     callLastBefore?: string;
     aeId?: string[];
     sdrId?: string[];
+    // Last Touch filter: contacts whose MOST RECENT activity of this channel
+    // was done by one of these reps. Both must be set together.
+    lastTouchType?: "call" | "email" | "linkedin";
+    lastTouchRepId?: string[];
     ownerId?: string | string[];
     scopeAnyMatch?: boolean;
     prospectOnly?: boolean;
@@ -138,6 +142,10 @@ export const buildContactQuery = (params: ContactSearchParams): URLSearchParams 
     if (params.callLastBefore) search.set("call_last_before", params.callLastBefore);
     if (params.aeId?.length) search.set("ae_id", params.aeId.join(","));
     if (params.sdrId?.length) search.set("sdr_id", params.sdrId.join(","));
+    if (params.lastTouchType && params.lastTouchRepId?.length) {
+      search.set("last_touch_type", params.lastTouchType);
+      search.set("last_touch_rep_id", params.lastTouchRepId.join(","));
+    }
     if (params.ownerId) {
       const ownerValue = Array.isArray(params.ownerId) ? params.ownerId.join(",") : params.ownerId;
       if (ownerValue) search.set("owner_id", ownerValue);
