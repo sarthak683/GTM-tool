@@ -478,8 +478,28 @@ function MilestoneDealsModal({
           </div>
         </div>
 
-        {/* Table */}
+        {/* Body: bucket summary first, then the deal table */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {buckets && buckets.length > 0 && (
+            <div style={{ padding: "10px 22px 18px", display: "grid", gap: 12, borderBottom: "1px solid #ebeff5" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — {bucketScopeLabel}</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                {buckets.map((b) => (
+                  <StatPill
+                    key={b.key}
+                    label={b.label}
+                    value={b.value}
+                    tone={b.tone}
+                    text={b.text}
+                    sub={<span>{b.sub}</span>}
+                    onClick={onOpenBucket ? () => onOpenBucket(b.key, b.label) : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
@@ -532,26 +552,6 @@ function MilestoneDealsModal({
               </tfoot>
             )}
           </table>
-          {buckets && buckets.length > 0 && (
-            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — {bucketScopeLabel}</p>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-                {buckets.map((b) => (
-                  <StatPill
-                    key={b.key}
-                    label={b.label}
-                    value={b.value}
-                    tone={b.tone}
-                    text={b.text}
-                    sub={<span>{b.sub}</span>}
-                    onClick={onOpenBucket ? () => onOpenBucket(b.key, b.label) : undefined}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
