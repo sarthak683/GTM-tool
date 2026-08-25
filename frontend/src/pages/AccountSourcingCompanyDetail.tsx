@@ -955,10 +955,6 @@ export default function AccountSourcingCompanyDetail() {
     const entry = cache.icp_analysis as Record<string, unknown> | undefined;
     return typeof entry?.analyzed_at === "string" ? entry.analyzed_at : undefined;
   }, [cache]);
-  const icpPersonas = useMemo(() => {
-    const personas = prospectingProfile.icp_personas;
-    return Array.isArray(personas) ? personas as Array<Record<string, string>> : [];
-  }, [prospectingProfile]);
   const icpOpenGaps = useMemo(() => {
     const gaps = prospectingProfile.open_gaps;
     return Array.isArray(gaps) ? gaps.map(String) : [];
@@ -2437,21 +2433,7 @@ export default function AccountSourcingCompanyDetail() {
                 return null;
               })()}
 
-              {icpPersonas.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3, marginBottom: 8 }}>KEY PERSONAS</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {icpPersonas.map((p, i) => (
-                      <div key={i} style={{ background: "#fbfdff", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "10px 14px" }}>
-                        <div style={{ color: colors.text, fontSize: 13, fontWeight: 700 }}>{p.title || "Unknown"}</div>
-                        {p.name && <div style={{ color: colors.primary, fontSize: 12 }}>{p.name}</div>}
-                        {p.relevance && <div style={{ color: colors.faint, fontSize: 12, marginTop: 2 }}>{p.relevance}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {relevantContacts.length === 0 && icpPersonas.length === 0 ? (
+              {relevantContacts.length === 0 ? (
                 <div style={{ color: colors.faint }}>No prospects have been added to this account yet.</div>
               ) : relevantContacts.length > 0 ? (
                 <>
