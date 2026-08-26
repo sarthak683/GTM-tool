@@ -15,7 +15,7 @@ import { useToast } from "../../lib/ToastContext";
 import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../../lib/utils";
 import { CLOSE_REASONS, isCloseReasonStage } from "../../lib/closeReasons";
-import { MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
+import { EVENT_OPTIONS, MARKETING_LEAD_SOURCES, parseMarketingSource, serializeMarketingSource } from "../../lib/dealSources";
 import TaskCenterModal from "../tasks/TaskCenterModal";
 import TranscriptPreview from "../activity/TranscriptPreview";
 import ProvenanceBar from "../ProvenanceBar";
@@ -361,7 +361,7 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         {stat("Amount", deal.value != null ? formatCurrency(deal.value) : "—")}
         <div style={{ minWidth: 110, flex: "1 1 110px" }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>Close date</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#8295ab", textTransform: "uppercase", letterSpacing: "0.06em" }}>Date of meeting</div>
           {editingCloseDate ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
               <input
@@ -376,11 +376,11 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
                 autoFocus
                 style={{ fontSize: 13, fontWeight: 700, color: "#16273d", border: "1px solid #c7d4e3", borderRadius: 8, padding: "5px 8px", outline: "none", fontFamily: "inherit", minHeight: 30 }}
               />
-              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commitCloseDate} title="Save close date" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #bbf7d0", background: "#ecfdf3", color: "#15803d", cursor: "pointer" }}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commitCloseDate} title="Save date of meeting" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #bbf7d0", background: "#ecfdf3", color: "#15803d", cursor: "pointer" }}>
                 <Check size={13} />
               </button>
               {deal.close_date_est && (
-                <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onPatch({ close_date_est: undefined } as Partial<Deal>); setEditingCloseDate(false); }} title="Clear close date" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #fecdd3", background: "#fff1f2", color: "#be123c", cursor: "pointer" }}>
+                <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onPatch({ close_date_est: undefined } as Partial<Deal>); setEditingCloseDate(false); }} title="Clear date of meeting" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: "1px solid #fecdd3", background: "#fff1f2", color: "#be123c", cursor: "pointer" }}>
                   <XCircle size={13} />
                 </button>
               )}
@@ -389,7 +389,7 @@ function DealAtAGlance({ deal, onPatch, qualificationDue }: { deal: Deal; onPatc
             <button
               type="button"
               onClick={beginEditCloseDate}
-              title="Edit close date"
+              title="Edit date of meeting"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 2, padding: "2px 6px 2px 0", border: "none", background: "transparent", cursor: "pointer", color: isCloseOverdue ? "#dc2626" : "#16273d", font: "inherit" }}
             >
               <span style={{ fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>
@@ -1399,19 +1399,17 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               </select>
             </FieldRow>
 
-            {/* Assigned SDR — only visible for demo_scheduled, demo_done and qualified_lead */}
-            {(deal.stage === "demo_scheduled" || deal.stage === "demo_done" || deal.stage === "qualified_lead") && (
-              <FieldRow label="Assigned SDR" icon={<UserCircle2 size={13} />}>
-                <select
-                  value={deal.sdr_id ?? ""}
-                  onChange={(e) => patchDeal({ sdr_id: e.target.value || null } as Partial<Deal>)}
-                  style={{ ...fieldInputStyle }}
-                >
-                  <option value="">Unassigned</option>
-                  {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </FieldRow>
-            )}
+            {/* Assigned SDR — visible on every deal, regardless of stage */}
+            <FieldRow label="Assigned SDR" icon={<UserCircle2 size={13} />}>
+              <select
+                value={deal.sdr_id ?? ""}
+                onChange={(e) => patchDeal({ sdr_id: e.target.value || null } as Partial<Deal>)}
+                style={{ ...fieldInputStyle }}
+              >
+                <option value="">Unassigned</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </FieldRow>
 
             {/* Amount */}
             <FieldRow label="Amount" icon={<span style={{ fontSize: 13, fontWeight: 700 }}>$</span>}>
@@ -1439,7 +1437,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 date input fires onChange for every segment the rep types, so
                 typing "2026-03-15" used to send three PATCHes with partial
                 dates, each one a stage-history-adjacent write and a re-render. */}
-            <FieldRow label="Close date" icon={<CalendarDays size={13} />}>
+            <FieldRow label="Date of Meeting" icon={<CalendarDays size={13} />}>
               <input
                 type="date"
                 defaultValue={deal.close_date_est ?? ""}
@@ -1535,12 +1533,28 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                       <option key={s.value} value={s.value}>{s.label}</option>
                     ))}
                   </select>
-                  {(parseMarketingSource(deal.marketing_source).base === "other" || parseMarketingSource(deal.marketing_source).base === "events") && (
+                  {parseMarketingSource(deal.marketing_source).base === "events" && (
+                    <select
+                      value={marketingCustom}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setMarketingCustom(next);
+                        patchDeal({ marketing_source: serializeMarketingSource("events", next) } as Partial<Deal>);
+                      }}
+                      style={{ ...fieldInputStyle, marginTop: 6 }}
+                    >
+                      <option value="">Select event</option>
+                      {EVENT_OPTIONS.map((eventName) => (
+                        <option key={eventName} value={eventName}>{eventName}</option>
+                      ))}
+                    </select>
+                  )}
+                  {parseMarketingSource(deal.marketing_source).base === "other" && (
                     <input
                       value={marketingCustom}
                       onChange={(e) => setMarketingCustom(e.target.value)}
-                      onBlur={() => patchDeal({ marketing_source: serializeMarketingSource(parseMarketingSource(deal.marketing_source).base, marketingCustom) } as Partial<Deal>)}
-                      placeholder={parseMarketingSource(deal.marketing_source).base === "other" ? "Describe the other source" : "Describe the event"}
+                      onBlur={() => patchDeal({ marketing_source: serializeMarketingSource("other", marketingCustom) } as Partial<Deal>)}
+                      placeholder="Describe the other source"
                       style={{ ...fieldInputStyle, marginTop: 6 }}
                     />
                   )}
@@ -1586,6 +1600,22 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 </span>
               </label>
             </FieldRow>
+            {/* Meeting Booked With */}
+            <FieldRow label="Meeting Booked With" icon={<UserCircle2 size={13} />}>
+              <select
+                value={deal.meeting_booked_with ?? ""}
+                onChange={(e) => patchDeal({ meeting_booked_with: e.target.value || null } as Partial<Deal>)}
+                style={{ ...fieldInputStyle }}
+              >
+                <option value="">Select level</option>
+                <option value="Director">Director</option>
+                <option value="S. Director">S. Director</option>
+                <option value="AVP">AVP</option>
+                <option value="VP">VP</option>
+                <option value="SVP">SVP</option>
+                <option value="Head/Chief">Head / Chief</option>
+              </select>
+            </FieldRow>
             {/* Meeting Booked From */}
             <FieldRow label="Meeting Booked From" icon={<Send size={13} />}>
               <select
@@ -1598,6 +1628,18 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 <option value="Call">Call</option>
                 <option value="LinkedIn">LinkedIn</option>
               </select>
+            </FieldRow>
+            {/* Close Date — genuinely separate from close_date_est (the
+                meeting date, shown as "Date of meeting" in the header above
+                and driving Sales Analytics). Never auto-populated; blank
+                until a rep sets it here. */}
+            <FieldRow label="Close Date" icon={<CalendarDays size={13} />}>
+              <input
+                type="date"
+                value={deal.close_date ?? ""}
+                onChange={(e) => patchDeal({ close_date: e.target.value || null } as Partial<Deal>)}
+                style={{ ...fieldInputStyle }}
+              />
             </FieldRow>
           </div>
           </div>
