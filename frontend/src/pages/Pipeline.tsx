@@ -1171,12 +1171,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
       {/* Footer: avatar + days + contacts + P-tag */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 5, borderTop: "1px solid #f0f4f8" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {deal.assigned_rep_name ? <div title={`AE: ${deal.assigned_rep_name}`} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
-          {deal.sdr_name && (
-            <div title={`SDR: ${deal.sdr_name}`} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.sdr_name)}`} style={{ width: 22, height: 22, marginLeft: -10, border: "2px solid #fff" }}>
-              {getInitials(deal.sdr_name)}
-            </div>
-          )}
+          {deal.assigned_rep_name ? <div title={deal.assigned_rep_name} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
           <div
             title={
               deal.stall_threshold_days != null
