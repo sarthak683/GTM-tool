@@ -269,6 +269,10 @@ export interface Deal {
   priority: string;
   value?: number;
   close_date_est?: string;
+  // Separate from close_date_est (the meeting date — shown as "Date of
+  // Meeting" everywhere, including Sales Analytics). Never auto-populated;
+  // reps set it manually after the deal exists.
+  close_date?: string;
   health: string;
   health_score?: number;
   qualification?: DealQualification;
@@ -301,6 +305,7 @@ export interface Deal {
   // Joined fields from board/detail queries
   company_name?: string;
   assigned_rep_name?: string;
+  sdr_name?: string;
   contact_count?: number;
   meddpicc_score?: number;
   seller_engagement_at?: string;

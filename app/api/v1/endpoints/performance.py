@@ -466,6 +466,69 @@ async def get_deal_health(
     )
 
 
+@router.get("/pipeline-stage-deals", response_model=list[RedAlertDeal])
+async def get_pipeline_stage_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    stage: Annotated[str, Query(description="Stage key to list, e.g. 'qualified_lead'")],
+    rep_id: Annotated[list[UUID], Query(description="Narrow to these AEs (Pipeline by Rep click). Repeatable; empty means every rep (Pipeline by Stage click).")] = [],
+    geography: Annotated[list[str], Query()] = [],
+):
+    """Every live, open deal currently sitting in `stage` — the click-through
+    behind the Pipeline by Stage / Pipeline by Rep charts on Sales Analytics.
+
+    Unlike /deal-health's red-alert buckets, this is NOT restricted to deals
+    stalled past a threshold — it's the full population behind that chart's
+    bar/segment, same population rule (live "deal" pipeline, not deleted).
+    """
+    from sqlalchemy.orm import aliased
+
+    from app.api.v1.endpoints.analytics import _normalize_geography_key
+    from app.models.deal import Deal
+
+    AeUser = aliased(User)
+    SdrUser = aliased(User)
+    stmt = (
+        select(
+            Deal.id,
+            Deal.name,
+            Deal.value,
+            Deal.stage_entered_at,
+            Deal.geography,
+            AeUser.name.label("ae_name"),
+            SdrUser.name.label("sdr_name"),
+        )
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
+        .where(
+            Deal.stage == stage,
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
+        )
+    )
+    filter_rep_ids = [r for r in rep_id if r]
+    if filter_rep_ids:
+        stmt = stmt.where(Deal.assigned_to_id.in_(filter_rep_ids))
+    rows = (await session.execute(stmt)).all()
+
+    filter_geographies = {g for g in geography if g}
+    if filter_geographies:
+        rows = [r for r in rows if _normalize_geography_key(r.geography) in filter_geographies]
+
+    return [
+        RedAlertDeal(
+            deal_id=str(r.id),
+            deal_name=r.name,
+            amount=float(r.value) if r.value else None,
+            stage_entered_at=r.stage_entered_at.isoformat() if r.stage_entered_at else None,
+            ae_name=r.ae_name,
+            sdr_name=r.sdr_name,
+        )
+        for r in rows
+    ]
+
+
 # ── Pipeline Buckets ─────────────────────────────────────────────────────────
 
 # Stages 7-11: late-stage active pipeline

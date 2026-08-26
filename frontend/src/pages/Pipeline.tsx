@@ -10,7 +10,7 @@ import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
-import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
+import { EVENT_OPTIONS, MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 
@@ -959,10 +959,26 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                       <option key={s.value} value={s.value}>{s.label}</option>
                     ))}
                   </select>
-                  {(form.marketing_source === "other" || form.marketing_source === "events") && (
+                  {form.marketing_source === "events" && (
+                    <select
+                      style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_custom.trim() ? "#fff" : "#fffbf5", border: validationErrors.marketing_custom || !form.marketing_custom.trim() ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_custom.trim() ? "#1f2d3d" : "#92400e" }}
+                      value={form.marketing_custom}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setForm((current) => ({ ...current, marketing_custom: next }));
+                        if (validationErrors.marketing_custom && next.trim()) setValidationErrors((current) => ({ ...current, marketing_custom: false }));
+                      }}
+                    >
+                      <option value="">Select event (required)</option>
+                      {EVENT_OPTIONS.map((eventName) => (
+                        <option key={eventName} value={eventName}>{eventName}</option>
+                      ))}
+                    </select>
+                  )}
+                  {form.marketing_source === "other" && (
                     <input
                       style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_custom.trim() ? "#fff" : "#fffbf5", border: validationErrors.marketing_custom || !form.marketing_custom.trim() ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_custom.trim() ? "#1f2d3d" : "#92400e" }}
-                      placeholder={form.marketing_source === "other" ? "Describe the other source (required)" : "Describe the event (required)"}
+                      placeholder="Describe the other source (required)"
                       value={form.marketing_custom}
                       onChange={(event) => {
                         const next = event.target.value;
@@ -1155,7 +1171,12 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
       {/* Footer: avatar + days + contacts + P-tag */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 5, borderTop: "1px solid #f0f4f8" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {deal.assigned_rep_name ? <div title={deal.assigned_rep_name} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
+          {deal.assigned_rep_name ? <div title={`AE: ${deal.assigned_rep_name}`} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.assigned_rep_name)}`} style={{ width: 22, height: 22 }}>{getInitials(deal.assigned_rep_name)}</div> : <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#e8eef5" }} />}
+          {deal.sdr_name && (
+            <div title={`SDR: ${deal.sdr_name}`} className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(deal.sdr_name)}`} style={{ width: 22, height: 22, marginLeft: -10, border: "2px solid #fff" }}>
+              {getInitials(deal.sdr_name)}
+            </div>
+          )}
           <div
             title={
               deal.stall_threshold_days != null
