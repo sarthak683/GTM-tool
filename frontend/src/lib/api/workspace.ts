@@ -199,6 +199,16 @@ export const performanceApi = {
     return request<DealHealthResponse>(`/api/v1/performance/deal-health${tail ? `?${tail}` : ""}`);
   },
   getPipelineBuckets: () => request<PipelineBucketsResponse>("/api/v1/performance/pipeline-buckets"),
+  // Click-through behind the Pipeline by Stage / Pipeline by Rep charts —
+  // every live open deal in `stage`, optionally narrowed to specific reps
+  // (Pipeline by Rep click passes exactly one) or geographies.
+  getPipelineStageDeals: (params: { stage: string; repIds?: string[]; geographies?: string[] }) => {
+    const qs = new URLSearchParams();
+    qs.set("stage", params.stage);
+    for (const id of params.repIds ?? []) qs.append("rep_id", id);
+    for (const g of params.geographies ?? []) qs.append("geography", g);
+    return request<RedAlertDeal[]>(`/api/v1/performance/pipeline-stage-deals?${qs.toString()}`);
+  },
   getForecast: (params: {
     period?: "month" | "quarter";
     anchor?: string;
@@ -278,6 +288,7 @@ export type IncentiveDealRow = {
   date: string | null;
   source: "direct_sql" | "converted";
   meeting_booked_with: string | null;
+  deal_source: string | null;
 };
 
 export type IncentiveDealsResponse = {
@@ -389,6 +400,7 @@ export type MilestoneDealRow = {
   deal_value: number | null;
   assigned_ae: string | null;
   assigned_sdr: string | null;
+  meeting_booked_with: string | null;
 };
 
 export type SalesDashboardSummary = {

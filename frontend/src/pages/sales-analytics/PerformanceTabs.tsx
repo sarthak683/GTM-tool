@@ -945,9 +945,9 @@ function PipelineCurrencyTooltip({ active, payload, label }: TooltipProps<number
   );
 }
 
-function PipelineStageChart({ rows }: { rows: SalesStageBucket[] }) {
+function PipelineStageChart({ rows, onSelectStage }: { rows: SalesStageBucket[]; onSelectStage?: (stageKey: string, label: string) => void }) {
   const chartData = useMemo(
-    () => rows.map((r) => ({ label: r.label, amount: r.amount, weighted: r.weighted_amount, deal_count: r.deal_count })),
+    () => rows.map((r) => ({ key: r.key, label: r.label, amount: r.amount, deal_count: r.deal_count })),
     [rows],
   );
   if (rows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No open pipeline yet.</p>;
@@ -960,18 +960,28 @@ function PipelineStageChart({ rows }: { rows: SalesStageBucket[] }) {
           <XAxis type="number" tick={{ fill: CHART_PIPELINE.axis, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtShortCurrency(Number(v))} />
           <YAxis type="category" dataKey="label" tick={{ fill: "#46586d", fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} width={132} />
           <Tooltip content={<PipelineCurrencyTooltip />} cursor={{ fill: "rgba(111,174,39,0.06)" }} />
-          <Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 8, fontSize: 12 }} />
-          <Bar dataKey="amount" name="Open" fill={CHART_PIPELINE.raw} radius={[0, 6, 6, 0]} maxBarSize={16}>
+          <Bar
+            dataKey="amount"
+            name="Open"
+            fill={CHART_PIPELINE.raw}
+            radius={[0, 6, 6, 0]}
+            maxBarSize={16}
+            cursor={onSelectStage ? "pointer" : undefined}
+            onClick={(point: { key?: string; label?: string; payload?: { key?: string; label?: string } }) => {
+              const key = point?.key ?? point?.payload?.key;
+              const label = point?.label ?? point?.payload?.label;
+              if (onSelectStage && key) onSelectStage(key, label ?? key);
+            }}
+          >
             <LabelList dataKey="amount" position="right" formatter={(v: number) => fmtShortCurrency(Number(v))} fill="#46586d" fontSize={11} fontWeight={700} />
           </Bar>
-          <Bar dataKey="weighted" name="Weighted" fill={CHART_PIPELINE.weighted} radius={[0, 6, 6, 0]} maxBarSize={16} />
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function PipelineOwnerChart({ rows }: { rows: SalesPipelineOwnerRow[] }) {
+function PipelineOwnerChart({ rows, onSelectSegment }: { rows: SalesPipelineOwnerRow[]; onSelectSegment?: (stageKey: string, label: string, repId: string, repName: string) => void }) {
   // Show only AEs — filter out "Unassigned" (no user_id) and any non-person rows
   const aeRows = rows.filter((r) => r.user_id);
   if (aeRows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No AE-owned pipeline yet.</p>;
@@ -986,12 +996,21 @@ function PipelineOwnerChart({ rows }: { rows: SalesPipelineOwnerRow[] }) {
           <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden", display: "flex" }}>
             {row.stages.map((stage) => {
               const width = row.amount > 0 ? `${(stage.amount / row.amount) * 100}%` : "0%";
-              return <div key={stage.key} title={`${stage.label}: ${fmtShortCurrency(stage.amount)}`} style={{ width, background: stage.color, minWidth: stage.amount > 0 ? 8 : 0 }} />;
+              const clickable = Boolean(onSelectSegment && row.user_id);
+              return (
+                <div
+                  key={stage.key}
+                  title={`${stage.label}: ${fmtShortCurrency(stage.amount)}`}
+                  onClick={() => {
+                    if (onSelectSegment && row.user_id) onSelectSegment(stage.key, stage.label, row.user_id, row.rep_name);
+                  }}
+                  style={{ width, background: stage.color, minWidth: stage.amount > 0 ? 8 : 0, cursor: clickable ? "pointer" : undefined }}
+                />
+              );
             })}
           </div>
           <div style={{ textAlign: "right" }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{fmtShortCurrency(row.amount)}</p>
-            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#75869a" }}>{fmtShortCurrency(row.weighted_amount)} weighted</p>
           </div>
         </div>
       ))}
@@ -1014,6 +1033,16 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// How many days a deal has been sitting in its current stage — a duration,
+// not the entry date itself (that's what stage_entered_at gives you).
+function daysInStage(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const entered = new Date(iso).getTime();
+  if (Number.isNaN(entered)) return "—";
+  const days = Math.max(0, Math.floor((Date.now() - entered) / 86400000));
+  return `${days}d`;
+}
+
 function dlCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
   const esc = (v: string | number | null | undefined) => {
     const s = v == null ? "" : String(v);
@@ -1032,10 +1061,16 @@ function RedAlertModal({
   label,
   deals,
   onClose,
+  loading,
+  error,
 }: {
   label: string;
   deals: RedAlertDeal[];
   onClose: () => void;
+  // Only the async pipeline-stage/rep click-through fetches on open; the
+  // Deal Health tiles pass already-loaded data, so both default to unset.
+  loading?: boolean;
+  error?: string | null;
 }) {
   const total = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
   return (
@@ -1069,13 +1104,13 @@ function RedAlertModal({
             </h3>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {deals.length > 0 && (
+            {!loading && !error && deals.length > 0 && (
               <button
                 type="button"
                 onClick={() => dlCsv(
                   label.toLowerCase().replace(/\s+/g, "-"),
-                  ["Deal", "Amount", "Date in Stage", "AE", "SDR"],
-                  deals.map((d) => [d.deal_name, d.amount ?? "", fmtDate(d.stage_entered_at), d.ae_name ?? "", d.sdr_name ?? ""]),
+                  ["Deal", "AE", "SDR", "Days in Stage", "Amount"],
+                  deals.map((d) => [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? ""]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -1091,11 +1126,16 @@ function RedAlertModal({
         </div>
         {/* Table */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#aab4c2" }}>Loading…</div>
+          ) : error ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#c0392b" }}>{error}</div>
+          ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                {["Deal", "Amount", "Date in Stage", "AE Assigned", "SDR Assigned"].map((h, i) => (
-                  <th key={h} style={{ padding: "10px 14px", textAlign: i === 1 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
+                {["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount"].map((h, i) => (
+                  <th key={h} style={{ padding: "10px 14px", textAlign: i === 4 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1103,10 +1143,10 @@ function RedAlertModal({
               {deals.map((d, i) => (
                 <tr key={d.deal_id} style={{ borderBottom: "1px solid #f0f3f8", background: i % 2 === 0 ? "#fff" : "#fafbfd" }}>
                   <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1d2b3a" }}>{d.deal_name || "—"}</td>
-                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
-                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(d.stage_entered_at)}</td>
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.ae_name || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a" }}>{daysInStage(d.stage_entered_at)}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
                 </tr>
               ))}
               {deals.length === 0 && (
@@ -1114,6 +1154,7 @@ function RedAlertModal({
               )}
             </tbody>
           </table>
+          )}
         </div>
       </div>
     </div>
@@ -1202,6 +1243,13 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
   const [pipelineView, setPipelineView] = useState<"stage" | "rep">("stage");
   const [pipelineBuckets, setPipelineBuckets] = useState<PipelineBucketsResponse | null>(null);
   const [openPipelineBucket, setOpenPipelineBucket] = useState<{ label: string; deals: PipelineBucketDeal[] } | null>(null);
+  // Click-through for the Pipeline by Stage / Pipeline by Rep charts. repIds
+  // is set only for a "by rep" segment click (one rep); a "by stage" bar
+  // click leaves it empty so every rep in that stage shows up.
+  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage: string; label: string; repIds?: string[] } | null>(null);
+  const [stageDealsData, setStageDealsData] = useState<RedAlertDeal[]>([]);
+  const [stageDealsLoading, setStageDealsLoading] = useState(false);
+  const [stageDealsError, setStageDealsError] = useState<string | null>(null);
 
   const { windowDays, fromDate, toDate, repIds, geographies, refreshNonce } = filters;
   const repId = singleRepId(filters);
@@ -1257,6 +1305,28 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
       cancelled = true;
     };
   }, [refreshNonce]);
+
+  useEffect(() => {
+    if (!stageDealsQuery) return;
+    let cancelled = false;
+    setStageDealsLoading(true);
+    setStageDealsError(null);
+    performanceApi
+      .getPipelineStageDeals({ stage: stageDealsQuery.stage, repIds: stageDealsQuery.repIds, geographies })
+      .then((payload) => {
+        if (!cancelled) setStageDealsData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setStageDealsError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setStageDealsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stageDealsQuery, geographies]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -1325,6 +1395,21 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
         />
       )}
 
+      {/* Pipeline by Stage / Pipeline by Rep click-through */}
+      {stageDealsQuery && (
+        <RedAlertModal
+          label={stageDealsQuery.label}
+          deals={stageDealsData}
+          loading={stageDealsLoading}
+          error={stageDealsError}
+          onClose={() => {
+            setStageDealsQuery(null);
+            setStageDealsData([]);
+            setStageDealsError(null);
+          }}
+        />
+      )}
+
       {error && <ErrorBanner message={error} />}
       {loading && !data && <Loading />}
 
@@ -1355,8 +1440,19 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
           }
         >
           {pipelineView === "stage"
-            ? <PipelineStageChart rows={pipelineData.pipeline_by_stage} />
-            : <PipelineOwnerChart rows={pipelineData.pipeline_by_owner} />}
+            ? (
+              <PipelineStageChart
+                rows={pipelineData.pipeline_by_stage}
+                onSelectStage={(stageKey, label) => setStageDealsQuery({ stage: stageKey, label })}
+              />
+            ) : (
+              <PipelineOwnerChart
+                rows={pipelineData.pipeline_by_owner}
+                onSelectSegment={(stageKey, stageLabel, segmentRepId, repName) =>
+                  setStageDealsQuery({ stage: stageKey, label: `${stageLabel} — ${repName}`, repIds: [segmentRepId] })
+                }
+              />
+            )}
         </Panel>
       )}
 
@@ -2382,6 +2478,13 @@ export function OutreachAnalysisTab({ filters = EMPTY_FILTER_SCOPE }: { filters?
 
 // ── Incentive deals drilldown modal ────────────────────────────────────────
 
+// Deal.source is stored lowercase (inbound/outbound/referral/partner/event) —
+// title-case it for display, same values the Pipeline "Deal source" dropdown offers.
+function dealSourceLabel(source: string | null | undefined): string {
+  if (!source) return "—";
+  return source.charAt(0).toUpperCase() + source.slice(1);
+}
+
 function IncentiveDealsModal({
   sdrName,
   periodLabel,
@@ -2426,8 +2529,8 @@ function IncentiveDealsModal({
                 type="button"
                 onClick={() => dlCsv(
                   `incentive-${bucket}-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
-                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"],
-                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? ""]),
+                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"],
+                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? "", dealSourceLabel(r.deal_source)]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -2448,7 +2551,7 @@ function IncentiveDealsModal({
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With"].map((h) => (
+                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"].map((h) => (
                     <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                   ))}
                 </tr>
@@ -2461,10 +2564,11 @@ function IncentiveDealsModal({
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.sdr_name || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(r.date)}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.meeting_booked_with || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a" }}>{dealSourceLabel(r.deal_source)}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                  <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
                 )}
               </tbody>
             </table>

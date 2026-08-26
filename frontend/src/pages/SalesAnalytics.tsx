@@ -408,6 +408,11 @@ function MilestoneDealsModal({
   const withAmount = deals.filter((d) => (d.deal_value ?? 0) > 0).length;
   const showDateOfMeeting = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
   const hideAmount = ["demo_scheduled", "demo_done"].includes(deals[0]?.milestone_key ?? "");
+  // "Scheduled On" — when the deal first reached demo_scheduled (reached_at,
+  // permanent, never moves on reschedule). Demo Scheduled modal only, not
+  // Demo Done — that milestone's "first reached" date means something
+  // different (when the demo was completed, not when it was booked).
+  const showScheduledOn = deals[0]?.milestone_key === "demo_scheduled";
 
   return (
     <div
@@ -452,11 +457,13 @@ function MilestoneDealsModal({
                 onClick={() => downloadCsv(
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
                   showDateOfMeeting
-                    ? (hideAmount ? ["Deal", "AE", "SDR", "Date of Meeting"] : ["Deal", "Amount", "AE", "SDR", "Date of Meeting"])
+                    ? (hideAmount
+                      ? ["Deal", "AE", "SDR", ...(showScheduledOn ? ["Scheduled On"] : []), "Date of Meeting", "Meeting Booked With"]
+                      : ["Deal", "Amount", "AE", "SDR", "Date of Meeting"])
                     : ["Deal", "Amount", "AE", "SDR"],
                   deals.map((d) => showDateOfMeeting
                     ? (hideAmount
-                      ? [d.deal_name || "", d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""]
+                      ? [d.deal_name || "", d.assigned_ae || "", d.assigned_sdr || "", ...(showScheduledOn ? [d.reached_at || ""] : []), d.close_date_est || "", d.meeting_booked_with || ""]
                       : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""])
                     : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
@@ -478,8 +485,28 @@ function MilestoneDealsModal({
           </div>
         </div>
 
-        {/* Table */}
+        {/* Body: bucket summary first, then the deal table */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {buckets && buckets.length > 0 && (
+            <div style={{ padding: "10px 22px 18px", display: "grid", gap: 12, borderBottom: "1px solid #ebeff5" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — {bucketScopeLabel}</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                {buckets.map((b) => (
+                  <StatPill
+                    key={b.key}
+                    label={b.label}
+                    value={b.value}
+                    tone={b.tone}
+                    text={b.text}
+                    sub={<span>{b.sub}</span>}
+                    onClick={onOpenBucket ? () => onOpenBucket(b.key, b.label) : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
@@ -487,7 +514,9 @@ function MilestoneDealsModal({
                 {!hideAmount && <th style={{ ...thSty, textAlign: "right" }}>Amount</th>}
                 <th style={thSty}>AE</th>
                 <th style={thSty}>SDR</th>
+                {showScheduledOn && <th style={thSty}>Scheduled On</th>}
                 {showDateOfMeeting && <th style={thSty}>Date of Meeting</th>}
+                {showDateOfMeeting && <th style={thSty}>Meeting Booked With</th>}
               </tr>
             </thead>
             <tbody>
@@ -511,9 +540,19 @@ function MilestoneDealsModal({
                     <td style={{ ...tdSty, color: "#62748a" }}>
                       {d.assigned_sdr || "—"}
                     </td>
+                    {showScheduledOn && (
+                      <td style={{ ...tdSty, color: "#62748a" }}>
+                        {d.reached_at || "—"}
+                      </td>
+                    )}
                     {showDateOfMeeting && (
                       <td style={{ ...tdSty, color: "#62748a" }}>
                         {d.close_date_est || "—"}
+                      </td>
+                    )}
+                    {showDateOfMeeting && (
+                      <td style={{ ...tdSty, color: "#7c3aed", fontWeight: 700 }}>
+                        {d.meeting_booked_with || "—"}
                       </td>
                     )}
                   </tr>
@@ -532,26 +571,6 @@ function MilestoneDealsModal({
               </tfoot>
             )}
           </table>
-          {buckets && buckets.length > 0 && (
-            <div style={{ padding: "18px 22px 22px", display: "grid", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#1f3144" }}>Meetings Booked — {bucketScopeLabel}</p>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-                {buckets.map((b) => (
-                  <StatPill
-                    key={b.key}
-                    label={b.label}
-                    value={b.value}
-                    tone={b.tone}
-                    text={b.text}
-                    sub={<span>{b.sub}</span>}
-                    onClick={onOpenBucket ? () => onOpenBucket(b.key, b.label) : undefined}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -1699,7 +1718,12 @@ function RepActivityTable({
               value={row.instantly_emails ?? 0}
               tone="#fff7ed"
               text="#c05621"
-              sub={<span>{row.emails > 0 ? Math.round(((row.instantly_emails ?? 0) / row.emails) * 100) : 0}% of out</span>}
+              sub={
+                <>
+                  <span>{row.emails > 0 ? Math.round((row.email_opens / row.emails) * 100) : 0}% open</span>
+                  <span>{row.emails > 0 ? Math.round((row.email_replies / row.emails) * 100) : 0}% reply</span>
+                </>
+              }
               onClick={() => onOpenMetric(row, "instantly_emails")}
             />
             <StatPill

@@ -12,7 +12,7 @@ import { useBoardStream } from "../hooks/useBoardStream";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { formatCurrencyAmount } from "../lib/currencies";
-import { MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
+import { EVENT_OPTIONS, MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 
@@ -20,14 +20,14 @@ type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
 type PendingDealMove = { dealId: string; dealName: string; fromStage: string; targetStage: string };
-type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
+export type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
 type SummaryCardKey = "active" | "inactive" | "tofu" | "mofu" | "bofu" | "total";
 type PipelineSummarySectionConfig = PipelineSummarySettings["deal"];
 type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
-const DEFAULT_DEAL_STAGES: StageMeta[] = [
+export const DEFAULT_DEAL_STAGES: StageMeta[] = [
   { id: "reprospect", label: "REPROSPECT", group: "active", color: "#8b5cf6" },
   { id: "demo_scheduled", label: "DEMO SCHEDULED", group: "active", color: "#4f6ddf" },
   { id: "demo_done", label: "DEMO DONE", group: "active", color: "#1d4ed8" },
@@ -664,8 +664,8 @@ function FunnelSettingsModal({
   );
 }
 
-function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void }) {
-  const [form, setForm] = useState({ name: "", company_id: "", value: "", currency_code: "USD", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" });
+export function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCreated, initialCompanyId, initialName, initialAssignedToId }: { defaultStage: string; companies: Company[]; users: User[]; stages: StageMeta[]; onClose: () => void; onCreated: (deal: Deal) => void; initialCompanyId?: string; initialName?: string; initialAssignedToId?: string }) {
+  const [form, setForm] = useState(() => ({ name: initialName || "", company_id: initialCompanyId || "", value: "", currency_code: "USD", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: initialAssignedToId || "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
@@ -962,10 +962,26 @@ function CreateDealModal({ defaultStage, companies, users, stages, onClose, onCr
                       <option key={s.value} value={s.value}>{s.label}</option>
                     ))}
                   </select>
-                  {(form.marketing_source === "other" || form.marketing_source === "events") && (
+                  {form.marketing_source === "events" && (
+                    <select
+                      style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_custom.trim() ? "#fff" : "#fffbf5", border: validationErrors.marketing_custom || !form.marketing_custom.trim() ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_custom.trim() ? "#1f2d3d" : "#92400e" }}
+                      value={form.marketing_custom}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setForm((current) => ({ ...current, marketing_custom: next }));
+                        if (validationErrors.marketing_custom && next.trim()) setValidationErrors((current) => ({ ...current, marketing_custom: false }));
+                      }}
+                    >
+                      <option value="">Select event (required)</option>
+                      {EVENT_OPTIONS.map((eventName) => (
+                        <option key={eventName} value={eventName}>{eventName}</option>
+                      ))}
+                    </select>
+                  )}
+                  {form.marketing_source === "other" && (
                     <input
                       style={{ ...modalInputStyle, marginTop: 6, background: form.marketing_custom.trim() ? "#fff" : "#fffbf5", border: validationErrors.marketing_custom || !form.marketing_custom.trim() ? "1.5px solid #fbbf24" : "1px solid #dbe6f2", color: form.marketing_custom.trim() ? "#1f2d3d" : "#92400e" }}
-                      placeholder={form.marketing_source === "other" ? "Describe the other source (required)" : "Describe the event (required)"}
+                      placeholder="Describe the other source (required)"
                       value={form.marketing_custom}
                       onChange={(event) => {
                         const next = event.target.value;

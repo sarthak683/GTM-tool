@@ -63,6 +63,10 @@ class DealBase(SQLModel):
     geography: Optional[str] = None
     source: Optional[str] = None
     close_date_est: Optional[date] = None
+    # Genuinely separate from close_date_est (which is the meeting date shown
+    # everywhere as "Date of Meeting" / feeding Sales Analytics). This one is
+    # never auto-populated — reps set it manually, after the deal exists.
+    close_date: Optional[date] = None
     health: str = "green"
     health_score: Optional[int] = None
     days_in_stage: int = 0
@@ -190,6 +194,7 @@ class DealRead(DealBase):
     # Joined fields populated by board/detail queries
     company_name: Optional[str] = None
     assigned_rep_name: Optional[str] = None
+    sdr_name: Optional[str] = None
     contact_count: int = 0
     # Stall detection — computed live by DealRepository from the workspace's
     # per-stage stuck thresholds (analytics_settings.stuck_thresholds_days,
@@ -234,6 +239,7 @@ class DealUpdate(SQLModel):
     value: Optional[Decimal] = None
     currency_code: Optional[str] = None
     close_date_est: Optional[date] = None
+    close_date: Optional[date] = None
     health: Optional[str] = None
     health_score: Optional[int] = None
     qualification: Optional[Any] = None

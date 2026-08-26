@@ -11,6 +11,20 @@ export const MARKETING_LEAD_SOURCES = [
   { value: "events", label: "Events" },
 ] as const;
 
+// Fixed list of events for the "Marketing lead → Events" picker, so reps
+// select a known event instead of free-typing a name that drifts (typos,
+// inconsistent formatting) across deals.
+export const EVENT_OPTIONS = [
+  "Bangalore Round Table",
+  "TSIA WBN Live",
+  "CS Summit, San Francisco",
+  "CCO Summit, San Francisco",
+  "Gainsight Pulse EU, London",
+  "Ortus Club, London",
+  "CS Summit, London",
+  "CCO Summit, London",
+] as const;
+
 export const MARKETING_SOURCE_LABELS: Record<string, string> = {
   google_ads: "Google Ads",
   meta_ads: "Meta Ads",

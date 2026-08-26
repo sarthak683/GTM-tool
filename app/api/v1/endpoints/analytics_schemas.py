@@ -30,6 +30,7 @@ class MilestoneDealRow(BaseModel):
     deal_value: Optional[float] = None
     assigned_ae: Optional[str] = None
     assigned_sdr: Optional[str] = None
+    meeting_booked_with: Optional[str] = None
 
 
 class SalesSummary(BaseModel):

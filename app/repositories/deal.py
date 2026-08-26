@@ -12,6 +12,7 @@ from sqlalchemy import delete as sa_delete
 # call in those scopes would silently receive a str instead.
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.config import settings
 from app.core.analytics_defaults import DEFAULT_STUCK_THRESHOLDS_DAYS
@@ -611,15 +612,18 @@ class DealRepository(BaseRepository[Deal]):
             .subquery()
         )
 
+        SdrUser = aliased(User)
         stmt = (
             select(
                 Deal,
                 Company.name.label("company_name"),
                 User.name.label("assigned_rep_name"),
+                SdrUser.name.label("sdr_name"),
                 func.coalesce(contact_count_sub.c.cnt, 0).label("contact_count"),
             )
             .outerjoin(Company, Deal.company_id == Company.id)
             .outerjoin(User, Deal.assigned_to_id == User.id)
+            .outerjoin(SdrUser, Deal.sdr_id == SdrUser.id)
             .outerjoin(contact_count_sub, Deal.id == contact_count_sub.c.deal_id)
             .where(Deal.pipeline_type == pipeline_type)
             .where(deal_visibility_filter(user_id, is_admin))
@@ -633,10 +637,11 @@ class DealRepository(BaseRepository[Deal]):
 
         board: dict[str, list[DealRead]] = {}
         now = datetime.utcnow()
-        for deal, company_name, rep_name, cc in rows:
+        for deal, company_name, rep_name, sdr_name, cc in rows:
             read = DealRead.model_validate(deal)
             read.company_name = company_name
             read.assigned_rep_name = rep_name
+            read.sdr_name = sdr_name
             read.contact_count = cc or 0
             read.meddpicc_score = compute_meddpicc_score(deal.qualification)
             _apply_flag_fields(read, deal.qualification)
@@ -682,15 +687,18 @@ class DealRepository(BaseRepository[Deal]):
             .subquery()
         )
 
+        SdrUser = aliased(User)
         stmt = (
             select(
                 Deal,
                 Company.name.label("company_name"),
                 User.name.label("assigned_rep_name"),
+                SdrUser.name.label("sdr_name"),
                 func.coalesce(contact_count_sub.c.cnt, 0).label("contact_count"),
             )
             .outerjoin(Company, Deal.company_id == Company.id)
             .outerjoin(User, Deal.assigned_to_id == User.id)
+            .outerjoin(SdrUser, Deal.sdr_id == SdrUser.id)
             .outerjoin(contact_count_sub, Deal.id == contact_count_sub.c.deal_id)
             .where(Deal.id == deal_id)
             .where(deal_visibility_filter(user_id, is_admin))
@@ -700,11 +708,12 @@ class DealRepository(BaseRepository[Deal]):
         if not row:
             return None
 
-        deal, company_name, rep_name, cc = row
+        deal, company_name, rep_name, sdr_name, cc = row
         seller_engagement, client_engagement, seller_signal, client_signal, seller_reason, client_reason = await self._build_engagement_maps([deal.id])
         read = DealRead.model_validate(deal)
         read.company_name = company_name
         read.assigned_rep_name = rep_name
+        read.sdr_name = sdr_name
         read.contact_count = cc or 0
         read.meddpicc_score = compute_meddpicc_score(deal.qualification)
         _apply_flag_fields(read, deal.qualification)

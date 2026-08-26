@@ -3794,6 +3794,7 @@ async def sales_dashboard(
             Deal.value.label("deal_value"),
             Deal.close_date_est.label("close_date_est"),
             Deal.geography.label("deal_geography"),
+            Deal.meeting_booked_with.label("meeting_booked_with"),
             Company.name.label("company_name"),
             AEUser.name.label("ae_name"),
             Company.sdr_name.label("sdr_name"),
@@ -3884,6 +3885,7 @@ async def sales_dashboard(
             deal_value=_to_float(r.deal_value) if r.deal_value else None,
             assigned_ae=r.ae_name or None,
             assigned_sdr=r.sdr_name or None,
+            meeting_booked_with=r.meeting_booked_with or None,
         )
         for r in milestone_summary_rows
     ]
