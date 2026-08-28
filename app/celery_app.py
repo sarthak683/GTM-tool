@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.personal_email_sync",
         "app.tasks.cadence_scheduler",
         "app.tasks.sales_reports",
+        "app.tasks.weekly_digest",
         "app.tasks.instantly_sync",
         "app.tasks.pre_meeting_brief",
         "app.tasks.transcribe_call",
@@ -148,6 +149,13 @@ celery_app.conf.update(
         # and dedup key. Default-off until verified, then flip enabled=true.
         "send-india-pod-call-report-daily": {
             "task": "app.tasks.sales_reports.send_india_pod_call_report",
+            "schedule": crontab(minute="*/15"),
+        },
+        # Weekly CRM activity digest — self-gates on its own config block
+        # (weekly_digest): enabled flag, Monday-only send_days, send time, and
+        # a per-week dedup key. Default 9:00 AM Asia/Kolkata.
+        "send-weekly-crm-digest": {
+            "task": "app.tasks.weekly_digest.send_weekly_digest",
             "schedule": crontab(minute="*/15"),
         },
         "sync-instantly-campaigns": {

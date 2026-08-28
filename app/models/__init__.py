@@ -20,6 +20,8 @@ from app.models.data_room_item import DataRoomItem, DataRoomItemCreate, DataRoom
 from app.models.user import User, UserRead, UserUpdate
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.deal_stage_history import DealStageHistory, DealStageHistoryRead
+from app.models.account_status_history import AccountStatusHistory
+from app.models.contact_disposition_history import ContactDispositionHistory
 from app.models.angel import (
     AngelInvestor, AngelInvestorCreate, AngelInvestorRead, AngelInvestorUpdate,
     AngelMapping, AngelMappingCreate, AngelMappingRead, AngelMappingUpdate,
@@ -58,6 +60,8 @@ __all__ = [
     "User", "UserRead", "UserUpdate",
     "CompanyStageMilestone",
     "DealStageHistory", "DealStageHistoryRead",
+    "AccountStatusHistory",
+    "ContactDispositionHistory",
     "AngelInvestor", "AngelInvestorCreate", "AngelInvestorRead", "AngelInvestorUpdate",
     "AngelMapping", "AngelMappingCreate", "AngelMappingRead", "AngelMappingUpdate",
     "Reminder", "ReminderCreate", "ReminderRead", "ReminderUpdate",

@@ -575,6 +575,7 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     # editing an unassigned one claims it.
     await authorize_contact_edit(session, _user, contact)
     update_data = payload.model_dump(exclude_unset=True)
+    previous_call_disposition = contact.call_disposition
     for key, value in update_data.items():
         # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
         # (replace() alone would keep the foreign wall-clock time)
@@ -613,6 +614,16 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
         await apply_call_disposition_effects(
             session, saved, disposition=update_data.get("call_disposition")
         )
+        if saved.call_disposition != previous_call_disposition:
+            from app.services.contact_disposition_history import record_disposition_change
+
+            await record_disposition_change(
+                session,
+                contact_id=saved.id,
+                from_disposition=previous_call_disposition,
+                to_disposition=saved.call_disposition,
+                changed_by_id=_user.id,
+            )
     if "linkedin_status" in update_data:
         await apply_linkedin_status_effects(
             session, saved, linkedin_status=update_data.get("linkedin_status")
