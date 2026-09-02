@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from sqlmodel import select as sm_select
 
 from app.config import settings
+from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.analytics_defaults import build_default_analytics_settings
@@ -54,6 +55,8 @@ from app.models.settings import (
     ProspectVisibilityUpdate,
     SyncScheduleSettingsRead,
     SyncScheduleSettingsUpdate,
+    WeeklyDigestSettingsRead,
+    WeeklyDigestSettingsUpdate,
     WorkspaceSettings,
     ZippySystemPromptRead,
     ZippySystemPromptUpdate,
@@ -79,6 +82,7 @@ from app.services.gmail_oauth import (
 from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
 from app.services.permissions import normalize_role_permissions
 from app.services.us_pod_call_report import INDIA_DEFAULT_SALES_REPORT_SETTINGS, normalize_sales_report_settings
+from app.services.weekly_digest import WEEKLY_DIGEST_CONFIG_KEY, normalize_weekly_digest_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -584,6 +588,7 @@ async def _report_sender_status(session: DBSession) -> ReportSenderSettingsRead:
             and row.report_sender_connected_email
             and row.report_sender_token_data
             and _has_scope(row.report_sender_token_data, GMAIL_SEND_SCOPE)
+            and row.report_sender_last_error != GMAIL_RECONNECT_REQUIRED_ERROR
         ),
         sender_email=row.report_sender_email,
         connected_email=row.report_sender_connected_email,
@@ -1035,6 +1040,43 @@ async def update_india_sales_report_settings(body: SalesReportSettingsUpdate, se
         key="india_sales_report",
         defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS,
     )
+
+
+def _weekly_digest_settings_from_sync(value: dict | None) -> WeeklyDigestSettingsRead:
+    raw = value.get(WEEKLY_DIGEST_CONFIG_KEY) if isinstance(value, dict) else None
+    return WeeklyDigestSettingsRead(**normalize_weekly_digest_settings(raw if isinstance(raw, dict) else None))
+
+
+@router.get("/weekly-digest", response_model=WeeklyDigestSettingsRead)
+async def get_weekly_digest_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _weekly_digest_settings_from_sync(row.sync_schedule_settings)
+
+
+@router.patch("/weekly-digest", response_model=WeeklyDigestSettingsRead)
+async def update_weekly_digest_settings(body: WeeklyDigestSettingsUpdate, session: DBSession, _admin: AdminUser):
+    row = await _get_or_create(session)
+    sync_settings = dict(row.sync_schedule_settings or {})
+    raw = sync_settings.get(WEEKLY_DIGEST_CONFIG_KEY)
+    current = normalize_weekly_digest_settings(raw if isinstance(raw, dict) else None)
+    updates = body.model_dump(exclude_unset=True)
+    # Same dedup-reset rule as the daily pod reports: only clear "already sent
+    # this week" bookkeeping when a schedule value actually changes, not on
+    # every unrelated save (recipient tweak, enabled toggle).
+    schedule_keys = {"send_timezone", "send_hour", "send_minute", "send_days"}
+    if any(key in updates and updates[key] != current.get(key) for key in schedule_keys):
+        current["last_scheduled_send_key"] = None
+        current["last_scheduled_send_at"] = None
+        current["partial_send_key"] = None
+        current["partial_sent_recipients"] = []
+    current.update(updates)
+    normalized = normalize_weekly_digest_settings(current)
+    sync_settings[WEEKLY_DIGEST_CONFIG_KEY] = normalized
+    row.sync_schedule_settings = sync_settings
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return WeeklyDigestSettingsRead(**normalized)
 
 
 @router.post("/sync-schedule/tldv-now", response_model=dict)

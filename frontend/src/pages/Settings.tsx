@@ -44,6 +44,7 @@ import type {
   PreMeetingAutomationSettings,
   RolePermissionsSettings,
   SyncScheduleSettings,
+  WeeklyDigestSettings,
 } from "../types";
 
 type SettingsTab = "email-sync" | "outreach-ai" | "pipeline" | "permissions" | "pre-meeting" | "reports" | "sync-schedule" | "zippy" | "zippy-prompt" | "notifications" | "system-health" | "trash";
@@ -211,6 +212,9 @@ export default function SettingsPage() {
   const [indiaSalesReportSettings, setIndiaSalesReportSettings] = useState<SalesReportSettings | null>(null);
   const [savingIndiaSalesReportSettings, setSavingIndiaSalesReportSettings] = useState(false);
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
+  const [weeklyDigestSettings, setWeeklyDigestSettings] = useState<WeeklyDigestSettings | null>(null);
+  const [savingWeeklyDigestSettings, setSavingWeeklyDigestSettings] = useState(false);
+  const [sendingWeeklyDigestTest, setSendingWeeklyDigestTest] = useState(false);
   // Zippy global system prompt (admin only)
   const [zippyPrompt, setZippyPrompt] = useState<string>("");
   const [zippyPromptIsDefault, setZippyPromptIsDefault] = useState<boolean>(true);
@@ -264,11 +268,12 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, reportSenderData, salesReportData, indiaSalesReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
+      const [gmailData, reportSenderData, salesReportData, indiaSalesReportData, weeklyDigestData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         getCachedGmailSync(),
         settingsApi.getReportSender().catch(() => null),
         settingsApi.getSalesReportSettings().catch(() => null),
         settingsApi.getIndiaSalesReportSettings().catch(() => null),
+        settingsApi.getWeeklyDigestSettings().catch(() => null),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
@@ -287,6 +292,7 @@ export default function SettingsPage() {
       }
       if (salesReportData) setSalesReportSettings(salesReportData);
       if (indiaSalesReportData) setIndiaSalesReportSettings(indiaSalesReportData);
+      if (weeklyDigestData) setWeeklyDigestSettings(weeklyDigestData);
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
@@ -1157,6 +1163,58 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to save India pod report schedule");
     } finally {
       setSavingIndiaSalesReportSettings(false);
+    }
+  };
+
+  const updateWeeklyDigestField = <K extends keyof WeeklyDigestSettings>(field: K, value: WeeklyDigestSettings[K]) => {
+    if (!weeklyDigestSettings) return;
+    setWeeklyDigestSettings({ ...weeklyDigestSettings, [field]: value });
+  };
+
+  const updateWeeklyDigestList = (field: "recipients" | "nonprod_recipients", value: string) => {
+    updateWeeklyDigestField(
+      field,
+      value.split(",").map((item) => item.trim()).filter(Boolean) as WeeklyDigestSettings[typeof field],
+    );
+  };
+
+  const handleSaveWeeklyDigestSettings = async () => {
+    if (!weeklyDigestSettings) return;
+    setSavingWeeklyDigestSettings(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateWeeklyDigestSettings(weeklyDigestSettings);
+      setWeeklyDigestSettings(updated);
+      setMessage("Weekly digest settings saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save weekly digest settings");
+    } finally {
+      setSavingWeeklyDigestSettings(false);
+    }
+  };
+
+  const handleSendWeeklyDigestTest = async () => {
+    setSendingWeeklyDigestTest(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await settingsApi.sendWeeklyDigestTest();
+      const recipients = result.recipients?.join(", ") || "configured recipients";
+      const results = result.send_results ?? [];
+      const sentCount = results.filter((r) => r.status === "sent").length;
+      if (results.length > 0 && sentCount === 0) {
+        const firstError = (results[0]?.error as string) || "Report sender Gmail account is not connected.";
+        setError(`Test digest was not sent: ${firstError}`);
+      } else if (sentCount < results.length) {
+        setMessage(`Test digest sent to ${sentCount}/${results.length} recipient(s) (${recipients}) — some failed, see logs`);
+      } else {
+        setMessage(`Test digest sent to ${recipients}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test digest");
+    } finally {
+      setSendingWeeklyDigestTest(false);
     }
   };
 
@@ -2393,6 +2451,97 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : null}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Weekly CRM digest</h4>
+                  <p className="crm-muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                    One email every Monday summarizing the prior week's pipeline stage changes, accounts marked DND / Not a Fit / Reach Out Later, prospects marked DND, and new accounts added via Recent Imports. Every recipient gets the identical full digest — no per-rep filtering, no row limits.
+                  </p>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, color: "#142335" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(weeklyDigestSettings?.enabled)}
+                    disabled={!isAdmin || !weeklyDigestSettings}
+                    onChange={(event) => updateWeeklyDigestField("enabled", event.target.checked)}
+                  />
+                  Scheduled digest enabled
+                </label>
+              </div>
+
+              <div className="report-settings-grid-three">
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send timezone</span>
+                  <input value={weeklyDigestSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateWeeklyDigestField("send_timezone", e.target.value)} disabled={!isAdmin || !weeklyDigestSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>IANA timezone used for the Monday send clock.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send hour</span>
+                  <input type="number" min={0} max={23} value={weeklyDigestSettings?.send_hour ?? 9} onChange={(e) => updateWeeklyDigestField("send_hour", Number(e.target.value))} disabled={!isAdmin || !weeklyDigestSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>24-hour local hour in the send timezone. Use 9 for 9 AM.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send minute</span>
+                  <input type="number" min={0} max={59} value={weeklyDigestSettings?.send_minute ?? 0} onChange={(e) => updateWeeklyDigestField("send_minute", Number(e.target.value))} disabled={!isAdmin || !weeklyDigestSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Minute after the hour. Use 0 for exactly 9:00.</span>
+                </label>
+              </div>
+
+              <ReportDaySelector
+                selectedDays={weeklyDigestSettings?.send_days ?? ["mon"]}
+                disabled={!isAdmin || !weeklyDigestSettings}
+                onToggle={(day) => {
+                  if (!weeklyDigestSettings) return;
+                  const current = new Set(weeklyDigestSettings.send_days);
+                  if (current.has(day)) current.delete(day);
+                  else current.add(day);
+                  const ordered = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].filter((item) => current.has(item));
+                  setWeeklyDigestSettings({ ...weeklyDigestSettings, send_days: ordered });
+                }}
+              />
+
+              <label style={{ display: "grid", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Production recipients</span>
+                <textarea value={(weeklyDigestSettings?.recipients ?? []).join(", ")} onChange={(e) => updateWeeklyDigestList("recipients", e.target.value)} disabled={!isAdmin || !weeklyDigestSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
+                <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails. Every recipient receives the identical full digest.</span>
+              </label>
+
+              <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Staging safety</div>
+                <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <input type="checkbox" checked={Boolean(weeklyDigestSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateWeeklyDigestField("nonprod_scheduled_enabled", e.target.checked)} disabled={!isAdmin || !weeklyDigestSettings} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Non-production allowed recipients</span>
+                  <textarea value={(weeklyDigestSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateWeeklyDigestList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !weeklyDigestSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Only these addresses can receive staging digest emails. Keep this as your email while testing.</span>
+                </label>
+              </div>
+
+              {weeklyDigestSettings?.last_scheduled_send_at && (
+                <div className="crm-muted" style={{ fontSize: 12 }}>
+                  Last scheduled send: {new Date(weeklyDigestSettings.last_scheduled_send_at).toLocaleString()} ({weeklyDigestSettings.last_scheduled_send_key})
+                </div>
+              )}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <button className="crm-button soft" type="button" onClick={handleSendWeeklyDigestTest} disabled={sendingWeeklyDigestTest || !weeklyDigestSettings}>
+                    {sendingWeeklyDigestTest ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
+                    Send test digest
+                  </button>
+                  <button className="crm-button primary" type="button" onClick={handleSaveWeeklyDigestSettings} disabled={savingWeeklyDigestSettings || !weeklyDigestSettings}>
+                    {savingWeeklyDigestSettings ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
+                    Save digest settings
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change digest settings.</p>
+              )}
             </div>
           </div>
         ) : activeTab === "sync-schedule" ? (

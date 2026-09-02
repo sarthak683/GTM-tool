@@ -2263,6 +2263,17 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
             message=f"Updated {summary}",
             metadata={"changes": changed_fields},
         )
+    if company.account_status != previous_account_status:
+        from app.services.account_status_history import record_account_status_change
+
+        await record_account_status_change(
+            session,
+            company_id=company.id,
+            from_status=previous_account_status,
+            to_status=company.account_status,
+            changed_by_id=current_user.id,
+        )
+
     company.updated_at = datetime.utcnow()
     company.icp_score, company.icp_tier = score_company(company)
     return await repo.save(company)

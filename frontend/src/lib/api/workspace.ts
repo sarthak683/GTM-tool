@@ -26,6 +26,7 @@ import type {
   TaskItem,
   TaskWorkspaceItem,
   User,
+  WeeklyDigestSettings,
 } from "../../types";
 import { BASE, getAuthHeaders, normalizeUtcDateStrings, request, requestList, requestPaginated } from "./core";
 
@@ -1228,6 +1229,17 @@ export const settingsApi = {
     }),
   sendSalesReportTest: () =>
     request<{ report_date: string; report_type: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/us-pod-call-report/send", {
+      method: "POST",
+    }),
+  getWeeklyDigestSettings: () =>
+    request<WeeklyDigestSettings>("/api/v1/settings/weekly-digest"),
+  updateWeeklyDigestSettings: (data: Partial<WeeklyDigestSettings>) =>
+    request<WeeklyDigestSettings>("/api/v1/settings/weekly-digest", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  sendWeeklyDigestTest: () =>
+    request<{ period_start: string; period_end: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/weekly-digest/send", {
       method: "POST",
     }),
   getSyncSchedule: () =>

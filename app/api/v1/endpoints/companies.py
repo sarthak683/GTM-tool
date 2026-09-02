@@ -57,7 +57,7 @@ def _visible_company_selector_filter():
     )
 
 
-async def _apply_company_update(session, company: Company, update_data: dict) -> None:
+async def _apply_company_update(session, company: Company, update_data: dict, changed_by_id: UUID | None = None) -> None:
     if "additional_domains" in update_data:
         # Same alias validation as the account-sourcing update path.
         from app.services.company_lifecycle import validate_alias_domains
@@ -86,6 +86,16 @@ async def _apply_company_update(session, company: Company, update_data: dict) ->
 
         await apply_account_disable_effects(
             session, company, reason=f"account_status={company.account_status}"
+        )
+    if company.account_status != previous_account_status:
+        from app.services.account_status_history import record_account_status_change
+
+        await record_account_status_change(
+            session,
+            company_id=company.id,
+            from_status=previous_account_status,
+            to_status=company.account_status,
+            changed_by_id=changed_by_id,
         )
 
 
@@ -377,7 +387,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
     if not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
-    await _apply_company_update(session, company, update_data)
+    await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
     company.icp_score, company.icp_tier = score_company(company)
     company.updated_at = datetime.utcnow()
     return await repo.save(company)
@@ -390,7 +400,7 @@ async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSes
     if not _can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
-    await _apply_company_update(session, company, update_data)
+    await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
     company.updated_at = datetime.utcnow()
     return await repo.save(company)
 

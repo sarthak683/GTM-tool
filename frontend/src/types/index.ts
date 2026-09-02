@@ -805,6 +805,19 @@ export interface SalesReportSettings {
   last_scheduled_send_at?: string | null;
 }
 
+export interface WeeklyDigestSettings {
+  enabled: boolean;
+  recipients: string[];
+  send_timezone: string;
+  send_hour: number;
+  send_minute: number;
+  send_days: string[];
+  nonprod_scheduled_enabled: boolean;
+  nonprod_recipients: string[];
+  last_scheduled_send_key?: string | null;
+  last_scheduled_send_at?: string | null;
+}
+
 export interface SalesAnalyticsRosterSettings {
   user_ids: string[];
   default_emails: string[];

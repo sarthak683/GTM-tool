@@ -12,6 +12,11 @@ from app.services.us_pod_call_report import (
     load_sales_report_settings,
     send_us_pod_call_report_email,
 )
+from app.services.weekly_digest import (
+    load_weekly_digest_settings,
+    send_weekly_digest_email,
+    weekly_digest_period,
+)
 
 router = APIRouter(prefix="/sales-reports", tags=["sales-reports"])
 
@@ -86,3 +91,55 @@ async def send_india_pod_call_report(
         reps=INDIA_POD_REPS,
         pod_label="India Pod",
     )
+
+
+@router.get("/weekly-digest")
+async def preview_weekly_digest(
+    session: DBSession,
+    _admin: AdminUser,
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
+):
+    digest_settings = await load_weekly_digest_settings(session)
+    if period_start and period_end:
+        start, end = period_start, period_end
+    else:
+        start, end = weekly_digest_period(digest_settings=digest_settings)
+    from app.services.weekly_digest import build_weekly_digest
+
+    digest = await build_weekly_digest(session, start, end, digest_settings=digest_settings)
+    return {
+        "period_start": digest.period_start,
+        "period_end": digest.period_end,
+        "subject": digest.subject,
+        "html_body": digest.html_body,
+        "stage_changes": len(digest.stage_changes),
+        "account_status_changes": len(digest.account_status_changes),
+        "prospect_dnd": len(digest.prospect_dnd),
+        "imports": len(digest.imports),
+    }
+
+
+@router.post("/weekly-digest/send")
+async def send_weekly_digest(
+    session: DBSession,
+    _admin: AdminUser,
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
+    recipient: str | None = Query(default=None),
+):
+    digest_settings = await load_weekly_digest_settings(session)
+    if period_start and period_end:
+        start, end = period_start, period_end
+    else:
+        start, end = weekly_digest_period(digest_settings=digest_settings)
+    recipients = [recipient] if recipient else None
+    digest = await send_weekly_digest_email(
+        session, start, end, recipients=recipients, digest_settings=digest_settings
+    )
+    return {
+        "period_start": digest.period_start,
+        "period_end": digest.period_end,
+        "recipients": digest.recipients,
+        "send_results": digest.send_results,
+    }

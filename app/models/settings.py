@@ -516,3 +516,27 @@ class SalesReportSettingsUpdate(SQLModel):
     skip_weekends: Optional[bool] = None
     nonprod_scheduled_enabled: Optional[bool] = None
     nonprod_recipients: Optional[list[str]] = None
+
+
+class WeeklyDigestSettingsRead(SQLModel):
+    enabled: bool
+    recipients: list[str]
+    send_timezone: str
+    send_hour: int
+    send_minute: int
+    send_days: list[str]
+    nonprod_scheduled_enabled: bool
+    nonprod_recipients: list[str]
+    last_scheduled_send_key: Optional[str] = None
+    last_scheduled_send_at: Optional[str] = None
+
+
+class WeeklyDigestSettingsUpdate(SQLModel):
+    enabled: Optional[bool] = None
+    recipients: Optional[list[str]] = None
+    send_timezone: Optional[str] = None
+    send_hour: Optional[int] = None
+    send_minute: Optional[int] = None
+    send_days: Optional[list[str]] = None
+    nonprod_scheduled_enabled: Optional[bool] = None
+    nonprod_recipients: Optional[list[str]] = None
