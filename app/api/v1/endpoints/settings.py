@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from sqlmodel import select as sm_select
 
 from app.config import settings
+from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.analytics_defaults import build_default_analytics_settings
@@ -587,6 +588,7 @@ async def _report_sender_status(session: DBSession) -> ReportSenderSettingsRead:
             and row.report_sender_connected_email
             and row.report_sender_token_data
             and _has_scope(row.report_sender_token_data, GMAIL_SEND_SCOPE)
+            and row.report_sender_last_error != GMAIL_RECONNECT_REQUIRED_ERROR
         ),
         sender_email=row.report_sender_email,
         connected_email=row.report_sender_connected_email,

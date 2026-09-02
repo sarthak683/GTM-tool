@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.clients.gmail_sender import send_gmail_email
+from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR, send_gmail_email
 from app.config import settings
 from app.models.company import Company
 from app.models.contact import Contact
@@ -645,24 +645,39 @@ async def send_weekly_digest_email(
 
     send_results = []
     token_data = settings_row.report_sender_token_data
+    reconnect_failure: dict[str, Any] | None = None
+    failures: list[str] = []
     for recipient in digest.recipients:
-        try:
-            result, token_data = await send_gmail_email(
-                token_data=token_data,
-                from_email=settings_row.report_sender_email,
-                to=recipient,
-                subject=digest.subject,
-                body=digest.body,
-                html_body=digest.html_body,
-                from_name="Beacon CRM",
-            )
-        except Exception as exc:  # never let one bad mailbox crash the whole send
-            logger.exception("Gmail send raised for %s: %s", recipient, exc)
-            result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        if reconnect_failure is not None:
+            result = dict(reconnect_failure)
+        else:
+            try:
+                result, token_data = await send_gmail_email(
+                    token_data=token_data,
+                    from_email=settings_row.report_sender_email,
+                    to=recipient,
+                    subject=digest.subject,
+                    body=digest.body,
+                    html_body=digest.html_body,
+                    from_name="Beacon CRM",
+                )
+            except Exception as exc:  # never let one bad mailbox crash the whole send
+                logger.exception("Gmail send raised for %s: %s", recipient, exc)
+                result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            if result.get("reconnect_required"):
+                reconnect_failure = dict(result)
         send_results.append({"to": recipient, **result})
+        if result.get("status") != "sent":
+            failures.append(f"{recipient}: {result.get('error') or 'Gmail send failed'}")
 
     if token_data != settings_row.report_sender_token_data:
         settings_row.report_sender_token_data = token_data
+    if reconnect_failure is not None:
+        settings_row.report_sender_last_error = GMAIL_RECONNECT_REQUIRED_ERROR
+    elif failures:
+        settings_row.report_sender_last_error = " | ".join(failures)[:500]
+    else:
+        settings_row.report_sender_last_error = None
     session.add(settings_row)
     await session.commit()
 

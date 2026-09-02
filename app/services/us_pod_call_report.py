@@ -11,7 +11,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.clients.gmail_sender import send_gmail_email
+from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR, send_gmail_email
 from app.config import settings
 from app.core.pods import get_pod
 from app.models.activity import Activity
@@ -1221,6 +1221,7 @@ async def send_us_pod_call_report_email(
 
     send_results = []
     token_data = settings_row.report_sender_token_data
+    reconnect_failure: dict[str, Any] | None = None
     # Attempt every recipient. Earlier this loop did `break` on the first
     # non-"sent" result, which meant a single transient Gmail hiccup
     # silently skipped every later recipient (Pulkit was at position 6 of
@@ -1230,26 +1231,33 @@ async def send_us_pod_call_report_email(
     # scheduled send_key based on whether every recipient succeeded.
     failures: list[str] = []
     for recipient in report["recipients"]:
-        try:
-            result, token_data = await send_gmail_email(
-                token_data=token_data,
-                from_email=settings_row.report_sender_email,
-                to=recipient,
-                subject=report["subject"],
-                body=report["body"],
-                html_body=report.get("html_body"),
-                from_name="Beacon Sales Ops",
-            )
-        except Exception as exc:  # network/timeout/quota/auth — never crash the whole report
-            logger.exception("Gmail send raised for %s: %s", recipient, exc)
-            result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        if reconnect_failure is not None:
+            result = dict(reconnect_failure)
+        else:
+            try:
+                result, token_data = await send_gmail_email(
+                    token_data=token_data,
+                    from_email=settings_row.report_sender_email,
+                    to=recipient,
+                    subject=report["subject"],
+                    body=report["body"],
+                    html_body=report.get("html_body"),
+                    from_name="Beacon Sales Ops",
+                )
+            except Exception as exc:  # network/timeout/quota/auth — never crash the whole report
+                logger.exception("Gmail send raised for %s: %s", recipient, exc)
+                result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            if result.get("reconnect_required"):
+                reconnect_failure = dict(result)
         send_results.append({"to": recipient, **result})
         if result.get("status") != "sent":
             failures.append(f"{recipient}: {result.get('error') or 'Gmail send failed'}")
 
     if token_data != settings_row.report_sender_token_data:
         settings_row.report_sender_token_data = token_data
-    if failures:
+    if reconnect_failure is not None:
+        settings_row.report_sender_last_error = GMAIL_RECONNECT_REQUIRED_ERROR
+    elif failures:
         # Cap the combined error so it fits the 500-char column. Multi-line
         # so the UI/log can show each failure on its own line.
         joined = " | ".join(failures)

@@ -15,6 +15,13 @@ from app.services.gmail_oauth import GMAIL_SEND_SCOPE, GOOGLE_TOKEN_URL
 logger = logging.getLogger(__name__)
 
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+GMAIL_RECONNECT_REQUIRED_ERROR = (
+    "Gmail authorization expired or was revoked. Reconnect the report sender in Settings."
+)
+
+
+class GmailReconnectRequiredError(RuntimeError):
+    """Raised when Google says the stored grant can no longer be refreshed."""
 
 
 def _has_send_scope(token_data: dict | None) -> bool:
@@ -36,7 +43,7 @@ async def _refresh_token_if_needed(token_data: dict) -> dict:
 
     refresh_token = token_data.get("refresh_token")
     if not refresh_token:
-        raise ValueError("No refresh_token available; reconnect the report sender Gmail account.")
+        raise GmailReconnectRequiredError(GMAIL_RECONNECT_REQUIRED_ERROR)
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -48,7 +55,15 @@ async def _refresh_token_if_needed(token_data: dict) -> dict:
                 "grant_type": "refresh_token",
             },
         )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        error_code = None
+        try:
+            error_code = response.json().get("error")
+        except Exception:
+            pass
+        if error_code == "invalid_grant":
+            raise GmailReconnectRequiredError(GMAIL_RECONNECT_REQUIRED_ERROR)
+        response.raise_for_status()
     payload = response.json()
 
     updated = dict(token_data)
@@ -134,7 +149,28 @@ async def send_gmail_email(
             token_data,
         )
 
-    updated_token = await _refresh_token_if_needed(token_data)
+    try:
+        updated_token = await _refresh_token_if_needed(token_data)
+    except GmailReconnectRequiredError:
+        logger.warning("Gmail authorization is no longer refreshable; reconnect required")
+        return (
+            {
+                "status": "failed",
+                "error": GMAIL_RECONNECT_REQUIRED_ERROR,
+                "reconnect_required": True,
+            },
+            token_data,
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.error("Gmail token refresh failed with HTTP %s", exc.response.status_code)
+        return (
+            {
+                "status": "failed",
+                "error": "Gmail authorization refresh failed. Try again later.",
+                "status_code": exc.response.status_code,
+            },
+            token_data,
+        )
     raw = _build_raw_message(
         from_email=from_email,
         to=to,
