@@ -5,6 +5,8 @@ from app.services.us_pod_call_report import (
     _activity_report_date,
     _utc_bounds_for_report_day,
     default_report_date,
+    month_to_date_report_period,
+    prior_quarter_report_period,
     weekly_report_period,
 )
 
@@ -62,4 +64,18 @@ def test_india_weekly_report_ends_on_friday_for_saturday_send():
     assert weekly_report_period(report_date, INDIA_SETTINGS) == (
         date(2026, 8, 3),
         date(2026, 8, 7),
+    )
+
+
+def test_month_to_date_uses_the_selected_completed_report_date():
+    assert month_to_date_report_period(date(2026, 8, 22), US_SETTINGS) == (
+        date(2026, 8, 1),
+        date(2026, 8, 22),
+    )
+
+
+def test_prior_quarter_uses_calendar_quarter_boundaries():
+    assert prior_quarter_report_period(date(2026, 8, 22), US_SETTINGS) == (
+        date(2026, 5, 1),
+        date(2026, 7, 31),
     )

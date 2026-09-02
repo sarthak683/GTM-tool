@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
@@ -35,7 +36,7 @@ async def backfill_orphans_for_company(
     shadow_companies_absorbed = 0
 
     if domain and not domain.endswith(".unknown"):
-        shadow_stmt = select(Company).where(
+        shadow_stmt = unscoped_for_background_job(Company, "company auto mapping system work").where(
             Company.id != company.id,
             Company.sourcing_batch_id.is_(None),
             or_(
@@ -99,7 +100,7 @@ async def backfill_orphans_for_company(
     family = sorted(
         d for d in company_domain_family(company) if d and d not in _NON_COMPANY_DOMAINS
     )
-    contacts_stmt = select(Contact).where(
+    contacts_stmt = unscoped_for_background_job(Contact, "company auto mapping system work").where(
         Contact.company_id.is_(None),
         Contact.email.is_not(None),
         func.lower(func.split_part(Contact.email, "@", 2)).in_(family),

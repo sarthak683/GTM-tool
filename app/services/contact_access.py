@@ -9,15 +9,14 @@ from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
-from app.repositories.contact import visible_contact_restriction
+from app.repositories.contact import ContactRepository, visible_contact_restriction
 
 
 async def get_visible_contact(session, user, contact_id: UUID) -> Contact:
     """Fetch a contact only when it is visible in the caller's Prospecting scope."""
-    stmt = select(Contact).where(Contact.id == contact_id)
-    restriction = await visible_contact_restriction(session, user)
-    if restriction is not None:
-        stmt = stmt.where(restriction)
+    stmt = (await ContactRepository.visible_to(session, user)).where(
+        Contact.id == contact_id
+    )
     contact = (await session.execute(stmt)).scalars().first()
     if contact is None:
         raise NotFoundError("Contact not found")

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Shield, User, UserPlus, Loader2, CheckCircle2, Mail, Save } from "lucide-react";
+import { Shield, User, UserPlus, Loader2, CheckCircle2, Mail, Save, Megaphone } from "lucide-react";
 import { authApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers, invalidateUsersCache } from "../lib/cachedFetch";
 import { SkeletonList } from "../components/ui/Skeleton";
@@ -7,6 +7,14 @@ import { useAuth } from "../lib/AuthContext";
 import type { User as UserType } from "../types";
 
 function roleMeta(role: UserType["role"]) {
+  if (role === "superadmin") {
+    return {
+      label: "Super Admin",
+      icon: Shield,
+      bg: "rgba(109, 40, 217, 0.12)",
+      color: "#6d28d9",
+    };
+  }
   if (role === "admin") {
     return {
       label: "Admin",
@@ -21,6 +29,14 @@ function roleMeta(role: UserType["role"]) {
       icon: UserPlus,
       bg: "rgba(14, 165, 233, 0.1)",
       color: "#0284c7",
+    };
+  }
+  if (role === "marketing") {
+    return {
+      label: "Marketing",
+      icon: Megaphone,
+      bg: "rgba(245, 158, 11, 0.12)",
+      color: "#b45309",
     };
   }
   return {
@@ -53,7 +69,11 @@ export default function TeamManagement() {
     }
     getCachedRolePermissions()
       .then((permissions) =>
-        setCanManageTeam(currentUser.role === "admin" ? true : Boolean(permissions[currentUser.role]?.manage_team))
+        setCanManageTeam(
+          currentUser.role === "ae" || currentUser.role === "sdr" || currentUser.role === "marketing"
+            ? Boolean(permissions[currentUser.role]?.manage_team)
+            : false,
+        )
       )
       .catch(() => setCanManageTeam(false));
   }, [currentUser, isAdmin]);
@@ -130,42 +150,11 @@ export default function TeamManagement() {
     }
   };
 
-  const [seeding, setSeeding] = useState(false);
-
-  const BEACON_TEAM = [
-    { email: "yash@beacon.li", name: "Yashveer Singh", role: "admin" },
-    { email: "annie@beacon.li", name: "Annie Gupta", role: "ae" },
-    { email: "bhavya@beacon.li", name: "Bhavya Mukkera", role: "ae" },
-    { email: "dyuthith@beacon.li", name: "Dyuthith Din", role: "sdr" },
-    { email: "mahesh@beacon.li", name: "Mahesh Pothula", role: "ae" },
-    { email: "manognya@beacon.li", name: "Manognya Rangineni", role: "sdr" },
-    { email: "pravalika@beacon.li", name: "Pravalika Jamalpur", role: "ae" },
-    { email: "pulkit@beacon.li", name: "Pulkit Anand", role: "ae" },
-    { email: "rakesh@beacon.li", name: "Rakesh Vaddadi", role: "sdr" },
-    { email: "saher@beacon.li", name: "Saher Ghattas", role: "ae" },
-    { email: "sandeep@beacon.li", name: "Sandeep Sinha", role: "ae" },
-    { email: "sarthak@beacon.li", name: "Sarthak Aitha", role: "admin" },
-    { email: "shahruk@beacon.li", name: "Shahruk", role: "ae" },
-  ];
-
-  const handleSeedTeam = async () => {
-    setSeeding(true);
-    try {
-      const result = await authApi.seedUsers(BEACON_TEAM);
-      invalidateUsersCache();
-      alert(`Created ${result.created} new team members (${result.skipped} already existed)`);
-      const loader = canManageTeam ? authApi.listUsers() : getCachedUsers();
-      setUsers(await loader);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to seed team");
-    } finally {
-      setSeeding(false);
-    }
-  };
-
+  const superAdmins = users.filter((u) => u.role === "superadmin");
   const admins = users.filter((u) => u.role === "admin");
   const aes = users.filter((u) => u.role === "ae");
   const sdrs = users.filter((u) => u.role === "sdr");
+  const marketing = users.filter((u) => u.role === "marketing");
 
   return (
     <div className="crm-page" style={{ padding: "0 0 40px" }}>
@@ -238,7 +227,8 @@ export default function TeamManagement() {
               >
                 <option value="sdr">SDR</option>
                 <option value="ae">AE</option>
-                <option value="admin">Admin</option>
+                <option value="marketing">Marketing</option>
+                {isAdmin && <option value="admin">Admin</option>}
               </select>
             </label>
             <button
@@ -252,23 +242,15 @@ export default function TeamManagement() {
           </form>
         )}
 
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={handleSeedTeam}
-            disabled={seeding}
-            style={{ marginBottom: 16, border: "1px solid #d8e0eb", background: "#fff", color: "#142335", borderRadius: 10, padding: "0 14px", height: 36, fontSize: 13, fontWeight: 700, cursor: seeding ? "wait" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
-          >
-            <UserPlus size={14} />
-            {seeding ? "Seeding..." : "Seed missing Beacon teammates"}
-          </button>
-        )}
-
         {/* Stats */}
-        <div className="team-mgmt-stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+        <div className="team-mgmt-stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 16 }}>
           <div className="crm-hover-lift" style={{ background: "#fff", border: "1px solid #e3e9f2", borderRadius: 14, padding: "14px 16px" }}>
             <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>Total Members</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: "#142335", marginTop: 4 }}>{users.length}</div>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #e3e9f2", borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>Super Admins</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: "#6d28d9", marginTop: 4 }}>{superAdmins.length}</div>
           </div>
           <div style={{ background: "#fff", border: "1px solid #e3e9f2", borderRadius: 14, padding: "14px 16px" }}>
             <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>Admins</div>
@@ -281,6 +263,10 @@ export default function TeamManagement() {
           <div style={{ background: "#fff", border: "1px solid #e3e9f2", borderRadius: 14, padding: "14px 16px" }}>
             <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>SDRs</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: "#1f8f5f", marginTop: 4 }}>{sdrs.length}</div>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #e3e9f2", borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ fontSize: 11, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>Marketing</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: "#b45309", marginTop: 4 }}>{marketing.length}</div>
           </div>
         </div>
 
@@ -363,52 +349,25 @@ export default function TeamManagement() {
                         <td data-label="Actions" style={{ textAlign: "right" }}>
                           {updating === u.id ? (
                             <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "#68788d" }} />
-                          ) : isMe ? (
-                            <span style={{ fontSize: 12, color: "#68788d" }}>-</span>
+                          ) : isMe || (u.role === "superadmin" && currentUser?.role !== "superadmin") || (!isAdmin && u.role === "admin") ? (
+                            <span style={{ fontSize: 12, color: "#68788d" }}>{isMe ? "Your account" : "Admin-managed"}</span>
                           ) : (
-                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                              {u.role !== "admin" && (
-                                <button
-                                  onClick={() => handleRoleChange(u.id, "admin")}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: 4,
-                                    padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                                    background: "rgba(99, 132, 255, 0.08)", color: "#6384ff",
-                                    border: "1px solid rgba(99, 132, 255, 0.2)", cursor: "pointer",
-                                  }}
+                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" }}>
+                              <label style={{ display: "grid", gap: 3, textAlign: "left" }}>
+                                <span style={{ fontSize: 10, color: "#68788d", fontWeight: 700, textTransform: "uppercase" }}>Role</span>
+                                <select
+                                  aria-label={`Role for ${u.name}`}
+                                  value={u.role}
+                                  disabled={!isAdmin && u.role === "admin"}
+                                  onChange={(event) => void handleRoleChange(u.id, event.target.value)}
+                                  style={{ height: 30, border: "1px solid #d7e0ea", borderRadius: 7, padding: "0 7px", fontSize: 12, color: "#142335", background: "#fff" }}
                                 >
-                                  <Shield size={12} />
-                                  Make Admin
-                                </button>
-                              )}
-                              {u.role !== "ae" && (
-                                <button
-                                  onClick={() => handleRoleChange(u.id, "ae")}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: 4,
-                                    padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                                    background: "rgba(14, 165, 233, 0.08)", color: "#0284c7",
-                                    border: "1px solid rgba(14, 165, 233, 0.2)", cursor: "pointer",
-                                  }}
-                                >
-                                  <UserPlus size={12} />
-                                  Make AE
-                                </button>
-                              )}
-                              {u.role !== "sdr" && (
-                                <button
-                                  onClick={() => handleRoleChange(u.id, "sdr")}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: 4,
-                                    padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                                    background: "rgba(31, 143, 95, 0.08)", color: "#1f8f5f",
-                                    border: "1px solid rgba(31, 143, 95, 0.2)", cursor: "pointer",
-                                  }}
-                                >
-                                  <User size={12} />
-                                  Make SDR
-                                </button>
-                              )}
+                                  <option value="sdr">SDR</option>
+                                  <option value="ae">AE</option>
+                                  <option value="marketing">Marketing</option>
+                                  {isAdmin && <option value="admin">Admin</option>}
+                                </select>
+                              </label>
                               <button
                                 onClick={() => handleToggleActive(u.id, !u.is_active)}
                                 style={{

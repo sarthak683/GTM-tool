@@ -88,7 +88,7 @@ async def create_reminder(payload: ReminderCreate, session: DBSession, _user: Cu
         contact_id=payload.contact_id,
         company_id=contact.company_id,
         created_by_id=_user.id,
-        assigned_to_id=payload.assigned_to_id if _user.role == "admin" else _user.id,
+        assigned_to_id=payload.assigned_to_id if _user.is_admin else _user.id,
         note=payload.note,
         due_at=_normalize_utc_naive(payload.due_at),
     )
@@ -151,7 +151,7 @@ async def update_reminder(reminder_id: UUID, payload: ReminderUpdate, session: D
     if not reminder:
         raise NotFoundError(f"Reminder {reminder_id} not found")
     await get_visible_contact(session, _user, reminder.contact_id)
-    if _user.role != "admin" and _user.id not in {
+    if not _user.is_admin and _user.id not in {
         reminder.created_by_id,
         reminder.assigned_to_id,
     }:
@@ -183,7 +183,7 @@ async def delete_reminder(reminder_id: UUID, session: DBSession, _user: CurrentU
     if not reminder:
         raise NotFoundError(f"Reminder {reminder_id} not found")
     await get_visible_contact(session, _user, reminder.contact_id)
-    if _user.role != "admin" and _user.id not in {
+    if not _user.is_admin and _user.id not in {
         reminder.created_by_id,
         reminder.assigned_to_id,
     }:

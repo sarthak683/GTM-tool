@@ -18,6 +18,7 @@ import type {
   ReportSenderSettings,
   RolePermissionsSettings,
   SalesReportSettings,
+  SalesReportRunResult,
   SalesResource,
   DataRoomCategory,
   DataRoomItem,
@@ -1242,6 +1243,31 @@ export const settingsApi = {
     request<{ period_start: string; period_end: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/weekly-digest/send", {
       method: "POST",
     }),
+  previewUsPodCallReport: (params: {
+    reportType: "daily" | "weekly" | "month_to_date" | "prior_quarter" | "custom";
+    date?: string;
+    periodStart?: string;
+    periodEnd?: string;
+  }) => {
+    const search = new URLSearchParams({ report_type: params.reportType });
+    if (params.date) search.set("date", params.date);
+    if (params.periodStart) search.set("period_start", params.periodStart);
+    if (params.periodEnd) search.set("period_end", params.periodEnd);
+    return request<SalesReportRunResult>(`/api/v1/sales-reports/us-pod-call-report?${search}`);
+  },
+  sendUsPodCallReport: (params: {
+    reportType: "daily" | "weekly" | "month_to_date" | "prior_quarter" | "custom";
+    recipient: string;
+    date?: string;
+    periodStart?: string;
+    periodEnd?: string;
+  }) => {
+    const search = new URLSearchParams({ report_type: params.reportType, recipient: params.recipient });
+    if (params.date) search.set("date", params.date);
+    if (params.periodStart) search.set("period_start", params.periodStart);
+    if (params.periodEnd) search.set("period_end", params.periodEnd);
+    return request<SalesReportRunResult>(`/api/v1/sales-reports/us-pod-call-report/send?${search}`, { method: "POST" });
+  },
   getSyncSchedule: () =>
     request<SyncScheduleSettings>("/api/v1/settings/sync-schedule"),
   updateSyncSchedule: (data: Partial<SyncScheduleSettings>) =>

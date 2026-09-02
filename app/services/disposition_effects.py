@@ -29,6 +29,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence
 
@@ -139,7 +140,7 @@ async def _maybe_suggest_deal_from_disposition(
         from app.models.company import Company
 
         co = (await session.execute(
-            select(Company).where(Company.id == contact.company_id)
+            unscoped_for_background_job(Company, "disposition effects system work").where(Company.id == contact.company_id)
         )).scalar_one_or_none()
         if co:
             company_name = co.name

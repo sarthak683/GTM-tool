@@ -38,6 +38,7 @@ import type {
   GmailSyncSettings,
   ReportSenderSettings,
   SalesReportSettings,
+  SalesReportRunResult,
   SalesAnalyticsRosterSettings,
   OutreachContentSettings,
   OutreachTemplateStep,
@@ -164,7 +165,7 @@ function slugifyStageId(label: string) {
 }
 
 export default function SettingsPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>("email-sync");
   const [jobHealth, setJobHealth] = useState<JobHealthRow[] | null>(null);
@@ -215,6 +216,14 @@ export default function SettingsPage() {
   const [weeklyDigestSettings, setWeeklyDigestSettings] = useState<WeeklyDigestSettings | null>(null);
   const [savingWeeklyDigestSettings, setSavingWeeklyDigestSettings] = useState(false);
   const [sendingWeeklyDigestTest, setSendingWeeklyDigestTest] = useState(false);
+  const [reportRunType, setReportRunType] = useState<"month_to_date" | "prior_quarter" | "custom">("month_to_date");
+  const [reportAsOfDate, setReportAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [customReportStart, setCustomReportStart] = useState("");
+  const [customReportEnd, setCustomReportEnd] = useState("");
+  const [reportRecipient, setReportRecipient] = useState("");
+  const [reportPreview, setReportPreview] = useState<SalesReportRunResult | null>(null);
+  const [loadingReportPreview, setLoadingReportPreview] = useState(false);
+  const [sendingPeriodReport, setSendingPeriodReport] = useState(false);
   // Zippy global system prompt (admin only)
   const [zippyPrompt, setZippyPrompt] = useState<string>("");
   const [zippyPromptIsDefault, setZippyPromptIsDefault] = useState<boolean>(true);
@@ -263,6 +272,10 @@ export default function SettingsPage() {
 
   const ccPattern = useMemo(() => buildCcPattern(gmail?.inbox || inbox), [gmail?.inbox, inbox]);
   const extraTemplateCount = Math.max((outreachContent?.step_templates.length ?? 0) - outreachStepDelays.length, 0);
+  const canManageReports = isAdmin || Boolean(
+    user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") &&
+      rolePermissions?.[user.role]?.manage_reports,
+  );
 
   const loadSettings = async () => {
     setLoading(true);
@@ -1147,6 +1160,50 @@ export default function SettingsPage() {
     }
   };
 
+  const reportRunParams = () => {
+    if (reportRunType === "custom") {
+      if (!customReportStart || !customReportEnd) throw new Error("Choose both dates for a custom report.");
+      return { reportType: reportRunType, periodStart: customReportStart, periodEnd: customReportEnd } as const;
+    }
+    return { reportType: reportRunType, date: reportAsOfDate || undefined } as const;
+  };
+
+  const handlePreviewPeriodReport = async () => {
+    setLoadingReportPreview(true);
+    setError(null);
+    setMessage(null);
+    try {
+      setReportPreview(await settingsApi.previewUsPodCallReport(reportRunParams()));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to build the report preview");
+    } finally {
+      setLoadingReportPreview(false);
+    }
+  };
+
+  const handleSendPeriodReport = async () => {
+    if (!reportRecipient.includes("@")) {
+      setError("Enter one email address for the report delivery.");
+      return;
+    }
+    setSendingPeriodReport(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await settingsApi.sendUsPodCallReport({ ...reportRunParams(), recipient: reportRecipient.trim() });
+      setReportPreview(result);
+      setMessage(`Report delivery requested for ${result.recipients.join(", ") || reportRecipient.trim()}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send the report");
+    } finally {
+      setSendingPeriodReport(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!reportRecipient && user?.email) setReportRecipient(user.email);
+  }, [reportRecipient, user?.email]);
+
   const handleSaveIndiaSalesReportSettings = async () => {
     if (!indiaSalesReportSettings) return;
     setSavingIndiaSalesReportSettings(true);
@@ -1283,9 +1340,9 @@ export default function SettingsPage() {
         authApi.listUsers().catch(() => []),
         settingsApi.getProspectVisibility().catch(() => ({ user_ids: [] as string[] })),
         settingsApi.getSalesAnalyticsRoster().catch(() => ({ user_ids: [] as string[], default_emails: [] as string[] })),
-      ]).then(([users, vis, roster]) => {
+      ]).then(([users, prospectVis, roster]) => {
         setAllUsers(users as Array<{ id: string; name?: string | null; email?: string | null; role: string }>);
-        setProspectViewAll(vis.user_ids || []);
+        setProspectViewAll(prospectVis.user_ids || []);
         setSalesAnalyticsRoster(roster);
       });
     }
@@ -2170,14 +2227,19 @@ export default function SettingsPage() {
                   label: "Run pre-meeting intel",
                   help: "Lets this role trigger meeting research, pre-briefs, and demo strategy generation manually.",
                 },
+                {
+                  key: "manage_reports" as const,
+                  label: "Manage call reports",
+                  help: "Lets this role preview, email, and update call-report schedules without granting full admin access.",
+                },
               ]).map((permission) => (
                 <div key={permission.key} style={{ border: "1px solid #e3e9f2", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1.25fr) repeat(2, minmax(180px, 1fr))", gap: 14, padding: 16, alignItems: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.25fr) repeat(auto-fit, minmax(150px, 1fr))", gap: 14, padding: 16, alignItems: "center" }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#142335", marginBottom: 6 }}>{permission.label}</div>
                       <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>{permission.help}</div>
                     </div>
-                    {(["ae", "sdr"] as const).map((role) => (
+                    {(["ae", "sdr", "marketing"] as const).map((role) => (
                       <label key={role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e3e9f2", borderRadius: 10, padding: "10px 12px", background: "#fbfdff" }}>
                         <div>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "#142335", textTransform: "uppercase", letterSpacing: "0.08em" }}>{role}</div>
@@ -2222,7 +2284,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
-                  {allUsers.filter((u) => u.role !== "admin").map((u) => {
+                  {allUsers.filter((u) => u.role !== "admin" && u.role !== "superadmin").map((u) => {
                     const on = prospectViewAll.includes(u.id);
                     return (
                       <label key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e3e9f2", borderRadius: 10, padding: "8px 12px", background: "#fbfdff" }}>
@@ -2241,9 +2303,23 @@ export default function SettingsPage() {
                       </label>
                     );
                   })}
-                  {allUsers.filter((u) => u.role !== "admin").length === 0 && (
+                  {allUsers.filter((u) => u.role !== "admin" && u.role !== "superadmin").length === 0 && (
                     <p className="crm-muted" style={{ fontSize: 12 }}>No non-admin teammates to configure yet.</p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+                <div>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Pipeline visibility</h3>
+                  <p className="crm-muted" style={{ maxWidth: 760, fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
+                    Every active teammate can see every live deal in the pipeline. This is workspace-wide, so there is no individual access toggle to maintain.
+                  </p>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #cdeedc", borderRadius: 10, padding: "10px 12px", background: "#eefaf2", color: "#1f8f5f", fontSize: 12, fontWeight: 800 }}>
+                  <CheckCircle2 size={15} /> Workspace-wide access enabled
                 </div>
               </div>
             )}
@@ -2293,10 +2369,93 @@ export default function SettingsPage() {
                 <CalendarDays size={14} />
                 Reports
               </div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Daily sales report settings</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#142335", marginBottom: 4 }}>Call-report workspace</h3>
               <p className="crm-muted" style={{ maxWidth: 760, lineHeight: 1.7 }}>
-                Control which days the US and India pod reports are sent. Sunday is disabled by default for both schedules.
+                Preview a period, set each pod’s schedule, and keep non-production delivery safely restricted. Sunday is disabled by default for both schedules.
               </p>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10 }}>
+              {[
+                { label: "US schedule", value: salesReportSettings?.enabled ? "On" : "Off", help: `${salesReportSettings?.send_hour ?? 7}:${String(salesReportSettings?.send_minute ?? 0).padStart(2, "0")} ${salesReportSettings?.send_timezone ?? "Asia/Kolkata"}` },
+                { label: "India schedule", value: indiaSalesReportSettings?.enabled ? "On" : "Off", help: `${(indiaSalesReportSettings?.send_days ?? []).length || 0} send days selected` },
+                { label: "Report access", value: canManageReports ? "Can manage" : "View only", help: canManageReports ? "Preview, delivery, and schedule controls are available." : "An admin can grant access in Permissions." },
+              ].map((item) => (
+                <div key={item.label} style={{ border: "1px solid #dce7f3", borderRadius: 12, background: "#fbfdff", padding: "12px 14px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.07em" }}>{item.label}</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: item.value === "Off" || item.value === "View only" ? "#9a5c10" : "#16744b", margin: "4px 0" }}>{item.value}</div>
+                  <div className="crm-muted" style={{ fontSize: 12, lineHeight: 1.45 }}>{item.help}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Run a historical US pod report</h4>
+                <p className="crm-muted" style={{ fontSize: 12, lineHeight: 1.6, margin: "4px 0 0" }}>
+                  Build a preview before emailing it. Month-to-date ends on the selected business date; the prior-period preset covers the three complete months immediately before it.
+                </p>
+              </div>
+
+              <div className="report-settings-grid-three">
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Report period</span>
+                  <select value={reportRunType} onChange={(event) => { setReportRunType(event.target.value as typeof reportRunType); setReportPreview(null); }} disabled={!canManageReports} style={{ height: 36, padding: "0 10px", fontSize: 13 }}>
+                    <option value="month_to_date">Month to date</option>
+                    <option value="prior_quarter">Prior 3 full months</option>
+                    <option value="custom">Custom date range</option>
+                  </select>
+                </label>
+                {reportRunType === "custom" ? (
+                  <>
+                    <label style={{ display: "grid", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Start date</span>
+                      <input type="date" value={customReportStart} onChange={(event) => { setCustomReportStart(event.target.value); setReportPreview(null); }} disabled={!canManageReports} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                    </label>
+                    <label style={{ display: "grid", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>End date</span>
+                      <input type="date" value={customReportEnd} onChange={(event) => { setCustomReportEnd(event.target.value); setReportPreview(null); }} disabled={!canManageReports} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                    </label>
+                  </>
+                ) : (
+                  <label style={{ display: "grid", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>As-of business date</span>
+                    <input type="date" value={reportAsOfDate} onChange={(event) => { setReportAsOfDate(event.target.value); setReportPreview(null); }} disabled={!canManageReports} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                    <span className="crm-muted" style={{ fontSize: 12 }}>Used to resolve the selected period.</span>
+                  </label>
+                )}
+              </div>
+
+              <div className="report-settings-grid-two">
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Email one recipient</span>
+                  <input type="email" value={reportRecipient} onChange={(event) => setReportRecipient(event.target.value)} disabled={!canManageReports} placeholder="name@beacon.li" style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>In staging, delivery remains limited to the non-production recipient allowlist.</span>
+                </label>
+                <div style={{ display: "flex", alignItems: "end", gap: 10, flexWrap: "wrap" }}>
+                  <button className="crm-button soft" type="button" onClick={handlePreviewPeriodReport} disabled={!canManageReports || loadingReportPreview}>
+                    {loadingReportPreview ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
+                    Preview report
+                  </button>
+                  <button className="crm-button primary" type="button" onClick={handleSendPeriodReport} disabled={!canManageReports || sendingPeriodReport}>
+                    {sendingPeriodReport ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
+                    Email report
+                  </button>
+                </div>
+              </div>
+
+              {reportPreview && (
+                <div style={{ border: "1px solid #d8e7f8", borderRadius: 12, padding: 14, background: "#f7fbff", display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>{reportPreview.subject}</div>
+                  <div className="crm-muted" style={{ fontSize: 12 }}>{reportPreview.period_start} through {reportPreview.period_end} · {reportPreview.rows.length} reps</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", minWidth: 420, borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ textAlign: "left", color: "#68788d" }}><th style={{ padding: "6px 0" }}>Rep</th><th>Calls</th><th>Connected</th><th>Meetings</th></tr></thead>
+                      <tbody>{reportPreview.rows.map((row) => <tr key={row.rep_name} style={{ borderTop: "1px solid #e3e9f2", color: "#142335" }}><td style={{ padding: "7px 0", fontWeight: 700 }}>{row.rep_name}</td><td>{row.calls}</td><td>{row.connected_calls}</td><td>{row.meetings_booked_calls}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
@@ -2313,7 +2472,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   checked={Boolean(salesReportSettings?.enabled)}
-                  disabled={!isAdmin || !salesReportSettings}
+                  disabled={!canManageReports || !salesReportSettings}
                   onChange={(event) => updateSalesReportField("enabled", event.target.checked)}
                 />
               </label>
@@ -2321,17 +2480,17 @@ export default function SettingsPage() {
               <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send timezone</span>
-                  <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input value={salesReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("send_timezone", e.target.value)} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>IANA timezone used for the send clock, e.g. Asia/Kolkata or America/Chicago.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send hour</span>
-                  <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input type="number" min={0} max={23} value={salesReportSettings?.send_hour ?? 7} onChange={(e) => updateSalesReportField("send_hour", Number(e.target.value))} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>24-hour local hour in the send timezone. Use 7 for 7 AM.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send minute</span>
-                  <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input type="number" min={0} max={59} value={salesReportSettings?.send_minute ?? 0} onChange={(e) => updateSalesReportField("send_minute", Number(e.target.value))} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Minute after the hour. Use 0 for exactly 7:00.</span>
                 </label>
               </div>
@@ -2339,56 +2498,56 @@ export default function SettingsPage() {
               <div className="report-settings-grid-three">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Business-day cutoff timezone</span>
-                  <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input value={salesReportSettings?.cutoff_timezone ?? "Asia/Kolkata"} onChange={(e) => updateSalesReportField("cutoff_timezone", e.target.value)} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used to decide which calls belong to a sales day.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Cutoff hour</span>
-                  <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input type="number" min={0} max={23} value={salesReportSettings?.cutoff_hour ?? 6} onChange={(e) => updateSalesReportField("cutoff_hour", Number(e.target.value))} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Hour when the sales day ends. Use 6 for 6 AM IST.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Report label timezone</span>
-                  <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <input value={salesReportSettings?.report_label_timezone ?? "America/Chicago"} onChange={(e) => updateSalesReportField("report_label_timezone", e.target.value)} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Timezone used for the date printed in the report subject/title.</span>
                 </label>
               </div>
 
               <ReportDaySelector
                 selectedDays={salesReportSettings?.send_days ?? ["mon", "tue", "wed", "thu", "fri", "sat"]}
-                disabled={!isAdmin || !salesReportSettings}
+                disabled={!canManageReports || !salesReportSettings}
                 onToggle={toggleSalesReportDay}
               />
 
               <div className="report-settings-grid-two">
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Weekly report day</span>
-                  <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!isAdmin || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }}>
+                  <select value={salesReportSettings?.weekly_report_day ?? "fri"} onChange={(e) => updateSalesReportField("weekly_report_day", e.target.value)} disabled={!canManageReports || !salesReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }}>
                     {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => <option key={day} value={day}>{day.toUpperCase()}</option>)}
                   </select>
                   <span className="crm-muted" style={{ fontSize: 12 }}>On this send day, Beacon sends the weekly report instead of the daily report.</span>
                 </label>
                 <label style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #e3e9f2", borderRadius: 14, padding: 14 }}>
-                  <input type="checkbox" checked={Boolean(salesReportSettings?.skip_weekends)} onChange={(e) => updateSalesReportField("skip_weekends", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
+                  <input type="checkbox" checked={Boolean(salesReportSettings?.skip_weekends)} onChange={(e) => updateSalesReportField("skip_weekends", e.target.checked)} disabled={!canManageReports || !salesReportSettings} />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Skip weekend report periods</span>
                 </label>
               </div>
 
               <label style={{ display: "grid", gap: 8 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Production recipients</span>
-                <textarea value={(salesReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
+                <textarea value={(salesReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("recipients", e.target.value)} disabled={!canManageReports || !salesReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
                 <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails for production scheduled reports. Staging does not send to this full list.</span>
               </label>
 
               <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Staging safety</div>
                 <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <input type="checkbox" checked={Boolean(salesReportSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateSalesReportField("nonprod_scheduled_enabled", e.target.checked)} disabled={!isAdmin || !salesReportSettings} />
+                  <input type="checkbox" checked={Boolean(salesReportSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateSalesReportField("nonprod_scheduled_enabled", e.target.checked)} disabled={!canManageReports || !salesReportSettings} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
                 </label>
                 <label style={{ display: "grid", gap: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Non-production allowed recipients</span>
-                  <textarea value={(salesReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !salesReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
+                  <textarea value={(salesReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateSalesReportList("nonprod_recipients", e.target.value)} disabled={!canManageReports || !salesReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
                   <span className="crm-muted" style={{ fontSize: 12 }}>Only these addresses can receive staging report emails. Keep this as your email while testing.</span>
                 </label>
               </div>
@@ -2399,7 +2558,7 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {isAdmin ? (
+              {canManageReports ? (
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <button className="crm-button soft" type="button" onClick={handleSendSalesReportTest} disabled={sendingSalesReportTest || !salesReportSettings}>
                     {sendingSalesReportTest ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
@@ -2411,7 +2570,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change report settings.</p>
+                <p className="crm-muted" style={{ fontSize: 12 }}>An admin can grant report management from Settings → Permissions.</p>
               )}
             </div>
 
@@ -2425,7 +2584,7 @@ export default function SettingsPage() {
                   <input
                     type="checkbox"
                     checked={Boolean(indiaSalesReportSettings?.enabled)}
-                    disabled={!isAdmin || !indiaSalesReportSettings}
+                    disabled={!canManageReports || !indiaSalesReportSettings}
                     onChange={(event) => indiaSalesReportSettings && setIndiaSalesReportSettings({ ...indiaSalesReportSettings, enabled: event.target.checked })}
                   />
                   Scheduled reports enabled
@@ -2434,11 +2593,11 @@ export default function SettingsPage() {
 
               <ReportDaySelector
                 selectedDays={indiaSalesReportSettings?.send_days ?? ["mon", "tue", "wed", "thu", "fri", "sat"]}
-                disabled={!isAdmin || !indiaSalesReportSettings}
+                disabled={!canManageReports || !indiaSalesReportSettings}
                 onToggle={toggleIndiaSalesReportDay}
               />
 
-              {isAdmin ? (
+              {canManageReports ? (
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <button
                     className="crm-button primary"

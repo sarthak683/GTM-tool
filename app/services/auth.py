@@ -46,14 +46,15 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 # ── Superadmin + impersonation ────────────────────────────────────────────────
 
-# Distinct from the `admin` role (which several people hold). Only these can
-# impersonate a specific teammate to see the CRM from their exact perspective.
-# Kept in sync with SUPERADMIN_EMAILS in frontend/src/lib/AuthContext.tsx.
-SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "annie@beacon.li"}
+# Superadmins are a distinct persisted role with all administrator capabilities
+# and role-preview controls. Administrators and superadmins can both use
+# read-only person impersonation; these accounts are enforced on login so an
+# accidental role edit cannot remove recovery access.
+SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li"}
 
 
 def is_superadmin(user) -> bool:
-    return bool(user and (getattr(user, "email", "") or "").strip().lower() in SUPERADMIN_EMAILS)
+    return bool(user and getattr(user, "role", None) == "superadmin")
 
 
 def create_impersonation_token(
@@ -62,8 +63,8 @@ def create_impersonation_token(
     """JWT that acts AS `target_user_id` while recording who is behind it.
 
     The `imp_by` claim is the marker the read-only guard (get_current_user) keys
-    off to block writes — so a superadmin can *see* a teammate's data but cannot
-    act as them. Identity resolution is otherwise identical to a normal token, so
+    off to block writes — so an admin can *see* a teammate's data but cannot act
+    as them. Identity resolution is otherwise identical to a normal token, so
     every endpoint scopes to the target user with no other changes.
     """
     ttl = expires_minutes or settings.JWT_EXPIRE_MINUTES

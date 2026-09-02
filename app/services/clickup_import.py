@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
@@ -389,7 +390,7 @@ async def _get_or_create_company(
         stats.companies_reused += 1
         return cached
 
-    stmt = select(Company).where(
+    stmt = unscoped_for_background_job(Company, "clickup import system work").where(
         func.lower(Company.domain) == domain.lower()
         if not domain.endswith(".unknown")
         else func.lower(Company.name) == company_name.lower()
@@ -426,7 +427,7 @@ async def _upsert_deal(
 ) -> Deal:
     existing = (
         await session.execute(
-            select(Deal).where(
+            unscoped_for_background_job(Deal, "clickup import system work").where(
                 Deal.external_source == "clickup_task",
                 Deal.external_source_id == str(task["id"]),
             )
@@ -509,7 +510,7 @@ async def _upsert_placeholder_contact(
     task_id = str(task["id"])
 
     existing_contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "clickup import system work").where(Contact.company_id == company.id))
     ).scalars().all()
     existing = next(
         (
@@ -789,13 +790,13 @@ async def replace_pipeline_deal_data(session: AsyncSession) -> ClickUpReplaceSta
 
     clickup_placeholder_contacts = [
         contact
-        for contact in (await session.execute(select(Contact))).scalars().all()
+        for contact in (await session.execute(unscoped_for_background_job(Contact, "clickup import system work"))).scalars().all()
         if _is_clickup_placeholder_contact(contact)
     ]
     clickup_placeholder_contact_ids = [contact.id for contact in clickup_placeholder_contacts if contact.id]
 
     imported_company_candidates = (
-        await session.execute(select(Company).where(Company.enrichment_sources.is_not(None)))
+        await session.execute(unscoped_for_background_job(Company, "clickup import system work").where(Company.enrichment_sources.is_not(None)))
     ).scalars().all()
     imported_company_ids = [
         company.id

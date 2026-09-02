@@ -15,26 +15,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, func, select
 
 from app.config import settings
-from app.core.dependencies import AdminUser, CurrentUser, DBSession
+from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.user import User, UserRead, UserUpdate
 from app.models.user_alias import UserAlias
 from app.services.auth import (
+    SUPERADMIN_EMAILS,
     build_google_login_url,
     create_access_token,
     create_impersonation_token,
     exchange_google_code,
-    is_superadmin,
 )
 from app.services.permissions import require_workspace_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-ALLOWED_USER_ROLES = {"admin", "ae", "sdr"}
-
-# Emails that always get admin role regardless of signup order.
-SUPERADMIN_EMAILS = {"sarthak@beacon.li", "rakesh@beacon.li", "maithili@beacon.li", "annie@beacon.li"}
+ALLOWED_USER_ROLES = {"superadmin", "admin", "ae", "sdr", "marketing"}
 
 # Alternate domains whose users are auto-linked to their beacon.li primary account
 # by username match (e.g. sipra@beaconli.com → sipra@beacon.li).
@@ -137,7 +134,7 @@ async def google_callback(
             existing_by_email.avatar_url = google_info.get("avatar_url")
             # Always enforce superadmin role for designated emails.
             if google_info["email"] in SUPERADMIN_EMAILS:
-                existing_by_email.role = "admin"
+                existing_by_email.role = "superadmin"
             session.add(existing_by_email)
             await session.commit()
             await session.refresh(existing_by_email)
@@ -177,7 +174,7 @@ async def google_callback(
                 )
 
         if user is None:
-            # Genuinely new user — superadmins always get admin; emails on the
+            # Genuinely new user — superadmins always get superadmin; emails on the
             # ADMIN_BOOTSTRAP_EMAILS allowlist get admin; otherwise the legacy
             # "first user to sign in becomes admin" fallback applies; everyone
             # else defaults to sdr. With ADMIN_BOOTSTRAP_EMAILS unset the
@@ -185,10 +182,10 @@ async def google_callback(
             user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
             is_bootstrap_admin = email.lower() in settings.admin_bootstrap_emails
             role = (
-                "admin"
+                "superadmin"
                 if google_info["email"] in SUPERADMIN_EMAILS
-                or is_bootstrap_admin
-                or user_count == 0
+                else "admin"
+                if is_bootstrap_admin or user_count == 0
                 else "sdr"
             )
 
@@ -209,7 +206,7 @@ async def google_callback(
         user.avatar_url = google_info.get("avatar_url")
         # Always enforce superadmin role for designated emails.
         if google_info["email"] in SUPERADMIN_EMAILS:
-            user.role = "admin"
+            user.role = "superadmin"
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -246,8 +243,8 @@ class ImpersonateResponse(SQLModel):
 
 @router.post("/impersonate", response_model=ImpersonateResponse)
 async def impersonate_user(payload: ImpersonateRequest, session: DBSession, current_user: CurrentUser):
-    """Superadmin-only: mint a READ-ONLY token that views the CRM as another
-    teammate, so a superadmin can see the app from that person's exact
+    """Admin-only: mint a READ-ONLY token that views the CRM as another
+    teammate, so an administrator can see the app from that person's exact
     perspective (their pipeline, their scoped meetings, their tasks). Writes are
     blocked while the token is active (enforced in get_current_user). The token
     records `imp_by` for audit.
@@ -256,8 +253,8 @@ async def impersonate_user(payload: ImpersonateRequest, session: DBSession, curr
     read-only guard blocks calling it while already impersonating, which also
     prevents impersonation chaining.
     """
-    if not is_superadmin(current_user):
-        raise ForbiddenError("Only superadmins can view as another user.")
+    if not current_user.is_admin:
+        raise ForbiddenError("Only admins can view as another user.")
     target = (
         await session.execute(select(User).where(User.id == payload.user_id))
     ).scalar_one_or_none()
@@ -288,7 +285,7 @@ def _validate_seed_user(email: str, name: str, role: str) -> tuple[str, str, str
     if not normalized_name:
         raise ForbiddenError("Name is required")
     if normalized_role not in ALLOWED_USER_ROLES:
-        raise ForbiddenError("Role must be one of: admin, ae, sdr")
+        raise ForbiddenError("Role must be one of: superadmin, admin, ae, sdr, marketing")
     return normalized_email, normalized_name, normalized_role
 
 
@@ -325,7 +322,20 @@ async def update_user(
         raise NotFoundError("User not found")
 
     if data.role and data.role not in ALLOWED_USER_ROLES:
-        raise ForbiddenError("Role must be one of: admin, ae, sdr")
+        raise ForbiddenError("Role must be one of: superadmin, admin, ae, sdr, marketing")
+
+    # A delegated team manager can administer ordinary teammates but must not
+    # be able to create or modify administrator accounts.
+    if not current_user.is_admin and (
+        user.is_admin or data.role in {"admin", "superadmin"}
+    ):
+        raise ForbiddenError("Only admins can grant or change administrator access")
+    if user.role == "superadmin" and current_user.role != "superadmin":
+        raise ForbiddenError("Only superadmins can change a superadmin account")
+    if current_user.role != "superadmin" and data.role == "superadmin":
+        raise ForbiddenError("Only superadmins can grant superadmin access")
+    if data.role == "superadmin" and user.email.lower() not in SUPERADMIN_EMAILS:
+        raise ForbiddenError("Superadmin access is reserved for the designated workspace owners")
 
     # Keep role changes focused on teammate administration, not self-service,
     # so nobody can accidentally lock themselves out from this screen.
@@ -334,11 +344,11 @@ async def update_user(
 
     admin_count = (
         await session.execute(
-            select(func.count(User.id)).where(User.role == "admin", User.is_active == True)  # noqa: E712
+            select(func.count(User.id)).where(User.role.in_(["admin", "superadmin"]), User.is_active == True)  # noqa: E712
         )
     ).scalar_one()
-    demoting_last_admin = user.role == "admin" and data.role and data.role != "admin" and admin_count <= 1
-    deactivating_last_admin = user.role == "admin" and data.is_active is False and admin_count <= 1
+    demoting_last_admin = user.is_admin and data.role and data.role not in {"admin", "superadmin"} and admin_count <= 1
+    deactivating_last_admin = user.is_admin and data.is_active is False and admin_count <= 1
     if demoting_last_admin or deactivating_last_admin:
         raise ForbiddenError("At least one active admin must remain on the workspace")
 
@@ -369,13 +379,17 @@ async def delete_user(
 
     if user.id == current_user.id:
         raise ForbiddenError("Cannot delete your own account from this screen")
+    if not current_user.is_admin and user.is_admin:
+        raise ForbiddenError("Only admins can delete administrator accounts")
+    if user.role == "superadmin" and current_user.role != "superadmin":
+        raise ForbiddenError("Only superadmins can delete a superadmin account")
 
     admin_count = (
         await session.execute(
-            select(func.count(User.id)).where(User.role == "admin", User.is_active == True)  # noqa: E712
+            select(func.count(User.id)).where(User.role.in_(["admin", "superadmin"]), User.is_active == True)  # noqa: E712
         )
     ).scalar_one()
-    deleting_last_admin = user.role == "admin" and user.is_active and admin_count <= 1
+    deleting_last_admin = user.is_admin and user.is_active and admin_count <= 1
     if deleting_last_admin:
         raise ForbiddenError("At least one active admin must remain on the workspace")
 
@@ -410,6 +424,12 @@ async def create_user(payload: SeedUserPayload, session: DBSession, current_user
     """Create a placeholder CRM user before their first Google sign-in."""
     await require_workspace_permission(session, current_user, "manage_team")
     email, name, role = _validate_seed_user(payload.email, payload.name, payload.role)
+    if not current_user.is_admin and role in {"admin", "superadmin"}:
+        raise ForbiddenError("Only admins can create administrator accounts")
+    if current_user.role != "superadmin" and role == "superadmin":
+        raise ForbiddenError("Only superadmins can create superadmin accounts")
+    if role == "superadmin" and email not in SUPERADMIN_EMAILS:
+        raise ForbiddenError("Superadmin access is reserved for the designated workspace owners")
 
     existing = (
         await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
@@ -431,8 +451,9 @@ async def create_user(payload: SeedUserPayload, session: DBSession, current_user
 
 
 @router.post("/users/seed", response_model=SeedUsersResponse)
-async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: AdminUser):
+async def seed_users(payload: SeedUsersRequest, session: DBSession, current_user: CurrentUser):
     """Bulk-create team members so they can be matched during imports (ClickUp, CSV, etc.)."""
+    await require_workspace_permission(session, current_user, "manage_team")
     created = 0
     skipped = 0
     all_users: list[User] = []
@@ -442,6 +463,12 @@ async def seed_users(payload: SeedUsersRequest, session: DBSession, _admin: Admi
             email, name, role = _validate_seed_user(entry.email, entry.name, entry.role)
         except ForbiddenError:
             continue
+        if not current_user.is_admin and role in {"admin", "superadmin"}:
+            raise ForbiddenError("Only admins can create administrator accounts")
+        if current_user.role != "superadmin" and role == "superadmin":
+            raise ForbiddenError("Only superadmins can create superadmin accounts")
+        if role == "superadmin" and email not in SUPERADMIN_EMAILS:
+            raise ForbiddenError("Superadmin access is reserved for the designated workspace owners")
         existing = (
             await session.execute(select(User).where(func.lower(User.email) == email).limit(1))
         ).scalar_one_or_none()

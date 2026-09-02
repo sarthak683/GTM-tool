@@ -88,7 +88,7 @@ async def _resolve_rep(
     Non-admins always see their own scorecard. Admins may pass rep_id=null to
     get a workspace-wide view or a specific rep.
     """
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         return current_user
     if rep_id is None:
         return None

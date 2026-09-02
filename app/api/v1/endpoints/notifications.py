@@ -25,6 +25,7 @@ from app.core.dependencies import CurrentUser, DBSession
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.notification import Notification, NotificationRead
+from app.repositories.contact import ContactRepository
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +200,13 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
     except (ValueError, TypeError):
         raise HTTPException(400, "Notification payload has invalid contact_id.")
 
-    contact: Optional[Contact] = (await session.execute(
-        select(Contact).where(Contact.id == contact_id)
-    )).scalar_one_or_none()
+    contact: Optional[Contact] = (
+        await session.execute(
+            (await ContactRepository.visible_to(session, user)).where(
+                Contact.id == contact_id
+            )
+        )
+    ).scalar_one_or_none()
     if not contact:
         raise HTTPException(404, "Contact has been deleted; can't create deal.")
 

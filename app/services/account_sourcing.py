@@ -32,6 +32,7 @@ from sqlalchemy import func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.database import AsyncSessionLocal
 from app.models.company import Company
 from app.models.contact import Contact
@@ -1459,7 +1460,7 @@ def _contact_priority_score(contact: Contact) -> int:
 
 async def _build_committee_coverage(company: Company, session: AsyncSession) -> dict[str, Any]:
     result = await session.execute(
-        select(Contact)
+        unscoped_for_background_job(Contact, "account sourcing system work")
         .where(Contact.company_id == company.id)
         .order_by(Contact.created_at.desc())
     )
@@ -1965,7 +1966,7 @@ def _should_run_paid_enrichment(company: Company, cache: dict[str, Any], force_p
 
 
 async def _contact_coverage_snapshot(company_id: UUID, session: AsyncSession) -> dict[str, int]:
-    result = await session.execute(select(Contact).where(Contact.company_id == company_id))
+    result = await session.execute(unscoped_for_background_job(Contact, "account sourcing system work").where(Contact.company_id == company_id))
     contacts = result.scalars().all()
     return {
         "total": len(contacts),
@@ -2612,7 +2613,7 @@ async def enrich_company_tiered(
 
     # ── Persist ─────────────────────────────────────────────────────────────
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "account sourcing system work").where(Contact.company_id == company.id))
     ).scalars().all()
     refresh_company_prospecting_fields(company, contacts)
     for contact in contacts:
@@ -2722,7 +2723,7 @@ async def re_enrich_contact_service(contact_id: UUID, session: AsyncSession) -> 
         company = await session.get(Company, contact.company_id)
         if company:
             company_contacts = (
-                await session.execute(select(Contact).where(Contact.company_id == company.id))
+                await session.execute(unscoped_for_background_job(Contact, "account sourcing system work").where(Contact.company_id == company.id))
             ).scalars().all()
             refresh_company_prospecting_fields(company, company_contacts)
             company.updated_at = datetime.utcnow()
@@ -2799,7 +2800,7 @@ async def _verify_top_contact_emails(
         return  # No API key — skip verification
 
     result = await session.execute(
-        select(Contact)
+        unscoped_for_background_job(Contact, "account sourcing system work")
         .where(Contact.company_id == company_id)
         .where(Contact.email.isnot(None))
         .where(Contact.email_verified == False)

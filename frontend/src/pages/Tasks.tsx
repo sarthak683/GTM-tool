@@ -595,7 +595,7 @@ export default function TasksPage() {
   const [dealSearch, setDealSearch] = useState("");
   const [dealOptions, setDealOptions] = useState<GlobalSearchItem[]>([]);
   const [dealSearching, setDealSearching] = useState(false);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
 
   // Sync filter state to URL
   useEffect(() => {
@@ -981,7 +981,7 @@ export default function TasksPage() {
                 workspace title on /tasks (no PAGE_META entry for the route). */}
             <h2 style={{ fontSize: 15, fontWeight: 700, color: colors.text, margin: "0 0 4px" }}>Tasks</h2>
             <p className="crm-muted" style={{ maxWidth: 720, lineHeight: 1.6, fontSize: 12.5, margin: 0 }}>
-              {user?.role === "admin"
+              {isAdmin
                 ? "Use My Queue for daily execution and Team Queue for coaching. Every task here is created by you or a teammate — assign, prioritise, and drive the right next actions."
                 : `Everything assigned to ${user?.name || "you"} in one place. Triage your follow-ups quickly and then jump into the right company, prospect, or deal.`}
             </p>
@@ -1150,7 +1150,7 @@ export default function TasksPage() {
                 onManualTakeover={() => takeManualOwnership(task)}
                 onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
                 onDelete={() => deleteTask(task)}
-                canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                canDelete={Boolean(user && (isAdmin || user.id === task.created_by_id))}
               />
             ))}
             {tasksPageCount > 1 ? (

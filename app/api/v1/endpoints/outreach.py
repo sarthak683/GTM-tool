@@ -23,6 +23,8 @@ from app.models.outreach import (
     OutreachStepUpdate,
 )
 from app.repositories.outreach import OutreachRepository
+from app.repositories.company import CompanyRepository
+from app.repositories.contact import ContactRepository
 from app.services.disposition_effects import _should_advance
 from app.services.outreach_generator import generate_sequence
 from app.services.contact_access import (
@@ -135,7 +137,11 @@ async def bulk_add_to_instantly_campaign(
     if len(visible_ids) != len(unique_ids):
         raise NotFoundError("One or more selected prospects were not found.")
     contacts = (
-        await session.execute(select(Contact).where(Contact.id.in_(visible_ids)))
+        await session.execute(
+            (await ContactRepository.visible_to(session, _user)).where(
+                Contact.id.in_(visible_ids)
+            )
+        )
     ).scalars().all()
     if not contacts:
         raise NotFoundError("No matching prospects found.")
@@ -145,7 +151,11 @@ async def bulk_add_to_instantly_campaign(
     # Batch-fetch company names for the lead payloads (contacts may span companies).
     company_ids = list({c.company_id for c in contacts if c.company_id})
     companies = (
-        await session.execute(select(Company).where(Company.id.in_(company_ids)))
+        await session.execute(
+            CompanyRepository.visible_to(_user, include_disabled=True).where(
+                Company.id.in_(company_ids)
+            )
+        )
     ).scalars().all() if company_ids else []
     company_name_by_id = {str(co.id): co.name for co in companies}
     disabled_company_ids = {co.id for co in companies if co.account_status in INACTIVE_ACCOUNT_STATUSES}
@@ -258,7 +268,9 @@ async def generate_bulk_sequences(
     persona_filter: Optional[str] = None,
 ):
     """Generate sequences for all contacts at a company (skips existing)."""
-    query = select(Contact).where(Contact.company_id == company_id)
+    query = (await ContactRepository.visible_to(session, _user)).where(
+        Contact.company_id == company_id
+    )
     if persona_filter:
         query = query.where(Contact.persona == persona_filter)
 
@@ -799,7 +811,9 @@ async def launch_contacts_campaign(
         raise NotFoundError("One or more selected prospects were not found.")
 
     contacts_result = await session.execute(
-        select(Contact).where(Contact.id.in_(visible_ids))
+        (await ContactRepository.visible_to(session, _user)).where(
+            Contact.id.in_(visible_ids)
+        )
     )
     contacts = list(contacts_result.scalars().all())
     if not contacts:

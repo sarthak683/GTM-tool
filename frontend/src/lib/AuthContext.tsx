@@ -3,14 +3,12 @@ import type { ReactNode } from "react";
 import type { User } from "../types";
 import { authApi } from "./api";
 
-export type RoleView = "admin" | "ae" | "sdr";
+export type RoleView = "admin" | "ae" | "sdr" | "marketing";
 
-// Superadmins can (a) preview the app as another ROLE, or (b) impersonate a
-// specific PERSON to see the CRM from their exact perspective (their pipeline,
-// their scoped meetings, their tasks). Person-impersonation is read-only and
-// enforced server-side. Gated to these emails — distinct from the `admin`
-// role, which several people hold. Kept in sync with backend SUPERADMIN_EMAILS.
-const SUPERADMIN_EMAILS = new Set(["sarthak@beacon.li", "rakesh@beacon.li", "annie@beacon.li"]);
+// Superadmins can preview the app as another ROLE. Administrators and
+// superadmins can impersonate a specific PERSON to see the CRM from their exact
+// perspective (their pipeline, scoped meetings, and tasks). Person
+// impersonation is read-only and enforced server-side.
 const VIEW_AS_KEY = "beacon_view_as_role";
 const TOKEN_KEY = "beacon_token";
 // While impersonating, the active token is the target user's; we stash the real
@@ -55,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [viewAsRole, setViewAsRoleState] = useState<RoleView | null>(() => {
     const v = localStorage.getItem(VIEW_AS_KEY);
-    return v === "admin" || v === "ae" || v === "sdr" ? v : null;
+    return v === "admin" || v === "ae" || v === "sdr" || v === "marketing" ? v : null;
   });
 
   const fetchMe = useCallback(async () => {
@@ -115,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRealUser(null);
   }, []);
 
-  const isSuperAdmin = !!realUser && SUPERADMIN_EMAILS.has((realUser.email || "").trim().toLowerCase());
+  const isSuperAdmin = realUser?.role === "superadmin";
   const isImpersonating = !!impersonatedUser;
 
   // Switch into a specific teammate's view. Must be invoked with the real
@@ -162,7 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         realUser,
         loading,
-        isAdmin: user?.role === "admin",
+        isAdmin: user?.role === "admin" || user?.role === "superadmin",
         isSuperAdmin,
         viewAsRole: activeView,
         setViewAsRole,

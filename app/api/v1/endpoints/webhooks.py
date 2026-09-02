@@ -32,9 +32,13 @@ from app.core.dependencies import DBSession
 from app.clients.aircall import AircallClient, AircallError
 from app.config import settings
 from app.models.activity import Activity
+from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.outreach import OutreachSequence
+from app.repositories.company import CompanyRepository
+from app.repositories.contact import ContactRepository
+from app.repositories.deal import DealRepository
 from app.services.disposition_effects import _should_advance
 from app.services.tasks import refresh_system_tasks_for_entity
 from app.services.tldv_sync import sync_tldv_meeting
@@ -103,7 +107,9 @@ async def _find_contact_by_email(session, email: str) -> Optional[Contact]:
     if not email:
         return None
     result = await session.execute(
-        select(Contact).where(func.lower(Contact.email) == email.lower().strip()).limit(1)
+        ContactRepository.unscoped_for_background_job(
+            "authenticated Instantly webhook contact resolution"
+        ).where(func.lower(Contact.email) == email.lower().strip()).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -181,7 +187,9 @@ async def _find_contact_by_phone(session, phone: str | None) -> Optional[Contact
     cand_digits = func.regexp_replace(Contact.phone, r"\D", "", "g")
     cand_last9 = func.right(cand_digits, 9)
     result = await session.execute(
-        select(Contact)
+        ContactRepository.unscoped_for_background_job(
+            "authenticated Aircall webhook phone resolution"
+        )
         .where(
             Contact.phone.isnot(None),
             cand_digits != "",  # mirror Python's `if not candidate_clean: continue`
@@ -202,7 +210,9 @@ async def _find_best_deal_for_contact(session, contact_id: Optional[UUID]) -> Op
         return None
 
     result = await session.execute(
-        select(Deal)
+        DealRepository.unscoped_for_background_job(
+            "authenticated Aircall webhook deal resolution"
+        )
         .join(DealContact, DealContact.deal_id == Deal.id)
         .where(DealContact.contact_id == contact_id)
         .order_by(
@@ -905,10 +915,10 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
                             contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or (contact.email or "Prospect")
                             company_name = None
                             if contact.company_id:
-                                from app.models.company import Company
-
                                 co = (await session.execute(
-                                    select(Company).where(Company.id == contact.company_id)
+                                    CompanyRepository.unscoped_for_background_job(
+                                        "authenticated Instantly webhook notification enrichment"
+                                    ).where(Company.id == contact.company_id)
                                 )).scalar_one_or_none()
                                 if co:
                                     company_name = co.name

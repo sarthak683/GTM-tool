@@ -1,108 +1,31 @@
-export interface Company {
-  id: string;
-  name: string;
-  domain: string;
+import type { components } from "./generated";
+
+type GeneratedCompany = components["schemas"]["CompanyRead"];
+
+export type Company = Omit<
+  GeneratedCompany,
+  | "additional_domains"
+  | "tech_stack"
+  | "enrichment_sources"
+  | "intent_signals"
+  | "enrichment_cache"
+  | "priority_tag"
+  | "prospecting_profile"
+  | "outreach_plan"
+  | "recotap"
+> & {
   // Alias domains (rebrands/merged accounts) — all matching honors these.
   additional_domains?: string[] | null;
-  // Per-account "Zippy ID": zippy+<email_cc_alias>@beacon.li, lazily minted on
-  // first read of the company. Display-only for now — mirrors
-  // Deal.email_cc_alias but is not (yet) matched by email_sync.
-  email_cc_alias?: string | null;
-  // Soft-deleted accounts are hidden everywhere; kept for audit.
-  deleted_at?: string | null;
-  industry?: string;
-  vertical?: string;
-  employee_count?: number;
-  arr_estimate?: number;
-  arr_estimate_currency?: string;
-  funding_stage?: string;
-  tech_stack?: Record<string, unknown>;
-  region?: string;
-  headquarters?: string;
-  has_dap: boolean;
-  dap_tool?: string;
-  icp_score?: number;
-  icp_tier?: string;
-  enrichment_sources?: Record<string, unknown>;
-  enriched_at?: string;
-  description?: string;
-  intent_signals?: Record<string, unknown>;
-  sourcing_batch_id?: string;
-  enrichment_cache?: Record<string, unknown>;
-  assigned_to_id?: string;
-  assigned_to_name?: string;
-  assigned_rep?: string;
-  assigned_rep_email?: string;
-  assigned_rep_name?: string;
-  sdr_id?: string;
-  sdr_email?: string;
-  sdr_name?: string;
-  sdr_assigned_at?: string | null;
-  outreach_status?: string;
-  disposition?: string;
-  // Manual sourcing status (see ACCOUNT_STATUS_OPTIONS in lib/accountStatus.ts)
-  account_status?: string | null;
-  // Free-text "Outbound Summary" quick notes shown under the status control.
-  outbound_summary?: string | null;
-  rep_feedback?: string;
-  account_thesis?: string;
-  why_now?: string;
-  beacon_angle?: string;
-  recommended_outreach_lane?: string;
-  instantly_campaign_id?: string;
-  prospecting_profile?: Record<string, unknown>;
-  outreach_plan?: Record<string, unknown>;
-  last_outreach_at?: string;
-  ownership_stage?: string;
+  tech_stack?: Record<string, unknown> | null;
+  enrichment_sources?: Record<string, unknown> | null;
+  intent_signals?: Record<string, unknown> | null;
+  enrichment_cache?: Record<string, unknown> | null;
   priority_tag?: "P0" | "P1" | "P2" | null;
-  pe_investors?: string;
-  vc_investors?: string;
-  strategic_investors?: string;
-  created_by_id?: string | null;
-  created_by_name?: string | null;
+  prospecting_profile?: Record<string, unknown> | null;
+  outreach_plan?: Record<string, unknown> | null;
   // Recotap ABM signals, joined by domain (Account Sourcing only).
   recotap?: RecotapSignals | null;
-  created_at: string;
-  updated_at: string;
-  // Opportunity Details (AE-filled, account-level)
-  opp_name?: string | null;
-  opp_amount?: number | null;
-  opp_arr?: number | null;
-  opp_multiyear_license_fee?: number | null;
-  opp_service_fee?: number | null;
-  opp_type?: string | null;
-  opp_sales_category?: string | null;
-  opp_geolocation?: string | null;
-  opp_owner?: string | null;
-  opp_solution_engineer?: string | null;
-  opp_close_date?: string | null;
-  opp_forecast_category?: string | null;
-  opp_probability?: number | null;
-  opp_stage?: string | null;
-  opp_poc_start_date?: string | null;
-  opp_poc_status?: string | null;
-  opp_aop_doc_link?: string | null;
-  opp_msp_doc_link?: string | null;
-  // MEDDPICC
-  medd_business_initiatives?: string | null;
-  medd_business_pains?: string | null;
-  medd_technical_pains?: string | null;
-  medd_size_business_pain?: number | null;
-  medd_who_impacted_business?: string | null;
-  medd_size_technical_pain?: number | null;
-  medd_who_impacted_technical?: string | null;
-  medd_metrics?: string | null;
-  medd_decision_criteria?: string | null;
-  medd_economic_buyer?: string | null;
-  medd_eb_top_2_priorities?: string | null;
-  medd_decision_process?: string | null;
-  medd_paper_process?: string | null;
-  medd_champion?: string | null;
-  medd_champion_win?: string | null;
-  medd_competition?: string | null;
-  // Current deal status note
-  opp_current_deal_status?: string | null;
-}
+};
 
 export interface RecotapSignals {
   domain: string;
@@ -130,84 +53,17 @@ export interface RecotapSignals {
   source?: string | null;
 }
 
-export interface Contact {
-  id: string;
-  company_id?: string;
-  company_name?: string; // populated via SQL JOIN — no second API call needed
-  // Account context from the same JOIN: the account's status (labels a
-  // parked/disabled account on its prospect rows) and the domain-mismatch
-  // flag ("this prospect's email doesn't belong to the account's domain
-  // family — check the mapping"). Server-computed, never client-written.
-  company_account_status?: string | null;
-  account_domain_mismatch?: boolean | null;
-  first_name: string;
-  last_name: string;
-  email?: string | null;
-  email_verified: boolean;
-  phone?: string | null;
-  additional_phones?: { number: string; label?: string }[];
-  title?: string;
-  seniority?: string;
-  linkedin_url?: string | null;
-  persona?: string;
-  enriched_at?: string;
-  enrichment_data?: Record<string, unknown>;
-  persona_type?: string; // champion | buyer | evaluator | blocker
-  assigned_to_id?: string;   // AE
-  assigned_to_name?: string;
-  assigned_rep_email?: string;
-  sdr_id?: string;            // SDR
-  sdr_name?: string;
-  // Set when SDR ownership changed; activity older than this is excluded from
-  // the prospect's counts so the incoming rep starts from zero.
-  sdr_assigned_at?: string | null;
-  outreach_lane?: string;
-  sequence_status?: string;
-  account_status?: string;
-  instantly_status?: string;
-  instantly_campaign_id?: string;
-  warm_intro_strength?: number;
-  warm_intro_path?: Record<string, unknown>;
-  conversation_starter?: string;
-  personalization_notes?: string;
-  talking_points?: string[];
-  tracking_stage?: string;
-  tracking_summary?: string;
-  tracking_score?: number;
-  tracking_label?: string;
-  tracking_last_activity_at?: string;
-  // Per-channel tracking
-  email_open_count?: number;
-  email_click_count?: number;
-  email_last_opened_at?: string;
-  call_status?: string;       // none | attempted | connected | voicemail | callback
-  call_disposition?: string;  // interested | not_interested | callback | wrong_number | no_answer
-  call_notes?: string;
-  call_last_at?: string;
-  // Aggregate count of Activity rows with type='call' for this contact.
-  // Drives the per-attempt yellow-dot rail on the prospect-page progress cell.
-  call_attempt_count?: number;
-  // Latest rep comment + total count (comments are activity rows, type='comment').
-  latest_comment?: string | null;
-  comment_count?: number;
-  // Last-touch-by-channel: who did it and when, from the most recent Activity
-  // row per type (call/email/linkedin), joined to its creator.
-  last_call_by?: string | null;
-  last_call_touch_at?: string | null;
-  last_email_by?: string | null;
-  last_email_touch_at?: string | null;
-  last_linkedin_by?: string | null;
-  last_linkedin_touch_at?: string | null;
-  // Scheduled follow-up datetime for `interested_follow_up_required` /
-  // `call_back_later_rescheduled` dispositions. Cleared automatically when
-  // the disposition changes to something that doesn't imply a follow-up.
-  next_followup_at?: string;
-  linkedin_status?: string;   // none | sent | inmail | accepted | follow_up | meeting_booked | meeting_rejected
-  linkedin_last_at?: string;
-  timezone?: string;
-  created_at: string;
-  updated_at: string;
-}
+type GeneratedContact = components["schemas"]["ContactRead"];
+
+export type Contact = Omit<
+  GeneratedContact,
+  "additional_phones" | "enrichment_data" | "warm_intro_path" | "talking_points"
+> & {
+  additional_phones?: { number: string; label?: string }[] | null;
+  enrichment_data?: Record<string, unknown> | null;
+  warm_intro_path?: Record<string, unknown> | null;
+  talking_points?: string[] | null;
+};
 
 export interface SourcingBatch {
   id: string;
@@ -258,74 +114,34 @@ export interface Paginated<T> {
   pages: number;
 }
 
-export interface Deal {
-  id: string;
-  company_id?: string;
-  assigned_to_id?: string;  // AE
-  sdr_id?: string;          // SDR
-  email_cc_alias?: string;
-  name: string;
-  pipeline_type: string;
-  stage: string;
-  priority: string;
-  value?: number;
-  currency_code?: string;
-  close_date_est?: string;
-  // Separate from close_date_est (the meeting date — shown as "Date of
-  // Meeting" everywhere, including Sales Analytics). Never auto-populated;
-  // reps set it manually after the deal exists.
-  close_date?: string;
-  health: string;
-  health_score?: number;
-  qualification?: DealQualification;
-  tags: string[];
-  department?: string;
-  geography?: string;
-  source?: string;
-  is_marketing_lead?: boolean;
-  marketing_source?: string | null;
-  description?: string;
-  next_step?: string;
-  next_step_updated_at?: string;
-  next_step_due_at?: string;
-  qualification_reason?: string;
+type GeneratedDeal = components["schemas"]["DealRead"];
+type DealEngagementSignal = {
+  type: string;
+  source: string;
+  label: string;
+  reason?: string;
+  source_label?: string;
+  detail?: string;
+};
+
+export type Deal = Omit<
+  GeneratedDeal,
+  | "qualification"
+  | "priority_tag"
+  | "seller_engagement_signal"
+  | "client_engagement_signal"
+  | "flags"
+  | "forecast_category"
+> & {
+  // The generated schema in the local WIP predates this newly merged field.
+  close_date?: string | null;
+  qualification?: DealQualification | null;
   priority_tag?: "P0" | "P1" | "P2" | null;
-  meeting_booked_with?: string | null;
-  meeting_booked_from?: string | null;
-  days_in_stage: number;
-  stage_entered_at?: string;
-  // Stall detection — computed server-side from the workspace's per-stage
-  // stuck thresholds (business-day dwell). null threshold = no threshold
-  // configured for the current stage (or the stage is closed).
-  stall_threshold_days?: number | null;
-  is_stalled?: boolean;
-  last_activity_at?: string;
-  stakeholder_count: number;
-  owner_id?: string;
-  created_at: string;
-  updated_at: string;
-  // Joined fields from board/detail queries
-  company_name?: string;
-  assigned_rep_name?: string;
-  sdr_name?: string;
-  contact_count?: number;
-  meddpicc_score?: number;
-  seller_engagement_at?: string;
-  client_engagement_at?: string;
-  seller_engagement_signal?: { type: string; source: string; label: string; reason?: string; source_label?: string; detail?: string };
-  client_engagement_signal?: { type: string; source: string; label: string; reason?: string; source_label?: string; detail?: string };
-  seller_engagement_reason?: string;
-  client_engagement_reason?: string;
-  commit_to_deal?: boolean;
-  // Flag matrix — derived server-side from qualification.meddpicc
-  flags?: Record<string, "green" | "yellow" | "red">;
-  forecast_category?: "commit" | "best_case" | "pipeline";
-  flag_green_count?: number;
-  flag_yellow_count?: number;
-  flag_red_count?: number;
-  flag_blockers?: string[];
-  flag_yellows?: string[];
-}
+  seller_engagement_signal?: DealEngagementSignal | null;
+  client_engagement_signal?: DealEngagementSignal | null;
+  flags?: Record<string, "green" | "yellow" | "red"> | null;
+  forecast_category?: "commit" | "best_case" | "pipeline" | null;
+};
 
 export interface MeddpiccAiDimension {
   level: number;
@@ -757,16 +573,11 @@ export interface GlobalSearchResponse {
   sections: GlobalSearchSection[];
 }
 
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  avatar_url?: string;
-  role: "admin" | "ae" | "sdr";
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type User = Omit<components["schemas"]["UserRead"], "role"> & {
+  role: "superadmin" | "admin" | "ae" | "sdr" | "marketing";
+};
+
+export type Task = components["schemas"]["TaskRead"];
 
 export interface GmailSyncSettings {
   configured: boolean;
@@ -816,6 +627,22 @@ export interface WeeklyDigestSettings {
   nonprod_recipients: string[];
   last_scheduled_send_key?: string | null;
   last_scheduled_send_at?: string | null;
+}
+
+export interface SalesReportRunResult {
+  report_type: "daily" | "weekly" | "month_to_date" | "prior_quarter" | "custom";
+  report_date: string;
+  period_start: string;
+  period_end: string;
+  subject: string;
+  recipients: string[];
+  rows: Array<{
+    rep_name: string;
+    calls: number;
+    connected_calls: number;
+    meetings_booked_calls: number;
+  }>;
+  send_results?: Array<Record<string, unknown>>;
 }
 
 export interface SalesAnalyticsRosterSettings {
@@ -873,11 +700,13 @@ export interface RolePermissionFlags {
   prospect_migration: boolean;
   manage_team: boolean;
   run_pre_meeting_intel: boolean;
+  manage_reports: boolean;
 }
 
 export interface RolePermissionsSettings {
   ae: RolePermissionFlags;
   sdr: RolePermissionFlags;
+  marketing: RolePermissionFlags;
 }
 
 export interface PreMeetingAutomationSettings {

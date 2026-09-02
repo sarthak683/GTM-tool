@@ -15,6 +15,10 @@ import { formatCurrencyAmount } from "../lib/currencies";
 import { EVENT_OPTIONS, MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
 import DealDetailDrawer from "../components/deal/DealDetailDrawer";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
+import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import ViewModeToggle from "../components/ViewModeToggle";
+import PipelineTableView from "./pipeline/PipelineTableView";
+import { reduceViewMode, withViewMode } from "../lib/viewMode";
 
 type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
@@ -436,125 +440,6 @@ function prospectPatch(stage: ProspectStageId): Partial<Contact> {
   return { outreach_lane: "not_a_fit", sequence_status: "completed", instantly_status: "not_a_fit" };
 }
 
-function MultiSelectFilter({
-  values,
-  onChange,
-  options,
-  label,
-  allLabel,
-}: {
-  values: string[];
-  onChange: (value: string[]) => void;
-  options: { value: string; label: string }[];
-  label: string;
-  allLabel: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [filterText, setFilterText] = useState("");
-  const ref = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const handleClick = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setFilterText("");
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 40);
-  }, [open]);
-
-  const toggle = (value: string) => {
-    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
-  };
-
-  const visibleOptions = filterText
-    ? options.filter((option) => option.label.toLowerCase().includes(filterText.toLowerCase()))
-    : options;
-
-  const displayLabel =
-    values.length === 0
-      ? allLabel
-      : values.length === 1
-        ? options.find((option) => option.value === values[0])?.label ?? allLabel
-        : `${values.length} selected`;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label className="pr-rail-label">{label}</label>
-      <div ref={ref} style={{ position: "relative" }}>
-        <button
-          type="button"
-          onClick={() => setOpen((current) => !current)}
-          style={{ width: "100%", height: 34, borderRadius: 10, border: values.length ? "1.5px solid #cfe89a" : "1px solid #e3e9f2", background: values.length ? "#f3fbe3" : "#f8fafc", padding: "0 28px 0 10px", fontSize: 12.5, fontWeight: 600, color: "#2d4258", cursor: "pointer", outline: "none", textAlign: "left", position: "relative" }}
-        >
-          {displayLabel}
-          {values.length > 1 && (
-            <span style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, background: "#9ace3d", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-              {values.length}
-            </span>
-          )}
-          <ChevronDown size={12} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#7a96b0" }} />
-        </button>
-        {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 280 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 0" }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-              {values.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onChange([])}
-                  style={{ border: "none", background: "transparent", color: "#9ace3d", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            {/* Search input */}
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <Search size={11} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }} />
-              <input
-                ref={inputRef}
-                type="text"
-                placeholder={`Search ${label.toLowerCase()}…`}
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                style={{ width: "100%", height: 30, borderRadius: 7, border: "1px solid #e2eaf2", background: "#f8fafc", paddingLeft: 26, paddingRight: 8, fontSize: 11, outline: "none", boxSizing: "border-box" }}
-              />
-            </div>
-            {/* Scrollable list */}
-            <div style={{ overflowY: "auto", maxHeight: 190, display: "flex", flexDirection: "column", gap: 2 }}>
-              {!filterText && (
-                <button
-                  type="button"
-                  onClick={() => onChange([])}
-                  style={{ border: "none", background: values.length === 0 ? "#f3fbe3" : "transparent", color: values.length === 0 ? "#4d7c0f" : "#4d6178", borderRadius: 8, padding: "7px 8px", textAlign: "left", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}
-                >
-                  {allLabel}
-                </button>
-              )}
-              {visibleOptions.length === 0 && (
-                <div style={{ padding: "8px 10px", fontSize: 11, color: "#94a3b8" }}>No matches</div>
-              )}
-              {visibleOptions.map((option) => (
-                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 8, borderRadius: 8, padding: "7px 8px", background: values.includes(option.value) ? "#f3fbe3" : "transparent", color: "#2d4258", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
-                  <input type="checkbox" checked={values.includes(option.value)} onChange={() => toggle(option.value)} />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function SummaryCard({ label, value, tone = "default", action, sub }: { label: string; value: string | number; tone?: "default" | "accent" | "success"; action?: ReactNode; sub?: string }) {
   const toneClass = tone === "accent" ? " pr-summary-tile--accent" : tone === "success" ? " pr-summary-tile--success" : "";
@@ -1163,8 +1048,8 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
-          <EngagementBadge side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
-          <EngagementBadge side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
+          <EngagementBadge side="rep" timestamp={deal.seller_engagement_at ?? undefined} signal={deal.seller_engagement_signal ?? undefined} reason={deal.seller_engagement_reason ?? undefined} />
+          <EngagementBadge side="client" timestamp={deal.client_engagement_at ?? undefined} signal={deal.client_engagement_signal ?? undefined} reason={deal.client_engagement_reason ?? undefined} />
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {(deal.tags ?? []).slice(0, 2).map((tag) => <span key={tag} style={chip("#f8f0ff", "#6b46a0", "#e8d8f8")}>{tag}</span>)}
@@ -1745,6 +1630,11 @@ export default function Pipeline() {
   const { isAdmin, user } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState<PipelineTab>("deal");
+  const viewMode = reduceViewMode("board", {
+    type: "hydrate",
+    value: searchParams.get("view"),
+    defaultMode: "board",
+  });
   const [mobileStage, setMobileStage] = useState<string>("all");
   // Bulk selection (deal tab only) — set of selected deal ids + a pending tag input.
   const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
@@ -2245,11 +2135,20 @@ export default function Pipeline() {
       }))
     : summaryCards;
   const canImportCrm =
-    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.crm_import);
+    isAdmin || Boolean(user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
-    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
+    isAdmin || Boolean(user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") && rolePermissions?.[user.role]?.prospect_migration);
   const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || sourceFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
+  const pipelineTableDeals = effectiveDealStages.flatMap(
+    (stage) => filteredDealBoard[stage.id] ?? [],
+  );
+  const dealStageLabels = new Map(
+    effectiveDealStages.map((stage) => [stage.id, stage.label]),
+  );
+  const setPipelineViewMode = (nextMode: "board" | "table") => {
+    setSearchParams((current) => withViewMode(current, nextMode, "board"));
+  };
   const stageOptions = (tab === "deal" ? effectiveDealStages : effectiveProspectStages).map((stage) => ({ value: stage.id, label: stage.label }));
   const assigneeOptions = [{ value: "unassigned", label: "Unassigned" }, ...users.map((user) => ({ value: user.id, label: user.name }))];
   const geographyOptions = [{ value: "unassigned", label: "Unassigned" }, ...GEO_OPTIONS.map((option) => ({ value: option, label: option }))];
@@ -2943,17 +2842,17 @@ export default function Pipeline() {
                 );
               })()
             )}
-            <MultiSelectFilter values={stageFilters} onChange={handleStageFilterChange} label="Stage" allLabel="All Stages" options={stageOptions} />
-            <MultiSelectFilter values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
-            <MultiSelectFilter values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
-            {tab === "deal" && <MultiSelectFilter values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={sourceFilters} onChange={setSourceFilters} label="Source" allLabel="All Sources" options={sourceOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={nextStepFilters} onChange={setNextStepFilters} label="Next Step" allLabel="Any Next Step" options={nextStepOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={activityFilters} onChange={setActivityFilters} label="Activity" allLabel="Any Activity" options={activityOptions} />}
-            {tab === "deal" && <MultiSelectFilter values={contactFilters} onChange={setContactFilters} label="Contacts" allLabel="Any Contacts" options={contactOptions} />}
+            <MultiSelectFilter variant="compact" values={stageFilters} onChange={handleStageFilterChange} label="Stage" allLabel="All Stages" options={stageOptions} />
+            <MultiSelectFilter variant="compact" values={assigneeFilters} onChange={handleAssigneeFilterChange} label="Assignee" allLabel="All Reps" options={assigneeOptions} />
+            <MultiSelectFilter variant="compact" values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={sourceFilters} onChange={setSourceFilters} label="Source" allLabel="All Sources" options={sourceOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={nextStepFilters} onChange={setNextStepFilters} label="Next Step" allLabel="Any Next Step" options={nextStepOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={activityFilters} onChange={setActivityFilters} label="Activity" allLabel="Any Activity" options={activityOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={contactFilters} onChange={setContactFilters} label="Contacts" allLabel="Any Contacts" options={contactOptions} />}
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label className="pr-rail-label">AE Triage</label>
@@ -3046,16 +2945,33 @@ export default function Pipeline() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflow: "hidden" }}>
           <div className="desktop-only" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 20px", borderBottom: "1px solid #e8eef5", background: "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-              <h2 style={{ fontSize: 14, fontWeight: 700, color: "#142335", margin: 0, whiteSpace: "nowrap" }}>{tab === "deal" ? "Deals" : "Prospects"} Board</h2>
+              <h2 style={{ fontSize: 14, fontWeight: 700, color: "#142335", margin: 0, whiteSpace: "nowrap" }}>{tab === "deal" ? "Deals" : "Prospects"} {tab === "deal" && viewMode === "table" ? "Table" : "Board"}</h2>
               <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999, background: accentBg, color: accentColor, border: `1px solid ${accentBorder}`, whiteSpace: "nowrap" }}>{currentBoardLoading ? "Loading..." : `${summary.total} visible`}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#68788d", minWidth: 0 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><GripVertical size={12} style={{ flexShrink: 0 }} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>
+              {tab === "deal" && <ViewModeToggle value={viewMode} onChange={setPipelineViewMode} />}
+              {viewMode === "board" && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><GripVertical size={12} style={{ flexShrink: 0 }} />{tab === "deal" ? "Drag to move stages · Click to open deal" : "Drag to move · Move to Meeting Booked to convert"}</span>}
               {busyStage && <span style={{ color: "#4d7c0f", fontWeight: 600, whiteSpace: "nowrap" }}>Updating lane...</span>}
             </div>
           </div>
 
-
+          {tab === "deal" && viewMode === "table" ? (
+            <PipelineTableView
+              records={pipelineTableDeals}
+              stageLabels={dealStageLabels}
+              companies={companyMap}
+              selectedIds={selectedDealIds}
+              onToggleSelect={toggleDealSelect}
+              onOpen={(deal) => {
+                setSelectedDeal(deal);
+                setSearchParams((current) => {
+                  const next = new URLSearchParams(current);
+                  next.set("deal", deal.id);
+                  return next;
+                }, { replace: true });
+              }}
+            />
+          ) : (
           <div
             className="desktop-only pipeline-board-scroll"
 
@@ -3098,6 +3014,7 @@ export default function Pipeline() {
               })}
             </div>
           </div>
+          )}
         </div>
       </div>
 

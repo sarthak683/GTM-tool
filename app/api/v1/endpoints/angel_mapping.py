@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from sqlalchemy import and_
 from sqlmodel import select
 
 from app.core.dependencies import CurrentUser, DBSession, Pagination
@@ -26,6 +27,8 @@ from app.models.angel import (
 )
 from app.models.company import Company
 from app.models.contact import Contact
+from app.repositories.company import CompanyRepository, company_visibility_filter
+from app.repositories.contact import ContactRepository
 
 router = APIRouter(prefix="/angel-mapping", tags=["angel-mapping"])
 
@@ -130,6 +133,7 @@ async def list_mappings(
     min_strength: Optional[int] = None,
 ):
     """List angel mappings with optional filters."""
+    visible_contacts = await ContactRepository.visible_to(session, _user)
     query = select(
         AngelMapping,
         Contact.first_name,
@@ -143,10 +147,14 @@ async def list_mappings(
     ).join(
         Contact, AngelMapping.contact_id == Contact.id
     ).outerjoin(
-        Company, AngelMapping.company_id == Company.id
+        Company,
+        and_(
+            AngelMapping.company_id == Company.id,
+            company_visibility_filter(_user.id, _user.is_admin, include_disabled=True),
+        ),
     ).join(
         AngelInvestor, AngelMapping.angel_investor_id == AngelInvestor.id
-    )
+    ).where(Contact.id.in_(visible_contacts.with_only_columns(Contact.id)))
 
     if contact_id:
         query = query.where(AngelMapping.contact_id == contact_id)
@@ -195,12 +203,30 @@ async def create_mapping(
 ):
     """Create a new angel-to-prospect mapping."""
     # Validate references exist
-    contact = (await session.execute(select(Contact).where(Contact.id == body.contact_id))).scalar_one_or_none()
+    contact = (
+        await session.execute(
+            (await ContactRepository.visible_to(session, _user)).where(
+                Contact.id == body.contact_id
+            )
+        )
+    ).scalar_one_or_none()
     if not contact:
         raise NotFoundError("Contact not found")
     angel = (await session.execute(select(AngelInvestor).where(AngelInvestor.id == body.angel_investor_id))).scalar_one_or_none()
     if not angel:
         raise NotFoundError("Angel investor not found")
+
+    company = None
+    if body.company_id:
+        company = (
+            await session.execute(
+                CompanyRepository.visible_to(_user, include_disabled=True).where(
+                    Company.id == body.company_id
+                )
+            )
+        ).scalar_one_or_none()
+        if company is None:
+            raise NotFoundError("Company not found")
 
     mapping = AngelMapping(**body.model_dump())
     session.add(mapping)
@@ -208,10 +234,7 @@ async def create_mapping(
     await session.refresh(mapping)
 
     # Return with joined names
-    company_name = None
-    if mapping.company_id:
-        company = (await session.execute(select(Company).where(Company.id == mapping.company_id))).scalar_one_or_none()
-        company_name = company.name if company else None
+    company_name = company.name if company else None
 
     return AngelMappingRead(
         **mapping.model_dump(),
@@ -233,8 +256,16 @@ async def update_mapping(
     _user: CurrentUser,
 ):
     """Update an angel mapping."""
+    visible_contacts = await ContactRepository.visible_to(session, _user)
     mapping = (
-        await session.execute(select(AngelMapping).where(AngelMapping.id == mapping_id))
+        await session.execute(
+            select(AngelMapping).where(
+                AngelMapping.id == mapping_id,
+                AngelMapping.contact_id.in_(
+                    visible_contacts.with_only_columns(Contact.id)
+                ),
+            )
+        )
     ).scalar_one_or_none()
     if not mapping:
         raise NotFoundError("Angel mapping not found")
@@ -248,11 +279,23 @@ async def update_mapping(
     await session.refresh(mapping)
 
     # Fetch joined names
-    contact = (await session.execute(select(Contact).where(Contact.id == mapping.contact_id))).scalar_one_or_none()
+    contact = (
+        await session.execute(
+            (await ContactRepository.visible_to(session, _user)).where(
+                Contact.id == mapping.contact_id
+            )
+        )
+    ).scalar_one_or_none()
     angel = (await session.execute(select(AngelInvestor).where(AngelInvestor.id == mapping.angel_investor_id))).scalar_one_or_none()
     company_name = None
     if mapping.company_id:
-        company = (await session.execute(select(Company).where(Company.id == mapping.company_id))).scalar_one_or_none()
+        company = (
+            await session.execute(
+                CompanyRepository.visible_to(_user, include_disabled=True).where(
+                    Company.id == mapping.company_id
+                )
+            )
+        ).scalar_one_or_none()
         company_name = company.name if company else None
 
     return AngelMappingRead(
@@ -270,8 +313,16 @@ async def update_mapping(
 @router.delete("/mappings/{mapping_id}", status_code=204)
 async def delete_mapping(mapping_id: UUID, session: DBSession, _user: CurrentUser):
     """Delete an angel mapping."""
+    visible_contacts = await ContactRepository.visible_to(session, _user)
     mapping = (
-        await session.execute(select(AngelMapping).where(AngelMapping.id == mapping_id))
+        await session.execute(
+            select(AngelMapping).where(
+                AngelMapping.id == mapping_id,
+                AngelMapping.contact_id.in_(
+                    visible_contacts.with_only_columns(Contact.id)
+                ),
+            )
+        )
     ).scalar_one_or_none()
     if not mapping:
         raise NotFoundError("Angel mapping not found")
@@ -348,7 +399,7 @@ async def bulk_import(
             last_name = name_parts[1] if len(name_parts) > 1 else ""
 
             # Try to find contact
-            contact_query = select(Contact).join(
+            contact_query = (await ContactRepository.visible_to(session, _user)).join(
                 Company, Contact.company_id == Company.id
             ).where(
                 Contact.first_name.ilike(f"%{first_name}%"),
@@ -363,7 +414,9 @@ async def bulk_import(
             # Update company investor fields if present
             if contact.company_id:
                 company = (await session.execute(
-                    select(Company).where(Company.id == contact.company_id)
+                    CompanyRepository.visible_to(_user, include_disabled=True).where(
+                        Company.id == contact.company_id
+                    )
                 )).scalar_one_or_none()
                 if company:
                     changed = False

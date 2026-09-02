@@ -8,4 +8,5 @@ if [ ! -d node_modules/aircall-everywhere ]; then
   npm ci
 fi
 
+npm test
 npm run build

@@ -35,8 +35,8 @@ from app.models.contact import Contact, ContactRead, ContactUpdate
 from app.models.deal import Deal
 from app.models.sourcing_batch import SourcingBatch, SourcingBatchRead
 from app.models.user import User
-from app.repositories.company import CompanyRepository, company_visibility_filter
-from app.repositories.contact import visible_contact_restriction
+from app.repositories.company import CompanyRepository, can_see_company, company_visibility_filter
+from app.repositories.contact import ContactRepository, visible_contact_restriction
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
     _clean_company_name,
@@ -236,15 +236,9 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
         else []
     )
     include_disabled = any(t in INACTIVE_ACCOUNT_STATUSES for t in status_tokens)
-    stmt = (
-        select(Company)
-        .where(_account_sourcing_visibility_filter())
-        .where(
-            company_visibility_filter(
-                user.id, user.role == "admin", include_disabled=include_disabled
-            )
-        )
-    )
+    stmt = CompanyRepository.visible_to(
+        user, include_disabled=include_disabled
+    ).where(_account_sourcing_visibility_filter())
 
     selected_ids = _parse_uuid_list(filters.company_ids)
     if selected_ids:
@@ -435,23 +429,6 @@ def apply_company_sort(stmt, sort: str | None, order: str | None):
         else:
             ordering = ordering.nulls_last()
     return stmt.order_by(ordering, Company.id.desc())
-
-
-def _can_see_company(company: Company, user) -> bool:
-    """Python mirror of ``company_visibility_filter`` for single-object guards.
-
-    Admins see every company; a non-admin sees a company they own (AE or SDR).
-    Ownership is the ONLY gate — deliberately NOT the disabled-status check the
-    list filter applies: an owner must be able to OPEN their parked
-    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
-    accounts by default; direct access never dead-ends. Keep in lockstep with
-    the copy in ``app/api/v1/endpoints/companies.py``.
-    """
-    if company.deleted_at is not None:
-        return False  # soft-deleted: gone for everyone (404, no trash view yet)
-    if user.role == "admin":
-        return True
-    return company.assigned_to_id == user.id or company.sdr_id == user.id
 
 
 async def _auto_create_angel_records(
@@ -1228,7 +1205,9 @@ async def _process_uploaded_rows(
                     # was already committed.
                     existing_contact = (
                         await session.execute(
-                            select(Contact)
+                            ContactRepository.unscoped_for_background_job(
+                                "background sourcing import email deduplication"
+                            )
                             .where(func.lower(Contact.email) == str(contact_fields["email"]).lower())
                             .limit(1)
                         )
@@ -1238,7 +1217,9 @@ async def _process_uploaded_rows(
                     # create two rows on the same account).
                     existing_contact = (
                         await session.execute(
-                            select(Contact).where(
+                            ContactRepository.unscoped_for_background_job(
+                                "background sourcing import account-name deduplication"
+                            ).where(
                                 Contact.company_id == company.id,
                                 func.lower(func.coalesce(Contact.first_name, ""))
                                 == str(contact_fields.get("first_name") or "").lower(),
@@ -1287,7 +1268,11 @@ async def _process_uploaded_rows(
                     await session.rollback()
 
                 company_contacts = (
-                    await session.execute(select(Contact).where(Contact.company_id == company.id))
+                    await session.execute(
+                        ContactRepository.unscoped_for_background_job(
+                            "background sourcing import account aggregate refresh"
+                        ).where(Contact.company_id == company.id)
+                    )
                 ).scalars().all()
                 refresh_company_prospecting_fields(company, company_contacts)
                 company.icp_score, company.icp_tier = score_company(company)
@@ -1310,7 +1295,9 @@ async def _process_uploaded_rows(
     await _update_batch_progress("import_completed", "Import complete, preparing enrichment")
 
 
-async def _build_competitive_landscape(session, company: Company) -> list[dict[str, str]]:
+async def _build_competitive_landscape(
+    session, company: Company, current_user: User
+) -> list[dict[str, str]]:
     cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
 
     cached_cards = cache.get("competitive_landscape_v2")
@@ -1398,7 +1385,9 @@ async def _build_competitive_landscape(session, company: Company) -> list[dict[s
             return seeded_cards
 
     # Try specific filters first, then broaden
-    base = select(Company).where(Company.id != company.id)
+    base = CompanyRepository.visible_to(
+        current_user, include_disabled=True
+    ).where(Company.id != company.id)
     candidates = []
     if company.industry:
         candidates = (
@@ -1605,9 +1594,9 @@ async def get_batch_companies(batch_id: UUID, _user: CurrentUser, session: DBSes
         raise HTTPException(status_code=404, detail="Batch not found")
 
     result = await session.execute(
-        select(Company)
+        CompanyRepository.visible_to(_user)
         .where(Company.sourcing_batch_id == batch_id)
-        .where(company_visibility_filter(_user.id, _user.role == "admin"))
+        .where(company_visibility_filter(_user.id, _user.is_admin))
         .offset(page.skip)
         .limit(page.limit)
         .order_by(Company.created_at.desc())
@@ -1925,7 +1914,7 @@ async def create_manual_company(
 async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Get a single sourced company with full enrichment data (including cache)."""
     company = await session.get(Company, company_id)
-    if not company or not _can_see_company(company, _user):
+    if not company or not can_see_company(company, _user):
         # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
     # Lazily mint this account's Zippy ID (email_cc_alias) on first read — this
@@ -1935,7 +1924,9 @@ async def get_sourced_company(company_id: UUID, _user: CurrentUser, session: DBS
     company = await CompanyRepository(session).ensure_email_cc_alias(company)
     read = CompanyRead.model_validate(company)
     cache = dict(read.enrichment_cache or {})
-    cache["competitive_landscape_v2"] = await _build_competitive_landscape(session, company)
+    cache["competitive_landscape_v2"] = await _build_competitive_landscape(
+        session, company, _user
+    )
     read.enrichment_cache = cache
     sig = await recotap_signals(session, [(company.id, company.domain)])
     read.recotap = sig.get(company.id)
@@ -2157,7 +2148,7 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     """Update sourced company workflow fields like owner, disposition, and rep feedback."""
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
-    if not _can_see_company(company, current_user):
+    if not can_see_company(company, current_user):
         raise HTTPException(status_code=404, detail="Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
@@ -2203,7 +2194,11 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
         company.assigned_rep = update_data["assigned_rep_name"]
 
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(
+            ContactRepository.unscoped_for_background_job(
+                "authorized account update cascades to every linked prospect"
+            ).where(Contact.company_id == company.id)
+        )
     ).scalars().all()
     for contact in contacts:
         # Keep contact-level sequencing aligned with the latest company owner and
@@ -2331,7 +2326,11 @@ async def merge_sourced_company(
     # Refresh the winner's denormalized prospecting fields against its new,
     # larger contact set.
     winner_contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == winner.id))
+        await session.execute(
+            ContactRepository.unscoped_for_background_job(
+                "admin account merge refreshes every moved prospect"
+            ).where(Contact.company_id == winner.id)
+        )
     ).scalars().all()
     refresh_company_prospecting_fields(winner, winner_contacts)
     winner.icp_score, winner.icp_tier = score_company(winner)
@@ -2849,7 +2848,8 @@ async def export_sourced_contacts(
     contact_ids: str | None = Query(default=None, description="Comma-separated contact UUIDs to export (selected rows only)"),
 ):
     stmt = (
-        select(Contact, Company)
+        (await ContactRepository.visible_to(session, current_user))
+        .add_columns(Company)
         .join(Company, Contact.company_id == Company.id)
         .where(Company.sourcing_batch_id.isnot(None))
         .order_by(Company.created_at.desc(), Contact.created_at.desc())
@@ -2860,9 +2860,6 @@ async def export_sourced_contacts(
     # Prospect-visibility: a non-admin may export only their own + unassigned
     # contacts (this CSV emits full name/email/linkedin, so an ungated export was
     # a full-identity workspace dump).
-    restriction = await visible_contact_restriction(session, current_user)
-    if restriction is not None:
-        stmt = stmt.where(restriction)
     if assigned_rep_email:
         stmt = stmt.where(
             (Contact.assigned_rep_email == assigned_rep_email) | (Company.assigned_rep_email == assigned_rep_email)
@@ -2901,7 +2898,7 @@ async def export_sourced_contacts(
 async def re_enrich_company(company_id: UUID, _user: CurrentUser, session: DBSession = None):
     """Re-run the deep TAL / ICP research pipeline for a company."""
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     try:
         from app.tasks.enrichment import icp_research_single_task
@@ -2927,7 +2924,7 @@ async def bulk_icp_research_companies(
 
     Uses existing DB contacts + web research + Claude analysis.
     """
-    stmt = select(Company).where(
+    stmt = CompanyRepository.visible_to(_).where(
         # NULL-safe: NULL enrichment_sources must PASS these exclusions
         # (`NOT (NULL @> x)` is NULL and silently drops the row).
         or_(
@@ -2975,7 +2972,7 @@ async def bulk_enrich_companies(
 
     Returns counts of how many tasks were queued and skipped.
     """
-    stmt = select(Company).where(
+    stmt = CompanyRepository.visible_to(_).where(
         # NULL-safe: NULL enrichment_sources must PASS these exclusions
         # (`NOT (NULL @> x)` is NULL and silently drops the row).
         or_(
@@ -3021,7 +3018,7 @@ async def icp_research_company(company_id: UUID, _user: CurrentUser, session: DB
     comprehensive ICP analysis with TAL filtering and intent scoring.
     """
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     try:
         from app.tasks.enrichment import icp_research_single_task
@@ -3050,11 +3047,11 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
     there, even prospects a teammate is assigned at the prospect level).
     """
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not can_see_company(company, current_user):
         raise HTTPException(status_code=404, detail="Company not found")
 
     stmt = (
-        select(Contact)
+        (await ContactRepository.visible_to(session, current_user))
         .where(Contact.company_id == company_id)
         .order_by(Contact.created_at.desc())
     )
@@ -3120,7 +3117,11 @@ async def update_company_contact(contact_id: UUID, payload: ContactUpdate, _user
         company = await session.get(Company, contact.company_id)
         if company:
             company_contacts = (
-                await session.execute(select(Contact).where(Contact.company_id == company.id))
+                await session.execute(
+                    ContactRepository.unscoped_for_background_job(
+                        "authorized prospect update refreshes its account aggregates"
+                    ).where(Contact.company_id == company.id)
+                )
             ).scalars().all()
             refresh_company_prospecting_fields(company, company_contacts)
             company.updated_at = datetime.utcnow()
@@ -3140,7 +3141,7 @@ class NoteCreate(BaseModel):
 async def add_company_note(company_id: UUID, payload: NoteCreate, session: DBSession, current_user: CurrentUser):
     """Append a manual note to the company's activity log."""
     company = await session.get(Company, company_id)
-    if not company:
+    if not company or not can_see_company(company, current_user):
         raise HTTPException(status_code=404, detail="Company not found")
     body = (payload.body or "").strip()
     if not body:
@@ -3220,7 +3221,7 @@ async def push_to_instantly(
 ):
     """Push company contacts to an Instantly email campaign."""
     company = await session.get(Company, company_id)
-    if not company or not _can_see_company(company, _user):
+    if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     if company.account_status in INACTIVE_ACCOUNT_STATUSES:
         raise HTTPException(
@@ -3233,7 +3234,7 @@ async def push_to_instantly(
 
     # Get contacts with emails
     result = await session.execute(
-        select(Contact)
+        (await ContactRepository.visible_to(session, _user))
         .where(Contact.company_id == company_id, Contact.email.isnot(None))
     )
     contacts = result.scalars().all()

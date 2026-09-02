@@ -30,6 +30,7 @@ from uuid import UUID
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.services.log_safety import safe_error_message
 
 logger = logging.getLogger(__name__)
@@ -604,7 +605,7 @@ async def _auto_link_attendees_to_deal(
         # Try by email
         if not contact and email:
             result = await session.execute(
-                sm_select(Contact).where(Contact.email == email)
+                unscoped_for_background_job(Contact, "pre meeting intelligence system work").where(Contact.email == email)
             )
             contact = result.scalar_one_or_none()
 
@@ -701,7 +702,9 @@ async def run_pre_meeting_intelligence(
             "vertical": company.vertical,
             "employee_count": company.employee_count,
             "funding_stage": company.funding_stage,
-            "arr_estimate": company.arr_estimate,
+            "arr_estimate": (
+                float(company.arr_estimate) if company.arr_estimate is not None else None
+            ),
             "icp_score": company.icp_score,
             "icp_tier": company.icp_tier,
             "has_dap": company.has_dap,
@@ -1098,7 +1101,11 @@ async def generate_meeting_demo_strategy(
                 "vertical": company.vertical,
                 "employee_count": company.employee_count,
                 "funding_stage": company.funding_stage,
-                "arr_estimate": company.arr_estimate,
+                "arr_estimate": (
+                    float(company.arr_estimate)
+                    if company.arr_estimate is not None
+                    else None
+                ),
                 "icp_score": company.icp_score,
                 "icp_tier": company.icp_tier,
                 "has_dap": company.has_dap,

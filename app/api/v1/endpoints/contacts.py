@@ -15,6 +15,7 @@ from app.core.exceptions import NotFoundError
 from app.models.company import Company
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.models.meeting import to_naive_utc
+from app.repositories.company import CompanyRepository
 from app.repositories.contact import ContactRepository, get_or_create_contact_by_email
 from app.schemas.common import PaginatedResponse
 from app.models.user import User
@@ -86,9 +87,11 @@ class ProspectImportResponse(SQLModel):
     message: str
 
 
-async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> Company | None:
-    from app.repositories.company import CompanyRepository
-
+async def _resolve_uploaded_company(
+    session: DBSession,
+    row: dict[str, str],
+    current_user: User,
+) -> Company | None:
     company_fields = row_to_company_fields(row)
     domain = (company_fields.get("domain") or "").strip().lower()
     name = (company_fields.get("name") or "").strip()
@@ -100,13 +103,17 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
         # fuzzy name matcher, which is exactly where wrong links come from.
         company = (
             await session.execute(
-                select(Company).where(func.lower(Company.domain) == domain).limit(1)
+                CompanyRepository.visible_to(current_user, include_disabled=True)
+                .where(func.lower(Company.domain) == domain)
+                .limit(1)
             )
         ).scalars().first()
     if not company and name:
         company = (
             await session.execute(
-                select(Company).where(func.lower(Company.name) == name.lower()).limit(1)
+                CompanyRepository.visible_to(current_user, include_disabled=True)
+                .where(func.lower(Company.name) == name.lower())
+                .limit(1)
             )
         ).scalars().first()
     if not company and name:
@@ -116,7 +123,9 @@ async def _resolve_uploaded_company(session: DBSession, row: dict[str, str]) -> 
         # domain contradicts the sheet's ("Apex Systems" apexsystems.com is
         # not "Apex Solutions" apexsolutions.io, however similar the names).
         company = await CompanyRepository(session).get_by_normalized_name(
-            name, incoming_domain=domain or None
+            name,
+            incoming_domain=domain or None,
+            visible_to=current_user,
         )
     return company
 
@@ -149,7 +158,7 @@ async def _get_or_create_uploaded_placeholder_company(
     # function takes sourcing_batch_id. The batch puts the new accounts in
     # Account Sourcing under a labelled group ("Prospect import: <file>") so
     # ops can review them as a unit.
-    company = await _resolve_uploaded_company(session, row)
+    company = await _resolve_uploaded_company(session, row, current_user)
     if company or not auto_create:
         return company, False
 
@@ -412,7 +421,7 @@ async def purge_all_prospects(
     confirmation phrase. Intended for migration resets, not day-to-day use.
     Deals themselves survive; only deal_contacts (stakeholder links) go away.
     """
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin only")
     if confirm != "DELETE ALL PROSPECTS":
         raise HTTPException(
@@ -474,9 +483,9 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     # 409 instead of a 500 under the partial unique index on lower(email).
     email_val = (payload.email or "").strip()
     if email_val:
-        existing_dupe = (await session.execute(
-            select(Contact).where(func.lower(Contact.email) == email_val.lower()).limit(1)
-        )).scalar_one_or_none()
+        existing_dupe = (
+            await session.execute(ContactRepository.email_uniqueness_conflict(email_val))
+        ).scalar_one_or_none()
         if existing_dupe:
             raise HTTPException(status_code=409, detail="A contact with this email already exists.")
 
@@ -488,7 +497,15 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     # Only fills a slot the caller didn't explicitly set; the creator-fallback
     # below still covers any slot the company itself leaves empty.
     if contact.company_id and (not contact.sdr_id or not contact.assigned_to_id):
-        company = await session.get(Company, contact.company_id)
+        company = (
+            await session.execute(
+                CompanyRepository.visible_to(_user, include_disabled=True).where(
+                    Company.id == contact.company_id
+                )
+            )
+        ).scalar_one_or_none()
+        if company is None:
+            raise HTTPException(status_code=404, detail="Company not found")
         if company:
             if not contact.sdr_id and company.sdr_id:
                 contact.sdr_id = company.sdr_id
@@ -500,7 +517,7 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     # Auto-assign to the creator (unless already set) so a rep who manually
     # adds a prospect actually sees it in their scoped list. Admins creating
     # contacts on behalf of someone else can leave it unassigned.
-    if _user.role != "admin":
+    if not _user.is_admin:
         if not contact.assigned_to_id and not contact.sdr_id:
             if _user.role == "sdr":
                 contact.sdr_id = _user.id
@@ -523,7 +540,7 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     # the plan once the sequence has started.
     company_for_tz = None
     if contact.company_id:
-        company_for_tz = await session.get(Company, contact.company_id)
+        company_for_tz = company
         if company_for_tz:
             ws_schedule = await load_workspace_sequence_schedule(session)
             refresh_contact_sequence_plan(contact, company_for_tz, workspace_schedule=ws_schedule)
@@ -592,7 +609,17 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
         if phone_changed or not contact.timezone:
             from app.services.timezone_infer import infer_timezone
 
-            company_for_tz = await session.get(Company, contact.company_id) if contact.company_id else None
+            company_for_tz = (
+                (
+                    await session.execute(
+                        CompanyRepository.visible_to(_user, include_disabled=True).where(
+                            Company.id == contact.company_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if contact.company_id
+                else None
+            )
             inferred = infer_timezone(
                 phone=contact.phone,
                 company_hq=getattr(company_for_tz, "headquarters", None),
@@ -678,7 +705,11 @@ async def bulk_delete_selected_contacts(
         # apply the stricter delete ownership rule.
         visible_ids = await get_visible_contact_ids(session, _user, ids)
         rows = (
-            await session.execute(select(Contact).where(Contact.id.in_(visible_ids)))
+            await session.execute(
+                (await ContactRepository.visible_to(session, _user)).where(
+                    Contact.id.in_(visible_ids)
+                )
+            )
         ).scalars().all()
         allowed = [c.id for c in rows if _can_delete_contact(c, _user)]
         skipped_not_owned = requested - len(allowed)
@@ -1040,7 +1071,9 @@ async def import_contacts_csv(
             if existing is None:
                 existing = (
                     await session.execute(
-                        select(Contact).where(func.lower(Contact.email) == email).limit(1)
+                        (await ContactRepository.visible_to(session, current_user))
+                        .where(func.lower(Contact.email) == email)
+                        .limit(1)
                     )
                 ).scalars().first()
         if not existing and first_name and last_name:
@@ -1066,7 +1099,11 @@ async def import_contacts_csv(
                     )
                 )
             existing = (
-                await session.execute(select(Contact).where(*name_match_filters).limit(1))
+                await session.execute(
+                    (await ContactRepository.visible_to(session, current_user))
+                    .where(*name_match_filters)
+                    .limit(1)
+                )
             ).scalars().first()
 
         if existing and company and existing.company_id and existing.company_id != company.id:
@@ -1174,6 +1211,23 @@ async def import_contacts_csv(
                 email or "",
                 defaults={k: v for k, v in contact_fields.items() if k != "email"},
             )
+            if not was_created:
+                visible_winner = (
+                    await session.execute(
+                        (await ContactRepository.visible_to(session, current_user)).where(
+                            Contact.id == contact.id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if visible_winner is None:
+                    if len(conflict_details) < 50:
+                        conflict_details.append(
+                            f"{email}: already exists outside your prospect scope; "
+                            "ask an admin to review the ownership or mapping"
+                        )
+                    conflict_count += 1
+                    skipped_count += 1
+                    continue
             if was_created:
                 contact.persona = classify_persona(contact)
                 if company:
@@ -1208,7 +1262,11 @@ async def import_contacts_csv(
         if not company:
             continue
         company_contacts = (
-            await session.execute(select(Contact).where(Contact.company_id == company_id))
+            await session.execute(
+                (await ContactRepository.visible_to(session, current_user)).where(
+                    Contact.company_id == company_id
+                )
+            )
         ).scalars().all()
         refresh_company_prospecting_fields(company, company_contacts)
         session.add(company)

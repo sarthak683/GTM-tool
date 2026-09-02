@@ -29,6 +29,7 @@ from typing import Any, Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.recotap import RecotapClient
 from app.models.activity import Activity
 from app.models.company import Company
@@ -219,7 +220,7 @@ async def push_activities(
     owner_ids = {a.created_by_id for a in rows if a.created_by_id}
     contacts = {
         c.id: c for c in (
-            await session.execute(select(Contact).where(Contact.id.in_(contact_ids)))
+            await session.execute(unscoped_for_background_job(Contact, "recotap activities system work").where(Contact.id.in_(contact_ids)))
         ).scalars().all()
     } if contact_ids else {}
     owners = {
@@ -230,7 +231,7 @@ async def push_activities(
     company_ids = {c.company_id for c in contacts.values() if c.company_id}
     companies = {
         c.id: c for c in (
-            await session.execute(select(Company).where(Company.id.in_(company_ids)))
+            await session.execute(unscoped_for_background_job(Company, "recotap activities system work").where(Company.id.in_(company_ids)))
         ).scalars().all()
     } if company_ids else {}
 

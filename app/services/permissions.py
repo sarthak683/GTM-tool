@@ -15,12 +15,21 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, dict[str, bool]] = {
         "prospect_migration": True,
         "manage_team": False,
         "run_pre_meeting_intel": True,
+        "manage_reports": False,
     },
     "sdr": {
         "crm_import": False,
         "prospect_migration": True,
         "manage_team": False,
         "run_pre_meeting_intel": False,
+        "manage_reports": False,
+    },
+    "marketing": {
+        "crm_import": False,
+        "prospect_migration": False,
+        "manage_team": False,
+        "run_pre_meeting_intel": False,
+        "manage_reports": False,
     },
 }
 
@@ -53,7 +62,7 @@ async def get_role_permissions(session: AsyncSession) -> dict[str, dict[str, boo
 
 
 async def user_has_permission(session: AsyncSession, user: User, permission_key: str) -> bool:
-    if user.role == "admin":
+    if user.is_admin:
         return True
     permissions = await get_role_permissions(session)
     return bool(permissions.get(user.role, {}).get(permission_key, False))
@@ -75,7 +84,7 @@ async def can_view_all_prospects(session: AsyncSession, user: User) -> bool:
     hard-restricted to their OWN prospects everywhere, so the own-only rule can't
     be bypassed via a grant.
     """
-    if user.role == "admin":
+    if user.is_admin:
         return True
     if (user.role or "").lower() == "sdr":
         return False
@@ -85,14 +94,11 @@ async def can_view_all_prospects(session: AsyncSession, user: User) -> bool:
 
 
 async def can_view_all_deals(session: AsyncSession, user: User) -> bool:
-    """True if the user may see every deal (the entire team's pipeline).
+    """The live deal pipeline is visible to every authenticated teammate.
 
-    Admins always can. Specific non-admins can be granted broader access by an
-    admin via WorkspaceSettings.deal_view_all_user_ids. Mirrors
-    can_view_all_prospects.
+    Keep this helper (and its signature) so callers cannot accidentally bring
+    back ownership-based deal scoping. The legacy per-user allowlist is no
+    longer consulted; it remains in the settings table solely for backwards
+    compatibility with existing workspaces.
     """
-    if user.role == "admin":
-        return True
-    row = await session.get(WorkspaceSettings, 1)
-    granted = (row.deal_view_all_user_ids if row else None) or []
-    return str(user.id) in {str(uid) for uid in granted}
+    return True

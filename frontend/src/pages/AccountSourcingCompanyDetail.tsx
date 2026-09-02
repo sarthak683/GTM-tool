@@ -316,7 +316,7 @@ function ContactItem({
             </button>
           </div>
 
-          <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at)}</div>
+          <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at ?? undefined)}</div>
           <Link
             to={`/account-sourcing/contacts/${contact.id}`}
             style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.primary, borderRadius: 10, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
@@ -2071,7 +2071,7 @@ export default function AccountSourcingCompanyDetail() {
           </div>
 
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${colors.border}`, display: "flex", gap: 16, flexWrap: "wrap", color: colors.faint, fontSize: 12.5 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={12} /> Enriched: {ts(company.enriched_at)}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={12} /> Enriched: {ts(company.enriched_at ?? undefined)}</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={12} /> Created: {formatDate(company.created_at)}</span>
           </div>
         </div>

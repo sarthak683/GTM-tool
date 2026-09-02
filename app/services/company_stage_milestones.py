@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.activity import Activity
 from app.models.company_stage_milestone import CompanyStageMilestone
 from app.models.deal import Deal
@@ -161,7 +162,7 @@ async def backfill_company_stage_milestones(session: AsyncSession) -> int:
 
     deal_rows = (
         await session.execute(
-            select(Deal).where(
+            unscoped_for_background_job(Deal, "company stage milestones system work").where(
                 Deal.company_id.is_not(None),
                 Deal.stage.in_(list(MILESTONE_STAGE_MAP.keys())),
             )

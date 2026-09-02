@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.company import Company
 from app.models.contact import Contact
 
@@ -136,7 +137,7 @@ async def sync_company_sdr_assignment_to_contacts(
         company.sdr_assigned_at = datetime.utcnow()
 
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "sdr reassignment system work").where(Contact.company_id == company.id))
     ).scalars().all()
     moved: list[Contact] = []
     kept_divergent: list[Contact] = []
@@ -167,7 +168,7 @@ async def sync_company_ae_assignment_to_contacts(
     outreach progress — the cadence belongs to the SDR motion.
     """
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "sdr reassignment system work").where(Contact.company_id == company.id))
     ).scalars().all()
     moved: list[Contact] = []
     kept_divergent: list[Contact] = []

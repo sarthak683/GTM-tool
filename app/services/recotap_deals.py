@@ -30,6 +30,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.recotap import RecotapClient
 from app.config import settings
 from app.models.company import Company
@@ -176,7 +177,7 @@ async def build_deal_payloads(
     later run. Written-off deals are excluded as well (``DEAD_DEAL_STAGES``);
     Recotap should not keep spending against an account we have dropped.
     """
-    stmt = select(Deal).where(
+    stmt = unscoped_for_background_job(Deal, "recotap deals system work").where(
         Deal.pipeline_type == "deal",
         func.lower(func.coalesce(Deal.stage, "")).notin_(tuple(DEAD_DEAL_STAGES)),
     )
@@ -199,7 +200,7 @@ async def build_deal_payloads(
         companies = {
             c.id: c
             for c in (
-                await session.execute(select(Company).where(Company.id.in_(company_ids)))
+                await session.execute(unscoped_for_background_job(Company, "recotap deals system work").where(Company.id.in_(company_ids)))
             ).scalars().all()
         }
     owner_ids = {d.assigned_to_id for d in deals if d.assigned_to_id}

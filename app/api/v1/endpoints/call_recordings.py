@@ -58,7 +58,7 @@ async def _get_recording_for_user(
         raise HTTPException(404, "Recording not found.")
     if recording.contact_id:
         await get_visible_contact(session, user, recording.contact_id)
-    if edit and user.role != "admin" and recording.created_by_id != user.id:
+    if edit and not user.is_admin and recording.created_by_id != user.id:
         raise HTTPException(404, "Recording not found.")
     return recording
 

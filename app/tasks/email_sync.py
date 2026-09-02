@@ -256,6 +256,8 @@ async def _async_sync() -> dict:
     from app.models.company import Company
     from app.models.contact import Contact
     from app.models.deal import Deal, DealContact
+    from app.repositories.company import CompanyRepository
+    from app.repositories.deal import DealRepository
     from app.models.settings import WorkspaceSettings
     from app.services.activity_signal_classifier import detect_latest_intent_from_segments
     from app.services.personal_email_sync import _load_existing_thread_segments, _normalize_beacon_sender
@@ -455,12 +457,16 @@ async def _async_sync() -> dict:
                     # Batch-fetch all linked Deals and their Companies in two queries
                     # instead of N individual session.get() calls (avoids N+1 pattern).
                     deals_result = await session.execute(
-                        select(Deal).where(Deal.id.in_(deal_ids))
+                        DealRepository.unscoped_for_background_job(
+                            "scheduled email sync deal activity refresh"
+                        ).where(Deal.id.in_(deal_ids))
                     )
                     deals_by_id: dict = {str(deal.id): deal for deal in deals_result.scalars().all()}
                     company_ids = list({deal.company_id for deal in deals_by_id.values() if deal and deal.company_id})
                     companies_result = await session.execute(
-                        select(Company).where(Company.id.in_(company_ids))
+                        CompanyRepository.unscoped_for_background_job(
+                            "scheduled email sync company activity refresh"
+                        ).where(Company.id.in_(company_ids))
                     ) if company_ids else None
                     companies_by_id: dict = {str(c.id): c for c in (companies_result.scalars().all() if companies_result else [])}
 

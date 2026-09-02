@@ -312,7 +312,7 @@ async def clear_user_folder(session: DBSession, current_user: CurrentUser):
 
     # If this connection is the admin folder, require admin to use /folder/select-admin
     # with a different folder to replace it, rather than clearing silently.
-    if connection.is_admin_folder and current_user.role != "admin":
+    if connection.is_admin_folder and not current_user.is_admin:
         raise ValidationError("Admin folder can only be changed by an admin")
 
     connection.selected_drive_folder_id = None

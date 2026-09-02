@@ -3,9 +3,11 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_validator
-from sqlalchemy import Column, String, Text
+from sqlalchemy import Column, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+from app.models.money import MoneyDecimal
 
 # Manual account-sourcing status. Canonical snake_case values stored in the DB;
 # human labels live in the frontend control (frontend/src/lib/accountStatus.ts,
@@ -39,7 +41,7 @@ class CompanyBase(SQLModel):
     industry: Optional[str] = None
     vertical: Optional[str] = None
     employee_count: Optional[int] = None
-    arr_estimate: Optional[float] = None
+    arr_estimate: Optional[MoneyDecimal] = None
     # ISO 4217 currency code for `arr_estimate`. Defaults to USD for
     # consistency with Deal.currency_code; the picker in the UI is curated.
     arr_estimate_currency: Optional[str] = Field(default="USD", sa_column=Column(String(3), nullable=True, server_default="USD"))
@@ -54,6 +56,9 @@ class Company(CompanyBase, table=True):
     __tablename__ = "companies"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    arr_estimate: Optional[MoneyDecimal] = Field(
+        default=None, sa_column=Column(Numeric(15, 2))
+    )
     tech_stack: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
     icp_score: Optional[int] = None
     icp_tier: Optional[str] = None
@@ -133,10 +138,18 @@ class Company(CompanyBase, table=True):
     # ── Opportunity Details (AE-filled, account-level) ────────────────────────
     # Core deal fields
     opp_name: Optional[str] = None
-    opp_amount: Optional[float] = None
-    opp_arr: Optional[float] = None
-    opp_multiyear_license_fee: Optional[float] = None
-    opp_service_fee: Optional[float] = None
+    opp_amount: Optional[MoneyDecimal] = Field(
+        default=None, sa_column=Column(Numeric(15, 2))
+    )
+    opp_arr: Optional[MoneyDecimal] = Field(
+        default=None, sa_column=Column(Numeric(15, 2))
+    )
+    opp_multiyear_license_fee: Optional[MoneyDecimal] = Field(
+        default=None, sa_column=Column(Numeric(15, 2))
+    )
+    opp_service_fee: Optional[MoneyDecimal] = Field(
+        default=None, sa_column=Column(Numeric(15, 2))
+    )
     opp_type: Optional[str] = None
     opp_sales_category: Optional[str] = None
     opp_geolocation: Optional[str] = None
@@ -227,10 +240,10 @@ class CompanyRead(CompanyBase):
     updated_at: datetime
     # Opportunity Details
     opp_name: Optional[str] = None
-    opp_amount: Optional[float] = None
-    opp_arr: Optional[float] = None
-    opp_multiyear_license_fee: Optional[float] = None
-    opp_service_fee: Optional[float] = None
+    opp_amount: Optional[MoneyDecimal] = None
+    opp_arr: Optional[MoneyDecimal] = None
+    opp_multiyear_license_fee: Optional[MoneyDecimal] = None
+    opp_service_fee: Optional[MoneyDecimal] = None
     opp_type: Optional[str] = None
     opp_sales_category: Optional[str] = None
     opp_geolocation: Optional[str] = None
@@ -288,7 +301,7 @@ class CompanyUpdate(SQLModel):
     industry: Optional[str] = None
     vertical: Optional[str] = None
     employee_count: Optional[int] = None
-    arr_estimate: Optional[float] = None
+    arr_estimate: Optional[MoneyDecimal] = None
     arr_estimate_currency: Optional[str] = None
     funding_stage: Optional[str] = None
     region: Optional[str] = None
@@ -331,10 +344,10 @@ class CompanyUpdate(SQLModel):
     strategic_investors: Optional[str] = None
     # Opportunity Details
     opp_name: Optional[str] = None
-    opp_amount: Optional[float] = None
-    opp_arr: Optional[float] = None
-    opp_multiyear_license_fee: Optional[float] = None
-    opp_service_fee: Optional[float] = None
+    opp_amount: Optional[MoneyDecimal] = None
+    opp_arr: Optional[MoneyDecimal] = None
+    opp_multiyear_license_fee: Optional[MoneyDecimal] = None
+    opp_service_fee: Optional[MoneyDecimal] = None
     opp_type: Optional[str] = None
     opp_sales_category: Optional[str] = None
     opp_geolocation: Optional[str] = None

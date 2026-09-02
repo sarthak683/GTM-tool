@@ -1189,8 +1189,8 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <EngagementPanel side="rep" timestamp={deal.seller_engagement_at} signal={deal.seller_engagement_signal} reason={deal.seller_engagement_reason} />
-              <EngagementPanel side="client" timestamp={deal.client_engagement_at} signal={deal.client_engagement_signal} reason={deal.client_engagement_reason} />
+              <EngagementPanel side="rep" timestamp={deal.seller_engagement_at ?? undefined} signal={deal.seller_engagement_signal ?? undefined} reason={deal.seller_engagement_reason ?? undefined} />
+              <EngagementPanel side="client" timestamp={deal.client_engagement_at ?? undefined} signal={deal.client_engagement_signal ?? undefined} reason={deal.client_engagement_reason ?? undefined} />
             </div>
 
             {/* Convert button for prospects */}
@@ -2107,16 +2107,16 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
             </>
           ) : activeTab === "meddpicc" ? (
             <MeddpiccPanel
-              qualification={deal.qualification}
-              flags={deal.flags}
-              forecastCategory={deal.forecast_category}
+              qualification={deal.qualification ?? undefined}
+              flags={deal.flags ?? undefined}
+              forecastCategory={deal.forecast_category ?? undefined}
               flagCounts={{
-                green: deal.flag_green_count,
-                yellow: deal.flag_yellow_count,
-                red: deal.flag_red_count,
+                green: deal.flag_green_count ?? undefined,
+                yellow: deal.flag_yellow_count ?? undefined,
+                red: deal.flag_red_count ?? undefined,
               }}
-              flagBlockers={deal.flag_blockers}
-              flagYellows={deal.flag_yellows}
+              flagBlockers={deal.flag_blockers ?? undefined}
+              flagYellows={deal.flag_yellows ?? undefined}
               autoFilling={autoFillingMeddpicc}
               onAutoFill={async () => {
                 setAutoFillingMeddpicc(true);

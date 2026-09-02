@@ -29,6 +29,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.activity import Activity
 from app.models.contact import Contact
 from app.models.outreach import OutreachSequence, OutreachStep
@@ -765,7 +766,7 @@ async def build_sequence_lifecycle_summaries(
 
     contacts = (
         await session.execute(
-            select(Contact).where(Contact.id.in_(ids))
+            unscoped_for_background_job(Contact, "sequence lifecycle system work").where(Contact.id.in_(ids))
         )
     ).scalars().all()
     contacts_by_id: dict[UUID, Contact] = {c.id: c for c in contacts}

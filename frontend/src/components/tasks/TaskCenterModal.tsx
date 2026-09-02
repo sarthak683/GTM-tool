@@ -733,7 +733,7 @@ function TaskCenterModal({
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
                     onDelete={() => deleteTask(task)}
-                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                    canDelete={Boolean(user && ((user.role === "admin" || user.role === "superadmin") || user.id === task.created_by_id))}
                   />
                 ))}
               </div>
@@ -765,7 +765,7 @@ function TaskCenterModal({
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
                     onDelete={() => deleteTask(task)}
-                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                    canDelete={Boolean(user && ((user.role === "admin" || user.role === "superadmin") || user.id === task.created_by_id))}
                   />
                 ))
               )}
@@ -799,7 +799,7 @@ function TaskCenterModal({
                         onAccept={() => acceptTask(task.id)}
                         onManualTakeover={() => takeManualOwnership(task)}
                         onDelete={() => deleteTask(task)}
-                        canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                        canDelete={Boolean(user && ((user.role === "admin" || user.role === "superadmin") || user.id === task.created_by_id))}
                       />
                     ))
                   : null}
@@ -831,7 +831,7 @@ function TaskCenterModal({
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
                     onDelete={() => deleteTask(task)}
-                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                    canDelete={Boolean(user && ((user.role === "admin" || user.role === "superadmin") || user.id === task.created_by_id))}
                   />
                 ))
               )}
@@ -858,7 +858,7 @@ function TaskCenterModal({
                     onAccept={() => acceptTask(task.id)}
                     onManualTakeover={() => takeManualOwnership(task)}
                     onDelete={() => deleteTask(task)}
-                    canDelete={Boolean(user && (user.role === "admin" || user.id === task.created_by_id))}
+                    canDelete={Boolean(user && ((user.role === "admin" || user.role === "superadmin") || user.id === task.created_by_id))}
                   />
                 ))}
               </div>

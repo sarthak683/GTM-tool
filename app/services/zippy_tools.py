@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.services.knowledge_search import KnowledgeSnippet, search_knowledge
 from app.services.zippy_docs import GeneratedDocument
 from app.services.zippy_docs.generic import GenericDocInput
@@ -1500,7 +1501,9 @@ async def _execute_lookup_phone(
         name_conditions.append(Contact.last_name.ilike(f"%{part}%"))
 
     stmt = (
-        sm_select(Contact, Company)
+        unscoped_for_background_job(
+            Contact, "Zippy prospect lookup has no requesting-user context"
+        ).add_columns(Company)
         .join(Company, Contact.company_id == Company.id, isouter=True)
         .where(or_(*name_conditions))
     )
@@ -1582,7 +1585,9 @@ async def _execute_find_deal(args: dict) -> ToolOutcome:
 
     async with async_session() as session:
         stmt = (
-            sm_select(Deal, Company)
+            unscoped_for_background_job(
+                Deal, "Zippy deal lookup has no requesting-user context"
+            ).add_columns(Company)
             .join(Company, Deal.company_id == Company.id, isouter=True)
             .where(
                 or_(
@@ -1655,7 +1660,7 @@ async def _execute_update_deal(args: dict, *, user_id: Optional[UUID] = None) ->
     changes: list[str] = []
     async with async_session() as session:
         result = await session.execute(
-            sm_select(Deal).where(Deal.id == uuid.UUID(deal_id))
+            unscoped_for_background_job(Deal, "zippy tools system work").where(Deal.id == uuid.UUID(deal_id))
         )
         deal = result.scalar_one_or_none()
         if not deal:
@@ -1787,7 +1792,7 @@ async def _execute_explain_deal_health(args: dict) -> ToolOutcome:
 
     async with async_session() as session:
         deal_result = await session.execute(
-            sm_select(Deal).where(Deal.id == uuid.UUID(deal_id))
+            unscoped_for_background_job(Deal, "zippy tools system work").where(Deal.id == uuid.UUID(deal_id))
         )
         deal = deal_result.scalar_one_or_none()
         if not deal:
@@ -1886,7 +1891,9 @@ async def _execute_find_entity_for_task(args: dict) -> ToolOutcome:
     async with async_session() as session:
         if entity_type == "deal":
             stmt = (
-                sm_select(Deal, Company)
+                unscoped_for_background_job(
+                    Deal, "Zippy entity search has no requesting-user context"
+                ).add_columns(Company)
                 .join(Company, Deal.company_id == Company.id, isouter=True)
                 .where(
                     or_(
@@ -1918,7 +1925,7 @@ async def _execute_find_entity_for_task(args: dict) -> ToolOutcome:
             )
 
         if entity_type == "company":
-            stmt = sm_select(Company).where(Company.name.ilike(f"%{query}%")).limit(5)
+            stmt = unscoped_for_background_job(Company, "zippy tools system work").where(Company.name.ilike(f"%{query}%")).limit(5)
             result = await session.execute(stmt)
             companies = list(result.scalars().all())
             if not companies:
@@ -1942,7 +1949,7 @@ async def _execute_find_entity_for_task(args: dict) -> ToolOutcome:
 
         # contact
         stmt = (
-            sm_select(Contact)
+            unscoped_for_background_job(Contact, "zippy tools system work")
             .where(
                 or_(
                     Contact.first_name.ilike(f"%{query}%"),

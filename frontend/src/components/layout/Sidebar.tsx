@@ -93,7 +93,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
     getCachedRolePermissions()
       .then((permissions) => {
         if (!cancelled) {
-          const permissionRole = user.role === "admin" ? null : user.role;
+          const permissionRole = user.role === "admin" || user.role === "superadmin" ? null : user.role;
           setCanManageTeam(permissionRole ? Boolean(permissions[permissionRole]?.manage_team) : true);
         }
       })

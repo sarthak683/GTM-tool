@@ -192,6 +192,65 @@ body {
   grid-template-columns: 84px minmax(0, 1fr);
 }
 
+/* The application has a substantial amount of page-level inline styling. A
+   single reversible transform keeps every surface, dialog, table, and form in
+   the same visual system in dark mode without leaving isolated light cards.
+   Images and the intentionally dark navigation rail are restored below. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] body {
+  background: #0a1020;
+}
+
+html[data-theme="dark"] #root {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+html[data-theme="dark"] #root img,
+html[data-theme="dark"] #root video,
+html[data-theme="dark"] #root canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+html[data-theme="dark"] .crm-sidebar {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+html[data-theme="dark"] .crm-sidebar img,
+html[data-theme="dark"] .crm-sidebar video,
+html[data-theme="dark"] .crm-sidebar canvas {
+  filter: none;
+}
+
+.crm-theme-toggle {
+  width: 38px;
+  height: 38px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #dbe4ef;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #4f647a;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.crm-theme-toggle:hover {
+  background: #f3fbe3;
+  border-color: #b7da73;
+  color: #4d7c0f;
+  transform: translateY(-1px);
+}
+
+.crm-theme-toggle:focus-visible {
+  outline: 3px solid rgba(154, 206, 61, 0.32);
+  outline-offset: 2px;
+}
+
 /* ─────────────────────────────────────────────────────────────────────
    Sidebar — beacon.li brand theme.
    Near-black surface, the logo's leaf-green (#9ace3d) as the single accent,

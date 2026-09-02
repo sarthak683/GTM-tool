@@ -24,6 +24,8 @@ from app.core.analytics_defaults import build_default_analytics_settings
 from app.models.settings import (
     ClickUpCrmSettingsRead,
     ClickUpCrmSettingsUpdate,
+    DealVisibilityRead,
+    DealVisibilityUpdate,
     DealStageSettingsRead,
     DealStageSettingsUpdate,
     DealFunnelSettingsRead,
@@ -80,7 +82,7 @@ from app.services.gmail_oauth import (
     exchange_gmail_code,
 )
 from app.services.meeting_automation import normalize_pre_meeting_settings, run_due_pre_meeting_intel_once
-from app.services.permissions import normalize_role_permissions
+from app.services.permissions import normalize_role_permissions, require_workspace_permission
 from app.services.us_pod_call_report import INDIA_DEFAULT_SALES_REPORT_SETTINGS, normalize_sales_report_settings
 from app.services.weekly_digest import WEEKLY_DIGEST_CONFIG_KEY, normalize_weekly_digest_settings
 
@@ -167,12 +169,21 @@ _DEFAULT_ROLE_PERMISSIONS = {
         "prospect_migration": True,
         "manage_team": False,
         "run_pre_meeting_intel": True,
+        "manage_reports": False,
     },
     "sdr": {
         "crm_import": False,
         "prospect_migration": True,
         "manage_team": False,
         "run_pre_meeting_intel": False,
+        "manage_reports": False,
+    },
+    "marketing": {
+        "crm_import": False,
+        "prospect_migration": False,
+        "manage_team": False,
+        "run_pre_meeting_intel": False,
+        "manage_reports": False,
     },
 }
 _DEFAULT_CLICKUP_CRM_SETTINGS = {
@@ -676,6 +687,7 @@ async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSess
     # are protected by the guard inside refresh_contact_sequence_plan.
     from app.models.contact import Contact
     from app.models.company import Company
+    from app.repositories.contact import ContactRepository
     from app.services.account_sourcing import (
         _workspace_step_schedule,
         refresh_contact_sequence_plan,
@@ -686,7 +698,9 @@ async def update_outreach_settings(body: OutreachSettingsUpdate, session: DBSess
     )
     refreshed_count = 0
     if ws_schedule:
-        stmt = sm_select(Contact).where(
+        stmt = ContactRepository.unscoped_for_background_job(
+            "workspace cadence change refreshes every not-yet-started prospect"
+        ).where(
             Contact.instantly_campaign_id.is_(None),
             (Contact.sequence_status.is_(None) | Contact.sequence_status.in_(["ready", "research_needed", ""])),
         )
@@ -1018,7 +1032,12 @@ async def get_sales_report_settings(session: DBSession, _user: CurrentUser):
 
 
 @router.patch("/sales-report", response_model=SalesReportSettingsRead)
-async def update_sales_report_settings(body: SalesReportSettingsUpdate, session: DBSession, _admin: AdminUser):
+async def update_sales_report_settings(
+    body: SalesReportSettingsUpdate,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    await require_workspace_permission(session, current_user, "manage_reports")
     return await _update_sales_report_settings_block(body, session, key="sales_report")
 
 
@@ -1033,7 +1052,12 @@ async def get_india_sales_report_settings(session: DBSession, _user: CurrentUser
 
 
 @router.patch("/sales-report/india", response_model=SalesReportSettingsRead)
-async def update_india_sales_report_settings(body: SalesReportSettingsUpdate, session: DBSession, _admin: AdminUser):
+async def update_india_sales_report_settings(
+    body: SalesReportSettingsUpdate,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    await require_workspace_permission(session, current_user, "manage_reports")
     return await _update_sales_report_settings_block(
         body,
         session,
@@ -1118,6 +1142,25 @@ async def update_prospect_visibility(body: ProspectVisibilityUpdate, session: DB
     await session.commit()
     await session.refresh(row)
     return ProspectVisibilityRead(user_ids=[str(uid) for uid in (row.prospect_view_all_user_ids or [])])
+
+
+@router.get("/deal-visibility", response_model=DealVisibilityRead)
+async def get_deal_visibility(session: DBSession, _admin: AdminUser):
+    """User ids of non-admins granted 'see all deals' access (admin only)."""
+    row = await _get_or_create(session)
+    return DealVisibilityRead(user_ids=[str(uid) for uid in (row.deal_view_all_user_ids or [])])
+
+
+@router.put("/deal-visibility", response_model=DealVisibilityRead)
+async def update_deal_visibility(body: DealVisibilityUpdate, session: DBSession, _admin: AdminUser):
+    """Set the full list of non-admins allowed to see every deal."""
+    row = await _get_or_create(session)
+    ids = list(dict.fromkeys(str(uid).strip() for uid in body.user_ids if str(uid).strip()))
+    row.deal_view_all_user_ids = ids or None
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return DealVisibilityRead(user_ids=[str(uid) for uid in (row.deal_view_all_user_ids or [])])
 
 
 @router.get("/sales-analytics-roster", response_model=SalesAnalyticsRosterRead)

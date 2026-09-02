@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.database import task_session
 from app.models.contact import Contact
 from app.services.notifications import create_notification
@@ -37,7 +38,7 @@ async def send_due_prospect_followup_reminders() -> dict[str, int]:
 
         rows = (
             await session.execute(
-                select(Contact).where(
+                unscoped_for_background_job(Contact, "prospect reminders system work").where(
                     Contact.next_followup_at.is_not(None),
                     Contact.next_followup_at <= now,
                     Contact.next_followup_at >= window_start,

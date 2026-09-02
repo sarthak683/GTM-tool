@@ -33,6 +33,8 @@ from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
 from app.models.contact import Contact, ContactRead
 from app.models.user import User
+from app.repositories.company import CompanyRepository
+from app.repositories.contact import ContactRepository
 from app.services.account_sourcing import append_company_activity_log
 from app.services.account_sourcing_tabular import parse_tabular_file
 from app.services.assignment_upload import (
@@ -83,7 +85,11 @@ async def _apply_contact_assignment(
         company = company_cache.get(contact.company_id)
         if company is None and contact.company_id not in company_cache:
             company = (
-                await session.execute(select(Company).where(Company.id == contact.company_id))
+                await session.execute(
+                    CompanyRepository.unscoped_for_background_job(
+                        "assignment backfill for an already-authorized prospect"
+                    ).where(Company.id == contact.company_id)
+                )
             ).scalar_one_or_none()
             company_cache[contact.company_id] = company
         if _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
@@ -246,7 +252,11 @@ async def assign_company(
     release a slot they currently hold. Pass user_id=null to unassign.
     """
     company = (
-        await session.execute(select(Company).where(Company.id == company_id))
+        await session.execute(
+            CompanyRepository.visible_to(actor, include_disabled=True).where(
+                Company.id == company_id
+            )
+        )
     ).scalar_one_or_none()
     if not company:
         raise NotFoundError("Company not found")
@@ -342,7 +352,11 @@ async def assign_contact(
     role="ae" (default) sets AE, role="sdr" sets SDR. Pass user_id=null to unassign.
     """
     contact = (
-        await session.execute(select(Contact).where(Contact.id == contact_id))
+        await session.execute(
+            (await ContactRepository.visible_to(session, actor)).where(
+                Contact.id == contact_id
+            )
+        )
     ).scalar_one_or_none()
     if not contact:
         raise NotFoundError("Contact not found")
@@ -382,7 +396,13 @@ async def assign_contact(
     contact.updated_at = datetime.utcnow()
     session.add(contact)
     if contact.company_id:
-        company = (await session.execute(select(Company).where(Company.id == contact.company_id))).scalar_one_or_none()
+        company = (
+            await session.execute(
+                CompanyRepository.unscoped_for_background_job(
+                    "assignment audit and empty-owner backfill for an authorized prospect"
+                ).where(Company.id == contact.company_id)
+            )
+        ).scalar_one_or_none()
         if company:
             backfilled = False
             if body.user_id:
@@ -437,7 +457,7 @@ async def bulk_assign_companies(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if actor.role != "admin" and not (
+    if not actor.is_admin and not (
         (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
     ):
         raise ForbiddenError(
@@ -450,13 +470,17 @@ async def bulk_assign_companies(
     prospects_kept_divergent = 0
     for cid in body.ids:
         company = (
-            await session.execute(select(Company).where(Company.id == cid))
+            await session.execute(
+                CompanyRepository.visible_to(actor, include_disabled=True).where(
+                    Company.id == cid
+                )
+            )
         ).scalar_one_or_none()
         if not company:
             skipped += 1
             continue
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-        if actor.role != "admin" and not _is_self_claim_or_self_release(
+        if not actor.is_admin and not _is_self_claim_or_self_release(
             actor=actor,
             target_user_id=body.user_id,
             current_assigned_id=current_assigned_id,
@@ -501,7 +525,7 @@ async def bulk_assign_contacts(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if actor.role != "admin" and not (
+    if not actor.is_admin and not (
         (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
     ):
         raise ForbiddenError(
@@ -515,13 +539,17 @@ async def bulk_assign_contacts(
     company_cache: dict[UUID, Company | None] = {}
     for cid in body.ids:
         contact = (
-            await session.execute(select(Contact).where(Contact.id == cid))
+            await session.execute(
+                (await ContactRepository.visible_to(session, actor)).where(
+                    Contact.id == cid
+                )
+            )
         ).scalar_one_or_none()
         if not contact:
             skipped += 1
             continue
         current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
-        if actor.role != "admin" and not _is_self_claim_or_self_release(
+        if not actor.is_admin and not _is_self_claim_or_self_release(
             actor=actor,
             target_user_id=body.user_id,
             current_assigned_id=current_assigned_id,
@@ -588,7 +616,7 @@ async def bulk_assign_contacts_by_filter(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if actor.role != "admin" and not (
+    if not actor.is_admin and not (
         (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
     ):
         raise ForbiddenError(
@@ -596,7 +624,6 @@ async def bulk_assign_contacts_by_filter(
             f"{role_key.upper()} slots or release your own assignments."
         )
 
-    from app.repositories.contact import ContactRepository
     from app.services.permissions import can_view_all_prospects
 
     restrict_to_owner_id = (
@@ -633,13 +660,17 @@ async def bulk_assign_contacts_by_filter(
     company_cache: dict[UUID, Company | None] = {}
     for item in items:
         contact = (
-            await session.execute(select(Contact).where(Contact.id == item.id))
+            await session.execute(
+                (await ContactRepository.visible_to(session, actor)).where(
+                    Contact.id == item.id
+                )
+            )
         ).scalar_one_or_none()
         if not contact:
             skipped += 1
             continue
         current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
-        if actor.role != "admin" and not _is_self_claim_or_self_release(
+        if not actor.is_admin and not _is_self_claim_or_self_release(
             actor=actor,
             target_user_id=body.user_id,
             current_assigned_id=current_assigned_id,
@@ -693,7 +724,7 @@ async def bulk_assign_companies_by_filter(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if actor.role != "admin" and not (
+    if not actor.is_admin and not (
         (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
     ):
         raise ForbiddenError(
@@ -735,7 +766,7 @@ async def bulk_assign_companies_by_filter(
     prospects_kept_divergent = 0
     for company in companies:
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-        if actor.role != "admin" and not _is_self_claim_or_self_release(
+        if not actor.is_admin and not _is_self_claim_or_self_release(
             actor=actor,
             target_user_id=body.user_id,
             current_assigned_id=current_assigned_id,

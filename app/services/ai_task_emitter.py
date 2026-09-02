@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.claude import ClaudeClient
 from app.config import settings
 from app.models.activity import Activity
@@ -1034,7 +1035,7 @@ async def emit_ai_tasks(
     ).scalars().all()
     contacts = (
         await session.execute(
-            select(Contact)
+            unscoped_for_background_job(Contact, "ai task emitter system work")
             .join(DealContact, DealContact.contact_id == Contact.id)
             .where(DealContact.deal_id == deal.id)
         )

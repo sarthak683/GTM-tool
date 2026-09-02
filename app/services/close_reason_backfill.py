@@ -29,6 +29,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.deal import Deal
 from app.services.deal_stage_history import CLOSE_REASONS
 
@@ -79,7 +80,7 @@ async def backfill_close_reasons(
     """
     rows = (
         await session.execute(
-            select(Deal).where(
+            unscoped_for_background_job(Deal, "close reason backfill system work").where(
                 Deal.deleted_at.is_(None),
                 Deal.pipeline_type == "deal",
                 Deal.qualification.is_not(None),

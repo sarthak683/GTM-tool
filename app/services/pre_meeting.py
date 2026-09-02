@@ -23,6 +23,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.claude import ClaudeClient
 from app.clients.web_search import WebSearchClient
 from app.models.company import Company
@@ -220,7 +221,9 @@ async def generate_account_brief(company_id: UUID, session: AsyncSession) -> dic
         "vertical": company.vertical,
         "employee_count": company.employee_count,
         "funding_stage": company.funding_stage,
-        "arr_estimate": company.arr_estimate,
+        "arr_estimate": (
+            float(company.arr_estimate) if company.arr_estimate is not None else None
+        ),
         "icp_score": company.icp_score,
         "icp_tier": company.icp_tier,
         "has_dap": company.has_dap,
@@ -256,7 +259,7 @@ async def generate_account_brief(company_id: UUID, session: AsyncSession) -> dic
             logger.warning("Live news lookup failed for %s: %s", company.name, exc)
 
     contacts_result = await session.execute(
-        select(Contact)
+        unscoped_for_background_job(Contact, "pre meeting system work")
         .where(Contact.company_id == company_id)
         .order_by(Contact.created_at.desc())
         .limit(20)

@@ -31,6 +31,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.company import Company, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact
 
@@ -122,7 +123,7 @@ async def apply_account_disable_effects(
     from app.models.outreach import OutreachSequence
 
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "account status system work").where(Contact.company_id == company.id))
     ).scalars().all()
     contact_ids = {c.id for c in contacts}
 

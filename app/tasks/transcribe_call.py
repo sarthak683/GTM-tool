@@ -128,16 +128,22 @@ async def _run(recording_id: UUID) -> dict:
             try:
                 from app.models.contact import Contact
                 from app.models.company import Company
+                from app.repositories.company import CompanyRepository
+                from app.repositories.contact import ContactRepository
 
                 contact = (await session.execute(
-                    select(Contact).where(Contact.id == recording.contact_id)
+                    ContactRepository.unscoped_for_background_job(
+                        "call transcription contact hydration"
+                    ).where(Contact.id == recording.contact_id)
                 )).scalar_one_or_none() if recording.contact_id else None
                 if contact:
                     contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or None
                     contact_title = contact.title
                     if contact.company_id:
                         company = (await session.execute(
-                            select(Company).where(Company.id == contact.company_id)
+                            CompanyRepository.unscoped_for_background_job(
+                                "call transcription company hydration"
+                            ).where(Company.id == contact.company_id)
                         )).scalar_one_or_none()
                         if company:
                             company_name = company.name

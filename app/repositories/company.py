@@ -65,7 +65,16 @@ from app.models.deal import Deal
 from app.models.outreach import OutreachSequence
 from app.models.reminder import Reminder
 from app.models.task import Task, TaskComment
+from app.models.user import User
 from app.repositories.base import BaseRepository
+
+
+def _user_is_admin(user: User) -> bool:
+    """Support real User rows and lightweight authenticated-user stand-ins."""
+    explicit = getattr(user, "is_admin", None)
+    if explicit is not None:
+        return bool(explicit)
+    return str(getattr(user, "role", "")).lower() == "admin"
 
 
 def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: bool = False):
@@ -108,6 +117,28 @@ def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: b
             Company.account_status.not_in(INACTIVE_ACCOUNT_STATUSES),
         ),
     )
+
+
+def can_see_company(company: Company, user: User) -> bool:
+    """Python mirror of ``company_visibility_filter`` for single-object guards.
+
+    Admins see every company; a non-admin sees a company they own (AE or SDR).
+    Ownership is the ONLY gate here — deliberately NOT the disabled-status
+    check the list filter applies: an owner must be able to OPEN their parked
+    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
+    accounts by default; direct access never dead-ends. Use on single-company
+    detail/update routes to 404 a company the caller can't see (so existence
+    isn't leaked).
+    """
+    if company.deleted_at is not None:
+        # Soft-deleted: gone from every detail/update route for everyone. The
+        # row is reachable only through GET /companies/trash (admin) and
+        # GET /companies/{id}/tombstone (which says "deleted" or "merged into
+        # X" without exposing the record).
+        return False
+    if _user_is_admin(user):
+        return True
+    return company.assigned_to_id == user.id or company.sdr_id == user.id
 
 
 def _normalize_domain(domain: str) -> str:
@@ -195,6 +226,28 @@ class CompanyRepository(BaseRepository[Company]):
         super().__init__(Company, session)
 
     @staticmethod
+    def visible_to(user: User, *, include_disabled: bool = False):
+        """Base select for ANY user-facing company query.
+
+        If you reach for a bare select(Company) in an endpoint, that is the
+        bug — see unscoped_for_background_job for the deliberate exception.
+        """
+        return select(Company).where(
+            company_visibility_filter(
+                user.id,
+                _user_is_admin(user),
+                include_disabled=include_disabled,
+            )
+        )
+
+    @staticmethod
+    def unscoped_for_background_job(reason: str):
+        """Every company, no ownership gate. Background/system work only."""
+        if not reason.strip():
+            raise ValueError("An unscoped company query requires a reviewable reason")
+        return select(Company)
+
+    @staticmethod
     def _slugify_alias(name: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
         return slug or "account"
@@ -259,7 +312,11 @@ class CompanyRepository(BaseRepository[Company]):
         return result.scalars().first()
 
     async def get_by_normalized_name(
-        self, name: str, *, incoming_domain: Optional[str] = None
+        self,
+        name: str,
+        *,
+        incoming_domain: Optional[str] = None,
+        visible_to: Optional[User] = None,
     ) -> Optional[Company]:
         """
         Looser fallback used by importers to prevent placeholder-domain duplicates.
@@ -285,8 +342,15 @@ class CompanyRepository(BaseRepository[Company]):
         # Pull a small candidate set by first 3 normalized chars to keep it cheap;
         # then normalize in Python for the equality check.
         prefix = target[:3]
+        stmt = (
+            self.visible_to(visible_to, include_disabled=True)
+            if visible_to is not None
+            else self.unscoped_for_background_job(
+                "company import dedupe has no requesting user"
+            )
+        )
         result = await self.session.execute(
-            select(Company).where(func.lower(Company.name).like(f"{prefix}%"))
+            stmt.where(func.lower(Company.name).like(f"{prefix}%"))
         )
         matches: list[Company] = []
         for candidate in result.scalars().all():

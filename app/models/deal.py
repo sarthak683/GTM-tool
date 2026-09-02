@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -9,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.models.meeting import to_naive_utc
+from app.models.money import MoneyDecimal
 
 
 # ── Stage definitions ────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ class Deal(DealBase, table=True):
     email_cc_alias: Optional[str] = Field(default=None, index=True)
     external_source: Optional[str] = Field(default=None, index=True)
     external_source_id: Optional[str] = Field(default=None, index=True)
-    value: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(15, 2)))
+    value: Optional[MoneyDecimal] = Field(default=None, sa_column=Column(Numeric(15, 2)))
     # ISO 4217 currency code for `value`. Defaults to USD so existing rows
     # stay single-currency until reps edit a deal and pick a different one.
     # See SUPPORTED_CURRENCY_CODES in frontend/src/lib/currencies.ts for the
@@ -143,7 +143,7 @@ class DealCreate(SQLModel):
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None
     sdr_id: Optional[UUID] = None
-    value: Optional[Decimal] = None
+    value: Optional[MoneyDecimal] = None
     currency_code: Optional[str] = None
     close_date_est: Optional[date] = None
     department: Optional[str] = None
@@ -179,7 +179,7 @@ class DealRead(DealBase):
     sdr_id: Optional[UUID] = None
     deleted_at: Optional[datetime] = None
     email_cc_alias: Optional[str] = None
-    value: Optional[Decimal] = None
+    value: Optional[MoneyDecimal] = None
     currency_code: Optional[str] = None
     qualification: Optional[Any] = None
     tags: list[str] = []
@@ -236,7 +236,7 @@ class DealUpdate(SQLModel):
     company_id: Optional[UUID] = None
     assigned_to_id: Optional[UUID] = None  # AE
     sdr_id: Optional[UUID] = None          # SDR
-    value: Optional[Decimal] = None
+    value: Optional[MoneyDecimal] = None
     currency_code: Optional[str] = None
     close_date_est: Optional[date] = None
     close_date: Optional[date] = None

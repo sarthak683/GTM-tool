@@ -506,7 +506,7 @@ async def list_company_names(
 
     result = await session.execute(
         sm_select(Company.name)
-        .where(company_visibility_filter(current_user.id, current_user.role == "admin"))
+        .where(company_visibility_filter(current_user.id, current_user.is_admin))
         .order_by(Company.name)
     )
     names = [row[0] for row in result.all() if row[0]]

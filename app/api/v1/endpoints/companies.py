@@ -12,34 +12,13 @@ from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
 from app.models.deal import Deal, DealRead
-from app.repositories.company import CompanyRepository, company_visibility_filter
+from app.repositories.company import CompanyRepository, can_see_company, company_visibility_filter
+from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
 from app.services.icp_scorer import score_company
 from app.services.sdr_reassignment import sync_company_sdr_assignment_to_contacts
 
 router = APIRouter(prefix="/companies", tags=["companies"])
-
-
-def _can_see_company(company: Company, user) -> bool:
-    """Python mirror of ``company_visibility_filter`` for single-object guards.
-
-    Admins see every company; a non-admin sees a company they own (AE or SDR).
-    Ownership is the ONLY gate here — deliberately NOT the disabled-status
-    check the list filter applies: an owner must be able to OPEN their parked
-    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
-    accounts by default; direct access never dead-ends. Use on single-company
-    detail/update routes to 404 a company the caller can't see (so existence
-    isn't leaked).
-    """
-    if company.deleted_at is not None:
-        # Soft-deleted: gone from every detail/update route for everyone. The
-        # row is reachable only through GET /companies/trash (admin) and
-        # GET /companies/{id}/tombstone (which says "deleted" or "merged into
-        # X" without exposing the record).
-        return False
-    if user.role == "admin":
-        return True
-    return company.assigned_to_id == user.id or company.sdr_id == user.id
 
 
 def _visible_company_selector_filter():
@@ -122,7 +101,8 @@ async def check_duplicates(payload: DuplicateCheckRequest, session: DBSession, _
         normalised = [n.strip().lower() for n in payload.names if n.strip()]
         rows = await session.execute(
             select(func.lower(func.trim(Company.name))).where(
-                func.lower(func.trim(Company.name)).in_(normalised)
+                func.lower(func.trim(Company.name)).in_(normalised),
+                company_visibility_filter(_user.id, _user.is_admin, include_disabled=True),
             )
         )
         dup_names = list(rows.scalars().all())
@@ -131,7 +111,8 @@ async def check_duplicates(payload: DuplicateCheckRequest, session: DBSession, _
         normalised_d = [d.strip().lower() for d in payload.domains if d.strip()]
         rows = await session.execute(
             select(Company.domain).where(
-                Company.domain.in_(normalised_d)
+                Company.domain.in_(normalised_d),
+                company_visibility_filter(_user.id, _user.is_admin, include_disabled=True),
             )
         )
         dup_domains = list(rows.scalars().all())
@@ -153,7 +134,7 @@ async def list_companies(
     repo = CompanyRepository(session)
     filters = [
         _visible_company_selector_filter(),
-        company_visibility_filter(_user.id, _user.role == "admin"),
+        company_visibility_filter(_user.id, _user.is_admin),
     ]
     if icp_tier:
         filters.append(Company.icp_tier == icp_tier)
@@ -371,7 +352,7 @@ async def restore_company_endpoint(company_id: UUID, session: DBSession, _admin:
 async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
-    if not _can_see_company(company, _user):
+    if not can_see_company(company, _user):
         # 404 (not 403) so a non-admin can't probe which company ids exist.
         raise HTTPException(status_code=404, detail="Company not found")
     # Lazily mint this account's Zippy ID (email_cc_alias) on first read so
@@ -384,7 +365,7 @@ async def get_company(company_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
-    if not _can_see_company(company, _user):
+    if not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
     await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
@@ -397,7 +378,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
 async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSession, _user: CurrentUser):
     repo = CompanyRepository(session)
     company = await repo.get_or_raise(company_id)
-    if not _can_see_company(company, _user):
+    if not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
     update_data = payload.model_dump(exclude_unset=True)
     await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
@@ -432,8 +413,11 @@ async def delete_company(company_id: UUID, session: DBSession, _admin: AdminUser
 
 @router.get("/{company_id}/deals", response_model=List[DealRead])
 async def get_company_deals(company_id: UUID, session: DBSession, _user: CurrentUser):
+    company = await CompanyRepository(session).get_or_raise(company_id)
+    if not can_see_company(company, _user):
+        raise HTTPException(status_code=404, detail="Company not found")
     result = await session.execute(
-        select(Deal)
+        DealRepository.visible_to(_user)
         .where(Deal.company_id == company_id)
         .order_by(Deal.created_at.desc())
     )

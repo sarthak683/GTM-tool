@@ -13,6 +13,7 @@ from app.models.company import Company
 from app.models.deal import Deal
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.user import User
+from app.repositories.company import CompanyRepository
 from app.repositories.meeting import MeetingRepository
 from app.services.call_levels import (
     CALL_LEVELS,
@@ -113,7 +114,7 @@ async def list_meetings(
     # is assigned to them. Enforced server-side so it can't be bypassed by
     # clearing the assignee filter in the UI or hitting the API directly. (The
     # `assignee_id` param still lets an admin slice by rep.)
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         ensure_deal_join()
         ensure_company_join()
         own_clause = or_(
@@ -423,7 +424,7 @@ async def relink_unlinked(
     Admin only. Defaults to a dry run so the proposed links can be inspected
     before anything is written. Pass ``dry_run=false`` to commit.
     """
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin only")
     from app.services.meeting_relink import relink_unlinked_meetings
 
@@ -722,7 +723,13 @@ async def get_research_gaps(meeting_id: UUID, session: DBSession, current_user: 
     if not meeting or not meeting.company_id:
         return {"gaps": [], "count": 0}
 
-    company = await session.get(Company, meeting.company_id)
+    company = (
+        await session.execute(
+            CompanyRepository.visible_to(current_user, include_disabled=True).where(
+                Company.id == meeting.company_id
+            )
+        )
+    ).scalar_one_or_none()
     if not company:
         return {"gaps": [], "count": 0}
 
@@ -813,7 +820,13 @@ async def generate_post_score(meeting_id: UUID, payload: dict, session: DBSessio
     ai = ClaudeClient()
     company_name = "the company"
     if meeting.company_id:
-        co = await session.get(Company, meeting.company_id)
+        co = (
+            await session.execute(
+                CompanyRepository.visible_to(current_user, include_disabled=True).where(
+                    Company.id == meeting.company_id
+                )
+            )
+        ).scalar_one_or_none()
         if co:
             company_name = co.name
 

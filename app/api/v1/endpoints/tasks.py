@@ -29,6 +29,9 @@ from app.models.task import (
     TaskWorkspaceRead,
 )
 from app.models.user import User
+from app.repositories.company import CompanyRepository
+from app.repositories.contact import ContactRepository
+from app.repositories.deal import DealRepository
 from app.services.tasks import (
     backfill_open_task_assignments,
     complete_system_task,
@@ -81,13 +84,13 @@ def _display_domain(value: str | None) -> str | None:
 
 
 def _can_delete_task(task: Task, current_user: User) -> bool:
-    if current_user.role == "admin":
+    if current_user.is_admin:
         return True
     return bool(task.created_by_id and task.created_by_id == current_user.id)
 
 
 def _can_manage_task(task: Task, current_user: User) -> bool:
-    if current_user.role == "admin":
+    if current_user.is_admin:
         return True
     if task.assigned_to_id and task.assigned_to_id == current_user.id:
         return True
@@ -134,7 +137,34 @@ async def _build_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskR
     return reads
 
 
-async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskWorkspaceRead]:
+async def _visible_entity_or_raise(
+    session: DBSession,
+    current_user: User,
+    entity_type: str,
+    entity_id: UUID,
+):
+    """Resolve a task entity through the same visibility boundary as its page."""
+    if entity_type == "company":
+        stmt = CompanyRepository.visible_to(current_user, include_disabled=True)
+    elif entity_type == "contact":
+        stmt = await ContactRepository.visible_to(session, current_user)
+    elif entity_type == "deal":
+        stmt = DealRepository.visible_to(current_user)
+    else:  # Defensive: callers validate before reaching this helper.
+        raise ValidationError(f"entity_type must be one of: {sorted(TASK_ENTITY_TYPES)}")
+    entity = (
+        await session.execute(stmt.where(stmt.column_descriptions[0]["entity"].id == entity_id))
+    ).scalar_one_or_none()
+    if entity is None:
+        raise NotFoundError("Task entity not found")
+    return entity
+
+
+async def _build_workspace_task_reads(
+    session: DBSession,
+    tasks: list[Task],
+    current_user: User,
+) -> list[TaskWorkspaceRead]:
     base_reads = await _build_task_reads(session, tasks)
     if not base_reads:
         return []
@@ -149,17 +179,29 @@ async def _build_workspace_task_reads(session: DBSession, tasks: list[Task]) -> 
 
     if ids_by_type["company"]:
         rows = (
-            await session.execute(select(Company).where(Company.id.in_(ids_by_type["company"])))
+            await session.execute(
+                CompanyRepository.visible_to(current_user, include_disabled=True).where(
+                    Company.id.in_(ids_by_type["company"])
+                )
+            )
         ).scalars().all()
         company_map = {row.id: row for row in rows if row.id}
     if ids_by_type["contact"]:
         rows = (
-            await session.execute(select(Contact).where(Contact.id.in_(ids_by_type["contact"])))
+            await session.execute(
+                (await ContactRepository.visible_to(session, current_user)).where(
+                    Contact.id.in_(ids_by_type["contact"])
+                )
+            )
         ).scalars().all()
         contact_map = {row.id: row for row in rows if row.id}
     if ids_by_type["deal"]:
         rows = (
-            await session.execute(select(Deal).where(Deal.id.in_(ids_by_type["deal"])))
+            await session.execute(
+                DealRepository.visible_to(current_user).where(
+                    Deal.id.in_(ids_by_type["deal"])
+                )
+            )
         ).scalars().all()
         deal_map = {row.id: row for row in rows if row.id}
 
@@ -250,8 +292,10 @@ async def list_tasks(
     include_closed: bool = Query(default=True),
     refresh_mode: str = Query(default="auto"),
 ):
-    _ = current_user
     _validate_entity_type(entity_type)
+    visible_entity = await _visible_entity_or_raise(
+        session, current_user, entity_type, entity_id
+    )
     if refresh_mode not in {"auto", "force", "none"}:
         raise ValidationError("refresh_mode must be one of: ['auto', 'force', 'none']")
 
@@ -279,7 +323,7 @@ async def list_tasks(
         await session.commit()
         tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
     else:
-        deal = await session.get(Deal, entity_id)
+        deal = visible_entity
         current_tasks = await _list_entity_tasks(session, entity_type, entity_id, include_closed)
         if deal and refresh_mode == "auto" and deal.ai_tasks_refreshed_at is None:
             await refresh_system_tasks_for_entity(session, entity_type, entity_id)
@@ -335,7 +379,7 @@ async def list_workspace_tasks(
         _validate_entity_type(entity_type)
     if scope not in {"mine", "team"}:
         raise ValidationError("scope must be one of: ['mine', 'team']")
-    if scope == "team" and current_user.role != "admin":
+    if scope == "team" and not current_user.is_admin:
         raise ForbiddenError("Only admins can access the team queue")
 
     status_rank = case(
@@ -352,7 +396,7 @@ async def list_workspace_tasks(
     stmt = select(Task).order_by(status_rank, priority_rank, Task.updated_at.desc())
     await backfill_open_task_assignments(session)
     await session.commit()
-    if scope == "mine" or current_user.role != "admin":
+    if scope == "mine" or not current_user.is_admin:
         stmt = stmt.where(Task.assigned_to_id == current_user.id)
     if not include_closed:
         stmt = stmt.where(Task.status == "open")
@@ -369,12 +413,15 @@ async def list_workspace_tasks(
         )
 
     tasks = (await session.execute(stmt)).scalars().all()
-    return await _build_workspace_task_reads(session, tasks)
+    return await _build_workspace_task_reads(session, tasks, current_user)
 
 
 @router.post("/", response_model=TaskRead, status_code=201)
 async def create_task(payload: TaskCreate, session: DBSession, current_user: CurrentUser):
     _validate_entity_type(payload.entity_type)
+    await _visible_entity_or_raise(
+        session, current_user, payload.entity_type, payload.entity_id
+    )
     _validate_priority(payload.priority)
     if payload.assigned_role:
         _validate_assigned_role(payload.assigned_role)
@@ -402,12 +449,14 @@ async def create_task(payload: TaskCreate, session: DBSession, current_user: Cur
 
 @router.patch("/{task_id}", response_model=TaskRead)
 async def update_task(task_id: UUID, payload: TaskUpdate, session: DBSession, current_user: CurrentUser):
-    _ = current_user
     task = await session.get(Task, task_id)
     if not task:
         raise NotFoundError("Task not found")
     if not _can_manage_task(task, current_user):
         raise ForbiddenError("Only the assigned user or an admin can update this task")
+    await _visible_entity_or_raise(
+        session, current_user, task.entity_type, task.entity_id
+    )
 
     update_data = payload.model_dump(exclude_unset=True)
     if "priority" in update_data:
@@ -440,6 +489,9 @@ async def add_task_comment(task_id: UUID, payload: TaskCommentCreate, session: D
         raise NotFoundError("Task not found")
     if not _can_manage_task(task, current_user):
         raise ForbiddenError("Only the assigned user or an admin can update this task")
+    await _visible_entity_or_raise(
+        session, current_user, task.entity_type, task.entity_id
+    )
 
     comment = TaskComment(
         task_id=task_id,
@@ -465,6 +517,9 @@ async def accept_task(task_id: UUID, session: DBSession, current_user: CurrentUs
         raise ValidationError("Only system tasks can be accepted")
     if not _can_manage_task(task, current_user):
         raise ForbiddenError("Only the assigned user or an admin can act on this task")
+    await _visible_entity_or_raise(
+        session, current_user, task.entity_type, task.entity_id
+    )
 
     await complete_system_task(session, task, current_user)
     await session.commit()
@@ -480,6 +535,9 @@ async def delete_task(task_id: UUID, session: DBSession, current_user: CurrentUs
         raise NotFoundError("Task not found")
     if not _can_delete_task(task, current_user):
         raise ForbiddenError("Only admins or the user who created this task can delete it")
+    await _visible_entity_or_raise(
+        session, current_user, task.entity_type, task.entity_id
+    )
 
     # Delete dependent comments first to satisfy FK constraints reliably.
     await session.execute(delete(TaskComment).where(TaskComment.task_id == task_id))
@@ -496,7 +554,7 @@ async def dismiss_inactive_deal_tasks(session: DBSession, current_user: CurrentU
     not_a_fit, closed_won, closed). Fixes tasks incorrectly created during
     CRM imports for parked/closed accounts.
     """
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         raise ForbiddenError("Only admins can run this operation")
 
     inactive_stages = {

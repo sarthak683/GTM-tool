@@ -21,6 +21,7 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlmodel import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
@@ -188,7 +189,7 @@ async def reconcile_deal_stakeholders(
             await _link(by_email[email])
             continue
         existing = (
-            await session.execute(select(Contact).where(func.lower(Contact.email) == email))
+            await session.execute(unscoped_for_background_job(Contact, "deal linker system work").where(func.lower(Contact.email) == email))
         ).scalars().first()
         if existing:
             by_email[email] = existing.id

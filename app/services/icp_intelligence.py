@@ -24,6 +24,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.services.log_safety import safe_error_message
 
@@ -145,7 +146,7 @@ async def _safe_apply_resolved_domain(session, company, resolved_domain: str) ->
 
     existing = (
         await session.execute(
-            select(Company).where(func.lower(Company.domain) == (normalized or "").lower(), Company.id != company.id)
+            unscoped_for_background_job(Company, "icp intelligence system work").where(func.lower(Company.domain) == (normalized or "").lower(), Company.id != company.id)
         )
     ).scalar_one_or_none()
     if existing:
@@ -1670,7 +1671,7 @@ async def research_company_and_update(
 
     from sqlmodel import select
     contacts = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "icp intelligence system work").where(Contact.company_id == company.id))
     ).scalars().all()
     company = refresh_company_prospecting_fields(company, contacts)
     for contact in contacts:
@@ -1864,7 +1865,7 @@ async def research_company_and_update_free(
 
     # Pull existing contacts from DB (prospects, stakeholders, deal contacts)
     contact_rows = (
-        await session.execute(select(Contact).where(Contact.company_id == company_id))
+        await session.execute(unscoped_for_background_job(Contact, "icp intelligence system work").where(Contact.company_id == company_id))
     ).scalars().all()
 
     db_contacts = [
@@ -2087,7 +2088,7 @@ async def research_company_and_update_free(
     company.prospecting_profile = refreshed_profile
 
     contacts_all = (
-        await session.execute(select(Contact).where(Contact.company_id == company.id))
+        await session.execute(unscoped_for_background_job(Contact, "icp intelligence system work").where(Contact.company_id == company.id))
     ).scalars().all()
     company = refresh_company_prospecting_fields(company, contacts_all)
     for contact in contacts_all:

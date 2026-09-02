@@ -21,6 +21,9 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.user import User
+from app.repositories.company import CompanyRepository
+from app.repositories.contact import ContactRepository
+from app.repositories.deal import DealRepository
 
 
 POSITIVE_PROGRESS_STATES = frozenset({"meeting_booked", "qualified", "deal_created"})
@@ -94,8 +97,7 @@ async def _load_company_contexts(
     assignee_id: Optional[UUID] = None,
 ) -> list[AssignmentContext]:
     stmt = (
-        select(
-            Company,
+        CompanyRepository.visible_to(current_user, include_disabled=True).add_columns(
             User.name.label("assignee_name"),
             User.email.label("assignee_email"),
         )
@@ -103,7 +105,7 @@ async def _load_company_contexts(
     )
     if assignee_id:
         stmt = stmt.where(Company.assigned_to_id == assignee_id)
-    elif current_user.role != "admin":
+    elif not current_user.is_admin:
         stmt = stmt.where(Company.assigned_to_id == current_user.id)
 
     rows = (await session.execute(stmt)).all()
@@ -135,8 +137,7 @@ async def _load_contact_contexts(
     contexts: list[AssignmentContext] = []
 
     ae_stmt = (
-        select(
-            Contact,
+        (await ContactRepository.visible_to(session, current_user)).add_columns(
             Company.name.label("company_name"),
             User.name.label("assignee_name"),
             User.email.label("assignee_email"),
@@ -146,7 +147,7 @@ async def _load_contact_contexts(
     )
     if assignee_id:
         ae_stmt = ae_stmt.where(Contact.assigned_to_id == assignee_id)
-    elif current_user.role != "admin":
+    elif not current_user.is_admin:
         ae_stmt = ae_stmt.where(Contact.assigned_to_id == current_user.id)
 
     for contact, company_name, assignee_name, assignee_email in (await session.execute(ae_stmt)).all():
@@ -168,8 +169,7 @@ async def _load_contact_contexts(
         ))
 
     sdr_stmt = (
-        select(
-            Contact,
+        (await ContactRepository.visible_to(session, current_user)).add_columns(
             Company.name.label("company_name"),
             User.name.label("assignee_name"),
             User.email.label("assignee_email"),
@@ -179,7 +179,7 @@ async def _load_contact_contexts(
     )
     if assignee_id:
         sdr_stmt = sdr_stmt.where(Contact.sdr_id == assignee_id)
-    elif current_user.role != "admin":
+    elif not current_user.is_admin:
         sdr_stmt = sdr_stmt.where(Contact.sdr_id == current_user.id)
 
     for contact, company_name, assignee_name, assignee_email in (await session.execute(sdr_stmt)).all():
@@ -209,8 +209,7 @@ async def _load_deal_contexts(
     assignee_id: Optional[UUID] = None,
 ) -> list[AssignmentContext]:
     stmt = (
-        select(
-            Deal,
+        DealRepository.visible_to(current_user).add_columns(
             Company.name.label("company_name"),
             User.name.label("assignee_name"),
             User.email.label("assignee_email"),
@@ -220,7 +219,7 @@ async def _load_deal_contexts(
     )
     if assignee_id:
         stmt = stmt.where(Deal.assigned_to_id == assignee_id)
-    elif current_user.role != "admin":
+    elif not current_user.is_admin:
         stmt = stmt.where(Deal.assigned_to_id == current_user.id)
 
     rows = (await session.execute(stmt)).all()
@@ -251,7 +250,7 @@ async def load_assignment_contexts(
     assignee_id: Optional[UUID] = None,
     entity_type: Optional[str] = None,
 ) -> list[AssignmentContext]:
-    effective_assignee_id = assignee_id if current_user.role == "admin" else current_user.id
+    effective_assignee_id = assignee_id if current_user.is_admin else current_user.id
     contexts: list[AssignmentContext] = []
     if entity_type in (None, "company"):
         contexts.extend(await _load_company_contexts(session, current_user, effective_assignee_id))
@@ -398,8 +397,7 @@ async def get_current_assignment_context(
         if assignment_role != "owner":
             raise NotFoundError("Company assignments use the owner role")
         stmt = (
-            select(
-                Company,
+            CompanyRepository.visible_to(current_user, include_disabled=True).add_columns(
                 User.name.label("assignee_name"),
                 User.email.label("assignee_email"),
             )
@@ -410,7 +408,7 @@ async def get_current_assignment_context(
         if not row:
             raise NotFoundError("Assigned company not found")
         company, assignee_name, assignee_email = row
-        if current_user.role != "admin" and company.assigned_to_id != current_user.id:
+        if not current_user.is_admin and company.assigned_to_id != current_user.id:
             raise ForbiddenError("You can only view updates for your own assignments")
         return AssignmentContext(
             entity_type="company",
@@ -432,8 +430,7 @@ async def get_current_assignment_context(
             raise NotFoundError("Contact assignments use the ae or sdr role")
         assignee_column = Contact.assigned_to_id if assignment_role == "ae" else Contact.sdr_id
         stmt = (
-            select(
-                Contact,
+            (await ContactRepository.visible_to(session, current_user)).add_columns(
                 Company.name.label("company_name"),
                 User.name.label("assignee_name"),
                 User.email.label("assignee_email"),
@@ -449,7 +446,7 @@ async def get_current_assignment_context(
         assignee_id = contact.assigned_to_id if assignment_role == "ae" else contact.sdr_id
         if assignee_id is None:
             raise NotFoundError("Assigned contact not found")
-        if current_user.role != "admin" and assignee_id != current_user.id:
+        if not current_user.is_admin and assignee_id != current_user.id:
             raise ForbiddenError("You can only view updates for your own assignments")
         return AssignmentContext(
             entity_type="contact",
@@ -470,8 +467,7 @@ async def get_current_assignment_context(
         if assignment_role != "owner":
             raise NotFoundError("Deal assignments use the owner role")
         stmt = (
-            select(
-                Deal,
+            DealRepository.visible_to(current_user).add_columns(
                 Company.name.label("company_name"),
                 User.name.label("assignee_name"),
                 User.email.label("assignee_email"),
@@ -484,7 +480,7 @@ async def get_current_assignment_context(
         if not row:
             raise NotFoundError("Assigned deal not found")
         deal, company_name, assignee_name, assignee_email = row
-        if current_user.role != "admin" and deal.assigned_to_id != current_user.id:
+        if not current_user.is_admin and deal.assigned_to_id != current_user.id:
             raise ForbiddenError("You can only view updates for your own assignments")
         return AssignmentContext(
             entity_type="deal",
@@ -546,7 +542,7 @@ async def create_item_update(
         entity_id=payload.entity_id,
         assignment_role=payload.assignment_role,
     )
-    if current_user.role != "admin" and context.assignee_id != current_user.id:
+    if not current_user.is_admin and context.assignee_id != current_user.id:
         raise ForbiddenError("You can only update your own assignments")
 
     update = AssignmentUpdate(

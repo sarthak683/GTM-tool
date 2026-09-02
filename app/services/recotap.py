@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.recotap import RecotapClient
 from app.config import settings
 from app.models.company import Company
@@ -358,7 +359,7 @@ async def seed_mock_signals(session: AsyncSession, *, overwrite: bool = False) -
     """Populate recotap_accounts with deterministic mock signals for every sourced
     company, so the UI has journey-stage/score data to work with. Skips rows
     already pulled live (source='recotap') unless overwrite=True."""
-    companies = (await session.execute(select(Company))).scalars().all()
+    companies = (await session.execute(unscoped_for_background_job(Company, "recotap system work"))).scalars().all()
     seeded = 0
     for company in companies:
         domain = normalize_domain(company.domain)
@@ -805,7 +806,7 @@ async def push_crm_status(
     # Soft-deleted companies were being pushed too — select(Company) has no
     # deleted_at guard of its own, so a trashed account kept being re-upserted
     # into Recotap every night.
-    q = select(Company).where(Company.deleted_at.is_(None))
+    q = unscoped_for_background_job(Company, "recotap system work").where(Company.deleted_at.is_(None))
     if company_ids:
         q = q.where(Company.id.in_(company_ids))
     companies = (await session.execute(q)).scalars().all()

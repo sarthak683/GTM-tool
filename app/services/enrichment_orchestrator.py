@@ -14,6 +14,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.company import Company
 from app.services.icp_scorer import score_company
 from app.services.log_safety import safe_error_message
@@ -131,7 +132,7 @@ async def _create_contacts_from_hunter(
             continue
 
         # Skip if already exists
-        existing = await session.execute(select(Contact).where(func.lower(Contact.email) == (email or "").lower()))
+        existing = await session.execute(unscoped_for_background_job(Contact, "enrichment orchestrator system work").where(func.lower(Contact.email) == (email or "").lower()))
         if existing.scalar_one_or_none():
             continue
 

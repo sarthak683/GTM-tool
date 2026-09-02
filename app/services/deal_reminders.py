@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.database import task_session
 from app.models.deal import Deal
 from app.services.deal_stages import get_configured_deal_stages
@@ -39,7 +40,7 @@ async def send_due_next_step_reminders() -> dict[str, int]:
 
         rows = (
             await session.execute(
-                select(Deal).where(
+                unscoped_for_background_job(Deal, "deal reminders system work").where(
                     Deal.deleted_at.is_(None),
                     Deal.next_step_due_at.is_not(None),
                     Deal.next_step_due_at <= now,

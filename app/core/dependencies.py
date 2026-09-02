@@ -82,8 +82,8 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def require_admin(user: CurrentUser) -> User:
-    """Dependency that ensures the current user has admin role."""
-    if user.role != "admin":
+    """Dependency that ensures the current user has administrator capability."""
+    if not user.is_admin:
         raise ForbiddenError("Admin access required")
     return user
 

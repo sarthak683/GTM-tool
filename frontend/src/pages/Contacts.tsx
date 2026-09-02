@@ -42,6 +42,23 @@ import AddProspectModal from "./contacts/AddProspectModal";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { ANGEL_SURFACE, ANGEL_TEXT, PERSONA_LABEL, PERSONA_STYLE, STRENGTH_LABEL, STRENGTH_STYLE } from "./contacts/constants";
 import { filterAngelMappings, getMissingCompanyKey, groupAngelMappingsByCompany } from "./contacts/utils";
+import {
+  CONTACT_TABLE_COLUMNS,
+  DEFAULT_CONTACT_TABLE_COLUMNS,
+  dayEndIso,
+  dayStartIso,
+  latestProspectActivity,
+  normalizeContactTableColumns,
+  personaChipStyle,
+  relativeTimeShort,
+  type ContactTableColumnKey,
+} from "./contacts/formatters";
+import {
+  PROSPECT_SORT_OPTIONS,
+  sortToApi,
+  useProspectFilters,
+  type ProspectSortKey,
+} from "./contacts/useProspectFilters";
 import type { ProspectImportSummary, ProspectingTab } from "./contacts/types";
 import { EMAIL_LOG_OUTCOME_OPTIONS, ProgressCell, deriveSequenceStatusFromEmailLog, getManualEmailLog } from "./contacts/ProgressCell";
 import { LifecycleDrawer } from "./contacts/LifecycleDrawer";
@@ -49,6 +66,8 @@ import { CallRecordingPanel, type AISuggestion, type CallRecordingPanelHandle } 
 import { PreCallIntelPanel } from "./contacts/PreCallIntelPanel";
 import { ProspectingTabButton } from "./contacts/ProspectingTabButton";
 import { AngelOverviewCard, SnapshotRow, StrengthBadge } from "./contacts/AngelOverviewCard";
+import ContactsBoardView from "./contacts/ContactsBoardView";
+import ViewModeToggle from "../components/ViewModeToggle";
 import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
 import type { Contact as ContactType } from "../types";
 
@@ -138,11 +157,6 @@ const EMAIL_FILTER_OPTIONS = [
   { value: "unverified", label: "Unverified" },
 ];
 
-function parseSearchParamList(value: string | null): string[] {
-  if (!value) return [];
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
-
 // Dispositions that imply a future touchpoint — for these we show a
 // datetime picker so the rep can schedule the follow-up while the call is
 // still fresh.
@@ -187,43 +201,6 @@ function defaultFollowupLocalString(): string {
   return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
 }
 
-const CONTACT_TABLE_COLUMNS: Array<{ key: string; label: string; required?: boolean }> = [
-  { key: "name", label: "Name", required: true },
-  { key: "company", label: "Company", required: true },
-  { key: "title", label: "Title" },
-  { key: "email", label: "Email", required: true },
-  { key: "progress", label: "Progress", required: true },
-  // Action sits here, not last. Reps work the Call / Email / Log / LinkedIn
-  // buttons constantly and the reference columns after it rarely; with Action
-  // last the table was 2217px wide in 1142px of space and the buttons started
-  // 466px past the right edge, so every row needed a horizontal scroll.
-  { key: "action", label: "Action", required: true },
-  { key: "comments", label: "Comments" },
-  { key: "timezone", label: "Timezone" },
-  { key: "ae", label: "AE" },
-  { key: "sdr", label: "SDR" },
-  { key: "last_touch", label: "Last Touch" },
-] as const;
-
-type ContactTableColumnKey = typeof CONTACT_TABLE_COLUMNS[number]["key"];
-const DEFAULT_CONTACT_TABLE_COLUMNS: ContactTableColumnKey[] = CONTACT_TABLE_COLUMNS.map((column) => column.key);
-
-// Convert a `YYYY-MM-DD` date-filter value into a UTC ISO bound. `dayStartIso`
-// anchors to local midnight (start of the rep's day) and `dayEndIso` to the
-// last millisecond, so a single-day pick captures the whole day. The backend
-// compares these against UTC-naive columns, so converting the local-day
-// boundary to UTC ISO gives the rep "their day" semantics.
-function dayStartIso(date: string): string | undefined {
-  if (!date) return undefined;
-  const d = new Date(`${date}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
-}
-function dayEndIso(date: string): string | undefined {
-  if (!date) return undefined;
-  const d = new Date(`${date}T23:59:59.999`);
-  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
-}
-
 // Local `YYYY-MM-DD` for the date-range presets. Offsets are in days from
 // today; getRange() is evaluated at render/click time so "Today" always means
 // the actual current day rather than page-load day.
@@ -248,82 +225,6 @@ const lastCallPresets: { label: string; getRange: () => DateRangeValue }[] = [
   { label: "Last 7 days", getRange: () => ({ from: localDateStr(-7), to: localDateStr(0) }) },
   { label: "Last 30 days", getRange: () => ({ from: localDateStr(-30), to: localDateStr(0) }) },
 ];
-
-function relativeTimeShort(iso?: string | null): string {
-  if (!iso) return "";
-  const ts = new Date(iso).getTime();
-  if (Number.isNaN(ts)) return "";
-  const diff = Date.now() - ts;
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo ago`;
-  return `${Math.floor(mo / 12)}y ago`;
-}
-
-function latestProspectActivity(c: Contact): string | undefined {
-  const candidates = [
-    c.email_last_opened_at,
-    c.call_last_at,
-    c.linkedin_last_at,
-    c.tracking_last_activity_at,
-  ].filter(Boolean) as string[];
-  if (!candidates.length) return undefined;
-  return candidates.sort()[candidates.length - 1];
-}
-
-function personaChipStyle(personaType?: string): { bg: string; fg: string; border: string; label: string } {
-  const t = (personaType || "").toLowerCase();
-  if (t === "champion") return { bg: "#ecfdf5", fg: "#047857", border: "#a7f3d0", label: "Champion" };
-  if (t === "buyer")    return { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe", label: "Buyer" };
-  if (t === "evaluator")return { bg: "#f5f3ff", fg: "#6d28d9", border: "#ddd6fe", label: "Evaluator" };
-  if (t === "blocker")  return { bg: "#fef2f2", fg: "#b91c1c", border: "#fecaca", label: "Blocker" };
-  return { bg: "#f1f5f9", fg: "#475569", border: "#e2e8f0", label: personaType || "Unknown" };
-}
-
-function normalizeContactTableColumns(raw: string | null): ContactTableColumnKey[] {
-  if (!raw) return DEFAULT_CONTACT_TABLE_COLUMNS;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return DEFAULT_CONTACT_TABLE_COLUMNS;
-    const allowed = new Set(CONTACT_TABLE_COLUMNS.map((column) => column.key));
-    const next = parsed.filter((value): value is ContactTableColumnKey => typeof value === "string" && allowed.has(value as ContactTableColumnKey));
-    if (!next.length) return DEFAULT_CONTACT_TABLE_COLUMNS;
-    // Auto-include any NEW columns added to the app since this layout was saved
-    // (e.g. "comments") so existing users see them without re-enabling manually.
-    // New columns are inserted just before "action" so they don't land after the
-    // row action buttons; if "action" isn't present they're appended.
-    const present = new Set(next);
-    const missing = CONTACT_TABLE_COLUMNS
-      .map((column) => column.key as ContactTableColumnKey)
-      .filter((key) => !present.has(key));
-    if (!missing.length) return next;
-    // "last_touch" gets its own placement rule (between SDR and Comments)
-    // rather than the generic before-Action rule, since it reads naturally
-    // beside the other per-rep reference columns.
-    const lastTouchIdx = missing.indexOf("last_touch");
-    let result = next;
-    if (lastTouchIdx !== -1) {
-      missing.splice(lastTouchIdx, 1);
-      const commentsIdx = result.indexOf("comments");
-      const sdrIdx = result.indexOf("sdr");
-      const insertAt = commentsIdx !== -1 ? commentsIdx : sdrIdx !== -1 ? sdrIdx + 1 : result.length;
-      result = [...result.slice(0, insertAt), "last_touch", ...result.slice(insertAt)];
-    }
-    if (!missing.length) return result;
-    const actionIdx = result.indexOf("action");
-    return actionIdx === -1
-      ? [...result, ...missing]
-      : [...result.slice(0, actionIdx), ...missing, ...result.slice(actionIdx)];
-  } catch {
-    return DEFAULT_CONTACT_TABLE_COLUMNS;
-  }
-}
 
 // Saved layouts predate Action being moved left, and the Customize menu only
 // toggles visibility, so a rep cannot reorder it back themselves. Reposition
@@ -351,126 +252,52 @@ export default function Contacts() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  // Filter hydration source. URL params WIN when present (bookmarks/shared
-  // links keep working); otherwise fall back to the last-saved filters in
-  // localStorage so returning via the left-nav link or a detail "back" button
-  // (which land on the BARE path with no query string) restores the view
-  // instead of resetting everything. Computed once at mount.
-  const initParams = useMemo(() => {
-    const FILTER_KEYS = ["q", "qf", "qm", "sb", "seq", "acct", "call", "li", "pe", "em", "cc", "ec", "ca", "fcmin", "fcmax", "nfa", "nfb", "cla", "clb", "owner", "ae", "sdr", "own", "tz", "co", "pg", "tab", "ltt", "ltr"];
-    const hasAny = FILTER_KEYS.some((k) => searchParams.has(k));
-    if (hasAny) return searchParams;
-    try {
-      const saved = localStorage.getItem("crm.prospecting.filters");
-      if (saved) return new URLSearchParams(saved);
-    } catch {
-      /* ignore */
-    }
-    return searchParams;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const { isAdmin, user } = useAuth();
   // SDRs are scoped to their own prospects everywhere (backend now returns only
   // own-assigned for this role). The owner-scope control's "All reps" /
   // "Unassigned" views would be misleading (they'd return only the SDR's own),
   // so for non-admin SDRs we force scope to "mine" and lock the toggle.
   const isSdrLocked = !isAdmin && user?.role === "sdr";
+  const {
+    viewMode, setViewMode,
+    search, setSearch,
+    searchScope, setSearchScope,
+    searchMatch, setSearchMatch,
+    prospectSort, setProspectSort,
+    personaFilter, setPersonaFilter,
+    sequenceFilter, setSequenceFilter,
+    accountStatusFilter, setAccountStatusFilter,
+    callDispositionFilter, setCallDispositionFilter,
+    linkedinStatusFilter, setLinkedinStatusFilter,
+    callOutcomeColorFilter, setCallOutcomeColorFilter,
+    emailOutcomeColorFilter, setEmailOutcomeColorFilter,
+    callAttemptsBucketFilter, setCallAttemptsBucketFilter,
+    followupCountMin, setFollowupCountMin,
+    followupCountMax, setFollowupCountMax,
+    nextFollowupRange, setNextFollowupRange,
+    callLastRange, setCallLastRange,
+    emailFilter, setEmailFilter,
+    ownerScope, setOwnerScope,
+    aeFilter, setAeFilter,
+    sdrFilter, setSdrFilter,
+    ownerFilter, setOwnerFilter,
+    timezoneFilter, setTimezoneFilter,
+    lastTouchType, setLastTouchType,
+    lastTouchRepFilter, setLastTouchRepFilter,
+    companyFilter, setCompanyFilter,
+    page, setPage,
+    reset: resetProspectFilters,
+    toParams: prospectFiltersToParams,
+    hasActiveFilters,
+    initiallyShowFilters,
+  } = useProspectFilters({ searchParams, isSdrLocked });
   const toast = useToast();
   const [tab, setTab] = useState<ProspectingTab>("contacts");
   const pageSize = 50;
 
   // ── Contacts state — initialised from URL so filters survive navigation ──
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [search, setSearch] = useState(() => initParams.get("q") ?? "");
-  const [searchScope, setSearchScope] = useState<string>(() => initParams.get("qf") ?? "all");
-  // Match mode for scoped/bulk search: "contains" treats each pasted entry as
-  // a substring; "exact" requires whole-cell equality (case-insensitive).
-  // URL-persisted as `qm`; only sent when scope !== "all".
-  const [searchMatch, setSearchMatch] = useState<"contains" | "exact">(() => (initParams.get("qm") === "exact" ? "exact" : "contains"));
-  // Explicit sort. Server-side so it covers the full dataset, not just the
-  // visible page. URL-persisted as `sb`/`sd` so deep-linked alphabetised
-  // views survive navigation.
-  type ProspectSortKey = "recent" | "name_asc" | "name_desc" | "company_asc" | "company_desc";
-  const PROSPECT_SORT_OPTIONS: Array<{ value: ProspectSortKey; label: string }> = [
-    { value: "recent", label: "Newest first" },
-    { value: "name_asc", label: "Name A → Z" },
-    { value: "name_desc", label: "Name Z → A" },
-    { value: "company_asc", label: "Company A → Z" },
-    { value: "company_desc", label: "Company Z → A" },
-  ];
-  const [prospectSort, setProspectSort] = useState<ProspectSortKey>(() => {
-    const raw = initParams.get("sb") ?? "recent";
-    return (PROSPECT_SORT_OPTIONS.some((o) => o.value === raw) ? raw : "recent") as ProspectSortKey;
-  });
-  const sortToApi = (s: ProspectSortKey): { sortBy?: "name" | "company"; sortDir?: "asc" | "desc" } => {
-    if (s === "name_asc") return { sortBy: "name", sortDir: "asc" };
-    if (s === "name_desc") return { sortBy: "name", sortDir: "desc" };
-    if (s === "company_asc") return { sortBy: "company", sortDir: "asc" };
-    if (s === "company_desc") return { sortBy: "company", sortDir: "desc" };
-    return {};
-  };
-  const [showFilters, setShowFilters] = useState<boolean>(() => {
-    // Auto-open the filter card on mount when the URL already carries active
-    // filters — otherwise users would have to hunt for the toggle to discover
-    // why the list is narrowed.
-    //
-    // `owner=mine` is deliberately NOT in this list. It is the DEFAULT landing
-    // view ("My prospects"), not something the rep chose, so counting it here
-    // auto-expanded all five filter rows on every plain visit to /contacts and
-    // pushed the first prospect to y=862 of a 900px viewport — zero rows
-    // visible before scrolling. Measured 2026-08-18.
-    return Boolean(
-      initParams.get("seq") || initParams.get("acct") || initParams.get("call") || initParams.get("ae") ||
-      initParams.get("sdr") || initParams.get("own") || initParams.get("tz") ||
-      initParams.get("co") ||
-      initParams.get("pe") || initParams.get("em") ||
-      initParams.get("cc") || initParams.get("ec") || initParams.get("ca") ||
-      initParams.get("fcmin") || initParams.get("fcmax") ||
-      initParams.get("nfa") || initParams.get("nfb") ||
-      initParams.get("cla") || initParams.get("clb")
-    );
-  });
-  // Layout reverted to the pre-97450f2 toolbar (no "More ⋯" overflow menu), but
-  // the filter still restores from the URL — that is the shareable-filter-link
-  // behaviour from d31d73d, which is function rather than layout.
-  const [personaFilter, setPersonaFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("pe")));
-  const [sequenceFilter, setSequenceFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("seq")));
-  // ACCOUNT-status filter. Server rule: with nothing selected, prospects of
-  // disabled (not_a_fit/dnd) accounts are hidden; explicitly selecting a
-  // disabled status shows them (reviewing parked accounts is legitimate).
-  const [accountStatusFilter, setAccountStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("acct")));
-  const [callDispositionFilter, setCallDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("call")));
-  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("li")));
-  // Progress-dot color filters. Map 1:1 to the dot colors rendered by
-  // `ProgressCell`. URL keys: `cc` (call color), `ec` (email color), `ca`
-  // (call attempts bucket). The backend translates colors to disposition /
-  // sequence_status / count buckets — see app/repositories/contact.py.
-  const [callOutcomeColorFilter, setCallOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("cc")));
-  const [emailOutcomeColorFilter, setEmailOutcomeColorFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ec")));
-  const [callAttemptsBucketFilter, setCallAttemptsBucketFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ca")));
-  // Follow-up count range (calls logged). URL keys: `fcmin` / `fcmax`. Either
-  // bound may be null (open-ended). Backend maps these to call_attempt_min/max.
-  const parseCountParam = (raw: string | null): number | null => {
-    if (raw == null || raw.trim() === "") return null;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
-  };
-  const [followupCountMin, setFollowupCountMin] = useState<number | null>(() => parseCountParam(initParams.get("fcmin")));
-  const [followupCountMax, setFollowupCountMax] = useState<number | null>(() => parseCountParam(initParams.get("fcmax")));
-  // Date-range filters. `nextFollowupRange` filters on the rep-scheduled
-  // callback (next_followup_at); `callLastRange` on the last call (call_last_at).
-  // Values are `YYYY-MM-DD`; "" means unbounded. URL keys: nfa/nfb, cla/clb.
-  const [nextFollowupRange, setNextFollowupRange] = useState<DateRangeValue>(() => ({
-    from: initParams.get("nfa") ?? "",
-    to: initParams.get("nfb") ?? "",
-  }));
-  const [callLastRange, setCallLastRange] = useState<DateRangeValue>(() => ({
-    from: initParams.get("cla") ?? "",
-    to: initParams.get("clb") ?? "",
-  }));
-  // Email-state filter (has/missing/verified/unverified). Server-side via
-  // ContactFilters.email_state; URL key `em`.
-  const [emailFilter, setEmailFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("em")));
+  const [showFilters, setShowFilters] = useState(initiallyShowFilters);
   // SERVER filter wired to the engagement KPI tiles. Clicking a tile applies
   // the matching backend filter (emails_opened / linkedin_active /
   // meetings_booked), so pagination, export, and bulk actions all agree with
@@ -481,40 +308,9 @@ export default function Contacts() {
   // Fetched with the SAME filters as the list, minus the tile filter itself,
   // so each tile keeps showing its category's count while one is active.
   const [engagementStats, setEngagementStats] = useState<ContactEngagementStats | null>(null);
-  const [ownerScope, setOwnerScope] = useState<"all" | "mine">(() =>
-    // SDRs only ever see their own prospects — force "mine" on load regardless
-    // of any persisted ?owner= param.
-    isSdrLocked || initParams.get("owner") === "mine" ? "mine" : "all"
-  );
-  const [aeFilter, setAeFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ae")));
-  const [sdrFilter, setSdrFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("sdr")));
-  // Last Touch filter: which channel (call/email/linkedin) + which rep(s) did
-  // the MOST RECENT activity of that channel. Both must be set to filter —
-  // a rep alone with no channel picked is ambiguous (which of the 3 columns?).
-  const [lastTouchType, setLastTouchType] = useState<"" | "call" | "email" | "linkedin">(
-    () => (initParams.get("ltt") as "call" | "email" | "linkedin" | null) || ""
-  );
-  const [lastTouchRepFilter, setLastTouchRepFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("ltr")));
-  // Owner filter — multi-select that matches AE OR SDR ownership for any
-  // selected user. Different from ownerScope (binary "mine vs all") and from
-  // aeFilter/sdrFilter (role-specific). Sent to backend via owner_id +
-  // scope_any_match=true so a single user_id matches contacts they own as
-  // either AE or SDR.
-  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("own")));
-  // Timezone filter values are canonical IANA zones. Legacy short labels in
-  // saved URLs are normalized on load, while API requests expand each calling
-  // region to every compatible canonical zone and historic abbreviation.
-  const [timezoneFilter, setTimezoneFilter] = useState<string[]>(() =>
-    parseSearchParamList(initParams.get("tz")).map(canonicalTimezone)
-  );
-  // Company filter — optional narrowing to a single company's prospects.
-  // Backend's contacts list already accepts `company_id`; this just wires a
-  // dropdown to it. Value is a single company UUID (or "" for all).
-  const [companyFilter, setCompanyFilter] = useState<string>(() => initParams.get("co") ?? "");
   const [companyOptions, setCompanyOptions] = useState<Company[]>([]);
   const [teamUsers, setTeamUsers] = useState<User[]>([]);
-  const [debouncedSearch, setDebouncedSearch] = useState(() => initParams.get("q") ?? "");
-  const [page, setPage] = useState(() => parseInt(initParams.get("pg") ?? "1", 10) || 1);
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [contactsTotal, setContactsTotal] = useState(0);
   const [contactsPages, setContactsPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -799,7 +595,7 @@ export default function Contacts() {
     window.dispatchEvent(new Event("crm:aircall:toggle"));
   };
   const canMigrateProspects =
-    isAdmin || Boolean(user && user.role !== "admin" && rolePermissions?.[user.role]?.prospect_migration);
+    isAdmin || Boolean(user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") && rolePermissions?.[user.role]?.prospect_migration);
 
   useEffect(() => {
     if (searchParams.get("new") !== "prospect") return;
@@ -1102,35 +898,7 @@ export default function Contacts() {
 
   useEffect(() => {
     setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      search.trim() ? next.set("q", search.trim()) : next.delete("q");
-      searchScope && searchScope !== "all" ? next.set("qf", searchScope) : next.delete("qf");
-      searchScope && searchScope !== "all" && searchMatch === "exact" ? next.set("qm", "exact") : next.delete("qm");
-      prospectSort !== "recent" ? next.set("sb", prospectSort) : next.delete("sb");
-      ownerScope === "mine" ? next.set("owner", "mine") : next.delete("owner");
-      sequenceFilter.length ? next.set("seq", sequenceFilter.join(",")) : next.delete("seq");
-      accountStatusFilter.length ? next.set("acct", accountStatusFilter.join(",")) : next.delete("acct");
-      callDispositionFilter.length ? next.set("call", callDispositionFilter.join(",")) : next.delete("call");
-      linkedinStatusFilter.length ? next.set("li", linkedinStatusFilter.join(",")) : next.delete("li");
-      personaFilter.length ? next.set("pe", personaFilter.join(",")) : next.delete("pe");
-      emailFilter.length ? next.set("em", emailFilter.join(",")) : next.delete("em");
-      callOutcomeColorFilter.length ? next.set("cc", callOutcomeColorFilter.join(",")) : next.delete("cc");
-      emailOutcomeColorFilter.length ? next.set("ec", emailOutcomeColorFilter.join(",")) : next.delete("ec");
-      callAttemptsBucketFilter.length ? next.set("ca", callAttemptsBucketFilter.join(",")) : next.delete("ca");
-      followupCountMin != null ? next.set("fcmin", String(followupCountMin)) : next.delete("fcmin");
-      followupCountMax != null ? next.set("fcmax", String(followupCountMax)) : next.delete("fcmax");
-      nextFollowupRange.from ? next.set("nfa", nextFollowupRange.from) : next.delete("nfa");
-      nextFollowupRange.to ? next.set("nfb", nextFollowupRange.to) : next.delete("nfb");
-      callLastRange.from ? next.set("cla", callLastRange.from) : next.delete("cla");
-      callLastRange.to ? next.set("clb", callLastRange.to) : next.delete("clb");
-      aeFilter.length ? next.set("ae", aeFilter.join(",")) : next.delete("ae");
-      sdrFilter.length ? next.set("sdr", sdrFilter.join(",")) : next.delete("sdr");
-      ownerFilter.length ? next.set("own", ownerFilter.join(",")) : next.delete("own");
-      timezoneFilter.length ? next.set("tz", timezoneFilter.join(",")) : next.delete("tz");
-      lastTouchType ? next.set("ltt", lastTouchType) : next.delete("ltt");
-      lastTouchRepFilter.length ? next.set("ltr", lastTouchRepFilter.join(",")) : next.delete("ltr");
-      companyFilter ? next.set("co", companyFilter) : next.delete("co");
-      page > 1 ? next.set("pg", String(page)) : next.delete("pg");
+      const next = prospectFiltersToParams(prev);
       // The active "tab" here is route-driven (angel-mapping is its own route),
       // so the route itself already persists which view is shown — we only
       // persist the prospect-list filters. Persist the same params to
@@ -1143,7 +911,7 @@ export default function Contacts() {
       }
       return next;
     }, { replace: true });
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, ownerFilter, ownerScope, page, sdrFilter, search, searchScope, searchMatch, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, prospectSort, setSearchParams]);
+  }, [prospectFiltersToParams, setSearchParams]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -3057,30 +2825,7 @@ export default function Contacts() {
                 the top action row. Auto-shown when the user already has active
                 filters so they can see what's narrowing the list. */}
             {showFilters && (() => {
-              const hasFilters = !!(
-                // For locked SDRs "mine" is the permanent baseline, not an
-                // active filter — don't let it force the Reset / panel state.
-                (!isSdrLocked && ownerScope === "mine") ||
-                sequenceFilter.length ||
-                callDispositionFilter.length ||
-                linkedinStatusFilter.length ||
-                personaFilter.length ||
-                emailFilter.length ||
-                callOutcomeColorFilter.length ||
-                emailOutcomeColorFilter.length ||
-                callAttemptsBucketFilter.length ||
-                followupCountMin != null ||
-                followupCountMax != null ||
-                nextFollowupRange.from || nextFollowupRange.to ||
-                callLastRange.from || callLastRange.to ||
-                aeFilter.length ||
-                sdrFilter.length ||
-                ownerFilter.length ||
-                timezoneFilter.length ||
-                companyFilter ||
-                (lastTouchType && lastTouchRepFilter.length) ||
-                search
-              );
+              const hasFilters = hasActiveFilters;
               const teamUserOptions = [
                 // Sentinel for "no owner" — backend maps "__unassigned__" to an
                 // IS NULL clause on the matching ownership slot(s) so reps can
@@ -3400,6 +3145,11 @@ export default function Contacts() {
                   <div style={{ height: 1, background: "#eef2f7", margin: "2px 0 0" }} />
                   <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
 
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4a6580", textTransform: "uppercase", letterSpacing: 0.4 }}>View</span>
+                    <ViewModeToggle value={viewMode} onChange={setViewMode} />
+                  </div>
+
                   {/* Sort — server-side so it covers the full dataset, not
                       just the visible 50. Ties are broken by contact.id so
                       pagination is stable. */}
@@ -3515,24 +3265,8 @@ export default function Contacts() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSearch("");
-                        // SDRs stay locked to their own prospects on reset.
-                        setOwnerScope(isSdrLocked ? "mine" : "all");
-                        setSequenceFilter([]); setCallDispositionFilter([]);
-                        setAccountStatusFilter([]);
-                        setLinkedinStatusFilter([]);
-                        setPersonaFilter([]); setEmailFilter([]);
+                        resetProspectFilters();
                         setCardFilter(null);
-                        setCallOutcomeColorFilter([]); setEmailOutcomeColorFilter([]);
-                        setCallAttemptsBucketFilter([]);
-                        setFollowupCountMin(null); setFollowupCountMax(null);
-                        setNextFollowupRange({ from: "", to: "" });
-                        setCallLastRange({ from: "", to: "" });
-                        setAeFilter([]); setSdrFilter([]);
-                        setOwnerFilter([]);
-                        setTimezoneFilter([]);
-                        setCompanyFilter("");
-                        setLastTouchType(""); setLastTouchRepFilter([]);
                       }}
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 5,
@@ -3774,7 +3508,13 @@ export default function Contacts() {
             )}
 
             {/* Contacts Table */}
-            {loading ? (
+            {viewMode === "board" ? (
+              loading ? (
+                <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
+              ) : (
+                <ContactsBoardView records={displayedContacts} onOpen={(contact) => navigate(`/contacts/${contact.id}`)} />
+              )
+            ) : loading ? (
               <div className="crm-panel p-14 text-center crm-muted prospect-desktop-only">Loading contacts...</div>
             ) : displayedContacts.length === 0 ? (
               <div className="crm-panel p-14 text-center text-[#6f8297] prospect-desktop-only">

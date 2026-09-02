@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.google_docs import fetch_google_doc_context
 from app.clients.gmail_inbox import EmailMessage
 from app.config import settings
@@ -493,7 +494,7 @@ async def _get_or_create_company_by_domain(
         return None
 
     result = await session.execute(
-        select(Company).where(func.lower(Company.domain) == (domain or "").lower())
+        unscoped_for_background_job(Company, "personal email sync system work").where(func.lower(Company.domain) == (domain or "").lower())
     )
     return result.scalar_one_or_none()
 
@@ -514,7 +515,7 @@ async def _get_or_create_contact_by_email(
     admin UI.
     """
     result = await session.execute(
-        select(Contact).where(func.lower(Contact.email) == (email_addr or "").lower())
+        unscoped_for_background_job(Contact, "personal email sync system work").where(func.lower(Contact.email) == (email_addr or "").lower())
     )
     return result.scalar_one_or_none()
 
@@ -637,7 +638,7 @@ async def process_personal_emails(
         return stats
 
     # Pre-load all company domains for fast lookup (avoid N+1 queries)
-    all_companies_result = await session.execute(select(Company))
+    all_companies_result = await session.execute(unscoped_for_background_job(Company, "personal email sync system work"))
     company_domain_map: dict[str, tuple[UUID, str, bool]] = {}  # domain → (id, name, trackable)
     all_company_names: list[str] = []
     company_name_candidates: list[tuple[str, UUID, str]] = []

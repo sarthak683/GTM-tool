@@ -19,10 +19,11 @@ from app.models.deal import (
     Deal, DealContactCreate, DealContactRead, DealCreate, DealRead, DealUpdate,
 )
 from app.models.user import User
-from app.repositories.deal import DealRepository, deal_visibility_filter
+from app.repositories.deal import DealRepository, can_see_deal, deal_visibility_filter
 from app.schemas.common import PaginatedResponse
 from app.services.close_reason_backfill import backfill_close_reasons
 from app.services.company_stage_milestones import record_deal_stage_milestone
+from app.services.contact_access import get_visible_contact
 from app.services.deal_stage_history import CLOSE_REASONS, record_stage_transition
 from app.services.deal_stages import get_configured_deal_stage_ids, get_configured_default_deal_stage
 from app.services.meddpicc_assist import generate_meddpicc_assist
@@ -37,16 +38,6 @@ router = APIRouter(prefix="/deals", tags=["deals"])
 
 async def _valid_stages(session, pipeline_type: str) -> frozenset[str]:
     return frozenset(await get_configured_deal_stage_ids(session)) if pipeline_type == "deal" else frozenset(PROSPECT_STAGES)
-
-
-def _can_see_deal(deal: Deal, user: User, view_all: bool = False) -> bool:
-    """Deals are workspace-wide (Jul 1): everyone can see + edit any deal.
-
-    Signature kept (callers still pass ``deal``/``user``/``view_all``) but all
-    args are now ignored — always returns True. The audit trail on each edit
-    (``created_by_id``) captures who made the change.
-    """
-    return True
 
 
 def _normalize_optional_text(value: object) -> str | None:
@@ -135,7 +126,7 @@ async def deal_board(
     pipeline_type: str = Query(default="deal"),
 ):
     """Return deals grouped by stage for kanban board display."""
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
     return await DealRepository(session).board(
         pipeline_type,
         user_id=_user.id,
@@ -186,7 +177,7 @@ async def list_deals(
     repo = DealRepository(session)
     # Scope to deals the caller may see (admins + view-all grantees see all).
     # Keep first so it ANDs with every other filter.
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
     filters = [deal_visibility_filter(_user.id, view_all)]
     if company_id:
         filters.append(Deal.company_id == company_id)
@@ -405,8 +396,6 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
     now = datetime.utcnow()
     valid_cache: dict[str, frozenset[str]] = {}
     updated = 0
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
-
     # One IN() fetch instead of up-to-200 session.get round trips. Scope the
     # fetch to deals the caller may see so a non-admin can't mutate deals they
     # don't own; ids they can't see are simply absent from the map and the loop
@@ -416,9 +405,8 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
         deal.id: deal
         for deal in (
             await session.execute(
-                select(Deal).where(
+                DealRepository.visible_to(_user).where(
                     Deal.id.in_(payload.deal_ids),
-                    deal_visibility_filter(_user.id, view_all),
                 )
             )
         ).scalars()
@@ -508,7 +496,7 @@ async def bulk_update_deals(payload: BulkDealUpdate, session: DBSession, _user: 
 
 @router.get("/{deal_id}", response_model=DealRead)
 async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
     result = await DealRepository(session).get_with_joins(
         deal_id, user_id=_user.id, is_admin=view_all
     )
@@ -524,8 +512,8 @@ async def get_deal(deal_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_deal(deal_id: UUID, payload: DealUpdate, session: DBSession, _user: CurrentUser):
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
-    if not _can_see_deal(deal, _user, view_all):
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
+    if not can_see_deal(deal, _user, view_all):
         raise NotFoundError(f"Deal {deal_id} not found")
     update_data = payload.model_dump(exclude_unset=True)
     stage_changed = False
@@ -745,8 +733,8 @@ async def move_stage(deal_id: UUID, body: DealStageMoveRequest, session: DBSessi
 
     repo = DealRepository(session)
     deal = await repo.get_or_raise(deal_id)
-    view_all = _user.role == "admin" or await can_view_all_deals(session, _user)
-    if not _can_see_deal(deal, _user, view_all):
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
+    if not can_see_deal(deal, _user, view_all):
         raise NotFoundError(f"Deal {deal_id} not found")
 
     valid = await _valid_stages(session, deal.pipeline_type)
@@ -901,9 +889,7 @@ async def add_deal_contact(deal_id: UUID, body: DealContactCreate, session: DBSe
         return existing
 
     # Verify contact exists
-    contact = await session.get(Contact, body.contact_id)
-    if not contact:
-        raise NotFoundError(f"Contact {body.contact_id} not found")
+    contact = await get_visible_contact(session, _user, body.contact_id)
 
     dc = await repo.add_contact(deal_id, body.contact_id, body.role)
 

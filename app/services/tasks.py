@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.models.activity import Activity
 from app.models.company import Company
@@ -95,7 +96,7 @@ async def compute_deal_task_input_hash(session: AsyncSession, deal: Deal) -> str
     ).scalars().all()
     contacts = (
         await session.execute(
-            select(Contact)
+            unscoped_for_background_job(Contact, "tasks system work")
             .join(DealContact, DealContact.contact_id == Contact.id)
             .where(DealContact.deal_id == deal.id)
         )
@@ -2471,7 +2472,7 @@ async def _refresh_deal_tasks(session: AsyncSession, entity_id: UUID) -> None:
 
     linked_contacts = (
         await session.execute(
-            select(Contact)
+            unscoped_for_background_job(Contact, "tasks system work")
             .join(DealContact, DealContact.contact_id == Contact.id)
             .where(DealContact.deal_id == deal.id)
         )
@@ -3060,7 +3061,7 @@ async def _refresh_sales_ai_tasks_for_deal(session: AsyncSession, deal: Deal) ->
     ).scalars().all()
     contacts = (
         await session.execute(
-            select(Contact)
+            unscoped_for_background_job(Contact, "tasks system work")
             .join(DealContact, DealContact.contact_id == Contact.id)
             .where(DealContact.deal_id == deal.id)
         )
@@ -3330,7 +3331,7 @@ async def apply_task_action(
         deal = await repo.get_or_raise(deal_id)
         email = str(payload["email"]).strip().lower()
         existing_contact = (
-            await session.execute(select(Contact).where(Contact.email == email))
+            await session.execute(unscoped_for_background_job(Contact, "tasks system work").where(Contact.email == email))
         ).scalar_one_or_none()
         contact = existing_contact
         if not contact:
@@ -3780,13 +3781,13 @@ async def apply_task_action(
         existing_contact = None
         if email:
             existing_contact = (
-                await session.execute(select(Contact).where(Contact.email == email))
+                await session.execute(unscoped_for_background_job(Contact, "tasks system work").where(Contact.email == email))
             ).scalar_one_or_none()
         elif name:
             first_name, _, last_name = name.partition(" ")
             existing_contact = (
                 await session.execute(
-                    select(Contact).where(
+                    unscoped_for_background_job(Contact, "tasks system work").where(
                         Contact.company_id == deal.company_id,
                         Contact.first_name == first_name,
                         Contact.last_name == (last_name or "Contact"),

@@ -140,6 +140,7 @@ async def _match_company(
     Pass 2: event title text contains a company name
     """
     from app.models.company import Company  # local import
+    from app.repositories.company import CompanyRepository
 
     # Pass 1 — domain match
     external_domains = {
@@ -151,7 +152,9 @@ async def _match_company(
         for domain in external_domains:
             company = (
                 await session.execute(
-                    select(Company).where(func.lower(Company.domain) == (domain or "").lower())
+                    CompanyRepository.unscoped_for_background_job(
+                        "scheduled AE meeting reminder domain matching"
+                    ).where(func.lower(Company.domain) == (domain or "").lower())
                 )
             ).scalar_one_or_none()
             if company:
@@ -176,7 +179,9 @@ async def _match_company(
         if re.search(pattern, title_key):
             company = (
                 await session.execute(
-                    select(Company).where(Company.id == company_id)
+                    CompanyRepository.unscoped_for_background_job(
+                        "scheduled AE meeting reminder company hydration"
+                    ).where(Company.id == company_id)
                 )
             ).scalar_one_or_none()
             if company:
@@ -191,10 +196,13 @@ async def _get_deal_stage_for_company(
 ) -> tuple[str | None, object | None]:
     """Return (deal_stage, assigned_to_id) for the company's deal, or (None, None)."""
     from app.models.deal import Deal  # local import
+    from app.repositories.deal import DealRepository
 
     deal = (
         await session.execute(
-            select(Deal).where(Deal.company_id == company_id).limit(1)
+            DealRepository.unscoped_for_background_job(
+                "scheduled AE meeting reminder deal hydration"
+            ).where(Deal.company_id == company_id).limit(1)
         )
     ).scalar_one_or_none()
     if deal:

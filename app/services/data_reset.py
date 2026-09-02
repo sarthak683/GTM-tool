@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.activity import Activity
 from app.models.angel import AngelMapping
 from app.models.battlecard import Battlecard
@@ -91,7 +92,7 @@ async def reset_prospecting_data(session: AsyncSession) -> dict[str, int]:
     contact_result = await session.execute(delete(Contact))
     await session.commit()
 
-    companies = list((await session.execute(select(Company))).scalars().all())
+    companies = list((await session.execute(unscoped_for_background_job(Company, "data reset system work"))).scalars().all())
     refreshed_companies = 0
     for company in companies:
         # Rebuild into a NEW dict instead of pop()-ing in place: `cache or None`

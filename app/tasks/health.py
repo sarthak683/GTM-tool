@@ -47,6 +47,7 @@ def recalculate_all_deal_health() -> dict:
 async def _async_recalculate() -> int:
     from app.database import task_session
     from app.models.deal import Deal
+    from app.repositories.deal import DealRepository
     from app.services.deal_activity import latest_touch_by_deal
     from app.services.deal_health import compute_health
     from app.services.deal_linker import reconcile_deal_stakeholders
@@ -60,7 +61,9 @@ async def _async_recalculate() -> int:
 
         closed_stage_ids = await get_closed_deal_stage_ids(session) or _CLOSED_STAGES
         result = await session.execute(
-            select(Deal).where(Deal.stage.notin_(closed_stage_ids), Deal.deleted_at.is_(None))
+            DealRepository.unscoped_for_background_job(
+                "scheduled workspace health scan"
+            ).where(Deal.stage.notin_(closed_stage_ids), Deal.deleted_at.is_(None))
         )
         deals = result.scalars().all()
 

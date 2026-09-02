@@ -13,10 +13,15 @@ class User(SQLModel, table=True):
     name: str
     avatar_url: Optional[str] = None
     google_id: str = Field(index=True, unique=True)
-    role: str = Field(default="sdr")  # admin | ae | sdr
+    role: str = Field(default="sdr")  # superadmin | admin | ae | sdr | marketing
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @property
+    def is_admin(self) -> bool:
+        """Whether this account has workspace-administrator capabilities."""
+        return self.role in {"admin", "superadmin"}
 
 
 class UserRead(SQLModel):

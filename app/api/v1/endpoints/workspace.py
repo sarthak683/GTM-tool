@@ -22,6 +22,7 @@ from app.models.contact import Contact, ContactRead
 from app.models.activity import Activity
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
+from app.repositories.contact import ContactRepository
 from app.services.contact_tracking import apply_contact_tracking
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -188,12 +189,13 @@ async def _load_tracked_contacts(session, user=None) -> list[ContactRead]:
     # Scope to what `user` may see (own + unassigned) for non-admins, so the
     # workspace alerts/insights built from these contacts don't leak other reps'
     # prospect names + /contacts/{id} deep-links. None/admin => all contacts.
-    stmt = select(Contact)
-    if user is not None:
-        from app.repositories.contact import visible_contact_restriction
-        restriction = await visible_contact_restriction(session, user)
-        if restriction is not None:
-            stmt = stmt.where(restriction)
+    stmt = (
+        await ContactRepository.visible_to(session, user)
+        if user is not None
+        else ContactRepository.unscoped_for_background_job(
+            "workspace aggregate helper invoked without a requesting user"
+        )
+    )
     contacts = (await session.execute(stmt)).scalars().all()
     tracked = [ContactRead.model_validate(contact) for contact in contacts]
     await apply_contact_tracking(session, tracked)

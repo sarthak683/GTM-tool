@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.clients.tldv import TldvClient, TldvError
 from app.clients.claude import ClaudeClient
 from app.config import settings
@@ -239,7 +240,7 @@ async def _match_contacts(session: AsyncSession, attendee_emails: list[str]) -> 
     # meeting→contact→deal link for any mixed-case row.
     lowered = [e.lower() for e in attendee_emails if e]
     result = await session.execute(
-        select(Contact).where(func.lower(Contact.email).in_(lowered))
+        unscoped_for_background_job(Contact, "tldv sync system work").where(func.lower(Contact.email).in_(lowered))
     )
     return result.scalars().all()
 
@@ -277,7 +278,7 @@ async def _match_deal_from_contacts(session: AsyncSession, contact_ids: list[UUI
     if not contact_ids:
         return None
     result = await session.execute(
-        select(Deal)
+        unscoped_for_background_job(Deal, "tldv sync system work")
         .join(DealContact, DealContact.deal_id == Deal.id)
         .where(DealContact.contact_id.in_(contact_ids))
         .order_by(
@@ -301,7 +302,7 @@ async def _match_company_from_domains(session: AsyncSession, domains: list[str])
     if len(normalized) != 1:
         return None
     result = await session.execute(
-        select(Company)
+        unscoped_for_background_job(Company, "tldv sync system work")
         .where(Company.domain.in_(normalized))
         .order_by(Company.enriched_at.desc().nullslast(), Company.updated_at.desc())
         .limit(1)
@@ -313,7 +314,7 @@ async def _match_single_deal_for_company(session: AsyncSession, company_id: UUID
     if not company_id:
         return None
     result = await session.execute(
-        select(Deal)
+        unscoped_for_background_job(Deal, "tldv sync system work")
         .where(Deal.company_id == company_id)
         .order_by(
             Deal.stage.not_in(["closed_won", "closed_lost"]).desc(),

@@ -1,14 +1,14 @@
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.core.dependencies import AdminUser, DBSession
+from app.core.dependencies import AdminUser, CurrentUser, DBSession
+from app.services.permissions import require_workspace_permission
 from app.services.us_pod_call_report import (
     INDIA_DEFAULT_SALES_REPORT_SETTINGS,
     INDIA_POD_REPS,
-    build_us_pod_call_report,
-    build_us_pod_weekly_call_report,
+    build_us_pod_period_call_report,
     load_sales_report_settings,
     send_us_pod_call_report_email,
 )
@@ -20,54 +20,82 @@ from app.services.weekly_digest import (
 
 router = APIRouter(prefix="/sales-reports", tags=["sales-reports"])
 
+ReportType = Literal["daily", "weekly", "month_to_date", "prior_quarter", "custom"]
+
+
+def _validate_period(report_type: ReportType, period_start: date | None, period_end: date | None) -> None:
+    if report_type == "custom" and (not period_start or not period_end):
+        raise HTTPException(status_code=422, detail="Custom reports require both period_start and period_end.")
+    if period_start and period_end and period_start > period_end:
+        raise HTTPException(status_code=422, detail="period_start must be on or before period_end.")
+
 
 @router.get("/us-pod-call-report")
 async def preview_us_pod_call_report(
     session: DBSession,
-    _admin: AdminUser,
+    current_user: CurrentUser,
     report_date: date | None = Query(default=None, alias="date"),
-    report_type: Literal["daily", "weekly"] = Query(default="daily"),
+    report_type: ReportType = Query(default="daily"),
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
 ):
-    if report_type == "weekly":
-        return await build_us_pod_weekly_call_report(session, report_date)
-    return await build_us_pod_call_report(session, report_date)
+    await require_workspace_permission(session, current_user, "manage_reports")
+    _validate_period(report_type, period_start, period_end)
+    return await build_us_pod_period_call_report(
+        session,
+        report_type=report_type,
+        report_date=report_date,
+        period_start=period_start,
+        period_end=period_end,
+    )
 
 
 @router.post("/us-pod-call-report/send")
 async def send_us_pod_call_report(
     session: DBSession,
-    _admin: AdminUser,
+    current_user: CurrentUser,
     report_date: date | None = Query(default=None, alias="date"),
-    report_type: Literal["daily", "weekly"] = Query(default="daily"),
+    report_type: ReportType = Query(default="daily"),
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
     recipient: str | None = Query(default=None),
 ):
+    await require_workspace_permission(session, current_user, "manage_reports")
+    _validate_period(report_type, period_start, period_end)
     recipients = [recipient] if recipient else None
     return await send_us_pod_call_report_email(
         session,
         report_date,
         report_type=report_type,
         recipients=recipients,
+        period_start=period_start,
+        period_end=period_end,
     )
 
 
 @router.get("/india-pod-call-report")
 async def preview_india_pod_call_report(
     session: DBSession,
-    _admin: AdminUser,
+    current_user: CurrentUser,
     report_date: date | None = Query(default=None, alias="date"),
-    report_type: Literal["daily", "weekly"] = Query(default="daily"),
+    report_type: ReportType = Query(default="daily"),
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
 ):
+    await require_workspace_permission(session, current_user, "manage_reports")
+    _validate_period(report_type, period_start, period_end)
     report_settings = await load_sales_report_settings(
         session, key="india_sales_report", defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS
     )
-    if report_type == "weekly":
-        report = await build_us_pod_weekly_call_report(
-            session, report_date, report_settings=report_settings, reps=INDIA_POD_REPS
-        )
-    else:
-        report = await build_us_pod_call_report(
-            session, report_date, report_settings=report_settings, reps=INDIA_POD_REPS
-        )
+    report = await build_us_pod_period_call_report(
+        session,
+        report_type=report_type,
+        report_date=report_date,
+        period_start=period_start,
+        period_end=period_end,
+        report_settings=report_settings,
+        reps=INDIA_POD_REPS,
+    )
     report["pod_label"] = "India Pod"
     return report
 
@@ -75,17 +103,23 @@ async def preview_india_pod_call_report(
 @router.post("/india-pod-call-report/send")
 async def send_india_pod_call_report(
     session: DBSession,
-    _admin: AdminUser,
+    current_user: CurrentUser,
     report_date: date | None = Query(default=None, alias="date"),
-    report_type: Literal["daily", "weekly"] = Query(default="daily"),
+    report_type: ReportType = Query(default="daily"),
+    period_start: date | None = Query(default=None),
+    period_end: date | None = Query(default=None),
     recipient: str | None = Query(default=None),
 ):
+    await require_workspace_permission(session, current_user, "manage_reports")
+    _validate_period(report_type, period_start, period_end)
     recipients = [recipient] if recipient else None
     return await send_us_pod_call_report_email(
         session,
         report_date,
         report_type=report_type,
         recipients=recipients,
+        period_start=period_start,
+        period_end=period_end,
         config_key="india_sales_report",
         config_defaults=INDIA_DEFAULT_SALES_REPORT_SETTINGS,
         reps=INDIA_POD_REPS,

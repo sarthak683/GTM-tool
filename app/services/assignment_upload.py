@@ -32,6 +32,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.repositories.visibility import unscoped_for_background_job
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.user import User
@@ -202,7 +203,7 @@ async def plan_assignment_upload(
     users = (
         await session.execute(select(User).where(User.is_active == True))  # noqa: E712
     ).scalars().all()
-    companies = (await session.execute(select(Company))).scalars().all()
+    companies = (await session.execute(unscoped_for_background_job(Company, "assignment upload system work"))).scalars().all()
     resolver = RepResolver(list(users))
     index = CompanyIndex(list(companies))
     user_names = {u.id: u.name for u in users}
@@ -306,7 +307,7 @@ async def apply_assignment_plan(
         if not entry.applies or entry.company_id is None:
             continue
         company = (
-            await session.execute(select(Company).where(Company.id == entry.company_id))
+            await session.execute(unscoped_for_background_job(Company, "assignment upload system work").where(Company.id == entry.company_id))
         ).scalar_one_or_none()
         if company is None:
             continue
@@ -325,7 +326,7 @@ async def apply_assignment_plan(
                 # contacts that were following the account's previous AE, so a
                 # deliberate per-contact override is never overwritten.
                 contacts = (
-                    await session.execute(select(Contact).where(Contact.company_id == company.id))
+                    await session.execute(unscoped_for_background_job(Contact, "assignment upload system work").where(Contact.company_id == company.id))
                 ).scalars().all()
                 for contact in contacts:
                     if contact.assigned_to_id not in (None, previous_ae_id):

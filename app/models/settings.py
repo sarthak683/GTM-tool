@@ -133,18 +133,27 @@ class WorkspaceSettings(SQLModel, table=True):
                 "prospect_migration": True,
                 "manage_team": False,
                 "run_pre_meeting_intel": True,
+                "manage_reports": False,
             },
             "sdr": {
                 "crm_import": False,
                 "prospect_migration": True,
                 "manage_team": False,
                 "run_pre_meeting_intel": False,
+                "manage_reports": False,
+            },
+            "marketing": {
+                "crm_import": False,
+                "prospect_migration": False,
+                "manage_team": False,
+                "run_pre_meeting_intel": False,
+                "manage_reports": False,
             },
         },
         sa_column=Column(
             JSON,
             nullable=False,
-            server_default='{"ae":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":true},"sdr":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":false}}',
+            server_default='{"ae":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":true,"manage_reports":false},"sdr":{"crm_import":false,"prospect_migration":true,"manage_team":false,"run_pre_meeting_intel":false,"manage_reports":false},"marketing":{"crm_import":false,"prospect_migration":false,"manage_team":false,"run_pre_meeting_intel":false,"manage_reports":false}}',
         ),
     )
     pre_meeting_automation_settings: dict = Field(
@@ -246,9 +255,8 @@ class WorkspaceSettings(SQLModel, table=True):
     # this widens specific people. NULL/[] = nobody extra.
     prospect_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
-    # Deal visibility grants: user_ids (strings) of non-admins allowed to see
-    # ALL deals (the entire team's pipeline), not just deals they own. Admins
-    # always see all; this widens specific people. NULL/[] = nobody extra.
+    # Legacy deal-visibility allowlist. The pipeline is now workspace-wide for
+    # every authenticated user; retained only to preserve existing DB rows.
     deal_view_all_user_ids: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
 
@@ -365,16 +373,19 @@ class RolePermissionFlags(SQLModel):
     prospect_migration: bool
     manage_team: bool
     run_pre_meeting_intel: bool
+    manage_reports: bool
 
 
 class RolePermissionsRead(SQLModel):
     ae: RolePermissionFlags
     sdr: RolePermissionFlags
+    marketing: RolePermissionFlags
 
 
 class RolePermissionsUpdate(SQLModel):
     ae: RolePermissionFlags
     sdr: RolePermissionFlags
+    marketing: RolePermissionFlags
 
 
 class PreMeetingAutomationSettingsRead(SQLModel):
@@ -438,6 +449,15 @@ class ProspectVisibilityRead(SQLModel):
 
 
 class ProspectVisibilityUpdate(SQLModel):
+    user_ids: list[str] = []
+
+
+class DealVisibilityRead(SQLModel):
+    """User ids of non-admins granted 'see all deals' access."""
+    user_ids: list[str] = []
+
+
+class DealVisibilityUpdate(SQLModel):
     user_ids: list[str] = []
 
 

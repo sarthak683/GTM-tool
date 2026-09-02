@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Briefcase, CalendarDays, CheckSquare, ChevronDown, Eye, LogOut, Plus, Search, Shield, User, UserPlus } from "lucide-react";
+import { Briefcase, CalendarDays, CheckSquare, ChevronDown, Eye, LogOut, Moon, Plus, Search, Shield, Sun, User, UserPlus } from "lucide-react";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
 // Lazy — the search modal (debounced multi-entity search) only mounts on first open.
@@ -29,20 +29,25 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   "/settings": { title: "Settings", subtitle: "Configure shared workflows, inboxes, and workspace defaults" },
 };
 
+const THEME_KEY = "beacon_theme";
+type Theme = "light" | "dark";
+
 function Layout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, realUser, logout, isAdmin, isSuperAdmin, viewAsRole, setViewAsRole,
           isImpersonating, impersonatedUser, impersonate, stopImpersonating } = useAuth();
   const roleViewing = isSuperAdmin && !isImpersonating && !!viewAsRole && viewAsRole !== realUser?.role;
+  const canImpersonate = realUser?.role === "admin" || realUser?.role === "superadmin";
   const [showUserMenu, setShowUserMenu] = useState(false);
-  // People list for the "View as person" picker (superadmin only).
+  // People list for the read-only "View as person" picker (admin and superadmin).
   const [people, setPeople] = useState<UserRecord[]>([]);
   const [personQuery, setPersonQuery] = useState("");
   const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
   const matchedMeta = Object.entries(PAGE_META).find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
   const meta = matchedMeta?.[1] ?? {
     title: "Beacon CRM",
@@ -59,13 +64,18 @@ function Layout() {
     window.localStorage.setItem("crm.sidebar.collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
-  // Load the team list for the "View as person" picker — only when a superadmin
-  // opens the menu and isn't already impersonating, and only once.
   useEffect(() => {
-    if (showUserMenu && isSuperAdmin && !isImpersonating && people.length === 0) {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  // Load the team list for the "View as person" picker — only when an eligible
+  // administrator opens the menu and isn't already impersonating, and only once.
+  useEffect(() => {
+    if (showUserMenu && canImpersonate && !isImpersonating && people.length === 0) {
       getCachedUsers().then(setPeople).catch(() => {});
     }
-  }, [showUserMenu, isSuperAdmin, isImpersonating, people.length]);
+  }, [showUserMenu, canImpersonate, isImpersonating, people.length]);
 
   const handleImpersonate = async (userId: string) => {
     setImpersonatingId(userId);
@@ -203,6 +213,15 @@ function Layout() {
               </div>
               <span className="crm-search-kbd">Ctrl + K</span>
             </button>
+            <button
+              type="button"
+              className="crm-theme-toggle"
+              onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            >
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
             <NotificationBell />
             <div style={{ position: "relative" }}>
               <button
@@ -281,7 +300,7 @@ function Layout() {
                       </div>
                     )}
                   </div>
-                  {isSuperAdmin && isImpersonating && (
+                  {canImpersonate && isImpersonating && (
                     <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
                       <button
                         type="button"
@@ -292,13 +311,14 @@ function Layout() {
                       </button>
                     </div>
                   )}
-                  {isSuperAdmin && !isImpersonating && (
+                  {canImpersonate && !isImpersonating && (
                     <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef2f7", marginBottom: "4px" }}>
+                      {isSuperAdmin && <>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "10px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b8ca2", marginBottom: "8px" }}>
                         <Eye size={11} /> View as role
                       </div>
                       <div style={{ display: "flex", gap: "6px" }}>
-                        {(["admin", "ae", "sdr"] as const).map((r) => {
+                        {(["admin", "ae", "sdr", "marketing"] as const).map((r) => {
                           const active = (viewAsRole ?? realUser?.role) === r;
                           return (
                             <button
@@ -321,6 +341,7 @@ function Layout() {
                       <div style={{ fontSize: "10.5px", color: "#94a3b8", marginTop: "6px", lineHeight: 1.5 }}>
                         Preview the app from this role's perspective. Your real access and data don't change.
                       </div>
+                      </>}
 
                       {/* View as a specific person — real, read-only impersonation. */}
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "10px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b8ca2", margin: "12px 0 8px" }}>

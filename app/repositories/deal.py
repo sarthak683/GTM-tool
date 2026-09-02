@@ -30,6 +30,14 @@ from app.services.business_days import business_days_between
 from app.services.deal_flags import compute_deal_flags
 
 
+def _user_is_admin(user: User) -> bool:
+    """Support real User rows and lightweight authenticated-user stand-ins."""
+    explicit = getattr(user, "is_admin", None)
+    if explicit is not None:
+        return bool(explicit)
+    return str(getattr(user, "role", "")).lower() == "admin"
+
+
 def deal_visibility_filter(user_id: UUID, is_admin: bool):
     """Pipeline is workspace-wide (Jul 1): every user sees ALL LIVE deals.
 
@@ -41,6 +49,11 @@ def deal_visibility_filter(user_id: UUID, is_admin: bool):
     read deal_stage_history and must NOT apply this filter.
     """
     return Deal.deleted_at.is_(None)
+
+
+def can_see_deal(deal: Deal, user: User, view_all: bool = False) -> bool:
+    """Deals are workspace-wide; every user can see every live deal."""
+    return deal.deleted_at is None
 
 
 # Local-part tokens that mark a non-human / marketing / transactional sender.
@@ -140,6 +153,18 @@ def _apply_flag_fields(read: DealRead, qualification: Any) -> None:
 class DealRepository(BaseRepository[Deal]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Deal, session)
+
+    @staticmethod
+    def visible_to(user: User):
+        """Base select for ANY user-facing deal query."""
+        return select(Deal).where(deal_visibility_filter(user.id, _user_is_admin(user)))
+
+    @staticmethod
+    def unscoped_for_background_job(reason: str):
+        """Every deal, including soft-deleted rows. Background/system work only."""
+        if not reason.strip():
+            raise ValueError("An unscoped deal query requires a reviewable reason")
+        return select(Deal)
 
     @staticmethod
     def _slugify_alias(name: str) -> str:

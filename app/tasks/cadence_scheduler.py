@@ -50,6 +50,7 @@ from app.database import task_session
 from app.models.activity import Activity
 from app.models.company import Company
 from app.models.contact import Contact
+from app.repositories.contact import ContactRepository
 from app.models.outreach import OutreachSequence
 from app.services.tasks import _upsert_system_task, _resolve_system_task
 
@@ -273,7 +274,9 @@ async def _run() -> dict[str, int]:
         # create tasks for cold, abandoned sequences.
         cutoff = now - timedelta(days=30)
         stmt = (
-            select(Contact)
+            ContactRepository.unscoped_for_background_job(
+                "scheduled outreach cadence scan"
+            )
             .join(OutreachSequence, OutreachSequence.contact_id == Contact.id)
             .where(OutreachSequence.launched_at >= cutoff)
             .distinct()

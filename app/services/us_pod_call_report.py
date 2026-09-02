@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR, send_gmail_email
+from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.core.pods import get_pod
 from app.models.activity import Activity
@@ -331,6 +332,34 @@ def weekly_report_period(report_date: date | None = None, report_settings: dict[
     return start_date, end_date
 
 
+def month_to_date_report_period(
+    report_date: date | None = None,
+    report_settings: dict[str, Any] | None = None,
+) -> tuple[date, date]:
+    """Return the completed business-day month-to-date window."""
+    end_date = report_date or default_report_date(report_settings=report_settings)
+    return end_date.replace(day=1), end_date
+
+
+def prior_quarter_report_period(
+    report_date: date | None = None,
+    report_settings: dict[str, Any] | None = None,
+) -> tuple[date, date]:
+    """Return the three complete calendar months before the report date's month.
+
+    This mirrors the requested May/June/July comparison when the as-of date is
+    in August, rather than treating the current calendar quarter as the anchor.
+    """
+    end_date = report_date or default_report_date(report_settings=report_settings)
+    prior_quarter_end = end_date.replace(day=1) - timedelta(days=1)
+    prior_quarter_start_month = prior_quarter_end.month - 2
+    prior_quarter_start_year = prior_quarter_end.year
+    if prior_quarter_start_month < 1:
+        prior_quarter_start_month += 12
+        prior_quarter_start_year -= 1
+    return date(prior_quarter_start_year, prior_quarter_start_month, 1), prior_quarter_end
+
+
 def _utc_bounds_for_report_day(day: date, report_settings: dict[str, Any] | None = None) -> tuple[datetime, datetime]:
     cutoff_tz = _report_zone(report_settings, "cutoff_timezone", REPORT_CUTOFF_TIMEZONE)
     cutoff_hour = _cutoff_hour(report_settings)
@@ -504,7 +533,7 @@ async def _build_call_detail_rows(
     contacts_by_id: dict[UUID, Contact] = {}
     if contact_ids:
         contacts = (
-            await session.execute(select(Contact).where(Contact.id.in_(contact_ids)))
+            await session.execute(unscoped_for_background_job(Contact, "us pod call report system work").where(Contact.id.in_(contact_ids)))
         ).scalars().all()
         contacts_by_id = {c.id: c for c in contacts}
 
@@ -512,7 +541,7 @@ async def _build_call_detail_rows(
     companies_by_id: dict[UUID, Company] = {}
     if company_ids:
         companies = (
-            await session.execute(select(Company).where(Company.id.in_(company_ids)))
+            await session.execute(unscoped_for_background_job(Company, "us pod call report system work").where(Company.id.in_(company_ids)))
         ).scalars().all()
         companies_by_id = {c.id: c for c in companies}
 
@@ -545,7 +574,7 @@ async def _build_call_detail_rows(
 
     close_date_by_deal: dict[UUID, date] = {}
     deals = (
-        await session.execute(select(Deal).where(Deal.id.in_(booked_deal_ids)))
+        await session.execute(unscoped_for_background_job(Deal, "us pod call report system work").where(Deal.id.in_(booked_deal_ids)))
     ).scalars().all()
     for deal in deals:
         if deal.close_date_est:
@@ -716,6 +745,44 @@ async def build_us_pod_weekly_call_report(
         period_start=period_start,
         period_end=period_end,
         report_type="weekly",
+        report_settings=config,
+        reps=reps,
+    )
+
+
+async def build_us_pod_period_call_report(
+    session: AsyncSession,
+    *,
+    report_type: str,
+    report_date: date | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    report_settings: dict[str, Any] | None = None,
+    reps: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Build an admin-requested report for one of the supported date presets."""
+    config = normalize_sales_report_settings(report_settings or await load_sales_report_settings(session))
+    if report_type == "daily":
+        return await build_us_pod_call_report(session, report_date, report_settings=config, reps=reps)
+    if report_type == "weekly":
+        return await build_us_pod_weekly_call_report(session, report_date, report_settings=config, reps=reps)
+    if report_type == "month_to_date":
+        start, end = month_to_date_report_period(report_date, config)
+    elif report_type == "prior_quarter":
+        start, end = prior_quarter_report_period(report_date, config)
+    elif report_type == "custom":
+        if not period_start or not period_end:
+            raise ValueError("Custom reports require both a start and end date.")
+        start, end = period_start, period_end
+    else:
+        raise ValueError(f"Unsupported report type: {report_type}")
+    if start > end:
+        raise ValueError("The report start date must be on or before the end date.")
+    return await _build_us_pod_call_report_for_period(
+        session,
+        period_start=start,
+        period_end=end,
+        report_type=report_type,
         report_settings=config,
         reps=reps,
     )
@@ -971,6 +1038,8 @@ def _report_subject(report: dict[str, Any]) -> str:
     pod = report.get("pod_label", "US Pod")
     if report.get("report_type") == "weekly":
         return f"{pod} Weekly Call Report - {report['period_start']} to {report['period_end']}"
+    if report.get("report_type") in {"month_to_date", "prior_quarter", "custom"}:
+        return f"{pod} Call Report - {report['period_start']} to {report['period_end']}"
     return f"{pod} Daily Call Report - {report['report_date']}"
 
 
@@ -978,6 +1047,8 @@ def _report_title(report: dict[str, Any]) -> str:
     pod = report.get("pod_label", "US Pod")
     if report.get("report_type") == "weekly":
         return f"{pod} Weekly Call Report - {report['period_start']} to {report['period_end']}"
+    if report.get("report_type") in {"month_to_date", "prior_quarter", "custom"}:
+        return f"{pod} Call Report - {report['period_start']} to {report['period_end']}"
     return f"{pod} Daily Call Report - {report['report_date']}"
 
 
@@ -1159,16 +1230,23 @@ async def send_us_pod_call_report_email(
     *,
     report_type: str = "daily",
     recipients: list[str] | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
     reps: list[dict] | None = None,
     config_key: str = "sales_report",
     config_defaults: dict | None = None,
     pod_label: str = "US Pod",
 ) -> dict[str, Any]:
     report_settings = await load_sales_report_settings(session, key=config_key, defaults=config_defaults)
-    if report_type == "weekly":
-        report = await build_us_pod_weekly_call_report(session, report_date, report_settings=report_settings, reps=reps)
-    else:
-        report = await build_us_pod_call_report(session, report_date, report_settings=report_settings, reps=reps)
+    report = await build_us_pod_period_call_report(
+        session,
+        report_type=report_type,
+        report_date=report_date,
+        period_start=period_start,
+        period_end=period_end,
+        report_settings=report_settings,
+        reps=reps,
+    )
     report["pod_label"] = pod_label
     # Re-stamp subject/body now that pod_label is known (build defaults to US Pod).
     report["subject"] = _report_subject(report)

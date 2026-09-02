@@ -300,6 +300,31 @@ class ContactRepository(BaseRepository[Contact]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Contact, session)
 
+    @staticmethod
+    async def visible_to(session: AsyncSession, user: User):
+        """Base select for ANY user-facing contact query."""
+        restriction = await visible_contact_restriction(session, user)
+        stmt = select(Contact)
+        return stmt.where(restriction) if restriction is not None else stmt
+
+    @staticmethod
+    def unscoped_for_background_job(reason: str):
+        """Every contact, no ownership gate. Background/system work only."""
+        if not reason.strip():
+            raise ValueError("An unscoped contact query requires a reviewable reason")
+        return select(Contact)
+
+    @staticmethod
+    def email_uniqueness_conflict(email: str):
+        """ID-only global check used before writes to the unique email key.
+
+        This deliberately does not return a contact row: callers may report a
+        generic conflict but cannot learn who owns the existing prospect.
+        """
+        return select(Contact.id).where(
+            func.lower(Contact.email) == (email or "").strip().lower()
+        ).limit(1)
+
     def _filtered_statements(
         self,
         company_id: Optional[UUID] = None,

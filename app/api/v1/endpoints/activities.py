@@ -11,9 +11,12 @@ from sqlalchemy import func, or_, select
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.core.exceptions import ForbiddenError
 from app.models.activity import Activity, ActivityCreate, ActivityRead, ActivityUpdate
+from app.models.company import Company
 from app.models.deal import Deal
 from app.models.meeting import Meeting
 from app.repositories.activity import ActivityRepository
+from app.repositories.company import CompanyRepository
+from app.repositories.deal import DealRepository
 from app.schemas.common import PaginatedResponse
 from app.database import AsyncSessionLocal
 from app.services.disposition_effects import (
@@ -37,6 +40,18 @@ logger = logging.getLogger(__name__)
 # the fallback when no report config is loadable.
 REPORT_CUTOFF_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REPORT_CUTOFF_HOUR = 6
+
+
+async def _ensure_visible_deal(session, user, deal_id: UUID) -> None:
+    deal = (
+        await session.execute(
+            DealRepository.visible_to(user).where(Deal.id == deal_id)
+        )
+    ).scalar_one_or_none()
+    if deal is None:
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError("Deal not found")
 
 
 def _pod_report_config_key(email: str | None) -> tuple[str, dict]:
@@ -105,11 +120,23 @@ async def list_activities(
     repo = ActivityRepository(session)
     filters = []
     if deal_id:
+        await _ensure_visible_deal(session, current_user, deal_id)
         filters.append(Activity.deal_id == deal_id)
     if contact_id:
         await get_visible_contact(session, current_user, contact_id)
         filters.append(Activity.contact_id == contact_id)
     if company_id:
+        company = (
+            await session.execute(
+                CompanyRepository.visible_to(current_user, include_disabled=True).where(
+                    Company.id == company_id
+                )
+            )
+        ).scalar_one_or_none()
+        if company is None:
+            from app.core.exceptions import NotFoundError
+
+            raise NotFoundError("Company not found")
         # Activities linked via deals belonging to this company,
         # or via meetings mapped to this company
         company_deal_ids = select(Deal.id).where(Deal.company_id == company_id)
@@ -242,6 +269,8 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
     data = payload.model_dump()
     if data.get("contact_id"):
         await get_actionable_contact(session, current_user, data["contact_id"])
+    if data.get("deal_id"):
+        await _ensure_visible_deal(session, current_user, data["deal_id"])
     # API-created activities always belong to the authenticated actor. Accepting
     # a client-supplied creator caused manual touches and call counts to be
     # attributed to the wrong rep.
@@ -304,6 +333,8 @@ async def get_activity(activity_id: UUID, session: DBSession, _user: CurrentUser
     activity = await ActivityRepository(session).get_or_raise(activity_id)
     if activity.contact_id:
         await get_visible_contact(session, _user, activity.contact_id)
+    if activity.deal_id:
+        await _ensure_visible_deal(session, _user, activity.deal_id)
     return activity
 
 
@@ -313,11 +344,15 @@ async def update_activity(activity_id: UUID, payload: ActivityUpdate, session: D
     activity = await repo.get_or_raise(activity_id)
     if activity.contact_id:
         await get_visible_contact(session, _user, activity.contact_id)
-    if _user.role != "admin" and activity.created_by_id != _user.id:
+    if activity.deal_id:
+        await _ensure_visible_deal(session, _user, activity.deal_id)
+    if not _user.is_admin and activity.created_by_id != _user.id:
         raise ForbiddenError("Only the activity's creator or an admin can edit it")
     update_data = payload.model_dump(exclude_unset=True)
     if update_data.get("contact_id"):
         await get_actionable_contact(session, _user, update_data["contact_id"])
+    if update_data.get("deal_id"):
+        await _ensure_visible_deal(session, _user, update_data["deal_id"])
     return await repo.update(activity, update_data)
 
 
@@ -327,9 +362,11 @@ async def delete_activity(activity_id: UUID, session: DBSession, _user: CurrentU
     activity = await repo.get_or_raise(activity_id)
     if activity.contact_id:
         await get_visible_contact(session, _user, activity.contact_id)
+    if activity.deal_id:
+        await _ensure_visible_deal(session, _user, activity.deal_id)
     # Deleting another rep's logged activity silently skews call counts and
     # leaderboards — restrict to the creator (or admin). System-generated
     # rows (no creator) stay admin-only.
-    if _user.role != "admin" and activity.created_by_id != _user.id:
+    if not _user.is_admin and activity.created_by_id != _user.id:
         raise ForbiddenError("Only the activity's creator or an admin can delete it")
     await repo.delete(activity)
