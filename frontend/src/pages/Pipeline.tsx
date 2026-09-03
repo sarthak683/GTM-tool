@@ -1003,7 +1003,7 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
   // closing TODAY as overdue from ~7 PM the previous evening for US users.
   const _todayStart = new Date();
   _todayStart.setHours(0, 0, 0, 0);
-  const _closeLocal = parseDateOnly(deal.close_date_est);
+  const _closeLocal = parseDateOnly(deal.close_date);
   const isOverdue = Boolean(_closeLocal && _closeLocal < _todayStart);
 
   return (
@@ -1024,9 +1024,9 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
         <button type="button" onClick={onClick} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: "#142335", lineHeight: 1.25 }}>{deal.name}</span>
         </button>
-        {deal.close_date_est && (
+        {deal.close_date && (
           <span style={{ fontSize: 11, fontWeight: 600, color: isOverdue ? "#dc2626" : "#7a8ca1", whiteSpace: "nowrap", flexShrink: 0, marginTop: 2 }}>
-            {formatDateOnly(deal.close_date_est)}
+            {formatDateOnly(deal.close_date)}
           </span>
         )}
       </div>
