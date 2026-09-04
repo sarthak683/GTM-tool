@@ -245,6 +245,34 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
         stmt = stmt.where(Company.id.in_(selected_ids))
 
     search_term = (filters.q or "").strip()
+
+    # Hide parked accounts from the default browse view, for EVERY role.
+    #
+    # `company_visibility_filter` early-returns for admins before its
+    # disabled-status gate, so admins saw every not_a_fit/dnd account here with
+    # no way to exclude them — the status filter only ever ADDS statuses. On
+    # production that was 316 of 972 rows, a third of the list, permanently.
+    # The prospecting list already gates every role this way
+    # (`list_with_company_name`), and INACTIVE_ACCOUNT_STATUSES documents
+    # itself as the definition every surface shares, so this is the surface
+    # catching up rather than a new rule.
+    #
+    # Three deliberate escape hatches, mirroring the contacts list:
+    #   - `include_disabled` (the caller explicitly filtered FOR not_a_fit/dnd,
+    #     i.e. is reviewing parked accounts)
+    #   - an explicit id selection
+    #   - a search term — a parked account must stay FINDABLE by name/domain, or
+    #     re-enabling it means knowing its URL. Losing accounts to a list that
+    #     could not search them has bitten this app before (the ClickUp
+    #     hidden_from_account_sourcing flag, repaired by migration 119).
+    if not include_disabled and not selected_ids and not search_term:
+        stmt = stmt.where(
+            or_(
+                Company.account_status.is_(None),
+                Company.account_status.not_in(INACTIVE_ACCOUNT_STATUSES),
+            )
+        )
+
     if search_term:
         like = f"%{search_term}%"
         stmt = stmt.where(

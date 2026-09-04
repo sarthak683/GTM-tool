@@ -26,12 +26,29 @@ ACCOUNT_STATUS_VALUES = {
 }
 
 # Statuses that take an account OUT of active prospecting ("disabled" in the
-# UI). This is THE definition every surface must share: the account list hides
-# these from default views, the prospecting list hides their contacts, outreach
-# launch refuses their contacts, and reminder jobs skip them. Rows are never
+# UI). This is THE definition every surface must share: the Account Sourcing
+# list hides these from its default browse view, the prospecting list hides
+# their contacts, outreach launch refuses their contacts, and prospect
+# follow-up reminders skip them. Rows are never
 # deleted — flipping the status back restores everything. reach_out_later is
 # deliberately NOT here: it parks the account with intent to return, so its
 # prospects stay visible (labeled) in the queue.
+#
+# Two things this does NOT mean, both of which read as bugs otherwise:
+#   - Parked accounts stay reachable on purpose. Direct access
+#     (`can_see_company`), the account detail page, global search, and any
+#     search term inside the sourcing list all still find them — otherwise
+#     re-enabling one would require knowing its URL.
+#   - `company_visibility_filter` early-returns for admins BEFORE its
+#     disabled-status gate, so it alone does not hide parked accounts from an
+#     admin. The Account Sourcing list applies its own gate for every role;
+#     any new browse surface must do the same rather than assume this constant
+#     is enforced for it.
+#
+# Deal next-step reminders deliberately do NOT skip parked accounts: these
+# statuses park an account's PROSPECTING, and an in-flight deal still needs its
+# next step chased. `apply_account_disable_effects` leaves deals alone for the
+# same reason.
 INACTIVE_ACCOUNT_STATUSES = ("not_a_fit", "dnd")
 
 
