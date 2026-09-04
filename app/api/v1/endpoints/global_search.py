@@ -104,7 +104,7 @@ async def global_search(
         )
     ).scalars().all()
 
-    contact_name = Contact.first_name + literal(" ") + Contact.last_name
+    contact_name = func.concat(Contact.first_name, literal(" "), Contact.last_name)
     contact_rank = func.greatest(
         func.similarity(contact_name, query),
         func.similarity(Contact.email, query),

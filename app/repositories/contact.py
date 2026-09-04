@@ -211,13 +211,13 @@ def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
     including ones a teammate is assigned at the prospect level — e.g. the account
     SDR sees prospects the AE holds), OR they own a DEAL on the contact's company
     (an AE running a demo/POC sees the prospects at that account even when the
-    company/contacts are still held by the sourcing SDR or another company AE),
-    OR it is fully unassigned (both slots NULL — an unclaimed lead anyone may pick
-    up). This is the SINGLE SOURCE OF TRUTH for the rule; reuse it on EVERY
-    contact-browse surface (the prospects list, the account-sourcing company page,
-    global search) so visibility can never diverge between surfaces. Mirrors the
-    inline `.in_()` form in ``list_with_company_name`` (which supports a multi-id
-    list).
+    company/contacts are still held by the sourcing SDR or another company AE).
+    NO unassigned clause — same as SDR, an AE never browses an unclaimed
+    prospect they have no ownership tie to. This is the SINGLE SOURCE OF TRUTH
+    for the rule; reuse it on EVERY contact-browse surface (the prospects list,
+    the account-sourcing company page, global search) so visibility can never
+    diverge between surfaces. Mirrors the inline `.in_()` form in
+    ``list_with_company_name`` (which supports a multi-id list).
     """
     from app.models.deal import Deal
 
@@ -253,7 +253,6 @@ def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
                 Deal.assigned_to_id == user_id, Deal.company_id.is_not(None)
             )
         ),
-        and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
     )
 
 
@@ -840,10 +839,11 @@ class ContactRepository(BaseRepository[Contact]):
         # viewer may see prospects they own (either ownership slot) INSIDE an
         # account that is theirs or unclaimed, prospects in an account they own
         # (account-scoped — the account owner sees everything inside their
-        # accounts, incl. prospects a teammate holds), or unowned prospects
-        # (both slots empty; non-SDR only). Admins/granted users bypass this
-        # by passing restrict_to_owner_id=None. ANDed with every other filter.
-        # Keep in lockstep with contact_visibility_filter() above.
+        # accounts, incl. prospects a teammate holds), or prospects on an
+        # account where they own the deal. NO unassigned/unowned clause for
+        # any role. Admins/granted users bypass this by passing
+        # restrict_to_owner_id=None. ANDed with every other filter. Keep in
+        # lockstep with contact_visibility_filter() above.
         restrict_ids = _parse_uuid_values(restrict_to_owner_id)
         if restrict_ids:
             from app.models.deal import Deal
@@ -877,6 +877,10 @@ class ContactRepository(BaseRepository[Contact]):
                 # NO unassigned clause.
                 visibility_filter = or_(owns_contact_in_scope, owns_account)
             else:
+                # Same shape as SDR above minus the account-scoped clauses that
+                # don't apply to SDRs: own prospects in-scope, every prospect on
+                # an owned account, or an owned deal's account. NO unassigned
+                # clause — same as SDR, lockstep with contact_visibility_filter().
                 visibility_filter = or_(
                     owns_contact_in_scope,
                     # Account AE or SDR sees every prospect on accounts they own,
@@ -890,7 +894,6 @@ class ContactRepository(BaseRepository[Contact]):
                             Deal.assigned_to_id.in_(restrict_ids), Deal.company_id.is_not(None)
                         )
                     ),
-                    and_(Contact.assigned_to_id.is_(None), Contact.sdr_id.is_(None)),
                 )
             base_stmt = base_stmt.where(visibility_filter)
             count_stmt = count_stmt.where(visibility_filter)
