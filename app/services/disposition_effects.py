@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,7 +100,7 @@ def _default_followup_utc() -> datetime:
 
 
 async def _maybe_suggest_deal_from_disposition(
-    session: AsyncSession, contact: Contact, disposition: str
+    session: AsyncSession, contact: Contact, disposition: str, *, activity_id: Optional[UUID] = None
 ) -> bool:
     """When a rep marks a meeting booked, raise a bell alert for the prospect
     owner (handled in the notifications endpoint, type=meeting_booked_suggest_deal).
@@ -169,6 +170,12 @@ async def _maybe_suggest_deal_from_disposition(
             "source": "call_disposition",
             "mode": mode,
             "deal_id": str(existing_deal_id) if existing_deal_id is not None else None,
+            # Lets the accept handler backfill deal_id back onto the call that
+            # triggered this alert — without it, the call Activity stays
+            # deal_id=NULL forever even after a deal exists, which is why the
+            # sales report's "Meeting date" showed "Pending" despite the deal
+            # having a Date of Meeting.
+            "activity_id": str(activity_id) if activity_id else None,
         },
         dedup_key=f"suggest_deal:{contact.id}",
     )
@@ -311,6 +318,7 @@ async def apply_call_disposition_effects(
     *,
     disposition: Optional[str],
     refresh_tasks: bool = True,
+    activity_id: Optional[UUID] = None,
 ) -> dict[str, str]:
     """Apply all side effects of a manual call disposition on a contact.
 
@@ -359,7 +367,7 @@ async def apply_call_disposition_effects(
 
     # Meeting booked on the phone → suggest creating a deal (bell alert; accept
     # auto-creates the deal). Deduped + skipped when a deal already exists.
-    if await _maybe_suggest_deal_from_disposition(session, contact, disposition):
+    if await _maybe_suggest_deal_from_disposition(session, contact, disposition, activity_id=activity_id):
         changes["deal_suggestion"] = "created"
 
     # Meeting booked on the phone → reflect it on the parent account's status.

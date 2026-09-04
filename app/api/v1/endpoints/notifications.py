@@ -182,6 +182,27 @@ async def accept(notification_id: UUID, session: DBSession, user: CurrentUser):
     return result
 
 
+async def _backfill_call_activity_deal_id(session, payload: dict, deal_id: UUID) -> None:
+    """Link the call that triggered a meeting-booked alert back to the deal
+    it resulted in. Without this, the originating call Activity keeps
+    deal_id=NULL forever (it's set once at logging time and never re-matched),
+    so the deal's Date of Meeting can never surface for that call in the
+    sales report — it just shows "Pending" indefinitely."""
+    from app.models.activity import Activity
+
+    raw_activity_id = payload.get("activity_id")
+    if not raw_activity_id:
+        return
+    try:
+        activity_id = UUID(str(raw_activity_id))
+    except (ValueError, TypeError):
+        return
+    activity = await session.get(Activity, activity_id)
+    if activity and activity.deal_id is None:
+        activity.deal_id = deal_id
+        session.add(activity)
+
+
 async def _accept_meeting_booked(session, user, notification: Notification) -> dict[str, Any]:
     """Materialize a Deal from the action_payload."""
     from app.models.activity import Activity
@@ -236,6 +257,8 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
         )).first()
         target_deal_id = str(existing[0]) if existing else None
     if target_deal_id:
+        await _backfill_call_activity_deal_id(session, payload, UUID(str(target_deal_id)))
+        await session.commit()
         return {"deal_id": str(target_deal_id)}
 
     # Name the deal after the company so it matches the rest of the pipeline
@@ -320,6 +343,8 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
     except Exception:
         # Non-fatal — milestone tracking shouldn't block deal creation.
         logger.exception("record_deal_stage_milestone failed for new deal %s", deal.id)
+
+    await _backfill_call_activity_deal_id(session, payload, deal.id)
 
     await session.commit()
     full = await repo.get_with_joins(deal.id) or deal

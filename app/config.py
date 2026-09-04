@@ -164,7 +164,7 @@ class Settings(BaseSettings):
     # Sales reports: production sends to the normal recipient list. Non-production
     # environments are restricted to this allowlist so staging can test real sends
     # without accidentally emailing the team.
-    SALES_REPORT_NONPROD_RECIPIENTS: str = "sarthak@beacon.li"
+    SALES_REPORT_NONPROD_RECIPIENTS: str = "sarthak@beacon.li,maithili@beacon.li"
     SALES_REPORT_ENABLE_NONPROD_SCHEDULED_SENDS: bool = False
 
     # Gmail shared inbox (email-to-activity sync)

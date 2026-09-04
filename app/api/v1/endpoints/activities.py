@@ -319,7 +319,7 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
         contact = await session.get(Contact, activity.contact_id)
         if contact and contact.call_disposition != disp:
             await apply_call_disposition_effects(
-                session, contact, disposition=disp, refresh_tasks=False
+                session, contact, disposition=disp, refresh_tasks=False, activity_id=activity.id
             )
             await session.commit()
 
