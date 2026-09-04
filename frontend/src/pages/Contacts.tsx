@@ -874,7 +874,7 @@ export default function Contacts() {
   // also loads the larger CRM + Account Sourcing catalog when opened.
   useEffect(() => {
     companiesApi
-      .list(0, 500)
+      .listAll()
       .then((rows) => {
         const opts = rows
           .filter((company) => company.id && (company.name || company.domain))

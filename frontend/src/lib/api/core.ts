@@ -6,6 +6,36 @@ async function requestList<T>(path: string): Promise<T[]> {
   return res.items ?? [];
 }
 
+/**
+ * Fetch every page of a paginated endpoint.
+ *
+ * Several call sites used to request one fixed page — `list(0, 500)` — and
+ * treat it as the whole dataset. Production outgrew all of those ceilings
+ * (704 deals, 1,353 companies), so records simply went missing from pickers
+ * and filters with nothing on screen saying the list was partial.
+ *
+ * `buildPath` receives the offset and returns the URL for that page. Pages are
+ * fetched in sequence and stop as soon as the server says there is nothing
+ * left, so a small dataset still costs exactly one request. `maxPages` is a
+ * seatbelt against an endpoint that never reports completion — not a data
+ * limit; size `pageSize` so real volumes finish well inside it.
+ */
+async function requestAllPages<T>(
+  buildPath: (skip: number, limit: number) => string,
+  { pageSize = 500, maxPages = 40 }: { pageSize?: number; maxPages?: number } = {},
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const res = await requestPaginated<T>(buildPath(all.length, pageSize));
+    const items = res.items ?? [];
+    all.push(...items);
+    // Short page, empty page, or we already hold everything the server counted.
+    if (items.length < pageSize) break;
+    if (typeof res.total === "number" && all.length >= res.total) break;
+  }
+  return all;
+}
+
 async function requestPaginated<T>(path: string): Promise<Paginated<T>> {
   const res = await request<Paginated<T> | T[]>(path);
   if (Array.isArray(res)) {
@@ -93,4 +123,4 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return normalizeUtcDateStrings(payload) as T;
 }
 
-export { BASE, getAuthHeaders, normalizeUtcDateStrings, request, requestList, requestPaginated };
+export { BASE, getAuthHeaders, normalizeUtcDateStrings, request, requestAllPages, requestList, requestPaginated };

@@ -1,5 +1,5 @@
 import "./pipeline-refresh.css";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
@@ -13,11 +13,16 @@ import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSett
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { formatCurrencyAmount } from "../lib/currencies";
 import { EVENT_OPTIONS, MARKETING_LEAD_SOURCES, MARKETING_SOURCE_LABELS, parseMarketingSource, serializeMarketingSource } from "../lib/dealSources";
-import DealDetailDrawer from "../components/deal/DealDetailDrawer";
+// Split out of the board chunk: neither renders until the user asks for it
+// (a card click, a view-mode switch), but statically imported they made
+// Pipeline the largest route in the app at 643 KB — on the page reps sit on
+// all day. Suspense fallback is null for the drawer: it animates in over the
+// board, so a placeholder would flash.
+const DealDetailDrawer = lazy(() => import("../components/deal/DealDetailDrawer"));
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
 import ViewModeToggle from "../components/ViewModeToggle";
-import PipelineTableView from "./pipeline/PipelineTableView";
+const PipelineTableView = lazy(() => import("./pipeline/PipelineTableView"));
 import { reduceViewMode, withViewMode } from "../lib/viewMode";
 
 type PipelineTab = "deal" | "prospect";
@@ -1642,6 +1647,10 @@ export default function Pipeline() {
   const [bulkTag, setBulkTag] = useState("");
   const [dealBoard, setDealBoard] = useState<Record<string, Deal[]>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
+  // Honest signal when the server had to clip the board (see the /contacts/board
+  // ceiling). The old hard-coded 500 gave no indication at all.
+  const [prospectsTruncated, setProspectsTruncated] = useState(false);
+  const [prospectTotal, setProspectTotal] = useState(0);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loadingDeals, setLoadingDeals] = useState(true);
@@ -1672,6 +1681,24 @@ export default function Pipeline() {
   const [createDealStage, setCreateDealStage] = useState<string | null>(null);
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [selectedProspect, setSelectedProspect] = useState<Contact | null>(null);
+
+  /** Open the prospect drawer from a board card.
+   *
+   *  Board cards are a slim projection (~20 fields) so the whole board can be
+   *  loaded at once, but the drawer shows the full record — enrichment,
+   *  talking points, warm-intro path. Show the card's fields immediately so
+   *  the drawer opens without a spinner, then swap in the full contact. A
+   *  failed hydrate leaves the card's fields on screen rather than an error. */
+  const openProspect = (card: Contact) => {
+    setSelectedProspect(card);
+    contactsApi
+      .get(card.id)
+      .then((full) => {
+        // Ignore a response that lost the race to a different card.
+        setSelectedProspect((current) => (current?.id === full.id ? full : current));
+      })
+      .catch(() => {});
+  };
   const [prospectActivities, setProspectActivities] = useState<Activity[]>([]);
   const [loadingProspectActivities, setLoadingProspectActivities] = useState(false);
   const [migratingProspects, setMigratingProspects] = useState(false);
@@ -1770,11 +1797,19 @@ export default function Pipeline() {
   const loadProspectBoard = async () => {
     setLoadingProspects(true);
     try {
-      const [contactList, prospectStageSettings] = await Promise.all([
-        contactsApi.list(0, 500),
+      // The board asks for EVERY prospect the caller may see, not the first
+      // 500. It used to take `contactsApi.list(0, 500)` as the whole
+      // population: with 5,935 production contacts an admin saw 8% of the
+      // board, and because rows come back newest-first it silently hid the
+      // OLDEST prospects. The slim board payload is ~10x lighter per row, so
+      // the complete board now costs less to load than the truncated one did.
+      const [board, prospectStageSettings] = await Promise.all([
+        contactsApi.board(),
         settingsApi.getProspectStages().catch(() => ({ stages: PROSPECT_STAGES as DealStageSetting[] })),
       ]);
-      setContacts(contactList);
+      setContacts(board.items as Contact[]);
+      setProspectsTruncated(board.truncated);
+      setProspectTotal(board.total);
       setProspectStageMeta((prospectStageSettings.stages ?? PROSPECT_STAGES).map((stage) => ({
         id: stage.id,
         label: stage.label,
@@ -1790,7 +1825,7 @@ export default function Pipeline() {
     setLoadingSummarySettings(true);
     try {
       const [companyList, userList, summarySettings] = await Promise.all([
-        companiesApi.list(),
+        companiesApi.listAll(),
         getCachedUsers().catch(() => []),
         settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
       ]);
@@ -1804,9 +1839,36 @@ export default function Pipeline() {
     }
   };
 
-  const loadBoard = async () => {
-    await Promise.all([loadDealBoard(), loadProspectBoard()]);
+  // The prospect board is reachable only from the mobile layout's Deals /
+  // Prospects toggle — the desktop "View" rail lost its prospect entry in
+  // a0eab59 when prospecting moved to its own page. Loading it on mount
+  // therefore spent a full contacts fetch on every DESKTOP visit to render
+  // nothing: 3 MB before the slim payload, and still wasted after it. Fetch it
+  // when the tab is actually opened instead.
+  const prospectsLoadedRef = useRef(false);
+
+  const loadProspectBoardOnce = async () => {
+    if (prospectsLoadedRef.current) return;
+    prospectsLoadedRef.current = true;
+    try {
+      await loadProspectBoard();
+    } catch {
+      // Let a failed load be retried the next time the tab is opened.
+      prospectsLoadedRef.current = false;
+    }
   };
+
+  const loadBoard = async () => {
+    await Promise.all([
+      loadDealBoard(),
+      tab === "prospect" ? loadProspectBoardOnce() : Promise.resolve(),
+    ]);
+  };
+
+  useEffect(() => {
+    if (tab === "prospect") void loadProspectBoardOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     loadBoard();
@@ -2956,6 +3018,7 @@ export default function Pipeline() {
           </div>
 
           {tab === "deal" && viewMode === "table" ? (
+            <Suspense fallback={<div style={{ padding: 24, fontSize: 12, color: "#7a96b0" }}>Loading table…</div>}>
             <PipelineTableView
               records={pipelineTableDeals}
               stageLabels={dealStageLabels}
@@ -2971,7 +3034,21 @@ export default function Pipeline() {
                 }, { replace: true });
               }}
             />
+            </Suspense>
           ) : (
+          <>
+          {tab === "prospect" && prospectsTruncated && (
+            // The board hit the server's ceiling. Say so — the previous
+            // hard-coded 500 clipped the board with no indication at all,
+            // which read as "the prospect isn't there".
+            <div
+              role="status"
+              style={{ margin: "0 20px", padding: "8px 12px", borderRadius: 8, background: "#fff8e6", border: "1px solid #f0dca8", fontSize: 12, color: "#7a5c00" }}
+            >
+              Showing {contacts.length.toLocaleString()} of {prospectTotal.toLocaleString()} prospects.
+              Filter by owner or stage to narrow the board.
+            </div>
+          )}
           <div
             className="desktop-only pipeline-board-scroll"
 
@@ -3006,7 +3083,7 @@ export default function Pipeline() {
                           }, { replace: true });
                         }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} priorityTag={deal.priority_tag ?? undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
-                        prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => setSelectedProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
+                        prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => openProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
                     </BoardColumn>
                   </div>
@@ -3014,6 +3091,7 @@ export default function Pipeline() {
               })}
             </div>
           </div>
+          </>
           )}
         </div>
       </div>
@@ -3069,7 +3147,7 @@ export default function Pipeline() {
               <div key={stage.id}>
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: "#64748b", padding: "6px 4px 4px" }}>{stage.label} ({items.length})</div>
                 {items.map(contact => (
-                  <div key={contact.id} className="mobile-card" onClick={() => setSelectedProspect(contact)} style={{ cursor: "pointer" }}>
+                  <div key={contact.id} className="mobile-card" onClick={() => openProspect(contact)} style={{ cursor: "pointer" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 800, color: "#1f2d3d", marginBottom: 4 }}>{contact.first_name} {contact.last_name}</div>
@@ -3182,14 +3260,14 @@ export default function Pipeline() {
           keys not in settings — e.g. a stage deleted while deals sat in it);
           those render on the board for visibility but the backend validator
           rejects moving a deal INTO them, so offering them silently failed. */}
-      {selectedDeal && <DealDetailDrawer key={selectedDeal.id} deal={selectedDeal} companies={companies} users={users} stages={dealStages.length ? dealStages : DEFAULT_DEAL_STAGES} onClose={() => {
+      {selectedDeal && <Suspense fallback={null}><DealDetailDrawer key={selectedDeal.id} deal={selectedDeal} companies={companies} users={users} stages={dealStages.length ? dealStages : DEFAULT_DEAL_STAGES} onClose={() => {
         setSelectedDeal(null);
         setSearchParams((current) => {
           const next = new URLSearchParams(current);
           next.delete("deal");
           return next;
         }, { replace: true });
-      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} />}
+      }} onDealUpdated={handleDealUpdated} onDealDeleted={handleDealDeleted} /></Suspense>}
       {selectedProspect && <ProspectDetailDrawer contact={selectedProspect} company={selectedProspect.company_id ? companyMap.get(selectedProspect.company_id) : undefined} companies={companies} activities={prospectActivities} loading={loadingProspectActivities} converting={convertingProspect} onConvert={handleConvertProspectToDeal} stages={effectiveProspectStages} onClose={() => setSelectedProspect(null)} onUpdated={loadProspectBoard} />}
       {pendingDealMove && (
         <>

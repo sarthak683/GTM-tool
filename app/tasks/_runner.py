@@ -29,6 +29,20 @@ from __future__ import annotations
 import asyncio
 
 
+# Draining once is not enough: cancelling a task runs its finalizers, and a
+# finalizer can schedule MORE work on the loop. The common case is a
+# third-party httpx client whose __del__ schedules `AsyncClient.aclose()` —
+# that task is created during the drain, so a single pass closes the loop out
+# from under it and the worker logs "Task exception was never retrieved ...
+# RuntimeError('Event loop is closed')". Every one of our own clients uses
+# `async with`, so this noise comes from vendored SDKs we do not control.
+#
+# Bounded because a pathological finalizer could otherwise schedule work
+# forever; three passes has been enough for every case seen in production, and
+# hitting the limit just restores the old (noisy) behaviour rather than hanging.
+_MAX_DRAIN_PASSES = 3
+
+
 def run_async_task(coro):
     """Run a coroutine inside a fresh event loop with orderly shutdown."""
     loop = asyncio.new_event_loop()
@@ -36,12 +50,25 @@ def run_async_task(coro):
         asyncio.set_event_loop(loop)
         result = loop.run_until_complete(coro)
         loop.run_until_complete(loop.shutdown_asyncgens())
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending:
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        _drain_pending(loop)
         return result
     finally:
         asyncio.set_event_loop(None)
         loop.close()
+
+
+def _drain_pending(loop) -> None:
+    """Cancel and await outstanding tasks, including ones finalizers create."""
+    for _ in range(_MAX_DRAIN_PASSES):
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if not pending:
+            # One more turn of the loop lets __del__-scheduled callbacks run,
+            # so anything they queue is caught by the next pass instead of
+            # being orphaned by loop.close().
+            loop.run_until_complete(asyncio.sleep(0))
+            if not [task for task in asyncio.all_tasks(loop) if not task.done()]:
+                return
+            continue
+        for task in pending:
+            task.cancel()
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))

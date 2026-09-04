@@ -502,7 +502,7 @@ export default function MeetingDetail() {
       if (m.company_id) {
         const [c, cts, sig] = await Promise.all([
           companiesApi.get(m.company_id),
-          contactsApi.list(0, 50, m.company_id),
+          contactsApi.listAllForCompany(m.company_id),
           signalsApi.getCompanySignals(m.company_id),
         ]);
         setCompany(c);
@@ -643,7 +643,7 @@ export default function MeetingDetail() {
     setDealSearchQuery(selectedDeal?.name ?? "");
     const [companyPage, ds] = await Promise.all([
       accountSourcingApi.listCompaniesPaginated({ skip: 0, limit: 50 }),
-      dealsApi.list(0, 500),
+      dealsApi.listAll(),
     ]);
     const companies = company && !companyPage.items.some((item) => item.id === company.id)
       ? [company, ...companyPage.items]
@@ -739,7 +739,7 @@ export default function MeetingDetail() {
       role: a.role ?? "attendee",
     })));
     if (meeting?.company_id && allContacts.length === 0) {
-      const cs = await contactsApi.list(0, 100, meeting.company_id);
+      const cs = await contactsApi.listAllForCompany(meeting.company_id);
       setAllContacts(cs);
     }
     setEditingAttendees(true);

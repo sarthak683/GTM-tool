@@ -10,13 +10,18 @@ import type {
   CallLevel,
   Meeting,
   MeetingPrepMonitor,
+  ProspectBoardCard,
   ProspectImportResponse,
 } from "../../types";
-import { BASE, getAuthHeaders, request, requestList, requestPaginated } from "./core";
+import { BASE, getAuthHeaders, request, requestAllPages, requestList, requestPaginated } from "./core";
 
 export const companiesApi = {
   list: (skip = 0, limit = 1000) =>
     requestList<Company>(`/api/v1/companies/?skip=${skip}&limit=${limit}`),
+  /** Every company, not the first page. Selectors and filters that used a
+   *  fixed ceiling were quietly missing accounts once the workspace passed it. */
+  listAll: () =>
+    requestAllPages<Company>((skip, limit) => `/api/v1/companies/?skip=${skip}&limit=${limit}`),
   // Server-side name/domain search so selectors find any account, not just the
   // first page the client loaded.
   search: (q: string, limit = 50) =>
@@ -211,6 +216,23 @@ export const contactsApi = {
   },
 
   get: (id: string) => request<Contact>(`/api/v1/contacts/${id}`),
+  /** Every prospect the caller may see, as slim board cards.
+   *  Replaces the old `list(0, 500)` the board used to treat as the whole
+   *  population — see ContactBoardCard for why the full set is now cheaper. */
+  board: () =>
+    request<{ items: ProspectBoardCard[]; total: number; truncated: boolean }>(
+      "/api/v1/contacts/board?prospect_only=true",
+    ),
+  /** Every contact on one account. The per-company pickers used fixed
+   *  ceilings of 25/50/100; production's largest account has 98 contacts, so
+   *  38 accounts overflowed the 25 and 8 overflowed the 50 — contacts simply
+   *  missing from the picker with no indication. */
+  listAllForCompany: (companyId: string) =>
+    requestAllPages<Contact>((skip, limit) => {
+      const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+      params.set("company_id", companyId);
+      return `/api/v1/contacts/?${params}`;
+    }, { pageSize: 200 }),
   enrich: (id: string) =>
     request<{ contact_id: string; status: string; fields_updated: string[]; contact: Contact }>(
       `/api/v1/contacts/${id}/enrich`,
@@ -326,6 +348,15 @@ export const dealsApi = {
     if (stage) params.set("stage", stage);
     return requestList<Deal>(`/api/v1/deals/?${params}`);
   },
+  /** Every deal the caller may see. The meeting-link picker searched a fixed
+   *  first page, so once the workspace passed that ceiling some deals could
+   *  not be linked to a meeting at all. */
+  listAll: (companyId?: string) =>
+    requestAllPages<Deal>((skip, limit) => {
+      const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+      if (companyId) params.set("company_id", companyId);
+      return `/api/v1/deals/?${params}`;
+    }),
   board: (pipelineType = "deal") =>
     request<Record<string, Deal[]>>(`/api/v1/deals/board?pipeline_type=${pipelineType}`),
   get: (id: string) => request<Deal>(`/api/v1/deals/${id}`),

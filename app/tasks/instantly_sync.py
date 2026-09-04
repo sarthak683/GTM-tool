@@ -5,8 +5,11 @@ Runs every 15 minutes as a fallback for webhook delivery gaps.
 Updates contact sequence_status, instantly_status, and email tracking
 counts for all contacts linked to active Instantly campaigns.
 """
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_
@@ -39,6 +42,33 @@ def _parse_instantly_datetime(value) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
     except (TypeError, ValueError):
         return None
+
+
+def _analytics_fingerprint(analytics: Any) -> str | None:
+    """Stable digest of a campaign's analytics, suffixed with today's UTC date.
+
+    Used to skip the per-lead Instantly fetch when a campaign has not moved.
+    Two properties matter:
+
+    * **Stable across runs.** ``sort_keys`` means a payload whose keys come
+      back in a different order does not read as a change and force a
+      pointless full sync.
+    * **Bounded staleness.** The date suffix guarantees the fingerprint
+      changes at midnight UTC, so every campaign gets one full reconciliation
+      a day even if its counters never move — a lead status Instantly does not
+      reflect in the aggregates can be late, never lost.
+    """
+    if not isinstance(analytics, dict):
+        return None
+    try:
+        digest = hashlib.sha256(
+            json.dumps(analytics, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:32]
+    except (TypeError, ValueError):
+        # Unserialisable payload — fall back to "always sync", which is the
+        # old behaviour and always correct, just slower.
+        return None
+    return f"{digest}:{datetime.utcnow().date().isoformat()}"
 
 
 def _safe_int(value) -> int:
@@ -390,6 +420,11 @@ async def _async_sync_active_campaigns() -> dict:
         synced = 0
         errors = 0
         tracking_enabled = 0
+        # Campaigns whose analytics were unchanged since the last pass, so the
+        # per-lead API call was skipped. On a steady-state run this should be
+        # most of them; a run where it stays 0 means change detection is not
+        # working and the task is back to its old ~250s full sweep.
+        skipped_unchanged = 0
         # One reconcile check per unique campaign (many sequences share a
         # campaign) so we don't re-GET the same campaign for every lead.
         reconciled_open_tracking: set[str] = set()
@@ -433,6 +468,21 @@ async def _async_sync_active_campaigns() -> dict:
                     seq.instantly_campaign_status = campaign_status
                     seq.updated_at = datetime.utcnow()
                     session.add(seq)
+
+                # Change detection. The per-lead fetch below is one Instantly
+                # API call PER SEQUENCE, and this task runs every 15 minutes:
+                # it was spending ~250s of every 900s cycle re-reading ~731
+                # leads to conclude nothing had moved. A campaign's analytics
+                # payload aggregates its leads' activity, so if it is
+                # byte-identical to the last pass no lead in it changed.
+                #
+                # The date suffix forces one full reconciliation per day, so a
+                # change the counters do not reflect is deferred by hours, not
+                # indefinitely — and the webhook still delivers in real time.
+                fingerprint = _analytics_fingerprint(analytics)
+                if fingerprint and seq.instantly_sync_fingerprint == fingerprint:
+                    skipped_unchanged += 1
+                    continue
 
                 # Sync lead status for the contact
                 contact = await session.get(Contact, seq.contact_id)
@@ -565,6 +615,14 @@ async def _async_sync_active_campaigns() -> dict:
                             "Failed to sync lead %s in campaign %s",
                             contact.email, campaign_id,
                         )
+                    else:
+                        # Remember the fingerprint ONLY after a clean pass. A
+                        # failed fetch must not mark the campaign as "already
+                        # reconciled" — that would defer the retry to whenever
+                        # the analytics happen to change next.
+                        if fingerprint:
+                            seq.instantly_sync_fingerprint = fingerprint
+                            session.add(seq)
 
             except InstantlyError:
                 errors += 1
@@ -580,5 +638,6 @@ async def _async_sync_active_campaigns() -> dict:
         "synced": synced,
         "errors": errors,
         "campaigns_checked": len(sequences),
+        "skipped_unchanged": skipped_unchanged,
         "open_tracking_enabled": tracking_enabled,
     }

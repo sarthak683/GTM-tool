@@ -469,7 +469,7 @@ export default function Meetings() {
       setAvailableContacts([]);
       return;
     }
-    contactsApi.list(0, 50, form.company_id).then(setAvailableContacts).catch(() => setAvailableContacts([]));
+    contactsApi.listAllForCompany(form.company_id).then(setAvailableContacts).catch(() => setAvailableContacts([]));
   }, [showModal, form.company_id]);
 
   const companyName = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c.name])), [companies]);

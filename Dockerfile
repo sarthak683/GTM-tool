@@ -53,6 +53,18 @@ RUN groupadd --system --gid 10001 appuser \
 
 COPY . .
 
+# Stamp the built commit into the image so "what is actually running" is a
+# question the cluster can answer. Production once ran an image tagged
+# v0.260904-3b904af whose code was really ea2f3fb — confirmed only by grepping
+# inside a live pod and cross-checking the alembic version. A tag that does not
+# identify its code makes rollback a guess. Passed at build time:
+#   docker build --build-arg GIT_SHA=$(git rev-parse --short HEAD) ...
+# Unset builds report "unknown", which is honest rather than wrong.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ENV BEACON_GIT_SHA=$GIT_SHA \
+    BEACON_BUILD_TIME=$BUILD_TIME
+
 # Hand the whole app dir to the runtime user after the source is in place.
 RUN chown -R appuser:appuser /app
 

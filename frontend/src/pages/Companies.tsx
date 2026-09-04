@@ -42,7 +42,7 @@ export default function Companies() {
   const [polling, setPolling] = useState(false);
 
   useEffect(() => {
-    companiesApi.list().then((cs) => setCompanies(cs)).catch(() => setCompanies([])).finally(() => setLoading(false));
+    companiesApi.listAll().then((cs) => setCompanies(cs)).catch(() => setCompanies([])).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -190,7 +190,7 @@ export default function Companies() {
       const result = await prospectingApi.bulkUpload(csvFile);
       setBatch(result);
       setPolling(result.created > 0);
-      const refreshed = await companiesApi.list();
+      const refreshed = await companiesApi.listAll();
       setCompanies(refreshed);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Bulk upload failed.");

@@ -643,6 +643,19 @@ def _extract_connector(row: dict[str, str], index: int) -> Optional[dict[str, An
     return {key: value for key, value in payload.items() if value is not None}
 
 
+# Canonical outreach-lane vocabulary. `recommended_outreach_lane` is a short,
+# INDEXED routing token — not prose — and downstream consumers match it
+# exactly (playbook selection, the `instantly_ready` gate, the Account
+# Sourcing lane filter, and the prospect board's columns). Anything writing
+# that column must produce one of these, so keep this the single definition.
+OUTREACH_LANES = frozenset({
+    "warm_intro",
+    "event_follow_up",
+    "cold_strategic",
+    "cold_operator",
+})
+
+
 def _build_company_outreach_lane(
     *,
     connectors: list[dict[str, Any]],

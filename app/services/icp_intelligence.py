@@ -27,6 +27,7 @@ from uuid import UUID
 from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.services.log_safety import safe_error_message
+from app.services.account_sourcing import OUTREACH_LANES
 
 logger = logging.getLogger(__name__)
 
@@ -1430,8 +1431,17 @@ async def research_company_and_update(
         company.why_now = str(icp["why_now"])[:2000]
     if icp.get("beacon_angle"):
         company.beacon_angle = str(icp["beacon_angle"])[:2000]
-    if icp.get("recommended_outreach_strategy"):
-        company.recommended_outreach_lane = str(icp["recommended_outreach_strategy"])[:500]
+    # `recommended_outreach_strategy` is free prose ("who to contact first, what
+    # to say, which channels"), but `recommended_outreach_lane` is an indexed
+    # routing TOKEN that downstream code compares by equality. Writing the prose
+    # here silently broke playbook selection and the `instantly_ready` gate, put
+    # 19 sentence-long options in the Account Sourcing lane filter, and — via the
+    # company->contact copy in account_sourcing — created junk prospect-board
+    # columns for 36 contacts. Only adopt a value that really is a lane; the
+    # strategy prose is already preserved in enrichment_cache["icp_analysis"].
+    strategy = str(icp.get("recommended_outreach_strategy") or "").strip().lower()
+    if strategy in OUTREACH_LANES:
+        company.recommended_outreach_lane = strategy
 
     # Store full ICP analysis in enrichment_cache
     cache = copy.deepcopy(company.enrichment_cache or {})
@@ -1937,8 +1947,17 @@ async def research_company_and_update_free(
         company.why_now = str(icp["why_now"])[:2000]
     if icp.get("beacon_angle"):
         company.beacon_angle = str(icp["beacon_angle"])[:2000]
-    if icp.get("recommended_outreach_strategy"):
-        company.recommended_outreach_lane = str(icp["recommended_outreach_strategy"])[:500]
+    # `recommended_outreach_strategy` is free prose ("who to contact first, what
+    # to say, which channels"), but `recommended_outreach_lane` is an indexed
+    # routing TOKEN that downstream code compares by equality. Writing the prose
+    # here silently broke playbook selection and the `instantly_ready` gate, put
+    # 19 sentence-long options in the Account Sourcing lane filter, and — via the
+    # company->contact copy in account_sourcing — created junk prospect-board
+    # columns for 36 contacts. Only adopt a value that really is a lane; the
+    # strategy prose is already preserved in enrichment_cache["icp_analysis"].
+    strategy = str(icp.get("recommended_outreach_strategy") or "").strip().lower()
+    if strategy in OUTREACH_LANES:
+        company.recommended_outreach_lane = strategy
 
     cache = copy.deepcopy(company.enrichment_cache or {})
     cache["icp_analysis"] = {

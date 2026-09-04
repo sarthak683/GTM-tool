@@ -13,7 +13,7 @@ from sqlmodel import SQLModel, select
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
-from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
+from app.models.contact import Contact, ContactBoardCard, ContactCreate, ContactRead, ContactUpdate
 from app.models.meeting import to_naive_utc
 from app.repositories.company import CompanyRepository
 from app.repositories.contact import ContactRepository, get_or_create_contact_by_email
@@ -576,6 +576,57 @@ async def create_contact(payload: ContactCreate, session: DBSession, _user: Curr
     except Exception:
         pass  # informational only — never block the add on a notification failure
     return await to_contact_read(session, saved)
+
+
+class ContactBoardResponse(SQLModel):
+    items: list[ContactBoardCard]
+    total: int
+    truncated: bool
+
+
+# ROUTE ORDER: "/board" MUST stay above "/{contact_id}" — FastAPI matches in
+# declaration order and would otherwise read "board" as a contact UUID.
+@router.get("/board", response_model=ContactBoardResponse)
+async def contact_board(
+    session: DBSession,
+    current_user: CurrentUser,
+    filters: ContactFilters = Depends(),
+    limit: int = Query(default=8000, ge=1, le=20000),
+):
+    """Every prospect the caller may see, as slim cards for the kanban board.
+
+    The board used to call the paginated list endpoint with a hard-coded
+    ``limit=500`` and treat the result as the whole population. Production has
+    5,935 contacts, so an admin saw 8% of the board — the ``cold_strategic``
+    column rendered 320 of its 4,804 cards — with nothing in the UI saying the
+    list was partial. Rows were dropped by creation date, so it silently hid
+    the OLDEST prospects: exactly the ones most likely to be going stale.
+
+    Raising that ceiling was not an option at ``ContactRead``'s 6.4 KB per row
+    (36 MB for the full set). ``ContactBoardCard`` is ~450 bytes, so the whole
+    board now costs less than the truncated one did.
+
+    Visibility and hygiene filtering are delegated to the SAME repository call
+    the list and CSV export use, so the board can never drift from them.
+    """
+    repo = ContactRepository(session)
+    restrict_to_owner_id = (
+        None if await can_view_all_prospects(session, current_user) else str(current_user.id)
+    )
+    items, total = await repo.list_with_company_name(
+        restrict_to_role=current_user.role,
+        restrict_to_owner_id=restrict_to_owner_id,
+        skip=0,
+        limit=limit,
+        **filters.as_repo_kwargs(),
+    )
+    # `truncated` is the honest signal the old ceiling never gave anyone: the
+    # client shows "showing N of M" rather than a quietly short board.
+    return ContactBoardResponse(
+        items=[ContactBoardCard.from_read(item) for item in items],
+        total=total,
+        truncated=total > len(items),
+    )
 
 
 @router.get("/{contact_id}", response_model=ContactRead)

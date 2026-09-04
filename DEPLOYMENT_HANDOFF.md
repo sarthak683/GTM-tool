@@ -229,7 +229,7 @@ Run from repo root:
 
 ```powershell
 cd C:\gtm-prototype
-docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-be:<TAG> --push --builder builder
+docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-be:<TAG> --build-arg GIT_SHA=$(git rev-parse --short HEAD) --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) --push --builder builder
 ```
 
 ### Frontend
@@ -432,7 +432,7 @@ $pw | docker login beacon.azurecr.io -u codebuild --password-stdin
 
 ```powershell
 cd C:\\gtm-prototype
-docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-be:$TAG --push --builder builder
+docker buildx build --platform linux/amd64 . -t beacon.azurecr.io/gtm-be:$TAG --build-arg GIT_SHA=$(git rev-parse --short HEAD) --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) --push --builder builder
 ```
 
 1. Build and push the frontend image from the `frontend` folder.

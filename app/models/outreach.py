@@ -32,6 +32,15 @@ class OutreachSequence(OutreachSequenceBase, table=True):
     # Instantly campaign tracking
     instantly_campaign_id: Optional[str] = None
     instantly_campaign_status: Optional[str] = None  # draft | active | paused | completed
+    # "<analytics fingerprint>:<UTC date>" from the last completed lead sync.
+    # The 15-minute poll issues one Instantly API call PER SEQUENCE, so it was
+    # re-fetching all ~731 linked leads every run (~250s of a 900s cycle) even
+    # though the campaign had not moved. When the campaign's analytics payload
+    # is byte-identical to the last pass, no lead in it can have changed, so
+    # the per-lead fetch is skipped. The date suffix forces one full
+    # reconciliation per day regardless, so a change the analytics counters do
+    # not reflect can never be deferred indefinitely.
+    instantly_sync_fingerprint: Optional[str] = None
 
     # Context used to generate this sequence (for audit/regen)
     generation_context: Optional[dict] = Field(

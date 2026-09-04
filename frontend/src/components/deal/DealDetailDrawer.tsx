@@ -686,7 +686,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     dealsApi.getContacts(deal.id).then(setDealContacts).catch(() => {});
     if (deal.company_id) {
-      contactsApi.list(0, 50, deal.company_id).then(setCompanyContacts).catch(() => {});
+      contactsApi.listAllForCompany(deal.company_id).then(setCompanyContacts).catch(() => {});
     }
   }, [deal.id, deal.company_id]);
 
@@ -895,8 +895,13 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     // Debounce so a fast typist doesn't fire a 200-row fetch per keystroke.
     contactSearchTimer.current = setTimeout(async () => {
       try {
-        // If deal has a company, only show contacts from that company
-        const all = await contactsApi.list(0, 200, deal.company_id ?? undefined);
+        // If deal has a company, only show contacts from that company — every
+        // one of them: the old fixed 200 silently hid contacts on the largest
+        // accounts. With no company we still fall back to a bounded
+        // workspace-wide page, because that search has no natural ceiling.
+        const all = deal.company_id
+          ? await contactsApi.listAllForCompany(deal.company_id)
+          : await contactsApi.list(0, 200);
         const lq = q.toLowerCase();
         setContactResults(
           all

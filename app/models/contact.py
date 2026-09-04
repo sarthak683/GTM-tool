@@ -101,6 +101,56 @@ class ContactCreate(ContactBase):
     persona_type: Optional[str] = None
 
 
+class ContactBoardCard(SQLModel):
+    """Slim projection for the prospect kanban board.
+
+    The board renders thousands of cards and needs about twenty fields, but
+    ``ContactRead`` carries the whole enrichment record. Measured over
+    production-shaped rows that is **6,414 bytes per contact**, of which
+    ``enrichment_data`` alone is 4,197 — so the board's old
+    "fetch the first 500" cost 3 MB to show 8% of the prospects, and fetching
+    all 5,935 would have cost 36 MB.
+
+    This projection is ~450 bytes per contact, which makes loading the FULL
+    board cheaper than loading a truncated one used to be. Keep it that way:
+    only add a field here if a card or a board filter actually reads it.
+    """
+
+    id: UUID
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    title: Optional[str] = None
+    phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    persona: Optional[str] = None
+
+    company_id: Optional[UUID] = None
+    company_name: Optional[str] = None
+
+    assigned_to_id: Optional[UUID] = None
+    assigned_to_name: Optional[str] = None
+    sdr_id: Optional[UUID] = None
+    sdr_name: Optional[str] = None
+
+    # Drive the column the card lands in — see `prospectStage` on the client.
+    outreach_lane: Optional[str] = None
+    sequence_status: Optional[str] = None
+    instantly_status: Optional[str] = None
+    tracking_stage: Optional[str] = None
+    tracking_summary: Optional[str] = None
+    tracking_score: Optional[float] = None
+    tracking_label: Optional[str] = None
+    # Not rendered on the card, but the board's per-column CSV export writes a
+    # "Last Activity" column from it — dropping it here would silently empty
+    # that column.
+    tracking_last_activity_at: Optional[datetime] = None
+
+    @classmethod
+    def from_read(cls, contact: "ContactRead") -> "ContactBoardCard":
+        return cls.model_validate(contact, from_attributes=True)
+
+
 class ContactRead(ContactBase):
     id: UUID
     company_id: Optional[UUID] = None

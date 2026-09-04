@@ -65,6 +65,12 @@ export type Contact = Omit<
   talking_points?: string[] | null;
 };
 
+/** Slim card the prospect board renders — see ContactBoardCard on the API.
+ *  ~10x lighter than a full Contact, which is what makes loading the WHOLE
+ *  board affordable instead of the first 500 rows. Open the drawer to hydrate
+ *  the full record. */
+export type ProspectBoardCard = components["schemas"]["ContactBoardCard"];
+
 export interface SourcingBatch {
   id: string;
   filename: string;

@@ -70,7 +70,7 @@ export default function SearchableCompanySelect({
       setLoading(true);
       try {
         const [crmCompanies, sourcingCompanies] = await Promise.all([
-          companiesApi.list(0, 1000).catch(() => []),
+          companiesApi.listAll().catch(() => []),
           accountSourcingApi.listCompanies(0, 1000).catch(() => []),
         ]);
         const merged = new Map<string, Company>();

@@ -163,7 +163,7 @@ export default function CompanyDetail() {
   const loadCompanyContext = async (companyId: string) => {
     const [c, cs, ds, sig] = await Promise.all([
       companiesApi.get(companyId),
-      contactsApi.list(0, 100, companyId),
+      contactsApi.listAllForCompany(companyId),
       companiesApi.getDeals(companyId),
       signalsApi.getCompanySignals(companyId),
     ]);

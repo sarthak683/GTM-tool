@@ -686,6 +686,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/contacts/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contact Board
+         * @description Every prospect the caller may see, as slim cards for the kanban board.
+         *
+         *     The board used to call the paginated list endpoint with a hard-coded
+         *     ``limit=500`` and treat the result as the whole population. Production has
+         *     5,935 contacts, so an admin saw 8% of the board — the ``cold_strategic``
+         *     column rendered 320 of its 4,804 cards — with nothing in the UI saying the
+         *     list was partial. Rows were dropped by creation date, so it silently hid
+         *     the OLDEST prospects: exactly the ones most likely to be going stale.
+         *
+         *     Raising that ceiling was not an option at ``ContactRead``'s 6.4 KB per row
+         *     (36 MB for the full set). ``ContactBoardCard`` is ~450 bytes, so the whole
+         *     board now costs less than the truncated one did.
+         *
+         *     Visibility and hygiene filtering are delegated to the SAME repository call
+         *     the list and CSV export use, so the board can never drift from them.
+         */
+        get: operations["contact_board_api_v1_contacts_board_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/contacts/{contact_id}": {
         parameters: {
             query?: never;
@@ -1461,6 +1495,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/performance/pipeline-stage-deals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline Stage Deals
+         * @description Every live, open deal currently sitting in `stage` — the click-through
+         *     behind the Pipeline by Stage / Pipeline by Rep charts on Sales Analytics.
+         *
+         *     Unlike /deal-health's red-alert buckets, this is NOT restricted to deals
+         *     stalled past a threshold — it's the full population behind that chart's
+         *     bar/segment, same population rule (live "deal" pipeline, not deleted).
+         */
+        get: operations["get_pipeline_stage_deals_api_v1_performance_pipeline_stage_deals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/performance/pipeline-buckets": {
         parameters: {
             query?: never;
@@ -1523,9 +1582,12 @@ export interface paths {
          * Get Incentives
          * @description Per-SDR SQL leaderboard for the Incentive view.
          *
-         *     SQL = (Direct SQL bucket) + (deals that moved demo_done → qualified_lead in
-         *     the period), unioned and deduped by deal id so the two sources never
-         *     double-count the same deal. The target is a flat per-window figure from
+         *     SQL = (Direct SQL: demo_done reached with a VP/SVP/Head-Chief meeting) +
+         *     (Converted: moved into qualified_lead with a Director/S. Director/AVP
+         *     meeting), unioned and deduped by deal id. The two title tiers are
+         *     mutually exclusive by design, so in practice a deal only ever lands in
+         *     one bucket — the union/dedup mainly guards against future title changes.
+         *     The target is a flat per-window figure from
          *     analytics_settings.incentive_targets (week=2, month=7, quarter=21 by
          *     default) — NOT prorated — with an optional per-SDR override in
          *     incentive_targets.per_rep[sdr_id][period], settable only by admins via
@@ -3442,6 +3504,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sales-reports/weekly-digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Weekly Digest */
+        get: operations["preview_weekly_digest_api_v1_sales_reports_weekly_digest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-reports/weekly-digest/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send Weekly Digest */
+        post: operations["send_weekly_digest_api_v1_sales_reports_weekly_digest_send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/account-sourcing/reset/{scope}": {
         parameters: {
             query?: never;
@@ -4548,6 +4644,24 @@ export interface paths {
         head?: never;
         /** Update India Sales Report Settings */
         patch: operations["update_india_sales_report_settings_api_v1_settings_sales_report_india_patch"];
+        trace?: never;
+    };
+    "/api/v1/settings/weekly-digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Weekly Digest Settings */
+        get: operations["get_weekly_digest_settings_api_v1_settings_weekly_digest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Weekly Digest Settings */
+        patch: operations["update_weekly_digest_settings_api_v1_settings_weekly_digest_patch"];
         trace?: never;
     };
     "/api/v1/settings/sync-schedule/tldv-now": {
@@ -7518,6 +7632,79 @@ export interface components {
             /** Opp Current Deal Status */
             opp_current_deal_status?: string | null;
         };
+        /**
+         * ContactBoardCard
+         * @description Slim projection for the prospect kanban board.
+         *
+         *     The board renders thousands of cards and needs about twenty fields, but
+         *     ``ContactRead`` carries the whole enrichment record. Measured over
+         *     production-shaped rows that is **6,414 bytes per contact**, of which
+         *     ``enrichment_data`` alone is 4,197 — so the board's old
+         *     "fetch the first 500" cost 3 MB to show 8% of the prospects, and fetching
+         *     all 5,935 would have cost 36 MB.
+         *
+         *     This projection is ~450 bytes per contact, which makes loading the FULL
+         *     board cheaper than loading a truncated one used to be. Keep it that way:
+         *     only add a field here if a card or a board filter actually reads it.
+         */
+        ContactBoardCard: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** First Name */
+            first_name?: string | null;
+            /** Last Name */
+            last_name?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Linkedin Url */
+            linkedin_url?: string | null;
+            /** Persona */
+            persona?: string | null;
+            /** Company Id */
+            company_id?: string | null;
+            /** Company Name */
+            company_name?: string | null;
+            /** Assigned To Id */
+            assigned_to_id?: string | null;
+            /** Assigned To Name */
+            assigned_to_name?: string | null;
+            /** Sdr Id */
+            sdr_id?: string | null;
+            /** Sdr Name */
+            sdr_name?: string | null;
+            /** Outreach Lane */
+            outreach_lane?: string | null;
+            /** Sequence Status */
+            sequence_status?: string | null;
+            /** Instantly Status */
+            instantly_status?: string | null;
+            /** Tracking Stage */
+            tracking_stage?: string | null;
+            /** Tracking Summary */
+            tracking_summary?: string | null;
+            /** Tracking Score */
+            tracking_score?: number | null;
+            /** Tracking Label */
+            tracking_label?: string | null;
+            /** Tracking Last Activity At */
+            tracking_last_activity_at?: string | null;
+        };
+        /** ContactBoardResponse */
+        ContactBoardResponse: {
+            /** Items */
+            items: components["schemas"]["ContactBoardCard"][];
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
         /** ContactCreate */
         ContactCreate: {
             /** First Name */
@@ -8024,6 +8211,8 @@ export interface components {
             source?: string | null;
             /** Close Date Est */
             close_date_est?: string | null;
+            /** Close Date */
+            close_date?: string | null;
             /**
              * Health
              * @default green
@@ -8106,6 +8295,8 @@ export interface components {
             company_name?: string | null;
             /** Assigned Rep Name */
             assigned_rep_name?: string | null;
+            /** Sdr Name */
+            sdr_name?: string | null;
             /**
              * Contact Count
              * @default 0
@@ -8276,6 +8467,8 @@ export interface components {
             currency_code?: string | null;
             /** Close Date Est */
             close_date_est?: string | null;
+            /** Close Date */
+            close_date?: string | null;
             /** Health */
             health?: string | null;
             /** Health Score */
@@ -8677,6 +8870,8 @@ export interface components {
             source: "direct_sql" | "converted";
             /** Meeting Booked With */
             meeting_booked_with: string | null;
+            /** Deal Source */
+            deal_source: string | null;
         };
         /** IncentiveDealsResponse */
         IncentiveDealsResponse: {
@@ -9163,6 +9358,8 @@ export interface components {
             assigned_ae?: string | null;
             /** Assigned Sdr */
             assigned_sdr?: string | null;
+            /** Meeting Booked With */
+            meeting_booked_with?: string | null;
         };
         /** MonthlyUniqueFunnelRow */
         MonthlyUniqueFunnelRow: {
@@ -11493,6 +11690,48 @@ export interface components {
             /** Stale Deals */
             stale_deals: number;
         };
+        /** WeeklyDigestSettingsRead */
+        WeeklyDigestSettingsRead: {
+            /** Enabled */
+            enabled: boolean;
+            /** Recipients */
+            recipients: string[];
+            /** Send Timezone */
+            send_timezone: string;
+            /** Send Hour */
+            send_hour: number;
+            /** Send Minute */
+            send_minute: number;
+            /** Send Days */
+            send_days: string[];
+            /** Nonprod Scheduled Enabled */
+            nonprod_scheduled_enabled: boolean;
+            /** Nonprod Recipients */
+            nonprod_recipients: string[];
+            /** Last Scheduled Send Key */
+            last_scheduled_send_key?: string | null;
+            /** Last Scheduled Send At */
+            last_scheduled_send_at?: string | null;
+        };
+        /** WeeklyDigestSettingsUpdate */
+        WeeklyDigestSettingsUpdate: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Recipients */
+            recipients?: string[] | null;
+            /** Send Timezone */
+            send_timezone?: string | null;
+            /** Send Hour */
+            send_hour?: number | null;
+            /** Send Minute */
+            send_minute?: number | null;
+            /** Send Days */
+            send_days?: string[] | null;
+            /** Nonprod Scheduled Enabled */
+            nonprod_scheduled_enabled?: boolean | null;
+            /** Nonprod Recipients */
+            nonprod_recipients?: string[] | null;
+        };
         /** WorkspaceInsights */
         WorkspaceInsights: {
             /**
@@ -13098,6 +13337,102 @@ export interface operations {
             };
         };
     };
+    contact_board_api_v1_contacts_board_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                company_id?: string | null;
+                /** @description Search by name, email, title, or company */
+                q?: string | null;
+                /** @description Scope `q` to a single column: name | email | company | title | phone | linkedin. Defaults to multi-field. */
+                q_field?: string | null;
+                /** @description When scoped: 'exact' for whole-cell case-insensitive equality, 'contains' (default) for substring LIKE. Only honored alongside q_field. */
+                q_match?: string | null;
+                persona?: string | null;
+                sequence_status?: string | null;
+                /** @description Filter by one or more call dispositions */
+                call_disposition?: string | null;
+                /** @description has_email | missing_email | verified | unverified */
+                email_state?: string | null;
+                /** @description Filter by one or more LinkedIn statuses: sent | inmail | accepted | follow_up | meeting_booked | meeting_rejected | not_contacted */
+                linkedin_status?: string | null;
+                /** @description Sort key: name | first_name | last_name | company | email | title | created_at. */
+                sort_by?: string | null;
+                /** @description Sort direction: asc | desc. Defaults to asc. */
+                sort_dir?: string | null;
+                /** @description Filter by one or more assigned AE user IDs */
+                ae_id?: string | null;
+                /** @description Filter by one or more assigned SDR user IDs */
+                sdr_id?: string | null;
+                /** @description Filter by one or more user IDs across AE or SDR ownership */
+                owner_id?: string | null;
+                /** @description When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter */
+                scope_any_match?: boolean;
+                /** @description Exclude internal/generated contacts and obvious company mismatches */
+                prospect_only?: boolean;
+                /** @description Filter by the ACCOUNT's status (comma-separated, e.g. 'in_progress,meeting_booked'; 'none' = account has no status yet) */
+                company_account_status?: string | null;
+                /** @description Include prospects of disabled (not_a_fit/dnd) accounts. Default false: disabled accounts' prospects are out of the queue everywhere. */
+                include_disabled_accounts?: boolean;
+                /** @description Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York') */
+                timezone?: string | null;
+                /** @description Filter by call-outcome dot color (white | green | red | blue | yellow). Repeatable; OR'd together. 'white' = no contact yet (zero call attempts). */
+                call_outcome_color?: string[] | null;
+                /** @description Filter by email-outcome dot color (green | red | blue | yellow). Repeatable; OR'd together. */
+                email_outcome_color?: string[] | null;
+                /** @description Filter by call-attempt bucket: 0 | 1 | 2 | 3 | 4plus. Repeatable; OR'd together. */
+                call_attempts_bucket?: string[] | null;
+                /** @description Follow-up count lower bound (inclusive): minimum number of logged calls. */
+                call_attempt_min?: number | null;
+                /** @description Follow-up count upper bound (inclusive): maximum number of logged calls. */
+                call_attempt_max?: number | null;
+                /** @description Only contacts whose scheduled follow-up (next_followup_at) is at/after this UTC datetime. */
+                next_followup_after?: string | null;
+                /** @description Only contacts whose scheduled follow-up (next_followup_at) is at/before this UTC datetime. */
+                next_followup_before?: string | null;
+                /** @description Only contacts last called (call_last_at) at/after this UTC datetime. */
+                call_last_after?: string | null;
+                /** @description Only contacts last called (call_last_at) at/before this UTC datetime. */
+                call_last_before?: string | null;
+                /** @description true → only prospects with at least one tracked email open (email_open_count > 0). */
+                emails_opened?: boolean | null;
+                /** @description true → only prospects with a logged LinkedIn motion (linkedin_status set and not 'none'). */
+                linkedin_active?: boolean | null;
+                /** @description true → only prospects whose sequence_status is meeting_booked. */
+                meetings_booked?: boolean | null;
+                /** @description call | email | linkedin — which channel's last touch to filter on. Requires last_touch_rep_id. */
+                last_touch_type?: string | null;
+                /** @description One or more rep user IDs (comma-separated). Requires last_touch_type. */
+                last_touch_rep_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactBoardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_contact_api_v1_contacts__contact_id__get: {
         parameters: {
             query?: never;
@@ -14624,6 +14959,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DealHealthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pipeline_stage_deals_api_v1_performance_pipeline_stage_deals_get: {
+        parameters: {
+            query: {
+                /** @description Stage key to list, e.g. 'qualified_lead' */
+                stage: string;
+                /** @description Narrow to these AEs (Pipeline by Rep click). Repeatable; empty means every rep (Pipeline by Stage click). */
+                rep_id?: string[];
+                geography?: string[];
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedAlertDeal"][];
                 };
             };
             /** @description Validation Error */
@@ -18595,6 +18967,75 @@ export interface operations {
             };
         };
     };
+    preview_weekly_digest_api_v1_sales_reports_weekly_digest_get: {
+        parameters: {
+            query?: {
+                period_start?: string | null;
+                period_end?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_weekly_digest_api_v1_sales_reports_weekly_digest_send_post: {
+        parameters: {
+            query?: {
+                period_start?: string | null;
+                period_end?: string | null;
+                recipient?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reset_sourcing_data_api_v1_account_sourcing_reset__scope__post: {
         parameters: {
             query?: never;
@@ -21121,6 +21562,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SalesReportSettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weekly_digest_settings_api_v1_settings_weekly_digest_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyDigestSettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_weekly_digest_settings_api_v1_settings_weekly_digest_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeeklyDigestSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyDigestSettingsRead"];
                 };
             };
             /** @description Validation Error */

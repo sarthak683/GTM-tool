@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,7 @@ from app.config import settings
 from app.core.exceptions import BeaconError, register_exception_handlers
 from app.core.logging_config import setup_logging
 from app.core.request_context import get_request_id, request_id_var
+from app.services.realtime import broadcaster
 
 # Configure app-wide logging. Without this, the root logger sits at WARNING and
 # every `logger.info(...)` in the codebase — including the Zippy per-iteration
@@ -78,7 +80,14 @@ async def lifespan(_: FastAPI):
     # beat) racing the same per-meeting dedup flag — the source of duplicate
     # brief emails. Do not reintroduce an in-process scheduler.
     await _ensure_instantly_webhook()
-    yield
+    # Bridge board events across API replicas. Production runs two, and the
+    # broadcaster's per-process queues mean a rep pinned to pod A never sees a
+    # deal moved on pod B without this.
+    await broadcaster.start_bridge()
+    try:
+        yield
+    finally:
+        await broadcaster.stop_bridge()
 
 # FastAPI app bootstrap:
 # 1. create the app
@@ -198,7 +207,21 @@ async def legacy_zippy_output(filename: str, request: Request) -> Response:
 # ── Health ───────────────────────────────────────────────────────────────────
 @app.get("/health", tags=["health"])
 async def health_check():
-    return {"status": "healthy", "service": "beacon-crm-api", "version": "2.0.0"}
+    """Liveness plus build provenance.
+
+    `git_sha` is stamped into the image at build time (see the Dockerfile).
+    It exists because an image tag is not proof of its contents: production
+    once ran `gtm-be:v0.260904-3b904af` whose code was actually `ea2f3fb`,
+    which could only be established by grepping inside a running pod. Reading
+    the sha here turns a rollback from a guess into a check.
+    """
+    return {
+        "status": "healthy",
+        "service": "beacon-crm-api",
+        "version": "2.0.0",
+        "git_sha": os.getenv("BEACON_GIT_SHA", "unknown"),
+        "built_at": os.getenv("BEACON_BUILD_TIME", "unknown"),
+    }
 
 
 @app.get("/", tags=["health"])
