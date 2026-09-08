@@ -36,6 +36,12 @@ def detail_has_capture(detail: dict[str, Any] | None) -> bool:
         return False
     if isinstance(detail.get("summary"), str) and detail["summary"].strip():
         return True
+    # Rep-typed evidence from the "Rep notes and evidence" box (Overview tab
+    # stage-gate popups and the MEDDPICC tab both save here) — this used to be
+    # invisible to the Green-flag check, so no amount of manually written
+    # evidence could ever turn a "Confirmed" dimension Green.
+    if isinstance(detail.get("notes"), str) and detail["notes"].strip():
+        return True
     contact = detail.get("contact")
     if isinstance(contact, dict):
         if isinstance(contact.get("name"), str) and contact["name"].strip():

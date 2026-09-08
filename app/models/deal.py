@@ -38,15 +38,28 @@ def compute_meddpicc_score(qualification: dict | None) -> int | None:
     """Compute MEDDPICC score (0-100) from qualification.meddpicc dict.
 
     Each of the 8 dimensions is scored 0-3 (not_started, identified,
-    validated, confirmed).  Total 0-24, scaled to 0-100.
+    validated, confirmed). A dimension's level only counts toward the score
+    if it has actual captured evidence (Rep notes and evidence) behind it —
+    same standard the Flag Matrix already requires before calling something
+    Green. A "Confirmed" with no notes contributes 0, not 3, so the score and
+    the Flag Matrix / Forecast Category can never disagree the way a
+    level-only score used to (100% score while still "Best Case", not
+    "Commit"). Total 0-24, scaled to 0-100.
     """
     if not qualification:
         return None
     meddpicc = qualification.get("meddpicc")
     if not meddpicc or not isinstance(meddpicc, dict):
         return None
-    total = sum(meddpicc.get(f, 0) for f in MEDDPICC_FIELDS)
-    filled = sum(1 for f in MEDDPICC_FIELDS if meddpicc.get(f, 0) > 0)
+    from app.services.meddpicc_updates import detail_has_capture, get_meddpicc_detail
+
+    total = 0
+    filled = 0
+    for f in MEDDPICC_FIELDS:
+        level = meddpicc.get(f, 0) or 0
+        if level > 0 and detail_has_capture(get_meddpicc_detail(qualification, f)):
+            total += level
+            filled += 1
     if filled == 0:
         return None
     return round(total / 24 * 100)

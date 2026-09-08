@@ -328,10 +328,12 @@ function ErrorBanner({ message }: { message: string }) {
 
 // ── Formatters ─────────────────────────────────────────────────────────────
 
+const STAGE_WORD_OVERRIDES: Record<string, string> = { poc: "POC", msa: "MSA", wip: "WIP" };
+
 function prettyStage(s: string): string {
   return s
     .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w) => STAGE_WORD_OVERRIDES[w.toLowerCase()] ?? w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
 
@@ -671,19 +673,6 @@ function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
 
 // ── Funnel tab ─────────────────────────────────────────────────────────────
 
-const ACTIVE_FUNNEL_STAGES = [
-  "reprospect",
-  "demo_scheduled",
-  "demo_done",
-  "qualified_lead",
-  "poc_agreed",
-  "poc_wip",
-  "poc_done",
-  "commercial_negotiation",
-  "msa_review",
-  "closed_won",
-];
-
 export function FunnelTab({ reps }: { reps: RepSummary[] }) {
   const { isAdmin } = useAuth();
   const [period, setPeriod] = useState<"week" | "month" | "quarter">("month");
@@ -691,6 +680,32 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
   const [data, setData] = useState<FunnelResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage: string; label: string } | null>(null);
+  const [stageDealsData, setStageDealsData] = useState<RedAlertDeal[]>([]);
+  const [stageDealsLoading, setStageDealsLoading] = useState(false);
+  const [stageDealsError, setStageDealsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!stageDealsQuery) return;
+    let cancelled = false;
+    setStageDealsLoading(true);
+    setStageDealsError(null);
+    performanceApi
+      .getPipelineStageDeals({ stage: stageDealsQuery.stage, repIds: repId ? [repId] : undefined })
+      .then((payload) => {
+        if (!cancelled) setStageDealsData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setStageDealsError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setStageDealsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stageDealsQuery, repId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -713,13 +728,6 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     };
   }, [period, repId]);
 
-  const activeFunnel = useMemo(() => {
-    if (!data) return [];
-    return ACTIVE_FUNNEL_STAGES.map((s) => data.funnel.find((f) => f.stage === s)).filter(Boolean) as typeof data.funnel;
-  }, [data]);
-
-  const maxCount = activeFunnel.reduce((m, r) => Math.max(m, r.deal_count), 0) || 1;
-
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
@@ -740,127 +748,91 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
           </div>
         }
       >
-        {data && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-            <MovementTile label="Entered" value={data.movement.entered} tone="blue" />
-            <MovementTile label="Advanced" value={data.movement.advanced} tone="green" />
-            <MovementTile label="Regressed" value={data.movement.regressed} tone="amber" />
-            <MovementTile label="Exited" value={data.movement.exited} tone="red" />
-          </div>
-        )}
+        {null}
       </Panel>
 
       {error && <ErrorBanner message={error} />}
       {loading && !data && <Loading />}
 
       {data && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 18 }}>
-          <Panel title="Funnel by stage" subtitle={`Active deals in each stage · ${data.period_label}`}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {activeFunnel.map((row, idx) => {
-                const width = (row.deal_count / maxCount) * 100;
-                // Graduated color — earlier stages cooler, later warmer.
-                const progress = idx / (activeFunnel.length - 1 || 1);
-                const hue = 215 - progress * 70; // 215 (blue) → 145 (green)
-                const color = `hsl(${hue}, 55%, 45%)`;
-                return (
-                  <div key={row.stage} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 170, fontSize: 12, fontWeight: 700, color: PALETTE.text }}>
-                      {prettyStage(row.stage)}
-                    </div>
-                    <div style={{ flex: 1, height: 34, background: "#f3f6fa", borderRadius: 8, position: "relative", overflow: "hidden" }}>
-                      <div
-                        style={{
-                          width: `${width}%`,
-                          height: "100%",
-                          background: color,
-                          borderRadius: 8,
-                          transition: "width 0.4s",
-                        }}
-                      />
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          padding: "0 12px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        <span style={{ color: width > 30 ? "#fff" : PALETTE.text }}>
-                          {row.deal_count} deals
-                        </span>
-                        <span style={{ color: PALETTE.text, fontVariantNumeric: "tabular-nums" }}>
-                          {fmtMoney(row.total_value)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Panel>
-
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18 }}>
           <Panel title="Stage conversion" subtitle={`For deals that entered the stage this ${period}`}>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {data.conversion.map((row) => {
-                const pct = Math.round(row.conv_rate * 100);
-                const tone = pct >= 50 ? "green" : pct >= 25 ? "amber" : "red";
-                const tint = RAG_TINT[tone];
-                return (
-                  <div
-                    key={`${row.from_stage}-${row.to_stage}`}
-                    style={{
-                      padding: "12px 0",
-                      borderBottom: `1px solid ${PALETTE.hairline}`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                      <span style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 600 }}>
-                        {prettyStage(row.from_stage)}
-                      </span>
-                      <span style={{ fontSize: 13, color: PALETTE.text, fontWeight: 700 }}>
-                        → {prettyStage(row.to_stage)}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 11, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Deals</div>
-                        <div style={{ fontSize: 14, color: PALETTE.text, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{row.deals}</div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 11, color: PALETTE.subtle, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Median</div>
-                        <div style={{ fontSize: 14, color: PALETTE.text, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
-                          {row.median_days != null ? `${row.median_days.toFixed(1)}d` : "—"}
-                        </div>
-                      </div>
-                      <div
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13 }}>
+                <colgroup>
+                  <col style={{ width: "40%" }} />
+                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "24%" }} />
+                </colgroup>
+                <thead>
+                  <tr style={{ background: "#fafaf8" }}>
+                    {["Stage move", "Deals", "Median", "Conversion"].map((h, i) => (
+                      <th
+                        key={h}
                         style={{
-                          minWidth: 60,
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          background: tint.bg,
-                          border: `1px solid ${tint.border}`,
-                          color: tint.text,
-                          fontSize: 14,
-                          fontWeight: 800,
-                          textAlign: "center",
-                          fontVariantNumeric: "tabular-nums",
+                          textAlign: i === 0 ? "left" : "center",
+                          padding: "9px 14px",
+                          color: PALETTE.subtle,
+                          fontWeight: 700,
+                          fontSize: 10.5,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                          borderBottom: `1px solid ${PALETTE.hairline}`,
                         }}
                       >
-                        {pct}%
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.conversion.map((row, idx) => {
+                    const pct = Math.round(row.conv_rate * 100);
+                    const tone = pct >= 50 ? "green" : pct >= 25 ? "amber" : "red";
+                    const tint = RAG_TINT[tone];
+                    return (
+                      <tr
+                        key={`${row.from_stage}-${row.to_stage}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setStageDealsQuery({ stage: row.from_stage, label: prettyStage(row.from_stage) })}
+                        onKeyDown={(e) => e.key === "Enter" && setStageDealsQuery({ stage: row.from_stage, label: prettyStage(row.from_stage) })}
+                        style={{ cursor: "pointer", background: idx % 2 === 1 ? "#fafaf8" : "#fff" }}
+                      >
+                        <td style={{ padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}` }}>
+                          <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
+                          <span style={{ color: PALETTE.subtle, margin: "0 6px" }}>→</span>
+                          <span style={{ color: PALETTE.text, fontWeight: 700 }}>{prettyStage(row.to_stage)}</span>
+                        </td>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}`, color: PALETTE.text, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                          {row.deals}
+                        </td>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}`, color: row.median_days != null ? PALETTE.text : PALETTE.subtle, fontVariantNumeric: "tabular-nums" }}>
+                          {row.median_days != null ? `${row.median_days.toFixed(1)}d` : "—"}
+                        </td>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}` }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              minWidth: 52,
+                              padding: "5px 12px",
+                              borderRadius: 8,
+                              background: tint.bg,
+                              border: `1px solid ${tint.border}`,
+                              color: tint.text,
+                              fontWeight: 800,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {pct}%
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: PALETTE.subtle }}>
               Conversion reflects deals that entered the "from" stage during this period. Historical transitions
@@ -868,6 +840,20 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
             </p>
           </Panel>
         </div>
+      )}
+
+      {stageDealsQuery && (
+        <RedAlertModal
+          label={stageDealsQuery.label}
+          deals={stageDealsData}
+          loading={stageDealsLoading}
+          error={stageDealsError}
+          onClose={() => {
+            setStageDealsQuery(null);
+            setStageDealsData([]);
+            setStageDealsError(null);
+          }}
+        />
       )}
     </div>
   );
@@ -2851,7 +2837,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
 
 // Visibility flags — set to false to hide a tab, true to show
 const SHOW_TAB_SCORECARD   = false;
-const SHOW_TAB_FUNNEL      = false;
+const SHOW_TAB_FUNNEL      = true;
 const SHOW_TAB_FORECAST    = false;
 const SHOW_TAB_TARGETS     = false;
 

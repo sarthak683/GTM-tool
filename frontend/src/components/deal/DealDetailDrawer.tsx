@@ -54,6 +54,9 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
 
 type DrawerTab = "overview" | "meddpicc" | "activity" | "timeline" | "tasks" | "emails";
 
+// Hidden for now — frontend-only, backend endpoint stays intact for a later re-enable.
+const SHOW_MEDDPICC_AUTO_FILL = false;
+
 const MEDDPICC_DIMENSIONS = [
   { key: "metrics", label: "Metrics", desc: "Quantified business impact of solving the problem" },
   { key: "economic_buyer", label: "Economic Buyer", desc: "Person with veto power and budget authority" },
@@ -1840,232 +1843,6 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
           </div>
           </div>
 
-          <SectionLabel>People</SectionLabel>
-          {/* ── Contacts section ───────────────────────────────────── */}
-          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              marginBottom: 12,
-            }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "#1f2d3d" }}>
-                People on this deal ({dealContacts.length})
-              </span>
-              <button
-                onClick={() => setShowLinkContact(true)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
-                  cursor: "pointer",
-                }}
-              >
-                <Plus size={12} /> Link Contact
-              </button>
-            </div>
-
-            {showLinkContact && (
-              <div style={{
-                marginBottom: 12, padding: 14, borderRadius: 12,
-                border: "1px solid #dbe6f2", background: "#f9fbfe",
-              }}>
-                <input
-                  autoFocus
-                  placeholder="Search contacts..."
-                  value={contactSearch}
-                  onChange={(e) => searchContacts(e.target.value)}
-                  style={{
-                    width: "100%", height: 36, borderRadius: 10,
-                    border: "1px solid #dbe6f2", padding: "0 12px", fontSize: 13, outline: "none",
-                    marginBottom: 8,
-                  }}
-                />
-                <select
-                  value={linkRole}
-                  onChange={(e) => setLinkRole(e.target.value)}
-                  style={{
-                    width: "100%", height: 32, borderRadius: 8, border: "1px solid #dbe6f2",
-                    padding: "0 10px", fontSize: 12, background: "#fff", marginBottom: 8,
-                  }}
-                >
-                  <option value="">No role</option>
-                  <option value="champion">Champion</option>
-                  <option value="economic_buyer">Economic Buyer</option>
-                  <option value="technical_evaluator">Technical Evaluator</option>
-                  <option value="blocker">Blocker</option>
-                  <option value="influencer">Influencer</option>
-                </select>
-                {contactResults.length > 0 && (
-                  <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                    {contactResults.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => handleLinkContact(c.id)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 8, width: "100%",
-                          padding: "8px 10px", borderRadius: 8, border: "none",
-                          cursor: "pointer", background: "transparent", textAlign: "left",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "#f3fbe3"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                      >
-                        <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(c.first_name + c.last_name)}`}
-                          style={{ width: 24, height: 24, flexShrink: 0 }}>
-                          {getInitials(`${c.first_name} ${c.last_name}`)}
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d" }}>{c.first_name} {c.last_name}</div>
-                          <div style={{ fontSize: 11, color: "#7a96b0" }}>{c.title ?? c.email}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-                  <button
-                    onClick={() => { setShowLinkContact(false); setContactSearch(""); setContactResults([]); }}
-                    style={{ fontSize: 12, color: "#7a96b0", cursor: "pointer", background: "none", border: "none" }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {dealContacts.length === 0 && !showLinkContact ? (
-              <div style={{ fontSize: 13, color: "#94a3b8", padding: "12px 0" }}>No contacts linked yet.</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {dealContacts.map((dc) => {
-                  const name = `${dc.first_name ?? ""} ${dc.last_name ?? ""}`.trim();
-                  const ps = PERSONA_STYLE[dc.persona ?? ""] ?? { bg: "#edf3f9", color: "#546679" };
-                  return (
-                    <div
-                      key={dc.contact_id}
-                      onClick={() => navigate(`/contacts/${dc.contact_id}`)}
-                      title="Open prospect detail"
-                      style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-                      borderRadius: 12, border: "1px solid #e8eef5", background: "#fff",
-                      cursor: "pointer",
-                    }}>
-                      <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(name)}`}
-                        style={{ width: 28, height: 28, flexShrink: 0 }}>
-                        {getInitials(name || "?")}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2d3d" }}>{name}</div>
-                        <div style={{ fontSize: 11, color: "#7a96b0" }}>{dc.title ?? dc.email}</div>
-                      </div>
-                      {dc.persona && (
-                        <span style={{
-                          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
-                          background: ps.bg, color: ps.color,
-                        }}>
-                          {dc.persona.replace(/_/g, " ")}
-                        </span>
-                      )}
-                      {dc.role && (
-                        <span style={{
-                          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
-                          background: "#f3fbe3", color: "#4d7c0f",
-                        }}>
-                          {dc.role.replace(/_/g, " ")}
-                        </span>
-                      )}
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleUnlinkContact(dc.contact_id);
-                        }}
-                        style={{ color: "#c8d2dd", cursor: "pointer", background: "none", border: "none" }}
-                        title="Remove"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Company prospects not yet linked to this deal */}
-            {(() => {
-              const linkedIds = new Set(dealContacts.map((dc) => dc.contact_id));
-              const unlinked = companyContacts.filter((c) => !linkedIds.has(c.id));
-              if (unlinked.length === 0) return null;
-              return (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "#7a96b0" }}>
-                        Suggested people from this account ({unlinked.length})
-                      </div>
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                        Auto-linking suggestion based on the deal company.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleLinkAllCompanyContacts(unlinked)}
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 800,
-                        padding: "5px 9px",
-                        borderRadius: 8,
-                        background: "#f3fbe3",
-                        color: "#4d7c0f",
-                        border: "1px solid #cfe89a",
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Link all
-                    </button>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {unlinked.map((c) => {
-                      const name = `${c.first_name ?? ""} ${c.last_name ?? ""}`.trim();
-                      return (
-                        <div
-                          key={c.id}
-                          onClick={() => navigate(`/contacts/${c.id}`)}
-                          title="Open prospect detail"
-                          style={{
-                          display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-                          borderRadius: 12, border: "1px dashed #dbe6f2", background: "#fafcfe",
-                          cursor: "pointer",
-                        }}>
-                          <div className={`flex items-center justify-center rounded-full text-[11px] font-bold ${avatarColor(name)}`}
-                            style={{ width: 24, height: 24, flexShrink: 0 }}>
-                            {getInitials(name || "?")}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{name}</div>
-                            <div style={{ fontSize: 11, color: "#94a3b8" }}>{c.title ?? c.email}</div>
-                          </div>
-                          <button
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              const dc = await dealsApi.addContact(deal.id, c.id, c.persona ?? undefined);
-                              setDealContacts((prev) => [dc, ...prev]);
-                            }}
-                            style={{
-                              fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
-                              background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a",
-                              cursor: "pointer",
-                            }}
-                          >
-                            Link
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
           <SectionLabel>Stage Journey</SectionLabel>
           <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)" }}>
             <StageJourney history={stageHistory} deal={deal} stages={stages} />
@@ -2639,8 +2416,13 @@ function MeddpiccPanel({
     });
   };
 
-  const total = MEDDPICC_DIMENSIONS.reduce((sum, d) => sum + (meddpicc[d.key] ?? 0), 0);
-  const filled = MEDDPICC_DIMENSIONS.filter((d) => (meddpicc[d.key] ?? 0) > 0).length;
+  // A dimension's level only counts toward the score if it has actual
+  // captured evidence behind it — same standard the Flag Matrix requires
+  // before calling something Green. Otherwise a "Confirmed" with no notes
+  // could hit 100% here while the Flag Matrix still calls it Yellow.
+  const hasEvidence = (key: string) => Boolean((meddpiccDetails[key]?.notes ?? "").trim());
+  const total = MEDDPICC_DIMENSIONS.reduce((sum, d) => sum + (hasEvidence(d.key) ? (meddpicc[d.key] ?? 0) : 0), 0);
+  const filled = MEDDPICC_DIMENSIONS.filter((d) => (meddpicc[d.key] ?? 0) > 0 && hasEvidence(d.key)).length;
   const pct = filled > 0 ? Math.round((total / 24) * 100) : 0;
 
   return (
@@ -2659,7 +2441,7 @@ function MeddpiccPanel({
           color: pct >= 75 ? "#166534" : pct >= 50 ? "#854d0e" : pct > 0 ? "#991b1b" : "#94a3b8",
           border: `2px solid ${pct >= 75 ? "#bbf7d0" : pct >= 50 ? "#fde68a" : pct > 0 ? "#fecaca" : "#e2e8f0"}`,
         }}>
-          {pct > 0 ? pct : "—"}
+          {total > 0 ? total : "—"}
         </div>
         <div>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#1f2d3d" }}>
@@ -2674,30 +2456,32 @@ function MeddpiccPanel({
             </div>
           )}
         </div>
-        <div style={{ marginLeft: "auto" }}>
-          <button
-            type="button"
-            onClick={() => void onAutoFill()}
-            disabled={autoFilling}
-            style={{
-              height: 36,
-              padding: "0 14px",
-              borderRadius: 10,
-              border: "1px solid #ffc8b4",
-              background: autoFilling ? "#fff7f2" : "#f3fbe3",
-              color: "#4d7c0f",
-              fontSize: 12,
-              fontWeight: 800,
-              cursor: autoFilling ? "default" : "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 7,
-            }}
-          >
-            {autoFilling ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {autoFilling ? "Refreshing..." : "Auto-fill with Beacon AI"}
-          </button>
-        </div>
+        {SHOW_MEDDPICC_AUTO_FILL && (
+          <div style={{ marginLeft: "auto" }}>
+            <button
+              type="button"
+              onClick={() => void onAutoFill()}
+              disabled={autoFilling}
+              style={{
+                height: 36,
+                padding: "0 14px",
+                borderRadius: 10,
+                border: "1px solid #ffc8b4",
+                background: autoFilling ? "#fff7f2" : "#f3fbe3",
+                color: "#4d7c0f",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: autoFilling ? "default" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+              }}
+            >
+              {autoFilling ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {autoFilling ? "Refreshing..." : "Auto-fill with Beacon AI"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Flag Matrix — forecast-call rubric */}

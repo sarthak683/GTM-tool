@@ -2,7 +2,7 @@ import "./pipeline-refresh.css";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload, UserCircle2 } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload } from "lucide-react";
 import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, performanceApi, settingsApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { CLOSE_REASONS, isCloseReasonStage } from "../lib/closeReasons";
@@ -29,6 +29,51 @@ type PipelineTab = "deal" | "prospect";
 type ProspectStageId = "outreach" | "in_progress" | "meeting_booked" | "negative_response" | "no_response" | "not_a_fit";
 type DragItem = { kind: "deal"; id: string; fromStage: string } | { kind: "prospect"; id: string; fromStage: ProspectStageId };
 type PendingDealMove = { dealId: string; dealName: string; fromStage: string; targetStage: string };
+
+// Same 0-3 level scale + colors as the MEDDPICC tab's picker (DealDetailDrawer.tsx)
+// — kept in sync manually since the two live in separate page components.
+const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
+const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
+
+// Mandatory MEDDPICC capture gates — moving a deal INTO one of these stages
+// (from anywhere) requires filling in each listed dimension before the move
+// is allowed to proceed (usually two fields, but a gate may list just one).
+// Keys must match MEDDPICC_DIMENSIONS keys in DealDetailDrawer.tsx so the
+// captured text lands on the right dimension.
+type MeddpiccGateKey = "identify_pain" | "competition" | "metrics" | "champion" | "economic_buyer" | "decision_criteria" | "decision_process" | "paper_process";
+type StageQualificationGate = {
+  fields: { key: MeddpiccGateKey; label: string; placeholder: string }[];
+};
+const STAGE_QUALIFICATION_GATES: Record<string, StageQualificationGate> = {
+  qualified_lead: {
+    fields: [
+      { key: "identify_pain", label: "(I) Pain", placeholder: "Identified the acute business problem driving urgency for change." },
+      { key: "competition", label: "(C) Competition", placeholder: "Identified the alternative available to the buyer including rival vendors, internal development projects or maintaining the status quo." },
+    ],
+  },
+  poc_agreed: {
+    fields: [
+      { key: "metrics", label: "(M) Metrics", placeholder: "Identified the quantifiable business outcomes / economic value that Beacon can deliver." },
+      { key: "champion", label: "(C) Champion", placeholder: "Identified the influential internal advocate who actively sells on your behalf, shares intelligence and has/hasn't a personal stake in our success." },
+    ],
+  },
+  poc_wip: {
+    fields: [
+      { key: "economic_buyer", label: "(E) Economic Buyer - Engaged", placeholder: "Ultimate authority with discretionary budget who impacts deal closure time has been contacted or looped in the deal." },
+      { key: "decision_criteria", label: "(D) Decision Criteria", placeholder: "Identified the technical, economic and vendor requirements / factors the client will judge us against." },
+    ],
+  },
+  poc_done: {
+    fields: [
+      { key: "decision_process", label: "(D) Decision Process", placeholder: "Identified and reconfirmed the process, timeline and stakeholders for the final decision." },
+    ],
+  },
+  commercial_negotiation: {
+    fields: [
+      { key: "paper_process", label: "(P) Paper Process", placeholder: "Identified the administrative, legal, procurement and security review steps required to get a final contract drafted, approved and signed." },
+    ],
+  },
+};
 export type StageMeta = { id: string; label: string; group: "active" | "closed"; color?: string };
 type FunnelKey = "active" | "inactive" | "tofu" | "mofu" | "bofu";
 type FunnelConfig = Record<FunnelKey, string[]>;
@@ -1077,7 +1122,6 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
             }
             style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, color: deal.is_stalled ? "#b45309" : "#68788d" }}
           ><Clock3 size={11} /><span>{deal.days_in_stage ?? 0}d</span></div>
-          {(deal.contact_count ?? 0) > 0 && <span style={{ fontSize: 11, color: "#68788d", display: "flex", alignItems: "center", gap: 2 }}><UserCircle2 size={11} />{deal.contact_count}</span>}
         </div>
         {priorityTag && (
           <span style={{
@@ -1714,6 +1758,14 @@ export default function Pipeline() {
   // the backend when the target is CLOSED LOST, optional for CLOSED WON.
   const [moveReason, setMoveReason] = useState("");
   const [moveReasonDetail, setMoveReasonDetail] = useState("");
+  // Qualification capture — required when a deal moves into a stage listed
+  // in STAGE_QUALIFICATION_GATES, from any prior stage. Mirrors the
+  // close-reason capture above; keyed by each gate field's MEDDPICC key so a
+  // gate can list one field or several without touching this state shape.
+  const [qualifyFieldValues, setQualifyFieldValues] = useState<Record<string, string>>({});
+  // MEDDPICC level (0-3) the rep picks per field in the same popup — defaults
+  // to 1 ("Identified") until they explicitly bump it to Validated/Confirmed.
+  const [qualifyFieldLevels, setQualifyFieldLevels] = useState<Record<string, number>>({});
   // Bulk close: target stage held while the one-shot reason prompt is open.
   const [bulkCloseStage, setBulkCloseStage] = useState<string | null>(null);
   const [bulkCloseReason, setBulkCloseReason] = useState("");
@@ -2581,11 +2633,43 @@ export default function Pipeline() {
   const confirmPendingDealMove = async () => {
     if (!pendingDealMove) return;
     const closeTarget = isCloseReasonStage(pendingDealMove.targetStage);
+    const gate = STAGE_QUALIFICATION_GATES[pendingDealMove.targetStage];
     // Backend 422s a reason-less CLOSED LOST move; the Confirm button is
     // disabled until a reason is picked, this is just a belt-and-braces guard.
     if (pendingDealMove.targetStage === "closed_lost" && !moveReason) return;
+    // MEDDPICC capture on gated stages (QUALIFIED LEAD, POC AGREED, ...) is
+    // optional for now — no longer blocks the move if left blank.
     setBusyStage(pendingDealMove.targetStage);
     try {
+      // Only fields the rep actually filled in get written — optional now,
+      // so a blank field is left completely untouched rather than stamping
+      // an empty note over whatever (if anything) was there before.
+      const filledFields = gate?.fields.filter((f) => (qualifyFieldValues[f.key] ?? "").trim()) ?? [];
+      if (filledFields.length > 0) {
+        // Fetch the full deal first — the board list doesn't carry
+        // `qualification`, and PUT /deals/{id} replaces it wholesale, so a
+        // naive partial payload here would wipe out any MEDDPICC dimensions
+        // already scored on this deal.
+        const fullDeal = await dealsApi.get(pendingDealMove.dealId);
+        const existingQualification = fullDeal.qualification ?? {};
+        const existingMeddpicc = existingQualification.meddpicc ?? {};
+        const existingDetails = existingQualification.meddpicc_details ?? {};
+        const now = new Date().toISOString();
+        const meddpiccUpdates: Record<string, number> = {};
+        const detailUpdates: Record<string, { notes: string; updated_at: string }> = {};
+        for (const field of filledFields) {
+          const pickedLevel = qualifyFieldLevels[field.key] ?? 1;
+          meddpiccUpdates[field.key] = Math.max(existingMeddpicc[field.key] ?? 0, pickedLevel);
+          detailUpdates[field.key] = { ...existingDetails[field.key], notes: qualifyFieldValues[field.key].trim(), updated_at: now };
+        }
+        await dealsApi.update(pendingDealMove.dealId, {
+          qualification: {
+            ...existingQualification,
+            meddpicc: { ...existingMeddpicc, ...meddpiccUpdates },
+            meddpicc_details: { ...existingDetails, ...detailUpdates },
+          },
+        } as Partial<Deal>);
+      }
       await dealsApi.moveStage(
         pendingDealMove.dealId,
         pendingDealMove.targetStage,
@@ -2605,6 +2689,8 @@ export default function Pipeline() {
     } finally {
       setBusyStage(null);
       setPendingDealMove(null);
+      setQualifyFieldValues({});
+      setQualifyFieldLevels({});
     }
   };
 
@@ -3313,19 +3399,71 @@ export default function Pipeline() {
                   <span style={{ fontSize: 11, color: "#8ca0b3" }}>Powers the win/loss rollup — pick the closest match.</span>
                 </div>
               )}
+              {STAGE_QUALIFICATION_GATES[pendingDealMove.targetStage] && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
+                  {STAGE_QUALIFICATION_GATES[pendingDealMove.targetStage].fields.map((field) => {
+                    const value = qualifyFieldValues[field.key] ?? "";
+                    const level = qualifyFieldLevels[field.key] ?? 1;
+                    return (
+                      <div key={field.key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b" }}>
+                          {field.label}
+                        </label>
+                        <textarea
+                          value={value}
+                          onChange={(event) => setQualifyFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                          rows={2}
+                          placeholder={field.placeholder}
+                          style={{ width: "100%", border: "1px solid #d7e2ee", borderRadius: 10, padding: "8px 10px", fontSize: 13, color: "#182042", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+                        />
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {MEDDPICC_LEVEL_LABELS.map((label, idx) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => setQualifyFieldLevels((prev) => ({ ...prev, [field.key]: idx }))}
+                              style={{
+                                flex: 1,
+                                height: 32,
+                                borderRadius: 8,
+                                border: idx === level ? `2px solid ${MEDDPICC_LEVEL_COLORS[idx]}` : "1px solid #e2e8f0",
+                                background: idx === level ? `${MEDDPICC_LEVEL_COLORS[idx]}14` : "#fff",
+                                color: idx === level ? MEDDPICC_LEVEL_COLORS[idx] : "#94a3b8",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <span style={{ fontSize: 11, color: "#8ca0b3" }}>Optional — feeds the deal's MEDDPICC score if filled in.</span>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                 <button
                   type="button"
                   className="crm-button soft"
                   disabled={Boolean(busyStage)}
-                  onClick={() => setPendingDealMove(null)}
+                  onClick={() => {
+                    setPendingDealMove(null);
+                    setQualifyFieldValues({});
+                    setQualifyFieldLevels({});
+                  }}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   className="crm-button primary"
-                  disabled={Boolean(busyStage) || (pendingDealMove.targetStage === "closed_lost" && !moveReason)}
+                  disabled={
+                    Boolean(busyStage) ||
+                    (pendingDealMove.targetStage === "closed_lost" && !moveReason)
+                  }
                   onClick={confirmPendingDealMove}
                 >
                   {busyStage ? "Moving..." : "Yes, move it"}
