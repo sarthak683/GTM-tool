@@ -4,15 +4,17 @@ import {
   X, ChevronDown, Building2, CalendarDays, UserCircle2,
   Send, Tag, Plus, Trash2, ArrowRight, Clock3, Globe, Zap, Navigation,
   Activity as ActivityIcon, Phone, Mail, Video, FileText, AlertTriangle, Search, Loader2, Sparkles,
-  Shield, BarChart2, ClipboardList, Presentation, Megaphone, Pencil, Check, XCircle,
+  Shield, BarChart2, ClipboardList, Presentation, Megaphone, Pencil, Check, XCircle, Layers, Download, Eye,
 } from "lucide-react";
 import { ZippyDocDropdown } from "../zippy/ZippyDocDropdown";
+import { DriveFilePicker } from "../DriveFilePicker";
+import type { DriveFile } from "../../lib/api";
 import { accountSourcingApi, dealsApi, contactsApi, personalEmailSyncApi, tasksApi } from "../../lib/api";
 import { getCachedGmailSync } from "../../lib/cachedFetch";
 import type { PersonalEmailThread } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import { useToast } from "../../lib/ToastContext";
-import type { Activity, Company, Contact, Deal, DealContact, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
+import type { Activity, Company, Contact, Deal, DealContact, DealDocument, DealQualification, MeddpiccFieldDetail, TaskItem, User } from "../../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../../lib/utils";
 import { SUPPORTED_CURRENCY_CODES, getCurrencyOption, formatCurrencyAmount } from "../../lib/currencies";
 import { CLOSE_REASONS, isCloseReasonStage } from "../../lib/closeReasons";
@@ -52,7 +54,7 @@ const ACTIVITY_ICON: Record<string, typeof ActivityIcon> = {
   visit: Globe,
 };
 
-type DrawerTab = "overview" | "meddpicc" | "activity" | "timeline" | "tasks" | "emails";
+type DrawerTab = "overview" | "meddpicc" | "activity" | "timeline" | "tasks" | "emails" | "documents";
 
 // Hidden for now — frontend-only, backend endpoint stays intact for a later re-enable.
 const SHOW_MEDDPICC_AUTO_FILL = false;
@@ -70,6 +72,18 @@ const MEDDPICC_DIMENSIONS = [
 
 const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
 const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
+
+// Product-line categorization (multi-select), Deal.use_case. Same list as
+// USE_CASE_OPTIONS in Pipeline.tsx's Qualified Lead stage-move gate — kept in
+// sync manually since the two live in separate page components.
+const USE_CASE_OPTIONS = [
+  "Implementation Automation",
+  "Support and Hypercare Automation",
+  "Workflow Automation",
+  "Product Agent Studio",
+  "Cross System Orchestration",
+  "Presales",
+] as const;
 
 function formatMeddpiccChangeReason(value?: string) {
   return value ? value.replace(/_/g, " ") : "";
@@ -641,6 +655,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deal.currency_code]);
   const [showStageMenu, setShowStageMenu] = useState(false);
+  const [useCaseMenuOpen, setUseCaseMenuOpen] = useState(false);
   // Win/loss capture: moving to CLOSED WON / CLOSED LOST opens a reason
   // prompt before the move. closeReasonDraft holds the shared enum value
   // (required for closed_lost), closeReasonDetail the optional free text.
@@ -648,6 +663,12 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   const [closeReasonDraft, setCloseReasonDraft] = useState("");
   const [closeReasonDetail, setCloseReasonDetail] = useState("");
   const [closingDeal, setClosingDeal] = useState(false);
+
+  useEffect(() => {
+    const dismiss = () => setUseCaseMenuOpen(false);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
+  }, []);
 
   // Link contact
   const [showLinkContact, setShowLinkContact] = useState(false);
@@ -684,14 +705,112 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
   }, []);
 
   const [companyContacts, setCompanyContacts] = useState<Contact[]>([]);
+  const [dealDocuments, setDealDocuments] = useState<DealDocument[]>([]);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  // In-app preview for an uploaded document (Drive-linked ones just open in
+  // Drive — Google already renders those). PDFs and images preview via an
+  // object URL; text-ish files preview as plain text; anything else (docx,
+  // xlsx, ...) falls back to a "Download" button inside the same modal since
+  // browsers can't render those formats on their own.
+  const [previewDoc, setPreviewDoc] = useState<DealDocument | null>(null);
+  const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     dealsApi.getContacts(deal.id).then(setDealContacts).catch(() => {});
+    dealsApi.listDocuments(deal.id).then(setDealDocuments).catch(() => {});
     if (deal.company_id) {
       contactsApi.listAllForCompany(deal.company_id).then(setCompanyContacts).catch(() => {});
     }
   }, [deal.id, deal.company_id]);
+
+  const handleUploadDocument = async (file: File) => {
+    setUploadingDocument(true);
+    try {
+      const created = await dealsApi.uploadDocument(deal.id, file);
+      setDealDocuments((prev) => [created, ...prev]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed.", "Document not added");
+    } finally {
+      setUploadingDocument(false);
+      if (documentFileInputRef.current) documentFileInputRef.current.value = "";
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string) => {
+    const previous = dealDocuments;
+    setDealDocuments((prev) => prev.filter((d) => d.id !== documentId));
+    try {
+      await dealsApi.deleteDocument(deal.id, documentId);
+    } catch (error) {
+      setDealDocuments(previous);
+      toast.error(error instanceof Error ? error.message : "Could not delete.", "Delete failed");
+    }
+  };
+
+  const handlePickDriveFile = async (file: DriveFile) => {
+    try {
+      const created = await dealsApi.linkDriveDocument(deal.id, {
+        driveFileId: file.id,
+        filename: file.name,
+        webViewLink: file.web_view_link,
+        mimeType: file.mime_type,
+        sizeBytes: file.size_bytes,
+      });
+      setDealDocuments((prev) => [created, ...prev]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not attach file.", "Document not added");
+    }
+  };
+
+  const closeDocumentPreview = () => {
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    setPreviewDoc(null);
+    setPreviewObjectUrl(null);
+    setPreviewText(null);
+    setPreviewError(null);
+  };
+
+  const openDocumentPreview = async (docItem: DealDocument) => {
+    if (docItem.source === "drive") {
+      if (docItem.drive_web_view_link) window.open(docItem.drive_web_view_link, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setPreviewDoc(docItem);
+    setPreviewObjectUrl(null);
+    setPreviewText(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    try {
+      const blob = await dealsApi.fetchDocumentBlob(deal.id, docItem.id);
+      const type = docItem.content_type || blob.type || "";
+      if (type === "application/pdf" || type.startsWith("image/")) {
+        setPreviewObjectUrl(URL.createObjectURL(blob));
+      } else if (type.startsWith("text/") || type === "application/json") {
+        setPreviewText(await blob.text());
+      } else {
+        // No inline renderer for this type (docx, xlsx, pptx, zip, …) —
+        // the modal falls back to just offering Download.
+        setPreviewObjectUrl(null);
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "Could not load file.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const formatFileSize = (bytes?: number | null): string => {
+    if (bytes == null) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   useEffect(() => {
     if (activeTab !== "emails") return;
@@ -801,6 +920,25 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
       dealsApi.getActivities(deal.id).then(setActivities).catch(() => {});
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Update failed.", "Deal not saved");
+    }
+  };
+
+  // Whatever the rep picks as a deal's Use Case should also show up as picked
+  // on the account — one-way, additive sync (same helper as Pipeline.tsx's
+  // stage-move gate). Never removes a use case the account already has, only
+  // adds what's newly picked here. Best-effort — a failure must not surface
+  // as a deal-save error.
+  const syncUseCaseToCompany = async (companyId: string | null | undefined, picked: string[]) => {
+    if (!companyId || picked.length === 0) return;
+    try {
+      const company = await accountSourcingApi.getCompany(companyId);
+      const existing = company.use_case ?? [];
+      const merged = Array.from(new Set([...existing, ...picked]));
+      if (merged.length !== existing.length) {
+        await accountSourcingApi.updateCompany(companyId, { use_case: merged });
+      }
+    } catch {
+      // Non-critical — the deal's own use_case already saved.
     }
   };
 
@@ -980,6 +1118,26 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
     [dealContacts],
   );
 
+  // Every prospect a meeting was actually booked with on this deal — NOT the
+  // full stakeholder list. Role "primary" or "champion" is the only trusted
+  // signal: set directly and permanently the moment a rep marks a call
+  // disposition or the prospect-page status pill as meeting-booked (see
+  // link_contact_as_meeting_booked in disposition_effects.py), plus the two
+  // deal-creation paths that tag it the same way (a meeting-booked email
+  // reply auto-creating a deal, and Pipeline's manual "Convert to deal").
+  // Every other DealContact row — the vast majority in practice — has role
+  // "auto_linked", minted in bulk from meeting/email attendees by
+  // deal_linker.py's backfill; those are real stakeholders but not
+  // necessarily who a meeting was booked with, so they're excluded here.
+  // A list, not one person: two different prospects at the same account can
+  // each have had a meeting booked with them at different points in this
+  // deal's life, and both should show, permanently, regardless of what
+  // either of them is marked as today.
+  const meetingContacts = useMemo(
+    () => dealContacts.filter((c) => c.role === "primary" || c.role === "champion"),
+    [dealContacts],
+  );
+
   const applyEmailTemplate = (kind: "followup" | "recap" | "pricing") => {
     const companyName = selectedCompanyName && selectedCompanyName !== "None" ? selectedCompanyName : deal.company_name || "your team";
     if (kind === "pricing") {
@@ -1006,6 +1164,72 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
 
   return (
     <>
+      <DriveFilePicker
+        open={drivePickerOpen}
+        onClose={() => setDrivePickerOpen(false)}
+        onPick={handlePickDriveFile}
+      />
+      {/* Document preview — click a Documents row to view it in place instead
+          of it just silently saving to disk. PDFs and images render inline;
+          text-ish files render as plain text; anything else (docx, xlsx, ...)
+          falls back to a Download button since browsers can't render those. */}
+      {previewDoc && (
+        <div
+          onClick={closeDocumentPreview}
+          style={{ position: "fixed", inset: 0, background: "rgba(16, 22, 55, 0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 860, height: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 40px rgba(16, 22, 55, 0.25)", overflow: "hidden" }}
+          >
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eceffa", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {previewDoc.filename}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => void dealsApi.downloadDocument(deal.id, previewDoc.id, previewDoc.filename)}
+                  className="crm-button soft"
+                  style={{ fontSize: 12.5, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <Download size={14} /> Download
+                </button>
+                <button
+                  onClick={closeDocumentPreview}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#7c86a6", padding: 4, display: "flex", alignItems: "center" }}
+                  aria-label="Close preview"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", background: "#f5f7fb", display: "flex", alignItems: previewText ? "stretch" : "center", justifyContent: "center" }}>
+              {previewLoading ? (
+                <div style={{ color: "#7c86a6", fontSize: 13 }}>Loading…</div>
+              ) : previewError ? (
+                <div style={{ padding: "12px 14px", background: "#fff4e6", border: "1px solid #f0d4ac", color: "#a46206", borderRadius: 10, margin: 20, fontSize: 13 }}>
+                  {previewError}
+                </div>
+              ) : previewObjectUrl && previewDoc.content_type === "application/pdf" ? (
+                <iframe src={previewObjectUrl} title={previewDoc.filename} style={{ width: "100%", height: "100%", border: "none" }} />
+              ) : previewObjectUrl ? (
+                <img src={previewObjectUrl} alt={previewDoc.filename} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+              ) : previewText != null ? (
+                <pre style={{ width: "100%", margin: 0, padding: 20, fontSize: 12.5, color: "#182042", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace" }}>
+                  {previewText}
+                </pre>
+              ) : (
+                <div style={{ textAlign: "center", padding: 30, color: "#7c86a6", fontSize: 13, lineHeight: 1.6 }}>
+                  No inline preview for this file type.
+                  <br />
+                  Use Download above to open it.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Win/loss reason capture — shown when moving to a closed stage. */}
       {closeStagePrompt && (
         <div
@@ -1263,6 +1487,7 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               { id: "timeline", label: "Timeline" },
               { id: "emails", label: `Emails${emailThreads.length > 0 ? ` (${emailThreads.length})` : ""}` },
               { id: "tasks", label: "Tasks" },
+              { id: "documents", label: `Documents${dealDocuments.length > 0 ? ` (${dealDocuments.length})` : ""}` },
             ].map((item) => {
               const active = activeTab === item.id;
               return (
@@ -1691,6 +1916,100 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                 style={{ ...fieldInputStyle }}
               />
             </FieldRow>
+            {/* Use Case — product-line categorization, multi-select. Editable
+                at any stage (not gated to the Qualified Lead move like the
+                MEDDPICC capture), so it's highlighted here rather than styled
+                like the plain fields above. */}
+            <div style={{ gridColumn: "1 / -1", position: "relative" }}>
+              <FieldRow label="Use Case" icon={<Layers size={13} />}>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setUseCaseMenuOpen((cur) => !cur); }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    width: "100%",
+                    minHeight: 36,
+                    borderRadius: 10,
+                    border: "1.5px solid #d8cdf5",
+                    background: "#f7f4fd",
+                    padding: "5px 10px",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  {(deal.use_case ?? []).length > 0 ? (
+                    <span style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {(deal.use_case ?? []).map((option) => (
+                        <span
+                          key={option}
+                          style={{
+                            padding: "3px 9px",
+                            borderRadius: 999,
+                            border: "1.5px solid #7556cb",
+                            background: "#ece6fa",
+                            color: "#7556cb",
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {option}
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 13, color: "#8a7fae" }}>Select use case(s)…</span>
+                  )}
+                  <ChevronDown size={15} style={{ flexShrink: 0, color: "#8a7fae", transform: useCaseMenuOpen ? "rotate(180deg)" : undefined }} />
+                </button>
+                {useCaseMenuOpen && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 40, borderRadius: 10, border: "1px solid #e8dffa", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 6, display: "grid", gap: 2 }}
+                  >
+                    {USE_CASE_OPTIONS.map((option) => {
+                      const selected = (deal.use_case ?? []).includes(option);
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            const current = deal.use_case ?? [];
+                            const adding = !current.includes(option);
+                            const next = adding
+                              ? [...current, option]
+                              : current.filter((v) => v !== option);
+                            patchDeal({ use_case: next } as Partial<Deal>);
+                            if (adding) void syncUseCaseToCompany(deal.company_id, [option]);
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: selected ? "#ece6fa" : "transparent",
+                            color: selected ? "#7556cb" : "#3d5266",
+                            fontSize: 13,
+                            fontWeight: selected ? 700 : 600,
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                        >
+                          {option}
+                          {selected && <Check size={14} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </FieldRow>
+            </div>
           </div>
           </div>
 
@@ -1841,6 +2160,53 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
               minHeight={100}
             />
           </div>
+          </div>
+
+          <SectionLabel>
+            Meeting Contact{meetingContacts.length > 0 ? ` (${meetingContacts.length})` : ""}
+          </SectionLabel>
+          <div style={{ border: "1px solid #e8eef5", borderRadius: 14, padding: "16px 16px 18px", background: "#fff", boxShadow: "0 1px 3px rgba(17,34,68,0.04)", display: "flex", flexDirection: "column", gap: 14 }}>
+            {meetingContacts.length > 0 ? (
+              meetingContacts.map((mc) => (
+                <div key={mc.contact_id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[13px] font-extrabold ${avatarColor((mc.first_name ?? "") + (mc.last_name ?? ""))}`}>
+                    {getInitials(`${mc.first_name ?? ""} ${mc.last_name ?? ""}`) || "?"}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/contacts/${mc.contact_id}`)}
+                      style={{ border: "none", background: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, textAlign: "left" }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 800, color: "#182042" }}>
+                        {`${mc.first_name ?? ""} ${mc.last_name ?? ""}`.trim() || "Unnamed contact"}
+                      </span>
+                      {mc.role && PERSONA_STYLE[mc.role] && (
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: PERSONA_STYLE[mc.role].bg, color: PERSONA_STYLE[mc.role].color, textTransform: "capitalize" }}>
+                          {mc.role.replace(/_/g, " ")}
+                        </span>
+                      )}
+                    </button>
+                    <div style={{ fontSize: 12.5, color: "#5e738b", marginTop: 2 }}>
+                      {mc.title || "No title on file"}
+                      {mc.email ? ` · ${mc.email}` : ""}
+                    </div>
+                  </div>
+                  {mc.email && (
+                    <a
+                      href={`mailto:${mc.email}`}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #bfd8c7", background: "#ecfdf3", color: "#1f7a4d", fontSize: 12.5, fontWeight: 700, textDecoration: "none", flexShrink: 0 }}
+                    >
+                      <Mail size={13} /> Email
+                    </a>
+                  )}
+                </div>
+              ))
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "#8295a8" }}>
+                No prospect is explicitly linked as a meeting contact yet — this deal's other stakeholders (if any) were auto-linked from meeting/email attendees, not tagged to who booked a meeting.
+              </p>
+            )}
           </div>
 
           <SectionLabel>Stage Journey</SectionLabel>
@@ -2210,6 +2576,100 @@ function DealDetailDrawer({ deal, companies, users, stages, onClose, onDealUpdat
                     </div>
                   );
                 })
+              )}
+            </div>
+          ) : activeTab === "documents" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#182042", marginBottom: 4 }}>
+                    Documents
+                  </div>
+                  <p style={{ fontSize: 13, color: "#7c86a6", margin: 0 }}>
+                    Files attached to this deal — proposals, contracts, decks.
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    ref={documentFileInputRef}
+                    type="file"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleUploadDocument(file);
+                    }}
+                  />
+                  <button
+                    className="crm-button soft"
+                    style={{ fontSize: 13, padding: "6px 12px" }}
+                    onClick={() => setDrivePickerOpen(true)}
+                  >
+                    + Add from Drive
+                  </button>
+                  <button
+                    className="crm-button primary"
+                    style={{ fontSize: 13, padding: "6px 12px" }}
+                    disabled={uploadingDocument}
+                    onClick={() => documentFileInputRef.current?.click()}
+                  >
+                    {uploadingDocument ? "Uploading…" : "+ Upload from computer"}
+                  </button>
+                </div>
+              </div>
+              {dealDocuments.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#8295a8" }}>No documents yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {dealDocuments.map((docItem) => (
+                    <div
+                      key={docItem.id}
+                      onClick={() => void openDocumentPreview(docItem)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        border: "1px solid #e8eef5",
+                        borderRadius: 12,
+                        padding: "10px 14px",
+                        background: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <FileText size={18} color="#6f8399" style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#182042", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+                          {docItem.filename}
+                          {docItem.source === "drive" && (
+                            <span style={{ fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 999, background: "#eef2ff", color: "#4958d8", textTransform: "uppercase", flexShrink: 0 }}>
+                              Drive
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "#8295a8", marginTop: 2 }}>
+                          {[formatFileSize(docItem.size_bytes), docItem.uploaded_by_name, new Date(docItem.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void openDocumentPreview(docItem); }}
+                        title={docItem.source === "drive" ? "Open in Drive" : "View"}
+                        style={{ display: "grid", placeItems: "center", width: 32, height: 32, borderRadius: 8, border: "1px solid #dbe5f0", background: "#fff", color: "#3d5266", cursor: "pointer", flexShrink: 0 }}
+                      >
+                        <Eye size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void handleDeleteDocument(docItem.id); }}
+                        title="Delete"
+                        style={{ display: "grid", placeItems: "center", width: 32, height: 32, borderRadius: 8, border: "1px solid #f3d4d4", background: "#fff", color: "#b3413c", cursor: "pointer", flexShrink: 0 }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           ) : (

@@ -265,6 +265,7 @@ class ConversionRow(BaseModel):
     deals: int
     conv_rate: float
     median_days: Optional[float]
+    is_overall: bool = False  # the whole-funnel summary row (first stage -> last stage), not one step
 
 
 class FunnelResponse(BaseModel):
@@ -274,6 +275,16 @@ class FunnelResponse(BaseModel):
     funnel: list[StageCount]
     conversion: list[ConversionRow]
     movement: dict  # {"advanced": int, "regressed": int, "exited": int, "entered": int}
+
+
+class RedAlertDeal(BaseModel):
+    deal_id: str
+    deal_name: str
+    amount: Optional[float] = None
+    stage_entered_at: Optional[str] = None  # ISO datetime string
+    ae_name: Optional[str] = None
+    sdr_name: Optional[str] = None
+    stage: Optional[str] = None  # Deal.stage right now — only populated by callers where "current stage" is meaningful (e.g. the Funnel Overall row, which spans every stage)
 
 
 @router.get("/funnel", response_model=FunnelResponse)
@@ -316,6 +327,13 @@ async def get_funnel(
         row = await pm.stage_conversion(session, p, t["from"], t["to"], rep_uuid)
         conversion.append(ConversionRow(**row))
 
+    # Overall funnel — one summary row spanning the whole chain (first stage's
+    # "from" to last stage's "to"), so the full picture doesn't require
+    # stitching together every individual step by hand.
+    if transitions:
+        overall = await pm.stage_conversion(session, p, transitions[0]["from"], transitions[-1]["to"], rep_uuid)
+        conversion.insert(0, ConversionRow(**overall, is_overall=True))
+
     # Movement counts within the period
     ordered = {s: i for i, s in enumerate(DEAL_STAGES)}
     hist_stmt = (
@@ -355,6 +373,97 @@ async def get_funnel(
     )
 
 
+@router.get("/funnel-transition-deals", response_model=list[RedAlertDeal])
+async def get_funnel_transition_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    from_stage: Annotated[str, Query(description="Stage key the deals entered, e.g. 'qualified_lead'")],
+    to_stage: Annotated[Optional[str], Query(description="Row's target stage, e.g. 'poc_agreed' — needed to exclude deals stage_conversion() itself drops as backwards bounces")] = None,
+    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+    rep_id: Annotated[Optional[UUID], Query()] = None,
+):
+    """The exact deals behind a Funnel "Stage conversion" row's Deals count —
+    those that entered `from_stage` during the period. Unlike
+    /pipeline-stage-deals (every deal currently sitting in a stage), this
+    mirrors stage_conversion()'s own "entered" population, including its
+    guard against a deal that had already reached `to_stage` at some earlier
+    time than this particular entry (e.g. bounced back then forward again) —
+    stage_conversion() drops that row from the count, so this must too or the
+    click-through total won't match the row it was opened from.
+    """
+    from sqlalchemy import func, or_
+    from sqlalchemy.orm import aliased
+
+    from app.models.deal import Deal
+    from app.models.deal_stage_history import DealStageHistory
+
+    settings = await get_analytics_settings(session)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    rep = await _resolve_rep(session, current_user, rep_id)
+    rep_uuid = rep.id if rep else None
+
+    AeUser = aliased(User)
+    SdrUser = aliased(User)
+    entered = (
+        select(
+            DealStageHistory.deal_id.label("deal_id"),
+            DealStageHistory.changed_at.label("from_at"),
+        )
+        .where(
+            DealStageHistory.to_stage == from_stage,
+            DealStageHistory.changed_at >= p.start,
+            DealStageHistory.changed_at < p.end,
+        )
+        .subquery()
+    )
+    stmt = (
+        select(
+            entered.c.deal_id,
+            entered.c.from_at,
+            Deal.name,
+            Deal.value,
+            Deal.stage,
+            AeUser.name.label("ae_name"),
+            SdrUser.name.label("sdr_name"),
+        )
+        .select_from(entered)
+        .join(Deal, Deal.id == entered.c.deal_id)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
+        .where(Deal.deleted_at.is_(None))
+    )
+    if to_stage:
+        reached = (
+            select(
+                DealStageHistory.deal_id.label("deal_id"),
+                func.min(DealStageHistory.changed_at).label("to_at"),
+            )
+            .where(DealStageHistory.to_stage == to_stage)
+            .group_by(DealStageHistory.deal_id)
+            .subquery()
+        )
+        stmt = stmt.outerjoin(reached, reached.c.deal_id == entered.c.deal_id).where(
+            or_(reached.c.to_at.is_(None), reached.c.to_at >= entered.c.from_at)
+        )
+    if rep_uuid:
+        stmt = stmt.where(Deal.assigned_to_id == rep_uuid)
+    rows = (await session.execute(stmt)).all()
+
+    return [
+        RedAlertDeal(
+            deal_id=str(r.deal_id),
+            deal_name=r.name,
+            amount=float(r.value) if r.value else None,
+            stage_entered_at=r.from_at.isoformat() if r.from_at else None,
+            ae_name=r.ae_name,
+            sdr_name=r.sdr_name,
+            stage=r.stage,
+        )
+        for r in rows
+    ]
+
+
 # ── Deal Health ──────────────────────────────────────────────────────────────
 
 # Hardcoded per-stage red-alert thresholds (days)
@@ -367,15 +476,6 @@ _RED_ALERT_THRESHOLDS: dict[str, int] = {
 }
 _POC_DONE_AND_LATER_STAGES = ["poc_done", "commercial_negotiation", "msa_review"]
 _POC_DONE_AND_LATER_THRESHOLD = 56  # PoC Done and Later > 8 weeks
-
-
-class RedAlertDeal(BaseModel):
-    deal_id: str
-    deal_name: str
-    amount: Optional[float] = None
-    stage_entered_at: Optional[str] = None  # ISO datetime string
-    ae_name: Optional[str] = None
-    sdr_name: Optional[str] = None
 
 
 class DealHealthResponse(BaseModel):
@@ -977,6 +1077,7 @@ class IncentiveDealRow(BaseModel):
     source: Literal["direct_sql", "converted"]
     meeting_booked_with: Optional[str]  # Deal.meeting_booked_with (VP / SVP / Head-Chief / ...), from the pipeline
     deal_source: Optional[str]  # Deal.source (inbound / outbound / referral / partner / event), from the pipeline
+    current_stage: Optional[str]  # Deal.stage right now — where the deal sits today, not at the time it earned this incentive row
 
 
 class IncentiveDealsResponse(BaseModel):
@@ -1035,6 +1136,7 @@ async def get_incentive_deals(
                 Deal.name.label("deal_name"),
                 Deal.meeting_booked_with,
                 Deal.source.label("deal_source"),
+                Deal.stage.label("current_stage"),
                 AEUser.name.label("ae_name"),
                 SDRUser.name.label("sdr_name"),
                 Meeting.scheduled_at,
@@ -1075,6 +1177,7 @@ async def get_incentive_deals(
                 source="direct_sql",
                 meeting_booked_with=r.meeting_booked_with,
                 deal_source=r.deal_source,
+                current_stage=r.current_stage,
             ))
 
     # Converted — mirrors get_incentives' converted bucket: Director/S.
@@ -1099,6 +1202,7 @@ async def get_incentive_deals(
                     Deal.sdr_id,
                     Deal.meeting_booked_with,
                     Deal.source.label("deal_source"),
+                    Deal.stage.label("current_stage"),
                     AEUser.name.label("ae_name"),
                     SDRUser.name.label("sdr_name"),
                 )
@@ -1137,6 +1241,7 @@ async def get_incentive_deals(
                     source="converted",
                     meeting_booked_with=r.meeting_booked_with,
                     deal_source=r.deal_source,
+                    current_stage=r.current_stage,
                 ))
 
     return IncentiveDealsResponse(

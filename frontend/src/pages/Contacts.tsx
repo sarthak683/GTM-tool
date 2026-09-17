@@ -12,7 +12,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin,
+  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin, Pencil, Check,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -317,6 +317,7 @@ export default function Contacts() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [resetting, setResetting] = useState(false);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+  const [openPhoneMenuId, setOpenPhoneMenuId] = useState<string | null>(null);
   const [taskContact, setTaskContact] = useState<Contact | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(() => new Set());
   const [exportingSelectedContacts, setExportingSelectedContacts] = useState(false);
@@ -341,6 +342,7 @@ export default function Contacts() {
   const [bulkFollowupNote, setBulkFollowupNote] = useState("");
   const [bulkFollowupSaving, setBulkFollowupSaving] = useState(false);
   const [callContact, setCallContact] = useState<Contact | null>(null);
+  const [callNumberMenuOpen, setCallNumberMenuOpen] = useState(false);
   // Pre-dial countdown. When a rep hits Call we open the drawer immediately but
   // hold the actual dial for 10s so they can prep (or cancel). `dialCountdown`
   // is the seconds remaining (null = not counting); `dialTimerRef` holds the
@@ -445,6 +447,17 @@ export default function Contacts() {
   const [editingTimezoneId, setEditingTimezoneId] = useState<string | null>(null);
   const [timezoneDraft, setTimezoneDraft] = useState("");
   const [savingTimezoneId, setSavingTimezoneId] = useState<string | null>(null);
+  // Inline edit for the Name / Company / Title / Email / Phone cells.
+  // `editingCellKey` is `${contactId}:${field}` so two different rows/fields
+  // never collide.
+  const [editingCellKey, setEditingCellKey] = useState<string | null>(null);
+  const [editDraftFirstName, setEditDraftFirstName] = useState("");
+  const [editDraftLastName, setEditDraftLastName] = useState("");
+  const [editDraftTitle, setEditDraftTitle] = useState("");
+  const [editDraftCompanyName, setEditDraftCompanyName] = useState("");
+  const [editDraftEmail, setEditDraftEmail] = useState("");
+  const [editDraftPhone, setEditDraftPhone] = useState("");
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ProspectImportSummary | null>(null);
   // Filter-wide assignment ("Assign all N matching") — the assignment twin of
   // the filter-wide CSV export.
@@ -574,6 +587,100 @@ export default function Contacts() {
       setSavingTimezoneId(null);
       setEditingTimezoneId(null);
       setTimezoneDraft("");
+    }
+  };
+
+  const saveContactName = async (contact: Contact) => {
+    const key = `${contact.id}:name`;
+    const firstName = editDraftFirstName.trim();
+    const lastName = editDraftLastName.trim();
+    if (!firstName && !lastName) {
+      toast.error("Name can't be empty.", "Save failed");
+      return;
+    }
+    setSavingCellKey(key);
+    try {
+      const updated = await contactsApi.update(contact.id, { first_name: firstName, last_name: lastName });
+      setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, first_name: updated.first_name, last_name: updated.last_name } : item));
+      toast.success("Name updated.", "Prospect saved");
+      setEditingCellKey(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update name.", "Save failed");
+    } finally {
+      setSavingCellKey(null);
+    }
+  };
+
+  const saveContactTitle = async (contact: Contact) => {
+    const key = `${contact.id}:title`;
+    const title = editDraftTitle.trim();
+    setSavingCellKey(key);
+    try {
+      const updated = await contactsApi.update(contact.id, { title: title || null } as never);
+      setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, title: updated.title } : item));
+      toast.success("Title updated.", "Prospect saved");
+      setEditingCellKey(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update title.", "Save failed");
+    } finally {
+      setSavingCellKey(null);
+    }
+  };
+
+  // Company is a linked account, not a free-text field on the contact — the
+  // name shown here is joined in from the Company row. Renaming it here
+  // renames the account itself, so every other contact mapped to the same
+  // company_id picks up the new name too, not just this row.
+  const saveCompanyName = async (contact: Contact) => {
+    if (!contact.company_id) return;
+    const key = `${contact.id}:company`;
+    const name = editDraftCompanyName.trim();
+    if (!name) {
+      toast.error("Company name can't be empty.", "Save failed");
+      return;
+    }
+    setSavingCellKey(key);
+    try {
+      const updated = await companiesApi.update(contact.company_id, { name });
+      setContacts((current) => current.map((item) => item.company_id === contact.company_id ? { ...item, company_name: updated.name } : item));
+      toast.success("Company updated.", "Account saved");
+      setEditingCellKey(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update company.", "Save failed");
+    } finally {
+      setSavingCellKey(null);
+    }
+  };
+
+  const saveContactEmail = async (contact: Contact) => {
+    const key = `${contact.id}:email`;
+    const email = editDraftEmail.trim();
+    setSavingCellKey(key);
+    try {
+      const updated = await contactsApi.update(contact.id, { email: email || null } as never);
+      setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, email: updated.email } : item));
+      toast.success("Email updated.", "Prospect saved");
+      setEditingCellKey(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update email.", "Save failed");
+    } finally {
+      setSavingCellKey(null);
+    }
+  };
+
+  const saveContactPhone = async (contact: Contact) => {
+    const key = `${contact.id}:phone`;
+    const phone = editDraftPhone.trim();
+    setSavingCellKey(key);
+    try {
+      const updated = await contactsApi.update(contact.id, { phone: phone || null } as never);
+      setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, phone: updated.phone } : item));
+      toast.success("Phone updated.", "Prospect saved");
+      setEditingCellKey(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update phone.", "Save failed");
+    } finally {
+      setSavingCellKey(null);
     }
   };
 
@@ -1025,6 +1132,18 @@ export default function Contacts() {
     return () => window.removeEventListener("click", dismiss);
   }, []);
 
+  useEffect(() => {
+    const dismiss = () => setOpenPhoneMenuId(null);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
+  }, []);
+
+  useEffect(() => {
+    const dismiss = () => setCallNumberMenuOpen(false);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
+  }, []);
+
   // When the call sidebar opens, fetch the full pre-call brief: last email
   // sent & whether it was opened, recent signals, talking points, objection
   // playbook, and the AI sequence context. No network or AI in the brief
@@ -1382,12 +1501,28 @@ export default function Contacts() {
     setCurrentRecordingId(null);
     setSessionActivities([]);
     setExpandedActivityIndices(new Set());
+    setCallNumberMenuOpen(false);
     // Ring the rep's phone / open the dialer NOW, on open — the whole point of
     // the 10s countdown is to give the rep time to dial and connect before the
     // recording auto-starts. Previously this fired only at the END of the
     // countdown, so there was nothing to dial during the wait.
     performDial(contact);
     startDialCountdown(contact);
+  };
+
+  // Re-dial a different number for the same prospect while the call drawer is
+  // already open (e.g. the primary went to voicemail, try the mobile number).
+  // Only swaps which number is being called — nothing else about the drawer
+  // (recording, notes, disposition) resets.
+  const switchCallNumber = (newNumber: string) => {
+    if (!callContact || newNumber === callContact.phone) {
+      setCallNumberMenuOpen(false);
+      return;
+    }
+    const nextContact = { ...callContact, phone: newNumber };
+    setCallContact(nextContact);
+    setCallNumberMenuOpen(false);
+    performDial(nextContact);
   };
 
   // Safety net: whenever the drawer closes (any path), kill a pending
@@ -3588,16 +3723,66 @@ export default function Contacts() {
                                 const lastTouch = latestProspectActivity(c);
                                 const opens = c.email_open_count ?? 0;
                                 const clicks = c.email_click_count ?? 0;
+                                const nameKey = `${c.id}:name`;
+                                const isEditingName = editingCellKey === nameKey;
+                                const savingName = savingCellKey === nameKey;
                                 return (
-                                  <td key={column.key}>
+                                  <td key={column.key} onClick={isEditingName ? (e) => e.stopPropagation() : undefined}>
                                     <div className="flex items-center gap-3 min-w-0">
                                       <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold ${avatarColor(c.first_name + c.last_name)}`}>
                                         {getInitials(`${c.first_name} ${c.last_name}`)}
                                       </div>
                                       <div className="min-w-0" style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                                        <p className="font-bold text-[#0f1f33] truncate" style={{ fontSize: 13.5, lineHeight: 1.25 }}>
-                                          {c.first_name} {c.last_name}
-                                        </p>
+                                        {isEditingName ? (
+                                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                            <input
+                                              autoFocus
+                                              value={editDraftFirstName}
+                                              disabled={savingName}
+                                              onChange={(e) => setEditDraftFirstName(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") void saveContactName(c);
+                                                if (e.key === "Escape") setEditingCellKey(null);
+                                              }}
+                                              placeholder="First name"
+                                              style={{ width: 84, height: 26, borderRadius: 7, border: "1px solid #bfd6f3", padding: "0 6px", fontSize: 12.5, fontWeight: 700, outline: "none" }}
+                                            />
+                                            <input
+                                              value={editDraftLastName}
+                                              disabled={savingName}
+                                              onChange={(e) => setEditDraftLastName(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") void saveContactName(c);
+                                                if (e.key === "Escape") setEditingCellKey(null);
+                                              }}
+                                              placeholder="Last name"
+                                              style={{ width: 84, height: 26, borderRadius: 7, border: "1px solid #bfd6f3", padding: "0 6px", fontSize: 12.5, fontWeight: 700, outline: "none" }}
+                                            />
+                                            <button type="button" disabled={savingName} onClick={() => void saveContactName(c)} title="Save" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #bfe3c8", background: "#e8f8ee", color: "#1f7a43", cursor: "pointer" }}>
+                                              <Check size={12} />
+                                            </button>
+                                            <button type="button" disabled={savingName} onClick={() => setEditingCellKey(null)} title="Cancel" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #f0d3d3", background: "#fdecec", color: "#b3413c", cursor: "pointer" }}>
+                                              <X size={12} />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <p className="font-bold text-[#0f1f33] truncate" style={{ fontSize: 13.5, lineHeight: 1.25, display: "flex", alignItems: "center", gap: 6 }}>
+                                            {c.first_name} {c.last_name}
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingCellKey(nameKey);
+                                                setEditDraftFirstName(c.first_name ?? "");
+                                                setEditDraftLastName(c.last_name ?? "");
+                                              }}
+                                              title="Edit name"
+                                              style={{ display: "inline-grid", placeItems: "center", width: 14, height: 14, borderRadius: 4, border: "none", background: "transparent", color: "#9aaabd", cursor: "pointer", flexShrink: 0 }}
+                                            >
+                                              <Pencil size={9} />
+                                            </button>
+                                          </p>
+                                        )}
                                         {c.seniority && (
                                           <p style={{ fontSize: 11.5, color: "#7d8ea6", fontWeight: 600, lineHeight: 1.2, margin: 0 }}>
                                             {c.seniority}
@@ -3646,53 +3831,179 @@ export default function Contacts() {
                                   </td>
                                 );
                               }
-                              case "company":
+                              case "company": {
+                                const companyKey = `${c.id}:company`;
+                                const isEditingCompany = editingCellKey === companyKey;
+                                const savingCompany = savingCellKey === companyKey;
                                 return (
-                                  <td key={column.key}>
+                                  <td key={column.key} onClick={isEditingCompany ? (e) => e.stopPropagation() : undefined}>
                                     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-                                      {c.company_name ? (
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
-                                          }}
-                                          className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
-                                          style={{ textAlign: "left", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
-                                        >
-                                          {c.company_name}
-                                        </button>
+                                      {isEditingCompany ? (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                          <input
+                                            autoFocus
+                                            value={editDraftCompanyName}
+                                            disabled={savingCompany}
+                                            onChange={(e) => setEditDraftCompanyName(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") void saveCompanyName(c);
+                                              if (e.key === "Escape") setEditingCellKey(null);
+                                            }}
+                                            style={{ width: 140, height: 26, borderRadius: 7, border: "1px solid #bfd6f3", padding: "0 6px", fontSize: 12.5, fontWeight: 700, outline: "none" }}
+                                          />
+                                          <button type="button" disabled={savingCompany} onClick={() => void saveCompanyName(c)} title="Save" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #bfe3c8", background: "#e8f8ee", color: "#1f7a43", cursor: "pointer" }}>
+                                            <Check size={12} />
+                                          </button>
+                                          <button type="button" disabled={savingCompany} onClick={() => setEditingCellKey(null)} title="Cancel" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #f0d3d3", background: "#fdecec", color: "#b3413c", cursor: "pointer" }}>
+                                            <X size={12} />
+                                          </button>
+                                        </div>
                                       ) : (
-                                        <span className="text-[#96a7ba]" title="No account mapped — this prospect only appears in unscoped views">No account</span>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                          {c.company_name ? (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (c.company_id) navigate(`/account-sourcing/${c.company_id}`);
+                                              }}
+                                              className="text-[#2b6cb0] font-semibold text-[13px] hover:underline"
+                                              style={{ textAlign: "left", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                            >
+                                              {c.company_name}
+                                            </button>
+                                          ) : (
+                                            <span className="text-[#96a7ba]" title="No account mapped — this prospect only appears in unscoped views">No account</span>
+                                          )}
+                                          {c.company_id && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingCellKey(companyKey);
+                                                setEditDraftCompanyName(c.company_name ?? "");
+                                              }}
+                                              title="Edit company name"
+                                              style={{ display: "inline-grid", placeItems: "center", width: 14, height: 14, borderRadius: 4, border: "none", background: "transparent", color: "#9aaabd", cursor: "pointer", flexShrink: 0 }}
+                                            >
+                                              <Pencil size={9} />
+                                            </button>
+                                          )}
+                                        </div>
                                       )}
                                       <AccountContextBadges contact={c} />
                                     </div>
                                   </td>
                                 );
-                              case "title":
-                                return <td key={column.key}>{c.title ?? <span className="text-[#96a7ba]">-</span>}</td>;
-                              case "email":
+                              }
+                              case "title": {
+                                const titleKey = `${c.id}:title`;
+                                const isEditingTitle = editingCellKey === titleKey;
+                                const savingTitle = savingCellKey === titleKey;
                                 return (
-                                  <td key={column.key}>
+                                  <td key={column.key} onClick={isEditingTitle ? (e) => e.stopPropagation() : undefined}>
+                                    {isEditingTitle ? (
+                                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                        <input
+                                          autoFocus
+                                          value={editDraftTitle}
+                                          disabled={savingTitle}
+                                          onChange={(e) => setEditDraftTitle(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") void saveContactTitle(c);
+                                            if (e.key === "Escape") setEditingCellKey(null);
+                                          }}
+                                          style={{ width: 120, height: 26, borderRadius: 7, border: "1px solid #bfd6f3", padding: "0 6px", fontSize: 12.5, fontWeight: 600, outline: "none" }}
+                                        />
+                                        <button type="button" disabled={savingTitle} onClick={() => void saveContactTitle(c)} title="Save" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #bfe3c8", background: "#e8f8ee", color: "#1f7a43", cursor: "pointer" }}>
+                                          <Check size={12} />
+                                        </button>
+                                        <button type="button" disabled={savingTitle} onClick={() => setEditingCellKey(null)} title="Cancel" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #f0d3d3", background: "#fdecec", color: "#b3413c", cursor: "pointer" }}>
+                                          <X size={12} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        {c.title ?? <span className="text-[#96a7ba]">-</span>}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingCellKey(titleKey);
+                                            setEditDraftTitle(c.title ?? "");
+                                          }}
+                                          title="Edit title"
+                                          style={{ display: "inline-grid", placeItems: "center", width: 14, height: 14, borderRadius: 4, border: "none", background: "transparent", color: "#9aaabd", cursor: "pointer", flexShrink: 0 }}
+                                        >
+                                          <Pencil size={9} />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              }
+                              case "email": {
+                                const emailKey = `${c.id}:email`;
+                                const isEditingEmail = editingCellKey === emailKey;
+                                const savingEmail = savingCellKey === emailKey;
+                                return (
+                                  <td key={column.key} onClick={isEditingEmail ? (e) => e.stopPropagation() : undefined}>
                                     {/* Capped: the address is reference data — the Action column's
                                         Email button is what reps actually use to open Gmail — but
                                         an uncapped cell widened to the longest address on the page
                                         (293px measured) and pushed Action off-screen. Full address
                                         stays in the title tooltip. */}
                                     <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0, maxWidth: 176 }}>
-                                      {c.email
-                                        ? (
-                                          <span
-                                            title={c.email}
-                                            style={{ fontSize: 12.5, color: "#1e3a52", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}
+                                      {isEditingEmail ? (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                          <input
+                                            autoFocus
+                                            type="email"
+                                            value={editDraftEmail}
+                                            disabled={savingEmail}
+                                            onChange={(e) => setEditDraftEmail(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") void saveContactEmail(c);
+                                              if (e.key === "Escape") setEditingCellKey(null);
+                                            }}
+                                            style={{ width: 140, height: 26, borderRadius: 7, border: "1px solid #bfd6f3", padding: "0 6px", fontSize: 12, fontWeight: 600, outline: "none" }}
+                                          />
+                                          <button type="button" disabled={savingEmail} onClick={() => void saveContactEmail(c)} title="Save" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #bfe3c8", background: "#e8f8ee", color: "#1f7a43", cursor: "pointer", flexShrink: 0 }}>
+                                            <Check size={12} />
+                                          </button>
+                                          <button type="button" disabled={savingEmail} onClick={() => setEditingCellKey(null)} title="Cancel" style={{ display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, border: "1px solid #f0d3d3", background: "#fdecec", color: "#b3413c", cursor: "pointer", flexShrink: 0 }}>
+                                            <X size={12} />
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <span style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                                          {c.email
+                                            ? (
+                                              <span
+                                                title={c.email}
+                                                style={{ fontSize: 12.5, color: "#1e3a52", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}
+                                              >
+                                                {c.email_verified && (
+                                                  <span title="Email verified" style={{ flexShrink: 0, width: 6, height: 6, borderRadius: 999, background: "#22c55e", boxShadow: "0 0 0 2px #dcfce7" }} />
+                                                )}
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
+                                              </span>
+                                            )
+                                            : <span className="text-[#96a7ba]">No email</span>
+                                          }
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingCellKey(emailKey);
+                                              setEditDraftEmail(c.email ?? "");
+                                            }}
+                                            title="Edit email"
+                                            style={{ display: "inline-grid", placeItems: "center", width: 14, height: 14, borderRadius: 4, border: "none", background: "transparent", color: "#9aaabd", cursor: "pointer", flexShrink: 0 }}
                                           >
-                                            {c.email_verified && (
-                                              <span title="Email verified" style={{ flexShrink: 0, width: 6, height: 6, borderRadius: 999, background: "#22c55e", boxShadow: "0 0 0 2px #dcfce7" }} />
-                                            )}
-                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.email}</span>
-                                          </span>
-                                        )
-                                        : <span className="text-[#96a7ba]">No email</span>
-                                      }
+                                            <Pencil size={9} />
+                                          </button>
+                                        </span>
+                                      )}
                                       <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
                                         <span title={c.phone ? `Phone: ${c.phone}` : "No phone"} style={{
                                           display: "inline-flex", alignItems: "center", gap: 3,
@@ -3718,6 +4029,7 @@ export default function Contacts() {
                                     </div>
                                   </td>
                                 );
+                              }
                               case "progress":
                                 return (
                                   <td
@@ -3867,34 +4179,131 @@ export default function Contacts() {
                                   </td>
                                 );
                               }
-                              case "action":
+                              case "action": {
+                                const phoneKey = `${c.id}:phone`;
+                                const isEditingPhone = editingCellKey === phoneKey;
+                                const savingPhone = savingCellKey === phoneKey;
+                                // Primary `phone` plus every entry in `additional_phones`
+                                // (mobile/direct/etc.) — one combined list so the rep can
+                                // call any number on file, not just the primary.
+                                const allNumbers: { number: string; label: string }[] = [
+                                  ...(c.phone ? [{ number: c.phone, label: "Primary" }] : []),
+                                  ...((c.additional_phones ?? []) as { number: string; label?: string }[])
+                                    .filter((p) => p.number)
+                                    .map((p) => ({ number: p.number, label: p.label || "Other" })),
+                                ];
+                                const hasMultipleNumbers = allNumbers.length > 1;
+                                const isPhoneMenuOpen = openPhoneMenuId === c.id;
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()}>
-                                    <div style={{ position: "relative", display: "inline-flex", alignItems: "flex-start", gap: 8 }}>
+                                    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
                                       {/* Call button + a caption showing how many
                                           times this prospect was called and how
                                           recently — so a rep sees touch history
                                           without opening the drawer. */}
                                       <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "stretch", gap: 3 }}>
-                                        <span
-                                          title={c.phone || "No phone number saved"}
-                                          style={{
-                                            maxWidth: 140,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                            fontSize: 10.5,
-                                            fontWeight: 700,
-                                            lineHeight: 1.15,
-                                            textAlign: "center",
-                                            color: c.phone ? "#4a6580" : "#9fb0c0",
-                                          }}
-                                        >
-                                          {c.phone || "No phone saved"}
-                                        </span>
-                                        <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }} style={{ height: 38, borderRadius: 10, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? c.phone : "No phone number"}>
-                                          <Phone size={13} /> Call
-                                        </button>
+                                        {isEditingPhone ? (
+                                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
+                                            <input
+                                              autoFocus
+                                              type="tel"
+                                              value={editDraftPhone}
+                                              disabled={savingPhone}
+                                              onChange={(e) => setEditDraftPhone(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") void saveContactPhone(c);
+                                                if (e.key === "Escape") setEditingCellKey(null);
+                                              }}
+                                              style={{ width: 100, height: 24, borderRadius: 6, border: "1px solid #bfd6f3", padding: "0 5px", fontSize: 11, fontWeight: 700, outline: "none" }}
+                                            />
+                                            <button type="button" disabled={savingPhone} onClick={() => void saveContactPhone(c)} title="Save" style={{ display: "grid", placeItems: "center", width: 20, height: 20, borderRadius: 5, border: "1px solid #bfe3c8", background: "#e8f8ee", color: "#1f7a43", cursor: "pointer", flexShrink: 0 }}>
+                                              <Check size={11} />
+                                            </button>
+                                            <button type="button" disabled={savingPhone} onClick={() => setEditingCellKey(null)} title="Cancel" style={{ display: "grid", placeItems: "center", width: 20, height: 20, borderRadius: 5, border: "1px solid #f0d3d3", background: "#fdecec", color: "#b3413c", cursor: "pointer", flexShrink: 0 }}>
+                                              <X size={11} />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <span
+                                            title={c.phone || "No phone number saved"}
+                                            style={{
+                                              maxWidth: 140,
+                                              overflow: "hidden",
+                                              textOverflow: "ellipsis",
+                                              whiteSpace: "nowrap",
+                                              fontSize: 10.5,
+                                              fontWeight: 700,
+                                              lineHeight: 1.15,
+                                              textAlign: "center",
+                                              color: c.phone ? "#4a6580" : "#9fb0c0",
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              gap: 4,
+                                            }}
+                                          >
+                                            {c.phone || "No phone saved"}
+                                            {hasMultipleNumbers && (
+                                              <span title={`${allNumbers.length - 1} more number${allNumbers.length - 1 === 1 ? "" : "s"} on file`} style={{ fontSize: 9.5, fontWeight: 800, padding: "1px 5px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", lineHeight: 1.3 }}>
+                                                +{allNumbers.length - 1}
+                                              </span>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingCellKey(phoneKey);
+                                                setEditDraftPhone(c.phone ?? "");
+                                              }}
+                                              title="Edit phone"
+                                              style={{ display: "inline-grid", placeItems: "center", width: 14, height: 14, borderRadius: 4, border: "none", background: "transparent", color: "#9aaabd", cursor: "pointer", flexShrink: 0 }}
+                                            >
+                                              <Pencil size={9} />
+                                            </button>
+                                          </span>
+                                        )}
+                                        <div style={{ position: "relative", display: "inline-flex" }}>
+                                          <button
+                                            type="button"
+                                            disabled={!c.phone}
+                                            onClick={(e) => { e.stopPropagation(); if (c.phone) openCallSidebar(c); }}
+                                            style={{ height: 38, borderRadius: hasMultipleNumbers ? "10px 0 0 10px" : 10, borderRight: hasMultipleNumbers ? "1px solid #c8daf0aa" : undefined, border: "1px solid #c8daf0", background: c.phone ? "#eaf2ff" : "#f6f8fb", color: c.phone ? "#175089" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, flex: 1 }}
+                                            title={c.phone ? `Call primary — ${c.phone}` : "No phone number"}
+                                          >
+                                            <Phone size={13} /> Call
+                                          </button>
+                                          {hasMultipleNumbers && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); setOpenPhoneMenuId((cur) => (cur === c.id ? null : c.id)); }}
+                                              title="Choose which number to call"
+                                              style={{ height: 38, width: 22, borderRadius: "0 10px 10px 0", border: "1px solid #c8daf0", borderLeft: "1px solid #c8daf0", background: "#eaf2ff", color: "#175089", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                                            >
+                                              <ChevronDown size={13} />
+                                            </button>
+                                          )}
+                                          {isPhoneMenuOpen && (
+                                            <div style={{ position: "absolute", top: 42, left: 0, zIndex: 30, minWidth: 180, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 6, display: "grid", gap: 3 }}>
+                                              {allNumbers.map((n, idx) => (
+                                                <button
+                                                  key={`${n.number}-${idx}`}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setOpenPhoneMenuId(null);
+                                                    openCallSidebar({ ...c, phone: n.number });
+                                                  }}
+                                                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", padding: "7px 9px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}
+                                                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f4f8ff")}
+                                                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                                                >
+                                                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "#1e3a52" }}>{n.number}</span>
+                                                  <span style={{ fontSize: 10, fontWeight: 700, color: "#8aa0b6", textTransform: "uppercase" }}>{n.label}</span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
                                         <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.15, textAlign: "center", whiteSpace: "nowrap", color: (c.call_attempt_count ?? 0) > 0 ? "#5b6b7d" : "#9fb0c0" }}>
                                           {(c.call_attempt_count ?? 0) > 0
                                             ? `${c.call_attempt_count} call${c.call_attempt_count === 1 ? "" : "s"}${c.call_last_at ? ` · ${relativeTimeShort(c.call_last_at)}` : ""}`
@@ -3941,6 +4350,7 @@ export default function Contacts() {
                                     </div>
                                   </td>
                                 );
+                              }
                               default:
                                 return null;
                             }
@@ -4882,11 +5292,49 @@ export default function Contacts() {
                   </div>
                   {/* Contact reach row */}
                   <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-                    {callContact.phone && (
-                      <span style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a" }}>
-                        <Phone size={12} /> {callContact.phone}
-                      </span>
-                    )}
+                    {callContact.phone && (() => {
+                      const drawerNumbers: { number: string; label: string }[] = [
+                        ...(callContact.phone ? [{ number: callContact.phone, label: "Primary" }] : []),
+                        ...((callContact.additional_phones ?? []) as { number: string; label?: string }[])
+                          .filter((p) => p.number && p.number !== callContact.phone)
+                          .map((p) => ({ number: p.number, label: p.label || "Other" })),
+                      ];
+                      const hasMoreNumbers = drawerNumbers.length > 1;
+                      return (
+                        <div style={{ position: "relative", flex: 1 }}>
+                          <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f3fbe3", color: "#4d7c0f", border: "1px solid #cfe89a" }}>
+                            <Phone size={12} /> {callContact.phone}
+                            {hasMoreNumbers && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setCallNumberMenuOpen((cur) => !cur); }}
+                                title="Call a different number for this prospect"
+                                style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 2, border: "none", background: "transparent", color: "#4d7c0f", cursor: "pointer", fontSize: 11, fontWeight: 800, padding: 0 }}
+                              >
+                                +{drawerNumbers.length - 1} <ChevronDown size={12} />
+                              </button>
+                            )}
+                          </span>
+                          {callNumberMenuOpen && hasMoreNumbers && (
+                            <div style={{ position: "absolute", top: 38, left: 0, zIndex: 30, minWidth: 200, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 6, display: "grid", gap: 3 }}>
+                              {drawerNumbers.map((n, idx) => (
+                                <button
+                                  key={`${n.number}-${idx}`}
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); switchCallNumber(n.number); }}
+                                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", padding: "7px 9px", borderRadius: 8, border: "none", background: n.number === callContact.phone ? "#f3fbe3" : "transparent", cursor: "pointer", textAlign: "left" }}
+                                  onMouseEnter={(e) => { if (n.number !== callContact.phone) e.currentTarget.style.background = "#f4f8ff"; }}
+                                  onMouseLeave={(e) => { if (n.number !== callContact.phone) e.currentTarget.style.background = "transparent"; }}
+                                >
+                                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "#1e3a52" }}>{n.number}</span>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: "#8aa0b6", textTransform: "uppercase" }}>{n.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {callContact.email && (
                       <a
                         href={gmailComposeUrl(callContact.email)}

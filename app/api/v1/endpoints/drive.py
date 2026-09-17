@@ -52,6 +52,20 @@ class DriveFolderList(BaseModel):
     parent_id: Optional[str] = None
 
 
+class DriveFile(BaseModel):
+    id: str
+    name: str
+    mime_type: str
+    size_bytes: Optional[int] = None
+    modified_time: Optional[str] = None
+    web_view_link: Optional[str] = None
+
+
+class DriveFileList(BaseModel):
+    files: list[DriveFile]
+    folder_id: str
+
+
 class SelectFolderRequest(BaseModel):
     folder_id: str
     folder_name: Optional[str] = None  # Optional — we can re-fetch if not provided
@@ -65,6 +79,18 @@ class SelectedFolder(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _as_drive_file(raw: dict[str, Any]) -> DriveFile:
+    size = raw.get("size")
+    return DriveFile(
+        id=raw.get("id", ""),
+        name=raw.get("name", ""),
+        mime_type=raw.get("mimeType", ""),
+        size_bytes=int(size) if size is not None else None,
+        modified_time=raw.get("modifiedTime"),
+        web_view_link=raw.get("webViewLink"),
+    )
 
 
 def _as_drive_folder(raw: dict[str, Any]) -> DriveFolder:
@@ -160,6 +186,35 @@ async def search_drive_folders(
     await _persist_refreshed_token(session, connection, updated_token)
 
     return DriveFolderList(folders=[_as_drive_folder(f) for f in folders])
+
+
+# ── List files (for the deal-document "Add from Drive" picker) ────────────────
+
+
+@router.get("/folders/{folder_id}/files", response_model=DriveFileList)
+async def list_drive_files(
+    folder_id: str,
+    session: DBSession,
+    current_user: CurrentUser,
+):
+    """Files directly inside a folder (not sub-folders) — the second half of
+    the deal-document Drive picker, after the rep drills into a folder with
+    GET /drive/folders."""
+    connection = await _get_active_connection(session, current_user.id)
+
+    try:
+        files, updated_token = await google_drive.list_files_in_folder(
+            folder_id=folder_id,
+            token_data=connection.token_data,
+            client_id=settings.gmail_client_id,
+            client_secret=settings.gmail_client_secret,
+        )
+    except PermissionError as exc:
+        raise ValidationError(str(exc))
+
+    await _persist_refreshed_token(session, connection, updated_token)
+
+    return DriveFileList(files=[_as_drive_file(f) for f in files], folder_id=folder_id)
 
 
 # ── Select / clear folder ─────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import {
   PhoneCall,
   Loader2,
 } from "lucide-react";
-import { settingsApi, personalEmailSyncApi, driveApi, authApi, pushApi } from "../lib/api";
+import { settingsApi, personalEmailSyncApi, driveApi, authApi, pushApi, performanceApi } from "../lib/api";
 import { trashApi, type CompanyTrashRow, type DealTrashRow } from "../lib/api/trash";
 import { getCachedGmailSync, getCachedRolePermissions, invalidateGmailSyncCache, invalidateRolePermissionsCache } from "../lib/cachedFetch";
 import { disablePush, enablePush, getSubscriptionState, type PushSubscriptionState } from "../lib/push";
@@ -215,6 +215,11 @@ export default function SettingsPage() {
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
   const [weeklyDigestSettings, setWeeklyDigestSettings] = useState<WeeklyDigestSettings | null>(null);
   const [savingWeeklyDigestSettings, setSavingWeeklyDigestSettings] = useState(false);
+  // Live email alert on every pipeline stage move (separate from the
+  // scheduled reports above — this fires immediately, not on a cron).
+  const [stageAlertEmailsDraft, setStageAlertEmailsDraft] = useState("");
+  const [stageAlertEmailsLoaded, setStageAlertEmailsLoaded] = useState(false);
+  const [savingStageAlertEmails, setSavingStageAlertEmails] = useState(false);
   const [sendingWeeklyDigestTest, setSendingWeeklyDigestTest] = useState(false);
   const [reportRunType, setReportRunType] = useState<"month_to_date" | "prior_quarter" | "custom">("month_to_date");
   const [reportAsOfDate, setReportAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -1332,6 +1337,32 @@ export default function SettingsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
+
+  // Lazy-load the pipeline stage-change alert recipients when Reports opens.
+  useEffect(() => {
+    if (activeTab === "reports" && !stageAlertEmailsLoaded) {
+      performanceApi.getSettings()
+        .then((settings) => {
+          setStageAlertEmailsDraft((settings.stage_change_alert_emails ?? []).join(", "));
+          setStageAlertEmailsLoaded(true);
+        })
+        .catch(() => setStageAlertEmailsLoaded(true));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, stageAlertEmailsLoaded]);
+
+  const handleSaveStageAlertEmails = async () => {
+    setSavingStageAlertEmails(true);
+    try {
+      const emails = stageAlertEmailsDraft.split(",").map((e) => e.trim()).filter(Boolean);
+      await performanceApi.updateSettings({ stage_change_alert_emails: emails });
+      toast.success("Stage-change alert recipients saved.", "Settings saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save.", "Save failed");
+    } finally {
+      setSavingStageAlertEmails(false);
+    }
+  };
 
   // Lazy-load users + person-level settings when the Permissions tab opens.
   useEffect(() => {
@@ -2571,6 +2602,37 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <p className="crm-muted" style={{ fontSize: 12 }}>An admin can grant report management from Settings → Permissions.</p>
+              )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#142335" }}>Pipeline stage-change alerts</div>
+                <p className="crm-muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                  Live email — sent immediately whenever any deal moves to a different stage anywhere in Pipeline. Separate from the scheduled reports above; there's no delay or digest batching.
+                </p>
+              </div>
+              <label style={{ display: "grid", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Recipients</span>
+                <textarea
+                  value={stageAlertEmailsDraft}
+                  onChange={(e) => setStageAlertEmailsDraft(e.target.value)}
+                  disabled={!isAdmin}
+                  rows={2}
+                  placeholder="manager@beacon.li"
+                  style={{ padding: 12, resize: "vertical" }}
+                />
+                <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails. Each gets a message with Deal, Move, Changed by, and When for every stage move. Leave empty to turn this off.</span>
+              </label>
+              {isAdmin ? (
+                <div>
+                  <button className="crm-button primary" type="button" onClick={handleSaveStageAlertEmails} disabled={savingStageAlertEmails}>
+                    {savingStageAlertEmails ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
+                    Save alert recipients
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 12 }}>Only an admin can change this.</p>
               )}
             </div>
 

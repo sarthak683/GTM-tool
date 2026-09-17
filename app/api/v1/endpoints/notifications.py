@@ -257,6 +257,27 @@ async def _accept_meeting_booked(session, user, notification: Notification) -> d
         )).first()
         target_deal_id = str(existing[0]) if existing else None
     if target_deal_id:
+        # "Review" mode — a deal already exists, so nothing gets created. But
+        # this contact still just had their meeting-booked disposition marked,
+        # and without an explicit link here they'd never earn a "primary"/
+        # "champion" DealContact row — the deal_linker.py backfill has almost
+        # certainly already linked them as "auto_linked" (any meeting/email
+        # attendee gets that), and the deal drawer's Meeting Contact card
+        # deliberately doesn't trust that role as "who the meeting was booked
+        # with". (deal_id, contact_id) is the table's primary key — at most
+        # one row can exist per pair — so an existing row must be upgraded in
+        # place, not inserted alongside.
+        existing_link = (await session.execute(
+            select(DealContact).where(
+                DealContact.deal_id == UUID(str(target_deal_id)),
+                DealContact.contact_id == contact_id,
+            )
+        )).scalar_one_or_none()
+        if existing_link is None:
+            session.add(DealContact(deal_id=UUID(str(target_deal_id)), contact_id=contact_id, role="primary"))
+        elif existing_link.role not in ("primary", "champion"):
+            existing_link.role = "primary"
+            session.add(existing_link)
         await _backfill_call_activity_deal_id(session, payload, UUID(str(target_deal_id)))
         await session.commit()
         return {"deal_id": str(target_deal_id)}

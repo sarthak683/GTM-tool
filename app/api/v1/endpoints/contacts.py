@@ -32,6 +32,7 @@ from app.services.contact_tracking import apply_contact_tracking, to_contact_rea
 from app.services.disposition_effects import (
     apply_call_disposition_effects,
     apply_linkedin_status_effects,
+    link_contact_as_meeting_booked,
 )
 from app.services.timeline import build_contact_timeline
 from app.services.permissions import can_view_all_prospects, require_workspace_permission
@@ -706,7 +707,14 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
         await apply_linkedin_status_effects(
             session, saved, linkedin_status=update_data.get("linkedin_status")
         )
-    if "call_disposition" in update_data or "linkedin_status" in update_data:
+    # The prospect-page status pill (Cold / In Progress / Meeting Booked / ...)
+    # writes account_status directly and — unlike call_disposition — never
+    # went through apply_call_disposition_effects, so marking "Meeting Booked"
+    # here never linked the contact to the deal's Meeting Contact list. Same
+    # direct, unconditional link as the call-disposition path above.
+    if update_data.get("account_status") == "meeting_booked":
+        await link_contact_as_meeting_booked(session, saved)
+    if "call_disposition" in update_data or "linkedin_status" in update_data or "account_status" in update_data:
         await session.commit()
         await session.refresh(saved)
 

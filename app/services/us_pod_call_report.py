@@ -20,6 +20,7 @@ from app.models.call_recording import CallRecording
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
+from app.models.deal_stage_history import DealStageHistory
 from app.models.meeting import Meeting
 from app.models.settings import WorkspaceSettings
 from app.models.user import User
@@ -516,6 +517,84 @@ def _outcome_label(activity: Activity) -> str:
     return _OUTCOME_LABELS.get(_outcome_bucket(activity), "Unknown")
 
 
+async def _heal_orphaned_meeting_booked_deal_links(
+    session: AsyncSession,
+    candidates: list[dict[str, Any]],
+    contacts_by_id: dict[UUID, Contact],
+) -> None:
+    """Resolve deal_id live for "Mtg booked" calls whose Activity never got
+    linked, instead of just showing "Pending" forever.
+
+    Every write path that can leave a meeting-booked call unlinked (accepting
+    the bell notification, manually creating a deal, manually moving an
+    existing deal's stage — and any future path nobody's added a backfill
+    call to yet) is a whack-a-mole game the report keeps losing: Infor,
+    Tungsten Automation and Fareye all needed a one-off manual UPDATE this
+    week alone. Fixing it here instead, at read time, means it self-heals
+    regardless of which write path (or a path that doesn't exist yet)
+    orphaned the call — no more per-incident manual fixes.
+
+    Matches the same way migration 130's historical backfill and
+    notifications._backfill_call_activity_deal_id do: the company's deal that
+    entered demo_scheduled soonest after the call, within 7 days. Mutates
+    `deal_id` on the candidate dicts in place AND persists it onto the
+    Activity row so this resolution isn't redone (or found different, if the
+    deal bounces stage again) on every future report run.
+    """
+    orphans = [
+        c for c in candidates
+        if c["is_meeting_booked"] and not c["deal_id"] and c["contact_id"]
+    ]
+    if not orphans:
+        return
+
+    company_by_contact_id = {
+        contact_id: contact.company_id
+        for contact_id, contact in contacts_by_id.items()
+        if contact.company_id
+    }
+
+    healed_activity_ids: dict[UUID, UUID] = {}  # activity_id -> resolved deal_id
+    for candidate in orphans:
+        company_id = company_by_contact_id.get(candidate["contact_id"])
+        if not company_id:
+            continue
+        match = (
+            await session.execute(
+                select(DealStageHistory.deal_id)
+                .join(Deal, Deal.id == DealStageHistory.deal_id)
+                .where(
+                    Deal.company_id == company_id,
+                    Deal.deleted_at.is_(None),
+                    func.lower(DealStageHistory.to_stage) == "demo_scheduled",
+                    DealStageHistory.changed_at >= candidate["created_at"],
+                    DealStageHistory.changed_at <= candidate["created_at"] + timedelta(days=7),
+                )
+                .order_by(DealStageHistory.changed_at.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if match:
+            candidate["deal_id"] = match
+            healed_activity_ids[candidate["activity_id"]] = match
+
+    if healed_activity_ids:
+        activities = (
+            await session.execute(
+                unscoped_for_background_job(Activity, "us pod call report deal-link self-heal")
+                .where(Activity.id.in_(healed_activity_ids.keys()))
+            )
+        ).scalars().all()
+        for activity in activities:
+            activity.deal_id = healed_activity_ids[activity.id]
+            session.add(activity)
+        await session.commit()
+        logger.info(
+            "us_pod_call_report: self-healed %d orphaned meeting-booked call->deal link(s)",
+            len(healed_activity_ids),
+        )
+
+
 async def _build_call_detail_rows(
     session: AsyncSession, candidates: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -528,7 +607,6 @@ async def _build_call_detail_rows(
         return []
 
     contact_ids = {c["contact_id"] for c in candidates if c["contact_id"]}
-    deal_ids = {c["deal_id"] for c in candidates if c["deal_id"]}
 
     contacts_by_id: dict[UUID, Contact] = {}
     if contact_ids:
@@ -536,6 +614,9 @@ async def _build_call_detail_rows(
             await session.execute(unscoped_for_background_job(Contact, "us pod call report system work").where(Contact.id.in_(contact_ids)))
         ).scalars().all()
         contacts_by_id = {c.id: c for c in contacts}
+
+    await _heal_orphaned_meeting_booked_deal_links(session, candidates, contacts_by_id)
+    deal_ids = {c["deal_id"] for c in candidates if c["deal_id"]}
 
     company_ids = {c.company_id for c in contacts_by_id.values() if c.company_id}
     companies_by_id: dict[UUID, Company] = {}
@@ -904,6 +985,7 @@ async def _build_us_pod_call_report_for_period(
 
         call_detail_candidates.append(
             {
+                "activity_id": activity.id,
                 "rep_name": rep_name_by_id.get(rep_id, "Unknown"),
                 "contact_id": activity.contact_id,
                 "deal_id": activity.deal_id,

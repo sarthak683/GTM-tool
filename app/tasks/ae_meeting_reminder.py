@@ -44,7 +44,8 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import cast as sa_cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -136,7 +137,15 @@ async def _match_company(
 ):
     """Return the CRM Company matching this event, or None.
 
-    Pass 1: attendee email domain → company.domain
+    Pass 1: attendee email domain → company.domain OR additional_domains
+        (alias-aware — mirrors get_or_create_company_by_domain in
+        repositories/company.py; a rebrand or subsidiary that emails from a
+        second domain must still match its account, not fall through to
+        title-guessing and possibly grab an unrelated company. IRIS Software
+        Group's contacts mostly email from irissoftware.com but the account's
+        domain field was irisglobal.com — Pass 1 missed every meeting until
+        this checked additional_domains too, and title-matching on bare
+        "Iris" grabbed an unrelated empty "IRIS" company instead.)
     Pass 2: event title text contains a company name
     """
     from app.models.company import Company  # local import
@@ -150,11 +159,19 @@ async def _match_company(
     }
     if external_domains:
         for domain in external_domains:
+            normalized = (domain or "").lower()
             company = (
                 await session.execute(
                     CompanyRepository.unscoped_for_background_job(
                         "scheduled AE meeting reminder domain matching"
-                    ).where(func.lower(Company.domain) == (domain or "").lower())
+                    ).where(
+                        or_(
+                            func.lower(Company.domain) == normalized,
+                            func.coalesce(
+                                Company.additional_domains, sa_cast("[]", JSONB)
+                            ).op("@>")(func.jsonb_build_array(normalized)),
+                        )
+                    )
                 )
             ).scalar_one_or_none()
             if company:
@@ -194,7 +211,17 @@ async def _get_deal_stage_for_company(
     session: AsyncSession,
     company_id,
 ) -> tuple[str | None, object | None]:
-    """Return (deal_stage, assigned_to_id) for the company's deal, or (None, None)."""
+    """Return (deal_stage, assigned_to_id) for the company's live deal, or
+    (None, None).
+
+    Excludes soft-deleted deals and prefers the most recently created live
+    deal when a company has more than one (a reprospected account that got
+    re-booked into a fresh deal, like IRIS Software Group 2026-09-08 — its
+    old deal was deleted but this query had no deleted_at filter and no
+    ordering, so it non-deterministically picked either deal, sometimes
+    landing on the deleted reprospect one and wrongly excluding a real
+    demo_scheduled meeting from the reminder).
+    """
     from app.models.deal import Deal  # local import
     from app.repositories.deal import DealRepository
 
@@ -202,7 +229,10 @@ async def _get_deal_stage_for_company(
         await session.execute(
             DealRepository.unscoped_for_background_job(
                 "scheduled AE meeting reminder deal hydration"
-            ).where(Deal.company_id == company_id).limit(1)
+            )
+            .where(Deal.company_id == company_id, Deal.deleted_at.is_(None))
+            .order_by(Deal.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if deal:

@@ -141,6 +141,10 @@ class Deal(DealBase, table=True):
     commit_to_deal: bool = Field(default=False)
     meeting_booked_with: Optional[str] = Field(default=None)
     meeting_booked_from: Optional[str] = Field(default=None)
+    # Product-line categorization — multi-select, captured as a mandatory
+    # field on the Qualified Lead stage-move gate (see USE_CASE_OPTIONS in
+    # Pipeline.tsx). A deal can span more than one product line.
+    use_case: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_input_hash: Optional[str] = None
     ai_tasks_refresh_requested_at: Optional[datetime] = None
@@ -176,8 +180,13 @@ class DealCreate(SQLModel):
     email_cc_alias: Optional[str] = None
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
+    use_case: list[str] = []
     is_marketing_lead: bool = False
     marketing_source: Optional[str] = None
+    # Set by the frontend's "Create anyway" button after the user has already
+    # seen and dismissed the duplicate-deal warning (see create_deal /
+    # DuplicateDealError). False on every normal submit.
+    confirm_duplicate: bool = False
 
     @field_validator("next_step_due_at", mode="before")
     @classmethod
@@ -228,6 +237,7 @@ class DealRead(DealBase):
     commit_to_deal: bool = False
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
+    use_case: list[str] = []
     ai_tasks_refreshed_at: Optional[datetime] = None
     ai_tasks_refresh_requested_at: Optional[datetime] = None
     # Flag matrix — derived from qualification.meddpicc + meddpicc_details.
@@ -267,6 +277,7 @@ class DealUpdate(SQLModel):
     priority_tag: Optional[str] = None
     meeting_booked_with: Optional[str] = None
     meeting_booked_from: Optional[str] = None
+    use_case: Optional[list[str]] = None
     is_marketing_lead: Optional[bool] = None
     marketing_source: Optional[str] = None
     days_in_stage: Optional[int] = None

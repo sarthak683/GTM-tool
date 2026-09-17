@@ -7,6 +7,7 @@ import type {
   Contact,
   CrmImportResponse,
   Deal,
+  DealDocument,
   CallLevel,
   Meeting,
   MeetingPrepMonitor,
@@ -434,6 +435,65 @@ export const dealsApi = {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
+  // Documents tab — files a rep attaches to a deal, stored in Postgres (no
+  // S3/GCS in this app). Upload uses raw fetch (not request()) so the
+  // browser sets the multipart boundary itself, matching callRecordingsApi.
+  listDocuments: (dealId: string) => request<DealDocument[]>(`/api/v1/deals/${dealId}/documents`),
+  uploadDocument: async (dealId: string, file: File): Promise<DealDocument> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/v1/deals/${dealId}/documents`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Upload failed");
+    }
+    return res.json();
+  },
+  deleteDocument: (dealId: string, documentId: string) =>
+    request<void>(`/api/v1/deals/${dealId}/documents/${documentId}`, { method: "DELETE" }),
+  // "Add from Drive" — links an EXISTING file already in the rep's own
+  // Google Drive (picked via driveApi.listFolders/listFilesInFolder). No
+  // bytes travel through this app; only the reference is stored.
+  linkDriveDocument: (dealId: string, payload: { driveFileId: string; filename: string; webViewLink?: string; mimeType?: string; sizeBytes?: number }) =>
+    request<DealDocument>(`/api/v1/deals/${dealId}/documents/drive`, {
+      method: "POST",
+      body: JSON.stringify({
+        drive_file_id: payload.driveFileId,
+        filename: payload.filename,
+        web_view_link: payload.webViewLink,
+        mime_type: payload.mimeType,
+        size_bytes: payload.sizeBytes,
+      }),
+    }),
+  // Downloads the file and triggers the browser's save flow — the endpoint
+  // requires auth, so a plain <a href> won't carry the bearer token.
+  downloadDocument: async (dealId: string, documentId: string, filename: string): Promise<void> => {
+    const res = await fetch(`${BASE}/api/v1/deals/${dealId}/documents/${documentId}/download`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error("Download failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
+  // Fetches the file's bytes for an in-app preview (PDF/image/text) instead
+  // of saving to disk — caller owns the returned object URL and must
+  // URL.revokeObjectURL it when the preview closes.
+  fetchDocumentBlob: async (dealId: string, documentId: string): Promise<Blob> => {
+    const res = await fetch(`${BASE}/api/v1/deals/${dealId}/documents/${documentId}/download`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error("Could not load file");
+    return res.blob();
+  },
 };
 
 export const crmImportsApi = {

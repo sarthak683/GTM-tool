@@ -25,6 +25,9 @@ export type Company = Omit<
   outreach_plan?: Record<string, unknown> | null;
   // Recotap ABM signals, joined by domain (Account Sourcing only).
   recotap?: RecotapSignals | null;
+  // Product-line categorization (multi-select) — newer than the last schema
+  // regeneration, same taxonomy as Deal.use_case.
+  use_case?: string[] | null;
 };
 
 export interface RecotapSignals {
@@ -141,6 +144,9 @@ export type Deal = Omit<
 > & {
   // The generated schema in the local WIP predates this newly merged field.
   close_date?: string | null;
+  // Product-line categorization (multi-select), captured on the Qualified
+  // Lead stage-move gate — also newer than the last schema regeneration.
+  use_case?: string[] | null;
   qualification?: DealQualification | null;
   priority_tag?: "P0" | "P1" | "P2" | null;
   seller_engagement_signal?: DealEngagementSignal | null;
@@ -200,6 +206,20 @@ export interface DealContact {
   email?: string;
   title?: string;
   persona?: string;
+}
+
+export interface DealDocument {
+  id: string;
+  deal_id: string;
+  filename: string;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  source: "upload" | "drive";
+  drive_file_id?: string | null;
+  drive_web_view_link?: string | null;
+  uploaded_by_id?: string | null;
+  uploaded_by_name?: string | null;
+  created_at: string;
 }
 
 export interface OutreachSequence {

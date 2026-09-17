@@ -2,17 +2,19 @@ import logging
 import json
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, Query, Response, UploadFile
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import DuplicateDealError, NotFoundError, ValidationError
 from app.models.activity import Activity, ActivityRead
 from app.models.contact import Contact
+from app.models.deal_document import DealDocument, DealDocumentRead
 from app.models.deal_stage_history import DealStageHistory, DealStageHistoryRead
 from app.models.deal import (
     ALL_STAGES, DEAL_STAGES, PROSPECT_STAGES, PRIORITIES,
@@ -288,11 +290,40 @@ async def list_deal_trash(
 @router.post("/", response_model=DealRead, status_code=201)
 async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUser):
     data = payload.model_dump()
+    confirm_duplicate = data.pop("confirm_duplicate", False)
 
     # Company is mandatory — every deal must be linked to an account so pipeline,
     # analytics and stakeholder linking have an anchor (Annie 2026-06-17).
     if not data.get("company_id"):
         raise ValidationError("A company is required to create a deal.")
+
+    # Same account + same name (case-insensitive) as a live deal — almost
+    # always an accidental duplicate (a rep manually creating a deal for a
+    # booking that already has one, e.g. Infor 2026-09-08: two "Infor" deals
+    # both entered demo_scheduled the same day). Blocked unless the caller has
+    # already seen this warning and explicitly confirmed via the frontend's
+    # "Create anyway" button — a genuine second opportunity at the same
+    # account with the same name is rare but real.
+    if not confirm_duplicate and data.get("name"):
+        existing = (
+            await session.execute(
+                select(Deal).where(
+                    Deal.company_id == data["company_id"],
+                    func.lower(Deal.name) == data["name"].strip().lower(),
+                    Deal.deleted_at.is_(None),
+                )
+            )
+        ).scalars().first()
+        if existing:
+            raise DuplicateDealError(
+                f"A deal named '{existing.name}' already exists for this account.",
+                existing_deal={
+                    "id": str(existing.id),
+                    "name": existing.name,
+                    "stage": existing.stage,
+                    "created_at": existing.created_at.isoformat() if existing.created_at else None,
+                },
+            )
 
     # Default stage based on pipeline type
     if not data.get("stage"):
@@ -343,6 +374,18 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
             await reconcile_deal_stakeholders(session, deal, create_from_signals=False)
         except Exception:
             logger.exception("deal create: stakeholder link failed for %s", deal.id)
+        # A rep who logs a meeting-booked call and then manually creates the
+        # deal (rather than accepting the bell notification) leaves that call
+        # Activity's deal_id NULL forever — see
+        # disposition_effects.backfill_orphaned_meeting_booked_calls.
+        try:
+            from app.services.disposition_effects import backfill_orphaned_meeting_booked_calls
+            await backfill_orphaned_meeting_booked_calls(
+                session, company_id=deal.company_id, deal_id=deal.id,
+                deal_created_at=deal.created_at or datetime.utcnow(),
+            )
+        except Exception:
+            logger.exception("deal create: meeting-booked call backfill failed for %s", deal.id)
         # A live deal on the account means the account is in the pipeline —
         # reflect that on the account status (forward-only; no-op if the account
         # is already past this stage or manually parked).
@@ -725,8 +768,133 @@ class DealStageMoveRequest(BaseModel):
     reason_detail: Optional[str] = None
 
 
+async def _send_stage_change_alert_background(
+    deal_name: str,
+    from_stage: str,
+    to_stage: str,
+    changed_by_name: str,
+    changed_at: datetime,
+) -> None:
+    """Live email alert for a stage move — every move, any deal, any stage,
+    sent right away rather than batched into the weekly CRM Digest. Opens its
+    own session (the request's is long gone by the time this runs) and never
+    lets a send failure surface back to the rep — the stage move itself
+    already committed and returned before this even starts.
+
+    Sent via the workspace's connected Gmail "report sender" (same account
+    the scheduled sales reports and weekly digest use — see weekly_digest.py),
+    not Resend: Resend's account here is unverified for any domain, so it can
+    only deliver to the account owner's own address and 403s on every other
+    recipient.
+    """
+    import html
+
+    from app.clients.gmail_sender import GMAIL_RECONNECT_REQUIRED_ERROR, send_gmail_email
+    from app.database import AsyncSessionLocal
+    from app.models.settings import WorkspaceSettings
+    from app.services.analytics_settings import get_analytics_settings
+    from app.services.deal_stages import get_configured_deal_stages
+
+    async with AsyncSessionLocal() as session:
+        try:
+            settings = await get_analytics_settings(session)
+            recipients = [r for r in (settings.get("stage_change_alert_emails") or []) if r]
+            if not recipients:
+                return
+
+            settings_row = await session.get(WorkspaceSettings, 1)
+            if (
+                not settings_row
+                or not settings_row.report_sender_email
+                or not settings_row.report_sender_connected_email
+                or not settings_row.report_sender_token_data
+            ):
+                logger.warning(
+                    "stage-change alert: report sender Gmail account not connected — skipping deal %s",
+                    deal_name,
+                )
+                return
+            if settings_row.report_sender_email.lower() != settings_row.report_sender_connected_email.lower():
+                logger.warning(
+                    "stage-change alert: configured sender %s does not match connected Gmail %s — skipping deal %s",
+                    settings_row.report_sender_email, settings_row.report_sender_connected_email, deal_name,
+                )
+                return
+
+            stages = await get_configured_deal_stages(session)
+            label_by_id = {s["id"]: s["label"] for s in stages}
+            from_label = label_by_id.get(from_stage, from_stage.replace("_", " ").title())
+            to_label = label_by_id.get(to_stage, to_stage.replace("_", " ").title())
+            when_str = changed_at.strftime("%b %d, %Y, %I:%M %p") + " UTC"
+
+            safe_deal = html.escape(deal_name)
+            safe_move = html.escape(f"{from_label} → {to_label}")
+            safe_by = html.escape(changed_by_name)
+            html_body = f"""
+            <table style="border-collapse:collapse;font-family:-apple-system,sans-serif;font-size:14px;color:#1f2d3d;">
+              <tr style="background:#f4f6fa;">
+                <th style="padding:8px 14px;text-align:left;border:1px solid #dde3ec;">Deal</th>
+                <th style="padding:8px 14px;text-align:left;border:1px solid #dde3ec;">Move</th>
+                <th style="padding:8px 14px;text-align:left;border:1px solid #dde3ec;">Changed by</th>
+                <th style="padding:8px 14px;text-align:left;border:1px solid #dde3ec;">When</th>
+              </tr>
+              <tr>
+                <td style="padding:8px 14px;border:1px solid #dde3ec;font-weight:700;">{safe_deal}</td>
+                <td style="padding:8px 14px;border:1px solid #dde3ec;">{safe_move}</td>
+                <td style="padding:8px 14px;border:1px solid #dde3ec;">{safe_by}</td>
+                <td style="padding:8px 14px;border:1px solid #dde3ec;">{html.escape(when_str)}</td>
+              </tr>
+            </table>
+            """
+            plain_body = f"Deal: {deal_name}\nMove: {from_label} -> {to_label}\nChanged by: {changed_by_name}\nWhen: {when_str}"
+            subject = f"Pipeline move: {deal_name} → {to_label}"
+
+            token_data = settings_row.report_sender_token_data
+            reconnect_failure: dict | None = None
+            failures: list[str] = []
+            for email in recipients:
+                if reconnect_failure is not None:
+                    continue
+                try:
+                    result, token_data = await send_gmail_email(
+                        token_data=token_data,
+                        from_email=settings_row.report_sender_email,
+                        to=email,
+                        subject=subject,
+                        body=plain_body,
+                        html_body=html_body,
+                        from_name="Beacon Pipeline Alerts",
+                    )
+                except Exception as exc:
+                    logger.exception("stage-change alert: send to %s failed for deal %s", email, deal_name)
+                    result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                if result.get("reconnect_required"):
+                    reconnect_failure = dict(result)
+                if result.get("status") != "sent":
+                    failures.append(f"{email}: {result.get('error') or 'Gmail send failed'}")
+
+            if token_data != settings_row.report_sender_token_data:
+                settings_row.report_sender_token_data = token_data
+            if reconnect_failure is not None:
+                settings_row.report_sender_last_error = GMAIL_RECONNECT_REQUIRED_ERROR
+            elif failures:
+                settings_row.report_sender_last_error = " | ".join(failures)[:500]
+            else:
+                settings_row.report_sender_last_error = None
+            session.add(settings_row)
+            await session.commit()
+        except Exception:
+            logger.exception("stage-change alert background task failed for deal %s", deal_name)
+
+
 @router.patch("/{deal_id}/stage", response_model=DealRead)
-async def move_stage(deal_id: UUID, body: DealStageMoveRequest, session: DBSession, _user: CurrentUser):
+async def move_stage(
+    deal_id: UUID,
+    body: DealStageMoveRequest,
+    session: DBSession,
+    _user: CurrentUser,
+    background_tasks: BackgroundTasks,
+):
     new_stage = body.stage
     if not new_stage:
         raise ValidationError("stage is required")
@@ -792,11 +960,197 @@ async def move_stage(deal_id: UUID, body: DealStageMoveRequest, session: DBSessi
         reached_at=deal.stage_entered_at or deal.updated_at,
         source="stage_move",
     )
+
+    # Third path into demo_scheduled, after direct creation (deals.py
+    # create_deal) and accepting the bell notification (notifications.py):
+    # a rep manually drags an EXISTING deal's stage here. No activity_id
+    # travels with a stage-move request, so the same orphan-call sweep as
+    # create_deal applies — see disposition_effects.backfill_orphaned_
+    # meeting_booked_calls. Tungsten Automation 2026-09-10: Mahesh's call
+    # logged demo_scheduled_booked, then he moved the deal's stage directly
+    # instead of accepting the notification, leaving the call deal_id=NULL
+    # and the report showing "Pending".
+    if new_stage == "demo_scheduled" and deal.company_id:
+        try:
+            from app.services.disposition_effects import backfill_orphaned_meeting_booked_calls
+            await backfill_orphaned_meeting_booked_calls(
+                session, company_id=deal.company_id, deal_id=deal.id,
+                deal_created_at=transition_at,
+            )
+        except Exception:
+            logger.exception("stage move: meeting-booked call backfill failed for %s", deal.id)
+
     await session.commit()
 
     broadcaster.publish_deal_change("deal.stage_changed", str(deal_id), new_stage)
 
+    background_tasks.add_task(
+        _send_stage_change_alert_background,
+        deal.name,
+        old_stage,
+        new_stage,
+        _user.name or _user.email,
+        transition_at,
+    )
+
     return await repo.get_with_joins(deal_id)
+
+
+# ── Documents ────────────────────────────────────────────────────────────────
+# Files a rep attaches to a deal (proposals, contracts, decks) from the deal
+# drawer's Documents tab. Stored as bytea directly on the row — no S3/GCS
+# configured anywhere in this app — same pattern as zippy_generated_docs
+# (migration 116). MAX_DEAL_DOCUMENT_BYTES guards against someone dumping
+# something huge into the database; comfortably above any real proposal/deck.
+MAX_DEAL_DOCUMENT_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+async def _get_visible_deal_or_404(session, deal_id: UUID, _user) -> Deal:
+    repo = DealRepository(session)
+    deal = await repo.get_or_raise(deal_id)
+    view_all = _user.is_admin or await can_view_all_deals(session, _user)
+    if not can_see_deal(deal, _user, view_all):
+        raise NotFoundError(f"Deal {deal_id} not found")
+    return deal
+
+
+@router.get("/{deal_id}/documents", response_model=list[DealDocumentRead])
+async def list_deal_documents(deal_id: UUID, session: DBSession, _user: CurrentUser):
+    await _get_visible_deal_or_404(session, deal_id, _user)
+    rows = (await session.execute(
+        select(DealDocument)
+        .where(DealDocument.deal_id == deal_id)
+        .order_by(DealDocument.created_at.desc())
+    )).scalars().all()
+    return [DealDocumentRead(**row.model_dump(exclude={"data"})) for row in rows]
+
+
+@router.post("/{deal_id}/documents", response_model=DealDocumentRead, status_code=201)
+async def upload_deal_document(
+    deal_id: UUID,
+    session: DBSession,
+    _user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    await _get_visible_deal_or_404(session, deal_id, _user)
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise ValidationError("File is empty.")
+    if len(file_bytes) > MAX_DEAL_DOCUMENT_BYTES:
+        raise ValidationError(f"File too large — max {MAX_DEAL_DOCUMENT_BYTES // (1024 * 1024)} MB.")
+
+    doc = DealDocument(
+        deal_id=deal_id,
+        filename=file.filename or "unnamed",
+        content_type=file.content_type,
+        size_bytes=len(file_bytes),
+        data=file_bytes,
+        uploaded_by_id=_user.id,
+        uploaded_by_name=_user.name or _user.email,
+    )
+    session.add(doc)
+    session.add(Activity(
+        deal_id=deal_id,
+        type="document_uploaded",
+        source="user",
+        content=f"{doc.uploaded_by_name} uploaded {doc.filename}",
+        created_by_id=_user.id,
+    ))
+    await session.commit()
+    await session.refresh(doc)
+    return DealDocumentRead(**doc.model_dump(exclude={"data"}))
+
+
+class LinkDriveDocumentRequest(BaseModel):
+    drive_file_id: str
+    filename: str
+    web_view_link: Optional[str] = None
+    mime_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+
+
+@router.post("/{deal_id}/documents/drive", response_model=DealDocumentRead, status_code=201)
+async def link_drive_document(
+    deal_id: UUID,
+    payload: LinkDriveDocumentRequest,
+    session: DBSession,
+    _user: CurrentUser,
+):
+    """Attach an EXISTING Google Drive file to a deal — a reference only, no
+    bytes ever land in Postgres for this path. The rep picked the file from
+    their own Drive (GET /drive/folders + GET /drive/folders/{id}/files), so
+    it already lives in their Drive; this just records that it's relevant to
+    this deal.
+    """
+    await _get_visible_deal_or_404(session, deal_id, _user)
+
+    doc = DealDocument(
+        deal_id=deal_id,
+        filename=payload.filename,
+        content_type=payload.mime_type,
+        size_bytes=payload.size_bytes,
+        source="drive",
+        drive_file_id=payload.drive_file_id,
+        drive_web_view_link=payload.web_view_link,
+        uploaded_by_id=_user.id,
+        uploaded_by_name=_user.name or _user.email,
+    )
+    session.add(doc)
+    session.add(Activity(
+        deal_id=deal_id,
+        type="document_uploaded",
+        source="user",
+        content=f"{doc.uploaded_by_name} linked {doc.filename} from Google Drive",
+        created_by_id=_user.id,
+    ))
+    await session.commit()
+    await session.refresh(doc)
+    return DealDocumentRead(**doc.model_dump(exclude={"data"}))
+
+
+@router.get("/{deal_id}/documents/{document_id}/download")
+async def download_deal_document(deal_id: UUID, document_id: UUID, session: DBSession, _user: CurrentUser):
+    await _get_visible_deal_or_404(session, deal_id, _user)
+    doc = await session.get(DealDocument, document_id)
+    if not doc or doc.deal_id != deal_id:
+        raise NotFoundError("Document not found")
+
+    # Drive-linked documents carry no bytes — send the rep straight to their
+    # own Drive instead. The frontend normally opens drive_web_view_link
+    # directly without hitting this route at all; this is the defensive
+    # fallback for a direct navigation.
+    if doc.source == "drive":
+        if not doc.drive_web_view_link:
+            raise NotFoundError("This Drive link is no longer available.")
+        return RedirectResponse(doc.drive_web_view_link)
+
+    if doc.data is None:
+        raise NotFoundError("Document has no file content.")
+
+    # ASCII-only fallback plus RFC 5987 form (same as zippy.py's document
+    # download), so a filename with an accent can't produce a header the
+    # browser rejects.
+    ascii_name = doc.filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+    quoted = quote(doc.filename)
+    return Response(
+        content=doc.data,
+        media_type=doc.content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted}',
+            "Content-Length": str(len(doc.data)),
+        },
+    )
+
+
+@router.delete("/{deal_id}/documents/{document_id}", status_code=204)
+async def delete_deal_document(deal_id: UUID, document_id: UUID, session: DBSession, _user: CurrentUser):
+    await _get_visible_deal_or_404(session, deal_id, _user)
+    doc = await session.get(DealDocument, document_id)
+    if not doc or doc.deal_id != deal_id:
+        raise NotFoundError("Document not found")
+    await session.delete(doc)
+    await session.commit()
 
 
 # ── Delete ───────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import type { Company, Deal } from "../../types";
 import { formatCurrencyAmount } from "../../lib/currencies";
 import { formatDate, formatDateOnly } from "../../lib/utils";
+import { CLOSE_DATE_VISIBLE_STAGES } from "../Pipeline";
 
 export default function PipelineTableView({
   records,
@@ -58,7 +59,7 @@ export default function PipelineTableView({
                 <td style={{ fontWeight: 800, color: "#24405d" }}>{formatCurrencyAmount(deal.value, deal.currency_code)}</td>
                 <td>{deal.assigned_rep_name || "Unassigned"}</td>
                 <td>{deal.health ? `${deal.health}${deal.health_score != null ? ` · ${deal.health_score}` : ""}` : "—"}</td>
-                <td>{deal.close_date_est ? formatDateOnly(deal.close_date_est) : "—"}</td>
+                <td>{CLOSE_DATE_VISIBLE_STAGES.has(deal.stage) && deal.close_date ? formatDateOnly(deal.close_date) : "—"}</td>
                 <td style={{ maxWidth: 260 }}><span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.next_step || "No next step"}</span></td>
                 <td>{lastActivity ? formatDate(lastActivity) : "—"}</td>
               </tr>

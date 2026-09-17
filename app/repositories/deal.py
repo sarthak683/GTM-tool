@@ -186,9 +186,27 @@ class DealRepository(BaseRepository[Deal]):
             candidate = f"{base}-{suffix}"
             suffix += 1
 
+    async def _account_name_for_alias(self, company_id: UUID | None) -> str | None:
+        """The alias source of truth is the ACCOUNT, not the deal — a deal's
+        name is an internal label a rep can freely rename (a demo/test deal
+        often starts as "temp" or a person's name), but the address printed
+        in the UI as "ask reps to CC this exact address on client threads" is
+        the one thing a live client thread may already depend on, so it
+        should track the customer it's actually with, not whatever the deal
+        happens to be called this week. No account (yet) falls back to the
+        deal's own name at the call site.
+        """
+        if not company_id:
+            return None
+        company = await self.session.get(Company, company_id)
+        return company.name if company else None
+
     async def create(self, data: dict) -> Deal:
         if not data.get("email_cc_alias"):
-            data["email_cc_alias"] = await self.generate_unique_email_cc_alias(str(data.get("name") or "deal"))
+            account_name = await self._account_name_for_alias(data.get("company_id"))
+            data["email_cc_alias"] = await self.generate_unique_email_cc_alias(
+                account_name or str(data.get("name") or "deal")
+            )
         return await super().create(data)
 
     async def update(self, obj: Deal, data: dict) -> Deal:
@@ -198,6 +216,16 @@ class DealRepository(BaseRepository[Deal]):
                 data["email_cc_alias"] = await self.generate_unique_email_cc_alias(normalized, exclude_id=obj.id)
             else:
                 data["email_cc_alias"] = normalized
+        elif "company_id" in data and data["company_id"] != obj.company_id:
+            # Reassigned to a different account (or unlinked) — the alias
+            # should follow WHICH account owns this deal now. Renaming the
+            # account later does NOT retroactively touch this (see
+            # _account_name_for_alias) — only a genuine reassignment does,
+            # since that's this deal moving to a materially different
+            # customer relationship, not the same customer's name changing.
+            account_name = await self._account_name_for_alias(data["company_id"])
+            if account_name:
+                data["email_cc_alias"] = await self.generate_unique_email_cc_alias(account_name, exclude_id=obj.id)
         return await super().update(obj, data)
 
     @staticmethod

@@ -2,7 +2,7 @@ import "./pipeline-refresh.css";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRight, Building2, CalendarDays, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, Check, ChevronDown, Clock3, DollarSign, Download, FileText, Filter, Globe, GripVertical, Mail, MoreHorizontal, Phone, Plus, RotateCcw, Search, Settings2, Target, TrendingUp, Trash2, Upload } from "lucide-react";
 import { activitiesApi, companiesApi, contactsApi, crmImportsApi, dealsApi, performanceApi, settingsApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import { CLOSE_REASONS, isCloseReasonStage } from "../lib/closeReasons";
@@ -34,6 +34,33 @@ type PendingDealMove = { dealId: string; dealName: string; fromStage: string; ta
 // — kept in sync manually since the two live in separate page components.
 const MEDDPICC_LEVEL_LABELS = ["Not Started", "Identified", "Validated", "Confirmed"] as const;
 const MEDDPICC_LEVEL_COLORS = ["#94a3b8", "#f59e0b", "#3b82f6", "#22c55e"] as const;
+
+// Product-line categorization, captured as a mandatory field on the
+// Qualified Lead stage-move gate (Deal.use_case).
+const USE_CASE_OPTIONS = [
+  "Implementation Automation",
+  "Support and Hypercare Automation",
+  "Workflow Automation",
+  "Product Agent Studio",
+  "Cross System Orchestration",
+  "Presales",
+] as const;
+
+// Stages where the deal card shows a Close Date badge — everything from
+// Qualified Lead onward, where a close date is a real commitment, not the
+// earlier top-of-funnel stages (Reprospect, Demo Scheduled/Done, Nurture,
+// Marketing Lead) where nothing has been qualified yet.
+export const CLOSE_DATE_VISIBLE_STAGES = new Set([
+  "qualified_lead",
+  "poc_agreed",
+  "poc_wip",
+  "poc_done",
+  "commercial_negotiation",
+  "msa_review",
+  "closed_won",
+  "closed_lost",
+  "churned",
+]);
 
 // Mandatory MEDDPICC capture gates — moving a deal INTO one of these stages
 // (from anywhere) requires filling in each listed dimension before the move
@@ -603,6 +630,12 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
   const [form, setForm] = useState(() => ({ name: initialName || "", company_id: initialCompanyId || "", value: "", currency_code: "USD", stage: defaultStage, close_date_est: "", priority_tag: "", assigned_to_id: initialAssignedToId || "", sdr_id: "", geography: "", tags: "", source: "", meeting_booked_with: "", meeting_booked_from: "", is_marketing_lead: false, marketing_source: "", marketing_custom: "" }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Set when the backend rejects the submit with DuplicateDealError — a live
+  // deal with the same name already exists on this account (see
+  // app/api/v1/endpoints/deals.py create_deal). Shown as a warning with the
+  // choice to open that deal instead, or resubmit with confirm_duplicate.
+  const [duplicateWarning, setDuplicateWarning] = useState<{ id: string; name: string; stage: string; created_at: string | null } | null>(null);
+  const [, setSearchParams] = useSearchParams();
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
   const [companySearch, setCompanySearch] = useState("");
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
@@ -624,7 +657,8 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
 
   const selectedCompanyName = companies.find((c) => c.id === form.company_id)?.name ?? "";
 
-  const handleCreate = async () => {
+  const handleCreate = async (confirmDuplicate = false) => {
+    setDuplicateWarning(null);
     const needsMarketingCustom = form.is_marketing_lead && (form.marketing_source === "other" || form.marketing_source === "events");
     const nextValidationErrors = {
       name: !form.name.trim(),
@@ -676,14 +710,29 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
         meeting_booked_from: form.meeting_booked_from || undefined,
         is_marketing_lead: form.is_marketing_lead,
         marketing_source: form.is_marketing_lead ? serializeMarketingSource(form.marketing_source, form.marketing_custom) : undefined,
+        confirm_duplicate: confirmDuplicate,
       } as Partial<Deal>);
       onCreated(deal);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create deal");
+      const apiErr = err as (Error & { type?: string; body?: { existing_deal?: { id: string; name: string; stage: string; created_at: string | null } } }) | undefined;
+      if (apiErr?.type === "DuplicateDealError" && apiErr.body?.existing_deal) {
+        setDuplicateWarning(apiErr.body.existing_deal);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create deal");
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  const openExistingDeal = (dealId: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("deal", dealId);
+      return next;
+    });
+    onClose();
   };
 
   return (
@@ -932,9 +981,22 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
 
           {error && <p style={{ fontSize: 12, color: "#b94a24", fontWeight: 600, marginTop: 12 }}>{error}</p>}
 
+          {duplicateWarning && (
+            <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1.5px solid #fbbf24", background: "#fffbeb" }}>
+              <p style={{ fontSize: 12.5, color: "#92400e", fontWeight: 600, margin: 0 }}>
+                A deal named "{duplicateWarning.name}" already exists for this account — currently in {duplicateWarning.stage}
+                {duplicateWarning.created_at ? `, created ${new Date(duplicateWarning.created_at).toLocaleDateString()}` : ""}.
+              </p>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button className="crm-button soft" onClick={() => openExistingDeal(duplicateWarning.id)}>Open existing deal</button>
+                <button className="crm-button soft" onClick={() => handleCreate(true)} disabled={saving}>{saving ? "Creating..." : "Create anyway"}</button>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
             <button className="crm-button soft" onClick={onClose}>Cancel</button>
-            <button className="crm-button primary" onClick={handleCreate} disabled={saving}>{saving ? "Creating..." : "Create deal"}</button>
+            <button className="crm-button primary" onClick={() => handleCreate()} disabled={saving}>{saving ? "Creating..." : "Create deal"}</button>
           </div>
         </div>
       </div>
@@ -1053,10 +1115,14 @@ function DealCard({ deal, onClick, onDragStart, onDragEnd, priorityTag, selected
   // closing TODAY as overdue from ~7 PM the previous evening for US users.
   const _todayStart = new Date();
   _todayStart.setHours(0, 0, 0, 0);
-  // Prefer the real Close Date; fall back to Date of Meeting so cards for
-  // deals that predate the Close Date field (the vast majority right now)
-  // don't go blank. Once a deal's Close Date is set, that takes over.
-  const _cardDate = deal.close_date || deal.close_date_est;
+  // The card badge is the actual Close Date only — never Date of Meeting
+  // (close_date_est). The two are edited in different places and mean
+  // different things; falling back to close_date_est made editing "Date of
+  // Meeting" in the drawer silently change what the card shows. Further
+  // gated to the stages where a close date is actually meaningful — a
+  // fresh Reprospect/Demo/Nurture deal showing a "close date" reads as a
+  // real commitment that doesn't exist yet.
+  const _cardDate = CLOSE_DATE_VISIBLE_STAGES.has(deal.stage) ? deal.close_date : undefined;
   const _closeLocal = parseDateOnly(_cardDate);
   const isOverdue = Boolean(_closeLocal && _closeLocal < _todayStart);
 
@@ -1250,14 +1316,6 @@ function BoardColumn({ stage, count, totalValue, weightedValue, dropActive, onAd
             <span style={{ fontSize: 12.5, fontWeight: 700, color: totalValue > 0 ? "#4d7c0f" : "#94a3b8", letterSpacing: "0.01em" }}>
               {formatCurrency(totalValue)}
             </span>
-            {typeof weightedValue === "number" && Number.isFinite(weightedValue) && (
-              <span
-                title="Probability-weighted total (stage probability × deal value)"
-                style={{ fontSize: 11, fontWeight: 600, color: "#8ca0b3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              >
-                · wtd {compactCurrency(weightedValue)}
-              </span>
-            )}
           </div>
         )}
       </div>
@@ -1766,6 +1824,11 @@ export default function Pipeline() {
   // MEDDPICC level (0-3) the rep picks per field in the same popup — defaults
   // to 1 ("Identified") until they explicitly bump it to Validated/Confirmed.
   const [qualifyFieldLevels, setQualifyFieldLevels] = useState<Record<string, number>>({});
+  // Use Case — mandatory, multi-select, Qualified Lead-only. Unlike the
+  // MEDDPICC fields above (optional, feed the score), the move is blocked
+  // without at least one of these picked.
+  const [qualifyUseCase, setQualifyUseCase] = useState<string[]>([]);
+  const [qualifyUseCaseMenuOpen, setQualifyUseCaseMenuOpen] = useState(false);
   // Bulk close: target stage held while the one-shot reason prompt is open.
   const [bulkCloseStage, setBulkCloseStage] = useState<string | null>(null);
   const [bulkCloseReason, setBulkCloseReason] = useState("");
@@ -1794,6 +1857,12 @@ export default function Pipeline() {
 
   useEffect(() => () => {
     if (crmImportPollRef.current) window.clearInterval(crmImportPollRef.current);
+  }, []);
+
+  useEffect(() => {
+    const dismiss = () => setQualifyUseCaseMenuOpen(false);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
   }, []);
 
   const companyMap = useMemo(() => new Map(companies.map((company) => [company.id, company])), [companies]);
@@ -2630,6 +2699,26 @@ export default function Pipeline() {
     clearDragState();
   };
 
+  // Whatever the rep picks as a deal's Use Case should also show up as picked
+  // on the account — one-way, additive sync. Never removes a use case the
+  // account already has (it may have been set independently in Account
+  // Sourcing, or by another deal under the same account), only adds what's
+  // newly picked here. Best-effort: a failure here must not block the deal
+  // save that triggered it.
+  const syncUseCaseToCompany = async (companyId: string | null | undefined, picked: string[]) => {
+    if (!companyId || picked.length === 0) return;
+    try {
+      const company = await companiesApi.get(companyId);
+      const existing = company.use_case ?? [];
+      const merged = Array.from(new Set([...existing, ...picked]));
+      if (merged.length !== existing.length) {
+        await companiesApi.patch(companyId, { use_case: merged });
+      }
+    } catch {
+      // Non-critical — the deal's own use_case already saved.
+    }
+  };
+
   const confirmPendingDealMove = async () => {
     if (!pendingDealMove) return;
     const closeTarget = isCloseReasonStage(pendingDealMove.targetStage);
@@ -2637,6 +2726,9 @@ export default function Pipeline() {
     // Backend 422s a reason-less CLOSED LOST move; the Confirm button is
     // disabled until a reason is picked, this is just a belt-and-braces guard.
     if (pendingDealMove.targetStage === "closed_lost" && !moveReason) return;
+    // Use Case is mandatory on Qualified Lead (at least one) — the Confirm
+    // button is disabled until it's picked, this is just a belt-and-braces guard.
+    if (pendingDealMove.targetStage === "qualified_lead" && qualifyUseCase.length === 0) return;
     // MEDDPICC capture on gated stages (QUALIFIED LEAD, POC AGREED, ...) is
     // optional for now — no longer blocks the move if left blank.
     setBusyStage(pendingDealMove.targetStage);
@@ -2645,7 +2737,8 @@ export default function Pipeline() {
       // so a blank field is left completely untouched rather than stamping
       // an empty note over whatever (if anything) was there before.
       const filledFields = gate?.fields.filter((f) => (qualifyFieldValues[f.key] ?? "").trim()) ?? [];
-      if (filledFields.length > 0) {
+      const useCaseToSave = pendingDealMove.targetStage === "qualified_lead" ? qualifyUseCase : [];
+      if (filledFields.length > 0 || useCaseToSave.length > 0) {
         // Fetch the full deal first — the board list doesn't carry
         // `qualification`, and PUT /deals/{id} replaces it wholesale, so a
         // naive partial payload here would wipe out any MEDDPICC dimensions
@@ -2663,12 +2756,16 @@ export default function Pipeline() {
           detailUpdates[field.key] = { ...existingDetails[field.key], notes: qualifyFieldValues[field.key].trim(), updated_at: now };
         }
         await dealsApi.update(pendingDealMove.dealId, {
+          ...(useCaseToSave.length > 0 ? { use_case: useCaseToSave } : {}),
           qualification: {
             ...existingQualification,
             meddpicc: { ...existingMeddpicc, ...meddpiccUpdates },
             meddpicc_details: { ...existingDetails, ...detailUpdates },
           },
         } as Partial<Deal>);
+        if (useCaseToSave.length > 0) {
+          await syncUseCaseToCompany(fullDeal.company_id, useCaseToSave);
+        }
       }
       await dealsApi.moveStage(
         pendingDealMove.dealId,
@@ -2691,6 +2788,8 @@ export default function Pipeline() {
       setPendingDealMove(null);
       setQualifyFieldValues({});
       setQualifyFieldLevels({});
+      setQualifyUseCase([]);
+      setQualifyUseCaseMenuOpen(false);
     }
   };
 
@@ -3366,7 +3465,10 @@ export default function Pipeline() {
             onClick={busyStage ? undefined : () => setPendingDealMove(null)}
           />
           <div style={{ position: "fixed", inset: 0, zIndex: 61, display: "grid", placeItems: "center", padding: 16 }}>
-            <div className="crm-panel" style={{ width: "min(520px, 100%)", padding: 24, borderRadius: 18 }}>
+            {/* overflow: visible overrides .crm-panel's `overflow: hidden` — the
+                Use Case dropdown below pops outside the panel's own bounds, and
+                hidden would clip it after only 2-3 options. */}
+            <div className="crm-panel" style={{ width: "min(520px, 100%)", padding: 24, borderRadius: 18, overflow: "visible" }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: "#182042", marginBottom: 10 }}>Move this deal?</div>
               <div style={{ color: "#5e738b", fontSize: 14, lineHeight: 1.7, marginBottom: 18 }}>
                 <strong style={{ color: "#182042" }}>{pendingDealMove.dealName}</strong> will move from{" "}
@@ -3442,6 +3544,95 @@ export default function Pipeline() {
                     );
                   })}
                   <span style={{ fontSize: 11, color: "#8ca0b3" }}>Optional — feeds the deal's MEDDPICC score if filled in.</span>
+                  {pendingDealMove.targetStage === "qualified_lead" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, position: "relative" }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#5e738b" }}>
+                        Use Case<span style={{ color: "#dc2626" }}> *</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setQualifyUseCaseMenuOpen((cur) => !cur); }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          minHeight: 38,
+                          borderRadius: 10,
+                          border: qualifyUseCase.length > 0 ? "1px solid #d7e2ee" : "1.5px solid #fbbf24",
+                          background: "#fff",
+                          padding: "6px 10px",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        {qualifyUseCase.length > 0 ? (
+                          <span style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {qualifyUseCase.map((option) => (
+                              <span
+                                key={option}
+                                style={{
+                                  padding: "3px 9px",
+                                  borderRadius: 999,
+                                  border: "1.5px solid #175089",
+                                  background: "#eaf2ff",
+                                  color: "#175089",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {option}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 13, color: "#94a3b8" }}>Select use case(s)…</span>
+                        )}
+                        <ChevronDown size={15} style={{ flexShrink: 0, color: "#8ca0b3", transform: qualifyUseCaseMenuOpen ? "rotate(180deg)" : undefined }} />
+                      </button>
+                      {qualifyUseCaseMenuOpen && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 40, borderRadius: 10, border: "1px solid #dce8f4", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 6, display: "grid", gap: 2 }}
+                        >
+                          {USE_CASE_OPTIONS.map((option) => {
+                            const selected = qualifyUseCase.includes(option);
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() =>
+                                  setQualifyUseCase((prev) =>
+                                    prev.includes(option) ? prev.filter((v) => v !== option) : [...prev, option],
+                                  )
+                                }
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  width: "100%",
+                                  padding: "8px 10px",
+                                  borderRadius: 8,
+                                  border: "none",
+                                  background: selected ? "#eaf2ff" : "transparent",
+                                  color: selected ? "#175089" : "#3d5266",
+                                  fontSize: 13,
+                                  fontWeight: selected ? 700 : 600,
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                }}
+                              >
+                                {option}
+                                {selected && <Check size={14} />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <span style={{ fontSize: 11, color: "#8ca0b3" }}>Required — select every product line this deal covers.</span>
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -3453,6 +3644,8 @@ export default function Pipeline() {
                     setPendingDealMove(null);
                     setQualifyFieldValues({});
                     setQualifyFieldLevels({});
+                    setQualifyUseCase([]);
+                    setQualifyUseCaseMenuOpen(false);
                   }}
                 >
                   Cancel
@@ -3462,7 +3655,8 @@ export default function Pipeline() {
                   className="crm-button primary"
                   disabled={
                     Boolean(busyStage) ||
-                    (pendingDealMove.targetStage === "closed_lost" && !moveReason)
+                    (pendingDealMove.targetStage === "closed_lost" && !moveReason) ||
+                    (pendingDealMove.targetStage === "qualified_lead" && qualifyUseCase.length === 0)
                   }
                   onClick={confirmPendingDealMove}
                 >

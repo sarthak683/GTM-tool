@@ -126,4 +126,8 @@ def build_default_analytics_settings() -> dict:
         "sales_analytics_user_ids": [],
         "sales_analytics_default_emails": ["jacob@beacon.li"],
         "sales_analytics_roster_configured": False,
+        # Live email alert on every pipeline stage move (any deal, any stage,
+        # any time) — see PATCH /deals/{id}/stage. Empty by default; an admin
+        # fills this in from Settings before any alert goes out.
+        "stage_change_alert_emails": [],
     }

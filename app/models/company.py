@@ -102,6 +102,10 @@ class Company(CompanyBase, table=True):
     # Free-text quick notes SDRs keep on the account ("Outbound Summary"),
     # surfaced under the status control on the detail page.
     outbound_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Product-line categorization (multi-select) — same taxonomy and options
+    # as Deal.use_case, editable directly on the account before any deal
+    # exists (see USE_CASE_OPTIONS in AccountSourcingCompanyDetail.tsx).
+    use_case: list[str] = Field(default=[], sa_column=Column(JSONB, nullable=False, server_default="[]"))
     rep_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     account_thesis: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_now: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -233,6 +237,7 @@ class CompanyRead(CompanyBase):
     disposition: Optional[str] = None
     account_status: Optional[str] = None
     outbound_summary: Optional[str] = None
+    use_case: list[str] = []
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None
@@ -345,6 +350,7 @@ class CompanyUpdate(SQLModel):
     disposition: Optional[str] = None
     account_status: Optional[str] = None
     outbound_summary: Optional[str] = None
+    use_case: Optional[list[str]] = None
     rep_feedback: Optional[str] = None
     account_thesis: Optional[str] = None
     why_now: Optional[str] = None

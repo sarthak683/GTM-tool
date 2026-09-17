@@ -28,6 +28,18 @@ class ConflictError(BeaconError):
     status_code = 409
 
 
+class DuplicateDealError(ConflictError):
+    """A live deal with the same name already exists on this account.
+
+    Carries the existing deal's id/stage/created_at so the frontend can show
+    it in the warning popup and link straight to it, instead of a bare
+    conflict message.
+    """
+    def __init__(self, message: str, *, existing_deal: dict):
+        self.existing_deal = existing_deal
+        super().__init__(message)
+
+
 class ValidationError(BeaconError):
     status_code = 422
 
@@ -50,9 +62,13 @@ class ForbiddenError(BeaconError):
 # ── FastAPI exception handlers ──────────────────────────────────────────────
 
 async def beacon_exception_handler(request: Request, exc: BeaconError) -> JSONResponse:
+    content = {"detail": exc.message, "type": type(exc).__name__}
+    existing_deal = getattr(exc, "existing_deal", None)
+    if existing_deal is not None:
+        content["existing_deal"] = existing_deal
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.message, "type": type(exc).__name__},
+        content=content,
     )
 
 
@@ -61,6 +77,7 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(BeaconError, beacon_exception_handler)
     app.add_exception_handler(NotFoundError, beacon_exception_handler)
     app.add_exception_handler(ConflictError, beacon_exception_handler)
+    app.add_exception_handler(DuplicateDealError, beacon_exception_handler)
     app.add_exception_handler(ValidationError, beacon_exception_handler)
     app.add_exception_handler(ExternalServiceError, beacon_exception_handler)
     app.add_exception_handler(UnauthorizedError, beacon_exception_handler)

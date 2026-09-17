@@ -112,7 +112,15 @@ DEFAULT_SALES_ANALYTICS_EMAILS = {"jacob@beacon.li"}
 
 
 def _sales_analytics_rep_user_ids(user_rows, analytics_settings: dict | None) -> set[UUID]:
-    """AE/SDR users plus configured active users who should appear as reps."""
+    """AE/SDR users plus configured active users who should appear as reps.
+
+    ``sales_analytics_excluded_user_ids`` is a hard override, applied last, for
+    someone who has left the team but still has accounts/deals assigned to
+    them (so deactivating the account or changing their role isn't an option
+    yet — that would touch ownership/visibility everywhere else, not just
+    this view). Excluded here beats every inclusion path above, including an
+    explicit ``sales_analytics_user_ids`` entry.
+    """
     config = analytics_settings or {}
     active_user_rows = [row for row in user_rows if getattr(row, "is_active", True) is not False]
     ids = {
@@ -136,6 +144,12 @@ def _sales_analytics_rep_user_ids(user_rows, analytics_settings: dict | None) ->
             user_id = active_ids_by_email.get(email)
             if user_id:
                 ids.add(user_id)
+    excluded = {
+        str(value or "").strip()
+        for value in (config.get("sales_analytics_excluded_user_ids") or [])
+    }
+    if excluded:
+        ids = {user_id for user_id in ids if str(user_id) not in excluded}
     return ids
 
 

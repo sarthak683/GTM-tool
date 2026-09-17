@@ -167,6 +167,20 @@ export interface SelectedDriveFolder {
   owner_email?: string;
 }
 
+export interface DriveFile {
+  id: string;
+  name: string;
+  mime_type: string;
+  size_bytes?: number;
+  modified_time?: string;
+  web_view_link?: string;
+}
+
+export interface DriveFileList {
+  files: DriveFile[];
+  folder_id: string;
+}
+
 export const driveApi = {
   listFolders: (parentId?: string) => {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : "";
@@ -174,6 +188,10 @@ export const driveApi = {
   },
   searchFolders: (q: string) =>
     request<DriveFolderList>(`/api/v1/drive/folders/search?q=${encodeURIComponent(q)}`),
+  // Files directly inside a folder — the second half of the deal-document
+  // "Add from Drive" picker, once the rep has drilled into a folder.
+  listFilesInFolder: (folderId: string) =>
+    request<DriveFileList>(`/api/v1/drive/folders/${encodeURIComponent(folderId)}/files`),
   selectFolder: (folderId: string, folderName?: string) =>
     request<SelectedDriveFolder>(`/api/v1/drive/folder/select`, {
       method: "POST",

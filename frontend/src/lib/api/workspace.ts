@@ -211,6 +211,18 @@ export const performanceApi = {
     for (const g of params.geographies ?? []) qs.append("geography", g);
     return request<RedAlertDeal[]>(`/api/v1/performance/pipeline-stage-deals?${qs.toString()}`);
   },
+  // Click-through behind a Funnel "Stage conversion" row — the deals that
+  // entered `fromStage` during the period, matching that row's own Deals
+  // count (not every deal currently sitting in the stage).
+  getFunnelTransitionDeals: (params: { fromStage: string; toStage?: string; period?: "week" | "month" | "quarter"; anchor?: string; repId?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("from_stage", params.fromStage);
+    if (params.toStage) qs.set("to_stage", params.toStage);
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.repId) qs.set("rep_id", params.repId);
+    return request<RedAlertDeal[]>(`/api/v1/performance/funnel-transition-deals?${qs.toString()}`);
+  },
   getForecast: (params: {
     period?: "month" | "quarter";
     anchor?: string;
@@ -291,6 +303,7 @@ export type IncentiveDealRow = {
   source: "direct_sql" | "converted";
   meeting_booked_with: string | null;
   deal_source: string | null;
+  current_stage: string | null;
 };
 
 export type IncentiveDealsResponse = {
@@ -314,6 +327,7 @@ export type RedAlertDeal = {
   stage_entered_at?: string | null;
   ae_name?: string | null;
   sdr_name?: string | null;
+  stage?: string | null;
 };
 
 export type DealHealthResponse = {
@@ -376,6 +390,7 @@ export type AnalyticsSettings = {
   conversion_transitions: Array<{ from: string; to: string }>;
   workspace_timezone: string;
   email_reply_lookback_days: number;
+  stage_change_alert_emails?: string[];
 };
 
 export type FunnelResponse = {
@@ -389,6 +404,7 @@ export type FunnelResponse = {
     deals: number;
     conv_rate: number;
     median_days: number | null;
+    is_overall?: boolean;
   }>;
   movement: { advanced: number; regressed: number; exited: number; entered: number };
 };

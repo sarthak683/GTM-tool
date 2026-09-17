@@ -8,9 +8,11 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   ExternalLink,
   Globe,
+  Layers,
   Link2,
   Loader2,
   Mail,
@@ -98,6 +100,18 @@ const RTP_ENG_STYLE: Record<string, { bg: string; color: string; border: string 
   Cold: { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
 };
 const RTP_NEUTRAL = { bg: "#f4f7fb", color: "#55657a", border: "#d9e1ec" };
+
+// Product-line categorization (multi-select), Company.use_case. Same list as
+// USE_CASE_OPTIONS in Pipeline.tsx / DealDetailDrawer.tsx — kept in sync
+// manually since each lives in a separate page/component.
+const USE_CASE_OPTIONS = [
+  "Implementation Automation",
+  "Support and Hypercare Automation",
+  "Workflow Automation",
+  "Product Agent Studio",
+  "Cross System Orchestration",
+  "Presales",
+] as const;
 
 function RecotapSignalsPanel({ rtp }: { rtp?: RecotapSignals | null }) {
   if (!rtp) return null;
@@ -807,6 +821,13 @@ export default function AccountSourcingCompanyDetail() {
   const [domainSaving, setDomainSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
+  const [useCaseMenuOpen, setUseCaseMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const dismiss = () => setUseCaseMenuOpen(false);
+    window.addEventListener("click", dismiss);
+    return () => window.removeEventListener("click", dismiss);
+  }, []);
   const [summarySaving, setSummarySaving] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealError, setDealError] = useState("");
@@ -1394,6 +1415,19 @@ export default function AccountSourcingCompanyDetail() {
     }
   };
 
+  const toggleUseCase = async (option: string) => {
+    if (!company) return;
+    const current = company.use_case ?? [];
+    const next = current.includes(option) ? current.filter((v) => v !== option) : [...current, option];
+    setCompany((prev) => (prev ? { ...prev, use_case: next } : prev));
+    try {
+      await accountSourcingApi.updateCompany(company.id, { use_case: next });
+    } catch {
+      setCompany((prev) => (prev ? { ...prev, use_case: current } : prev));
+      toast.error("Could not update use case. Please try again.", "Save failed");
+    }
+  };
+
   const researchFingerprint = `${company.enriched_at || ""}|${company.icp_score ?? ""}|${company.domain}|${cacheTs(cache, "icp_analysis") || ""}|${cacheTs(cache, "research_quality") || ""}`;
 
   const tier = company.icp_tier || "cold";
@@ -1799,6 +1833,94 @@ export default function AccountSourcingCompanyDetail() {
                   <span>{researchStatus.message}</span>
                 </div>
               ) : null}
+
+              {/* Use Case — product-line categorization, multi-select. Editable
+                  regardless of pipeline stage, mirrors Deal.use_case's own
+                  field on the deal drawer / stage-move gate. */}
+              <div style={{ marginTop: 16, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: colors.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                  <Layers size={13} /> Use Case
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setUseCaseMenuOpen((cur) => !cur); }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    width: "100%",
+                    maxWidth: 920,
+                    minHeight: 36,
+                    borderRadius: 10,
+                    border: "1.5px solid #d8cdf5",
+                    background: "#f7f4fd",
+                    padding: "5px 10px",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  {(company.use_case ?? []).length > 0 ? (
+                    <span style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {(company.use_case ?? []).map((option) => (
+                        <span
+                          key={option}
+                          style={{
+                            padding: "3px 9px",
+                            borderRadius: 999,
+                            border: "1.5px solid #7556cb",
+                            background: "#ece6fa",
+                            color: "#7556cb",
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {option}
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 13, color: "#8a7fae" }}>Select use case(s)…</span>
+                  )}
+                  <ChevronDown size={15} style={{ flexShrink: 0, color: "#8a7fae", transform: useCaseMenuOpen ? "rotate(180deg)" : undefined }} />
+                </button>
+                {useCaseMenuOpen && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ position: "absolute", top: "100%", left: 0, right: 0, maxWidth: 920, marginTop: 4, zIndex: 40, borderRadius: 10, border: "1px solid #e8dffa", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 6, display: "grid", gap: 2 }}
+                  >
+                    {USE_CASE_OPTIONS.map((option) => {
+                      const selected = (company.use_case ?? []).includes(option);
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => void toggleUseCase(option)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: selected ? "#ece6fa" : "transparent",
+                            color: selected ? "#7556cb" : "#3d5266",
+                            fontSize: 13,
+                            fontWeight: selected ? 700 : 600,
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                        >
+                          {option}
+                          {selected && <Check size={14} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div style={{ display: "grid", gap: 10, alignContent: "start" }}>

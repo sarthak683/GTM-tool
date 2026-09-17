@@ -116,7 +116,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(readErrorDetail(err?.detail, res.statusText || "Request failed"));
+    const apiError = new Error(readErrorDetail(err?.detail, res.statusText || "Request failed"));
+    // Structured error bodies (e.g. DuplicateDealError's existing_deal) ride
+    // along on the thrown Error so a call site can branch on err.type/body
+    // instead of parsing the message string. Existing `catch { err.message }`
+    // call sites are unaffected — this only adds properties.
+    (apiError as Error & { type?: string; body?: unknown }).type = err?.type;
+    (apiError as Error & { type?: string; body?: unknown }).body = err;
+    throw apiError;
   }
   if (res.status === 204) return undefined as T;
   const payload = await res.json();

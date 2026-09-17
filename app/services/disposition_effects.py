@@ -99,6 +99,60 @@ def _default_followup_utc() -> datetime:
     return (now + timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
 
 
+async def link_contact_as_meeting_booked(session: AsyncSession, contact: Contact) -> bool:
+    """Link `contact` as a confirmed meeting contact on every open deal under
+    their account — direct and unconditional, unlike
+    `_maybe_suggest_deal_from_disposition`'s bell-notification flow below,
+    which silently does nothing when the contact has no SDR/AE to notify
+    (true for most prospects in this workspace). The deal drawer's Meeting
+    Contact list only trusts role "primary"/"champion" (not the
+    deal_linker.py backfill's "auto_linked"), so this is the one place that
+    actually earns that trust once a meeting is confirmed booked.
+
+    Idempotent and safe to call on every save, not just the first: `role in
+    ("primary", "champion")` is left untouched, anything else (including no
+    row at all) is created/upgraded to "primary". (deal_id, contact_id) is
+    the table's primary key, so at most one row can exist per pair — an
+    existing row is always updated in place, never inserted alongside.
+
+    Permanent by design: nothing calls this to *remove* a link, so a later
+    disposition/status change away from "meeting booked" does not un-link
+    the contact — the deal drawer should keep showing them as historical
+    proof a meeting was once booked with this person.
+    """
+    if not contact.company_id:
+        return False
+
+    from app.models.deal import Deal, DealContact
+
+    deal_ids = (await session.execute(
+        select(Deal.id).where(
+            Deal.company_id == contact.company_id,
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
+        )
+    )).scalars().all()
+    if not deal_ids:
+        return False
+
+    changed = False
+    for deal_id in deal_ids:
+        existing_link = (await session.execute(
+            select(DealContact).where(
+                DealContact.deal_id == deal_id,
+                DealContact.contact_id == contact.id,
+            )
+        )).scalar_one_or_none()
+        if existing_link is None:
+            session.add(DealContact(deal_id=deal_id, contact_id=contact.id, role="primary"))
+            changed = True
+        elif existing_link.role not in ("primary", "champion"):
+            existing_link.role = "primary"
+            session.add(existing_link)
+            changed = True
+    return changed
+
+
 async def _maybe_suggest_deal_from_disposition(
     session: AsyncSession, contact: Contact, disposition: str, *, activity_id: Optional[UUID] = None
 ) -> bool:
@@ -365,6 +419,14 @@ async def apply_call_disposition_effects(
             contact.instantly_status = "paused"
             session.add(contact)
 
+    # Meeting booked on the phone → link the contact to any open deal(s) on
+    # the account directly, right now — no dependency on an SDR/AE existing
+    # to notify (most prospects here have neither, which silently starved
+    # the bell-alert path below).
+    if disposition in _MEETING_BOOKED_DISPOSITIONS:
+        if await link_contact_as_meeting_booked(session, contact):
+            changes["meeting_contact_link"] = "linked"
+
     # Meeting booked on the phone → suggest creating a deal (bell alert; accept
     # auto-creates the deal). Deduped + skipped when a deal already exists.
     if await _maybe_suggest_deal_from_disposition(session, contact, disposition, activity_id=activity_id):
@@ -391,6 +453,48 @@ async def apply_call_disposition_effects(
         await refresh_system_tasks_for_entity(session, "contact", contact.id)
 
     return changes
+
+
+async def backfill_orphaned_meeting_booked_calls(
+    session: AsyncSession, *, company_id: UUID, deal_id: UUID, deal_created_at: datetime
+) -> None:
+    """Link any orphaned meeting-booked call activities on this account to
+    the just-created deal.
+
+    Covers the manual create-deal path (POST /deals), which — unlike
+    accepting the meeting_booked_suggest_deal bell notification — has no
+    single activity_id to backfill directly: a rep can create the deal
+    straight from the Pipeline UI after logging the call, bypassing the
+    notification entirely. Without this, the call Activity that triggered
+    the booking keeps deal_id=NULL forever, so the sales report's meeting
+    date shows "Pending" even though a deal with a Date of Meeting exists.
+    Same contact/company matching and 7-day window as migration 130's
+    historical backfill and notifications._backfill_call_activity_deal_id;
+    caller is responsible for commit.
+    """
+    from app.models.activity import Activity
+
+    window_start = deal_created_at - timedelta(days=7)
+    orphans = (
+        await session.execute(
+            select(Activity)
+            .join(Contact, Contact.id == Activity.contact_id)
+            .where(
+                Activity.type == "call",
+                Activity.deal_id.is_(None),
+                Activity.contact_id.is_not(None),
+                Contact.company_id == company_id,
+                Activity.event_metadata["call_disposition"].astext.in_(
+                    ["demo_scheduled_booked", "meeting_confirmed"]
+                ),
+                Activity.created_at >= window_start,
+                Activity.created_at <= deal_created_at,
+            )
+        )
+    ).scalars().all()
+    for activity in orphans:
+        activity.deal_id = deal_id
+        session.add(activity)
 
 
 async def apply_linkedin_status_effects(

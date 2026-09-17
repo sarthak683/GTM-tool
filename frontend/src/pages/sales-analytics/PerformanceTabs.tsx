@@ -680,7 +680,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
   const [data, setData] = useState<FunnelResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage: string; label: string } | null>(null);
+  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage: string; toStage: string; label: string; isOverall?: boolean } | null>(null);
   const [stageDealsData, setStageDealsData] = useState<RedAlertDeal[]>([]);
   const [stageDealsLoading, setStageDealsLoading] = useState(false);
   const [stageDealsError, setStageDealsError] = useState<string | null>(null);
@@ -691,7 +691,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     setStageDealsLoading(true);
     setStageDealsError(null);
     performanceApi
-      .getPipelineStageDeals({ stage: stageDealsQuery.stage, repIds: repId ? [repId] : undefined })
+      .getFunnelTransitionDeals({ fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, period, repId })
       .then((payload) => {
         if (!cancelled) setStageDealsData(payload);
       })
@@ -705,7 +705,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     return () => {
       cancelled = true;
     };
-  }, [stageDealsQuery, repId]);
+  }, [stageDealsQuery, repId, period]);
 
   useEffect(() => {
     let cancelled = false;
@@ -791,27 +791,53 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
                     const pct = Math.round(row.conv_rate * 100);
                     const tone = pct >= 50 ? "green" : pct >= 25 ? "amber" : "red";
                     const tint = RAG_TINT[tone];
+                    const overall = Boolean(row.is_overall);
+                    const rowBorder = overall ? "2px solid #d8cdf5" : `1px solid ${PALETTE.hairline}`;
                     return (
                       <tr
-                        key={`${row.from_stage}-${row.to_stage}`}
+                        key={`${row.from_stage}-${row.to_stage}-${overall ? "overall" : idx}`}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setStageDealsQuery({ stage: row.from_stage, label: prettyStage(row.from_stage) })}
-                        onKeyDown={(e) => e.key === "Enter" && setStageDealsQuery({ stage: row.from_stage, label: prettyStage(row.from_stage) })}
-                        style={{ cursor: "pointer", background: idx % 2 === 1 ? "#fafaf8" : "#fff" }}
+                        onClick={() => setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — entered this period" : `Entered ${prettyStage(row.from_stage)}`, isOverall: overall })}
+                        onKeyDown={(e) => e.key === "Enter" && setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — entered this period" : `Entered ${prettyStage(row.from_stage)}`, isOverall: overall })}
+                        style={{ cursor: "pointer", background: overall ? "#f7f4fd" : idx % 2 === 1 ? "#fafaf8" : "#fff" }}
                       >
-                        <td style={{ padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}` }}>
-                          <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
-                          <span style={{ color: PALETTE.subtle, margin: "0 6px" }}>→</span>
-                          <span style={{ color: PALETTE.text, fontWeight: 700 }}>{prettyStage(row.to_stage)}</span>
+                        <td style={{ padding: "11px 14px", borderBottom: rowBorder }}>
+                          {overall ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  letterSpacing: "0.05em",
+                                  textTransform: "uppercase",
+                                  color: "#7556cb",
+                                  background: "#ece6fa",
+                                  padding: "3px 8px",
+                                  borderRadius: 999,
+                                }}
+                              >
+                                Overall
+                              </span>
+                              <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
+                              <span style={{ color: PALETTE.subtle }}>→</span>
+                              <span style={{ color: PALETTE.text, fontWeight: 700 }}>{prettyStage(row.to_stage)}</span>
+                            </div>
+                          ) : (
+                            <>
+                              <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
+                              <span style={{ color: PALETTE.subtle, margin: "0 6px" }}>→</span>
+                              <span style={{ color: PALETTE.text, fontWeight: 700 }}>{prettyStage(row.to_stage)}</span>
+                            </>
+                          )}
                         </td>
-                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}`, color: PALETTE.text, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: rowBorder, color: PALETTE.text, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                           {row.deals}
                         </td>
-                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}`, color: row.median_days != null ? PALETTE.text : PALETTE.subtle, fontVariantNumeric: "tabular-nums" }}>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: rowBorder, color: row.median_days != null ? PALETTE.text : PALETTE.subtle, fontVariantNumeric: "tabular-nums" }}>
                           {row.median_days != null ? `${row.median_days.toFixed(1)}d` : "—"}
                         </td>
-                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: `1px solid ${PALETTE.hairline}` }}>
+                        <td style={{ textAlign: "center", padding: "11px 14px", borderBottom: rowBorder }}>
                           <span
                             style={{
                               display: "inline-block",
@@ -848,6 +874,8 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
           deals={stageDealsData}
           loading={stageDealsLoading}
           error={stageDealsError}
+          showStageEntered={stageDealsQuery.isOverall}
+          enteredStageLabel={prettyStage(stageDealsQuery.stage)}
           onClose={() => {
             setStageDealsQuery(null);
             setStageDealsData([]);
@@ -1049,6 +1077,8 @@ function RedAlertModal({
   onClose,
   loading,
   error,
+  showStageEntered,
+  enteredStageLabel,
 }: {
   label: string;
   deals: RedAlertDeal[];
@@ -1057,6 +1087,13 @@ function RedAlertModal({
   // Deal Health tiles pass already-loaded data, so both default to unset.
   loading?: boolean;
   error?: string | null;
+  // The Funnel "Overall" row spans every stage, so unlike a single-step row
+  // its deals can currently sit anywhere in the pipeline — worth its own
+  // column there. Other callers of this shared modal leave it unset.
+  showStageEntered?: boolean;
+  // Pretty label for the stage this deal-list's "entered" filter matched
+  // (e.g. "Reprospect") — shown as the left side of "Entered -> Current".
+  enteredStageLabel?: string;
 }) {
   const total = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
   return (
@@ -1095,8 +1132,12 @@ function RedAlertModal({
                 type="button"
                 onClick={() => dlCsv(
                   label.toLowerCase().replace(/\s+/g, "-"),
-                  ["Deal", "AE", "SDR", "Days in Stage", "Amount"],
-                  deals.map((d) => [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? ""]),
+                  showStageEntered
+                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Stage Entered"]
+                    : ["Deal", "AE", "SDR", "Days in Stage", "Amount"],
+                  deals.map((d) => showStageEntered
+                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", `${enteredStageLabel ?? "—"} -> ${d.stage ? prettyStage(d.stage) : "—"}`]
+                    : [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? ""]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -1120,7 +1161,10 @@ function RedAlertModal({
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                {["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount"].map((h, i) => (
+                {(showStageEntered
+                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Stage Entered"]
+                  : ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount"]
+                ).map((h, i) => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: i === 4 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                 ))}
               </tr>
@@ -1133,10 +1177,15 @@ function RedAlertModal({
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{daysInStage(d.stage_entered_at)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  {showStageEntered && (
+                    <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {enteredStageLabel ?? "—"} <span style={{ color: PALETTE.subtle }}>→</span> {d.stage ? prettyStage(d.stage) : "—"}
+                    </td>
+                  )}
                 </tr>
               ))}
               {deals.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                <tr><td colSpan={showStageEntered ? 6 : 5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
               )}
             </tbody>
           </table>
@@ -2515,8 +2564,8 @@ function IncentiveDealsModal({
                 type="button"
                 onClick={() => dlCsv(
                   `incentive-${bucket}-${sdrName.toLowerCase().replace(/\s+/g, "-")}`,
-                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"],
-                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? "", dealSourceLabel(r.deal_source)]),
+                  ["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source", "Current Stage of Deal"],
+                  rows.map((r) => [r.deal_name, r.ae_name, r.sdr_name, fmtDate(r.date), r.meeting_booked_with ?? "", dealSourceLabel(r.deal_source), r.current_stage ? prettyStage(r.current_stage) : "—"]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -2537,7 +2586,7 @@ function IncentiveDealsModal({
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
-                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source"].map((h) => (
+                  {["Deal", "AE", "SDR", dateHeader, "Meeting Booked With", "Source", "Current Stage of Deal"].map((h) => (
                     <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                   ))}
                 </tr>
@@ -2551,10 +2600,11 @@ function IncentiveDealsModal({
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{fmtDate(r.date)}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{r.meeting_booked_with || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#62748a" }}>{dealSourceLabel(r.deal_source)}</td>
+                    <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600 }}>{r.current_stage ? prettyStage(r.current_stage) : "—"}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                  <tr><td colSpan={7} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
                 )}
               </tbody>
             </table>
