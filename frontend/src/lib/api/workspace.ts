@@ -212,30 +212,39 @@ export const performanceApi = {
     return request<RedAlertDeal[]>(`/api/v1/performance/pipeline-stage-deals?${qs.toString()}`);
   },
   // Click-through behind a Funnel "Stage conversion" row — the deals that
-  // entered `fromStage` during the period, matching that row's own Deals
-  // count (not every deal currently sitting in the stage).
-  getFunnelTransitionDeals: (params: { fromStage: string; toStage?: string; period?: "week" | "month" | "quarter"; anchor?: string; repId?: string }) => {
+  // made that row's literal, direct from_stage -> to_stage move during the
+  // period, matching that row's own Deals count exactly. isOverall pools
+  // every configured transition's moves into one list (for the Overall row).
+  getFunnelTransitionDeals: (params: { fromStage: string; toStage?: string; isOverall?: boolean; period?: "week" | "month" | "quarter"; anchor?: string; repId?: string }) => {
     const qs = new URLSearchParams();
     qs.set("from_stage", params.fromStage);
     if (params.toStage) qs.set("to_stage", params.toStage);
+    if (params.isOverall) qs.set("is_overall", "true");
     if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
     if (params.repId) qs.set("rep_id", params.repId);
     return request<RedAlertDeal[]>(`/api/v1/performance/funnel-transition-deals?${qs.toString()}`);
   },
-  getForecast: (params: {
-    period?: "month" | "quarter";
-    anchor?: string;
-    rep_id?: string;
-    quota?: number;
-  }) => {
+  // Forecast tab's "Open Deals by Close Date" chart — every open deal with a
+  // Close Date inside the period, summed by stage and by owning AE.
+  getCloseDateBuckets: (params: { period?: "week" | "month" | "quarter" | "overall"; anchor?: string; repId?: string }) => {
     const qs = new URLSearchParams();
     if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
-    if (params.rep_id) qs.set("rep_id", params.rep_id);
-    if (params.quota != null) qs.set("quota", String(params.quota));
+    if (params.repId) qs.set("rep_id", params.repId);
     const tail = qs.toString();
-    return request<ForecastResponse>(`/api/v1/performance/forecast${tail ? `?${tail}` : ""}`);
+    return request<CloseDateBucketsResponse>(`/api/v1/performance/close-date-buckets${tail ? `?${tail}` : ""}`);
+  },
+  // Click-through behind one Open Deals by Close Date bar — a stage bar
+  // passes `stage`, a rep bar passes `repId`, matching that bar's own total.
+  getCloseDateDeals: (params: { stage?: string; period?: "week" | "month" | "quarter" | "overall"; anchor?: string; repId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.stage) qs.set("stage", params.stage);
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.repId) qs.set("rep_id", params.repId);
+    const tail = qs.toString();
+    return request<RedAlertDeal[]>(`/api/v1/performance/close-date-deals${tail ? `?${tail}` : ""}`);
   },
   getSettings: () => request<AnalyticsSettings>("/api/v1/performance/settings"),
   updateSettings: (patch: Partial<AnalyticsSettings>) =>
@@ -328,6 +337,40 @@ export type RedAlertDeal = {
   ae_name?: string | null;
   sdr_name?: string | null;
   stage?: string | null;
+  // The specific stage-move this deal is counted for — only populated by
+  // getFunnelTransitionDeals, where the Overall row pools moves from every
+  // step of the funnel and each deal needs its own from/to pair.
+  move_from_stage?: string | null;
+  move_to_stage?: string | null;
+  // Deal.close_date — only populated by getCloseDateBuckets/getCloseDateDeals.
+  close_date?: string | null;
+};
+
+export type CloseDateBucket = {
+  key: string;
+  label: string;
+  color?: string | null;
+  amount: number;
+  deal_count: number;
+};
+
+export type CloseDateOwnerRow = {
+  key: string;
+  label: string;
+  amount: number;
+  deal_count: number;
+  // Per-stage breakdown of this rep's total — same stage colors as
+  // Pipeline Health's By Rep chart.
+  stages: CloseDateBucket[];
+};
+
+export type CloseDateBucketsResponse = {
+  period_label: string;
+  // Both null for period="overall" — there is no single window to report.
+  period_start: string | null;
+  period_end: string | null;
+  by_stage: CloseDateBucket[];
+  by_rep: CloseDateOwnerRow[];
 };
 
 export type DealHealthResponse = {
@@ -360,20 +403,6 @@ export type PipelineBucketsResponse = {
   small_avg_deals: PipelineBucketDeal[];
 };
 
-export type ForecastResponse = {
-  period_label: string;
-  quota: number | null;
-  commit_number: number;
-  best_case_number: number;
-  weighted_pipeline: number;
-  gap_to_quota: number | null;
-  buckets: Array<{
-    category: string;
-    deal_count: number;
-    acv: number;
-    weighted_acv: number;
-  }>;
-};
 
 export type LeaderboardResponse = {
   metric: string;

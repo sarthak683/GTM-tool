@@ -42,7 +42,6 @@ from app.services.account_sourcing import (
     _clean_company_name,
     account_priority_snapshot,
     append_company_activity_log,
-    is_priority_stakeholder_candidate,
     merge_company_from_upload,
     parse_tabular_file,
     refresh_contact_sequence_plan,
@@ -3103,9 +3102,13 @@ async def get_company_contacts(company_id: UUID, session: DBSession, current_use
         stmt = stmt.where(restriction)
     result = await session.execute(stmt)
     all_contacts = result.scalars().all()
-    filtered_contacts = [contact for contact in all_contacts if is_priority_stakeholder_candidate(contact)]
-    contacts = filtered_contacts or all_contacts
-    reads = [ContactRead.model_validate(contact) for contact in contacts]
+    # Every visible contact goes to the client now — the priority-stakeholder
+    # heuristic (is_priority_stakeholder_candidate / the frontend's matching
+    # isPriorityStakeholder) is applied client-side by the Priority/All toggle
+    # instead of at the API, so a contact whose title doesn't match the
+    # keyword list (e.g. "Head of Client Support Services") is still visible
+    # via "All" rather than silently dropped from the response entirely.
+    reads = [ContactRead.model_validate(contact) for contact in all_contacts]
     for read in reads:
         read.company_name = company.name
     await apply_contact_tracking(session, reads)

@@ -555,69 +555,133 @@ async def touches_per_won(session, rep_id, period) -> float:
 
 
 # ── Stage conversion (for the funnel grid) ───────────────────────────────────
+#
+# "Deals" on a stage-move row counts the literal, direct from_stage -> to_stage
+# hop recorded in deal_stage_history during the period — not "entered
+# from_stage" and not "entered to_stage via any path". This is deliberately
+# the narrowest of the three possible readings: it's exactly the deals a rep
+# would point to and say "yes, that one moved from A straight to B this
+# month" — so the row's own count and its click-through popup always agree.
 
 
-async def stage_conversion(
+def stage_history_with_lag():
+    """Every deal_stage_history row, plus (via a window function) the
+    changed_at of that SAME deal's immediately preceding row. Unfiltered —
+    filtering must happen in the outer query, never here, or the window
+    would be computed over the wrong (already-narrowed) set of rows and
+    "entered_from_at" would silently point at the wrong prior transition.
+    """
+    return select(
+        DealStageHistory.deal_id.label("deal_id"),
+        DealStageHistory.from_stage.label("from_stage"),
+        DealStageHistory.to_stage.label("to_stage"),
+        DealStageHistory.changed_at.label("moved_at"),
+        func.lag(DealStageHistory.changed_at)
+        .over(partition_by=DealStageHistory.deal_id, order_by=DealStageHistory.changed_at)
+        .label("entered_from_at"),
+    ).subquery()
+
+
+async def stage_move_rows(
     session: AsyncSession,
     period: Period,
     from_stage: str,
     to_stage: str,
     rep_id: Optional[UUID] = None,
-) -> dict:
+):
+    """The actual deals behind a stage-move row: every deal that made the
+    direct from_stage -> to_stage hop during the period, with when it
+    entered from_stage right before that move. Shared by the metric
+    calculation and the drilldown endpoint so the two can never disagree.
     """
-    For deals that entered `from_stage` during the period, how many ever
-    reached `to_stage` and the median days it took.
-    """
-    entered = (
+    hist = stage_history_with_lag()
+    stmt = (
         select(
-            DealStageHistory.deal_id.label("deal_id"),
-            DealStageHistory.changed_at.label("from_at"),
+            hist.c.deal_id,
+            hist.c.entered_from_at,
+            hist.c.moved_at,
+            Deal.name.label("deal_name"),
+            Deal.value.label("value"),
         )
-        .join(Deal, Deal.id == DealStageHistory.deal_id)
+        .select_from(hist)
+        .join(Deal, Deal.id == hist.c.deal_id)
         .where(
-            DealStageHistory.to_stage == from_stage,
-            DealStageHistory.changed_at >= period.start,
-            DealStageHistory.changed_at < period.end,
+            hist.c.from_stage == from_stage,
+            hist.c.to_stage == to_stage,
+            hist.c.moved_at >= period.start,
+            hist.c.moved_at < period.end,
+            Deal.deleted_at.is_(None),
+            Deal.pipeline_type == "deal",
             _deal_rep_filter(rep_id),
         )
-        .subquery()
     )
-    reached = (
+    return (await session.execute(stmt)).all()
+
+
+async def stage_occupancy_at(
+    session: AsyncSession,
+    at: datetime,
+    stage: str,
+    rep_id: Optional[UUID] = None,
+) -> int:
+    """How many (live, open) deals were sitting in `stage` at the instant
+    `at` — reconstructed from history as each deal's to_stage on its most
+    recent transition strictly before `at`. Used as the Conversion %
+    denominator: "of who was already there when the period began, what
+    fraction moved forward this period."
+    """
+    last_before = (
         select(
             DealStageHistory.deal_id.label("deal_id"),
-            func.min(DealStageHistory.changed_at).label("to_at"),
+            func.max(DealStageHistory.changed_at).label("max_at"),
         )
-        .where(DealStageHistory.to_stage == to_stage)
+        .where(DealStageHistory.changed_at < at)
         .group_by(DealStageHistory.deal_id)
         .subquery()
     )
-    joined = (
+    stage_at = (
         select(
-            entered.c.deal_id,
-            entered.c.from_at,
-            reached.c.to_at,
+            DealStageHistory.deal_id.label("deal_id"),
+            DealStageHistory.to_stage.label("stage_at"),
         )
-        .select_from(entered)
-        .outerjoin(reached, reached.c.deal_id == entered.c.deal_id)
+        .join(
+            last_before,
+            and_(
+                DealStageHistory.deal_id == last_before.c.deal_id,
+                DealStageHistory.changed_at == last_before.c.max_at,
+            ),
+        )
         .subquery()
     )
-    stmt = select(
-        func.count(joined.c.deal_id).label("entered_count"),
-        func.count(joined.c.to_at).label("reached_count"),
-        func.percentile_cont(0.5).within_group(
-            func.extract("epoch", joined.c.to_at - joined.c.from_at) / 86400.0
-        ).label("median_days"),
-    ).where(or_(joined.c.to_at.is_(None), joined.c.to_at >= joined.c.from_at))
-    row = (await session.execute(stmt)).one()
-    entered_count = row.entered_count or 0
-    reached_count = row.reached_count or 0
-    return {
-        "from_stage": from_stage,
-        "to_stage": to_stage,
-        "deals": entered_count,
-        "conv_rate": _safe_ratio(reached_count, entered_count),
-        "median_days": float(row.median_days) if row.median_days is not None else None,
-    }
+    stmt = (
+        select(func.count(stage_at.c.deal_id))
+        .select_from(stage_at)
+        .join(Deal, Deal.id == stage_at.c.deal_id)
+        .where(
+            stage_at.c.stage_at == stage,
+            Deal.deleted_at.is_(None),
+            Deal.pipeline_type == "deal",
+            _deal_rep_filter(rep_id),
+        )
+    )
+    return (await session.execute(stmt)).scalar() or 0
+
+
+def median_days_of(rows) -> Optional[float]:
+    durations = [
+        (r.moved_at - r.entered_from_at).total_seconds() / 86400.0
+        for r in rows
+        if r.entered_from_at is not None
+    ]
+    if not durations:
+        return None
+    durations.sort()
+    mid = len(durations) // 2
+    if len(durations) % 2:
+        return durations[mid]
+    return (durations[mid - 1] + durations[mid]) / 2
+
+
 
 
 # ── Pipeline delta (for scorecard Pipeline block) ────────────────────────────

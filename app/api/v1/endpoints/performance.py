@@ -5,7 +5,7 @@ Surfaces:
 - /performance/scorecard      — weekly/monthly per-rep scorecard
 - /performance/funnel         — pipeline & funnel dashboard
 - /performance/deal-health    — stuck deals
-- /performance/forecast       — commit/best/worst + gap to quota
+- /performance/close-date-buckets — open deals by Close Date, by stage/rep
 - /performance/leaderboards   — cross-rep cuts
 
 All numbers flow through app.services.performance_metrics so every surface
@@ -20,7 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import distinct, select
+from sqlalchemy import select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.pods import get_pod, pod_ae_emails, pod_keys
@@ -284,7 +284,17 @@ class RedAlertDeal(BaseModel):
     stage_entered_at: Optional[str] = None  # ISO datetime string
     ae_name: Optional[str] = None
     sdr_name: Optional[str] = None
-    stage: Optional[str] = None  # Deal.stage right now — only populated by callers where "current stage" is meaningful (e.g. the Funnel Overall row, which spans every stage)
+    stage: Optional[str] = None  # Deal.stage right now — only populated by callers where "current stage" is meaningful
+    # The specific stage-move this deal is counted for (from_stage -> to_stage).
+    # Only populated by /funnel-transition-deals — the Overall row pools moves
+    # from every step of the funnel, so each deal needs its own pair rather
+    # than one fixed label for the whole list.
+    move_from_stage: Optional[str] = None
+    move_to_stage: Optional[str] = None
+    # Deal.close_date (the rep-set Close Date field, distinct from
+    # close_date_est / "Date of Meeting") — only populated by
+    # /close-date-buckets and /close-date-deals.
+    close_date: Optional[str] = None
 
 
 @router.get("/funnel", response_model=FunnelResponse)
@@ -297,7 +307,7 @@ async def get_funnel(
 ):
     from app.models.deal import Deal, DEAL_STAGES
     from app.models.deal_stage_history import DealStageHistory
-    from sqlalchemy import func, select, or_
+    from sqlalchemy import func, select
 
     settings = await get_analytics_settings(session)
     p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
@@ -320,19 +330,47 @@ async def get_funnel(
         for s in DEAL_STAGES
     ]
 
-    # Conversion grid
+    # Conversion grid — each row counts the literal, direct from -> to hop
+    # made during the period (see pm.stage_move_rows / pm.stage_occupancy_at).
+    # Rows and their raw move-rows are kept together so the Overall row below
+    # can roll all of them up rather than running its own separate
+    # Reprospect -> Closed Won calculation.
     transitions = settings.get("conversion_transitions", [])
     conversion: list[ConversionRow] = []
+    all_move_rows = []
+    total_deals = 0
+    total_denom = 0
     for t in transitions:
-        row = await pm.stage_conversion(session, p, t["from"], t["to"], rep_uuid)
-        conversion.append(ConversionRow(**row))
+        rows = await pm.stage_move_rows(session, p, t["from"], t["to"], rep_uuid)
+        denom = await pm.stage_occupancy_at(session, p.start, t["from"], rep_uuid)
+        conversion.append(
+            ConversionRow(
+                from_stage=t["from"],
+                to_stage=t["to"],
+                deals=len(rows),
+                conv_rate=(len(rows) / denom) if denom else 0.0,
+                median_days=pm.median_days_of(rows),
+            )
+        )
+        all_move_rows.extend(rows)
+        total_deals += len(rows)
+        total_denom += denom
 
-    # Overall funnel — one summary row spanning the whole chain (first stage's
-    # "from" to last stage's "to"), so the full picture doesn't require
-    # stitching together every individual step by hand.
+    # Overall funnel — a rollup of every step above (every deal that made
+    # ANY forward stage move this period, pooled into one row), not a
+    # separate first-stage -> last-stage calculation of its own.
     if transitions:
-        overall = await pm.stage_conversion(session, p, transitions[0]["from"], transitions[-1]["to"], rep_uuid)
-        conversion.insert(0, ConversionRow(**overall, is_overall=True))
+        conversion.insert(
+            0,
+            ConversionRow(
+                from_stage=transitions[0]["from"],
+                to_stage=transitions[-1]["to"],
+                deals=total_deals,
+                conv_rate=(total_deals / total_denom) if total_denom else 0.0,
+                median_days=pm.median_days_of(all_move_rows),
+                is_overall=True,
+            ),
+        )
 
     # Movement counts within the period
     ordered = {s: i for i, s in enumerate(DEAL_STAGES)}
@@ -373,79 +411,48 @@ async def get_funnel(
     )
 
 
-@router.get("/funnel-transition-deals", response_model=list[RedAlertDeal])
-async def get_funnel_transition_deals(
+async def _stage_move_deals(
     session: DBSession,
-    current_user: CurrentUser,
-    from_stage: Annotated[str, Query(description="Stage key the deals entered, e.g. 'qualified_lead'")],
-    to_stage: Annotated[Optional[str], Query(description="Row's target stage, e.g. 'poc_agreed' — needed to exclude deals stage_conversion() itself drops as backwards bounces")] = None,
-    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
-    anchor: Annotated[Optional[date], Query()] = None,
-    rep_id: Annotated[Optional[UUID], Query()] = None,
-):
-    """The exact deals behind a Funnel "Stage conversion" row's Deals count —
-    those that entered `from_stage` during the period. Unlike
-    /pipeline-stage-deals (every deal currently sitting in a stage), this
-    mirrors stage_conversion()'s own "entered" population, including its
-    guard against a deal that had already reached `to_stage` at some earlier
-    time than this particular entry (e.g. bounced back then forward again) —
-    stage_conversion() drops that row from the count, so this must too or the
-    click-through total won't match the row it was opened from.
+    p,
+    from_stage: str,
+    to_stage: str,
+    rep_uuid: Optional[UUID],
+) -> list[RedAlertDeal]:
+    """The exact deals behind one Stage Conversion row's Deals count — those
+    that made the literal, direct from_stage -> to_stage move during the
+    period (see pm.stage_move_rows). Each result is tagged with the specific
+    move it represents so a caller pooling several of these together (the
+    Overall row) can still show which stage-to-stage step each deal made.
     """
-    from sqlalchemy import func, or_
     from sqlalchemy.orm import aliased
 
     from app.models.deal import Deal
-    from app.models.deal_stage_history import DealStageHistory
-
-    settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
-    rep = await _resolve_rep(session, current_user, rep_id)
-    rep_uuid = rep.id if rep else None
 
     AeUser = aliased(User)
     SdrUser = aliased(User)
-    entered = (
-        select(
-            DealStageHistory.deal_id.label("deal_id"),
-            DealStageHistory.changed_at.label("from_at"),
-        )
-        .where(
-            DealStageHistory.to_stage == from_stage,
-            DealStageHistory.changed_at >= p.start,
-            DealStageHistory.changed_at < p.end,
-        )
-        .subquery()
-    )
+    hist = pm.stage_history_with_lag()
     stmt = (
         select(
-            entered.c.deal_id,
-            entered.c.from_at,
+            hist.c.deal_id,
+            hist.c.entered_from_at,
             Deal.name,
             Deal.value,
-            Deal.stage,
             AeUser.name.label("ae_name"),
             SdrUser.name.label("sdr_name"),
         )
-        .select_from(entered)
-        .join(Deal, Deal.id == entered.c.deal_id)
+        .select_from(hist)
+        .join(Deal, Deal.id == hist.c.deal_id)
         .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
         .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
-        .where(Deal.deleted_at.is_(None))
+        .where(
+            hist.c.from_stage == from_stage,
+            hist.c.to_stage == to_stage,
+            hist.c.moved_at >= p.start,
+            hist.c.moved_at < p.end,
+            Deal.deleted_at.is_(None),
+            Deal.pipeline_type == "deal",
+        )
     )
-    if to_stage:
-        reached = (
-            select(
-                DealStageHistory.deal_id.label("deal_id"),
-                func.min(DealStageHistory.changed_at).label("to_at"),
-            )
-            .where(DealStageHistory.to_stage == to_stage)
-            .group_by(DealStageHistory.deal_id)
-            .subquery()
-        )
-        stmt = stmt.outerjoin(reached, reached.c.deal_id == entered.c.deal_id).where(
-            or_(reached.c.to_at.is_(None), reached.c.to_at >= entered.c.from_at)
-        )
     if rep_uuid:
         stmt = stmt.where(Deal.assigned_to_id == rep_uuid)
     rows = (await session.execute(stmt)).all()
@@ -455,10 +462,279 @@ async def get_funnel_transition_deals(
             deal_id=str(r.deal_id),
             deal_name=r.name,
             amount=float(r.value) if r.value else None,
-            stage_entered_at=r.from_at.isoformat() if r.from_at else None,
+            stage_entered_at=r.entered_from_at.isoformat() if r.entered_from_at else None,
             ae_name=r.ae_name,
             sdr_name=r.sdr_name,
-            stage=r.stage,
+            move_from_stage=from_stage,
+            move_to_stage=to_stage,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/funnel-transition-deals", response_model=list[RedAlertDeal])
+async def get_funnel_transition_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    from_stage: Annotated[str, Query(description="Row's from_stage, e.g. 'demo_scheduled' — ignored when is_overall is true")],
+    to_stage: Annotated[Optional[str], Query(description="Row's to_stage, e.g. 'demo_done' — ignored when is_overall is true")] = None,
+    is_overall: Annotated[bool, Query(description="Pool every configured transition's moves into one list, for the Overall row")] = False,
+    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+    rep_id: Annotated[Optional[UUID], Query()] = None,
+):
+    """The exact deals behind a Funnel "Stage conversion" row's Deals count —
+    those that made that row's literal, direct from_stage -> to_stage move
+    during the period. Unlike /pipeline-stage-deals (every deal currently
+    sitting in a stage), this is a historical count of moves, not a live
+    snapshot. `is_overall=true` pools the moves from every configured
+    transition into one list (mirroring the Overall row's rollup in
+    /funnel), since that row no longer represents a single from/to pair.
+    """
+    settings = await get_analytics_settings(session)
+    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    rep = await _resolve_rep(session, current_user, rep_id)
+    rep_uuid = rep.id if rep else None
+
+    if is_overall:
+        transitions = settings.get("conversion_transitions", [])
+        deals: list[RedAlertDeal] = []
+        for t in transitions:
+            deals.extend(await _stage_move_deals(session, p, t["from"], t["to"], rep_uuid))
+        return deals
+
+    if not to_stage:
+        raise HTTPException(status_code=422, detail="to_stage is required unless is_overall=true")
+    return await _stage_move_deals(session, p, from_stage, to_stage, rep_uuid)
+
+
+# ── Open deals by Close Date (Forecast tab) ──────────────────────────────────
+#
+# Deal.close_date is the rep-set field a rep fills in manually on a deal —
+# genuinely separate from close_date_est ("Date of Meeting"). This section
+# answers "what's open right now that's expected to close in this window,"
+# grouped either by current stage or by owning rep.
+
+
+class CloseDateBucket(BaseModel):
+    key: str
+    label: str
+    color: Optional[str] = None
+    amount: float
+    deal_count: int
+
+
+class CloseDateOwnerRow(BaseModel):
+    key: str
+    label: str
+    amount: float
+    deal_count: int
+    # Per-stage breakdown of this rep's total — same stage colors as
+    # Pipeline Health's By Rep chart, so a segmented bar reads consistently
+    # across both tabs.
+    stages: list[CloseDateBucket]
+
+
+CloseDatePeriod = Literal["week", "month", "quarter", "overall"]
+
+
+class CloseDateBucketsResponse(BaseModel):
+    period_label: str
+    # None for period="overall" — there is no single window to report.
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    by_stage: list[CloseDateBucket]
+    by_rep: list[CloseDateOwnerRow]
+
+
+async def _open_close_date_deal_rows(
+    session: DBSession,
+    p,
+    rep_uuid: Optional[UUID],
+):
+    """Every open (not closed/parked) deal with a Close Date — bounded to
+    `p`'s window, or unbounded when `p` is None ("overall": every deal with
+    a Close Date, whenever it falls). Shared by the chart buckets and the
+    drilldown so the two can never disagree.
+    """
+    from sqlalchemy.orm import aliased
+
+    from app.models.deal import Deal
+    from app.services.deal_stages import get_configured_deal_stages
+
+    stage_settings = await get_configured_deal_stages(session)
+    stage_map = {s["id"]: s for s in stage_settings}
+    open_stage_ids = [s["id"] for s in stage_settings if s.get("group") != "closed"]
+
+    AeUser = aliased(User)
+    SdrUser = aliased(User)
+    stmt = (
+        select(
+            Deal.id,
+            Deal.name,
+            Deal.value,
+            Deal.stage,
+            Deal.stage_entered_at,
+            Deal.close_date,
+            Deal.assigned_to_id,
+            AeUser.name.label("ae_name"),
+            AeUser.role.label("ae_role"),
+            SdrUser.name.label("sdr_name"),
+        )
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
+        .where(
+            Deal.pipeline_type == "deal",
+            Deal.deleted_at.is_(None),
+            Deal.stage.in_(open_stage_ids) if open_stage_ids else Deal.id.is_(None),
+            Deal.close_date.isnot(None),
+        )
+    )
+    if p is not None:
+        stmt = stmt.where(Deal.close_date >= p.start.date(), Deal.close_date < p.end.date())
+    if rep_uuid:
+        stmt = stmt.where(Deal.assigned_to_id == rep_uuid)
+    rows = (await session.execute(stmt)).all()
+    return rows, stage_map
+
+
+def _resolve_close_date_period(period: CloseDatePeriod, anchor: Optional[date], tz_name: Optional[str]):
+    """None means "overall" — every deal with a Close Date, no window."""
+    if period == "overall":
+        return None, "All time"
+    p = pm.resolve_period(period, anchor=anchor, tz_name=tz_name)
+    return p, p.label
+
+
+@router.get("/close-date-buckets", response_model=CloseDateBucketsResponse)
+async def get_close_date_buckets(
+    session: DBSession,
+    current_user: CurrentUser,
+    period: Annotated[CloseDatePeriod, Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+    rep_id: Annotated[Optional[UUID], Query()] = None,
+):
+    """Open Deals by Close Date — every live, open deal with a Close Date
+    inside the period (or, for period="overall", ever), summed by current
+    stage and by owning AE. Backs the Forecast tab's chart (toggle: By
+    Stage / By Rep).
+    """
+    settings = await get_analytics_settings(session)
+    p, period_label = _resolve_close_date_period(period, anchor, settings.get("workspace_timezone"))
+    rep = await _resolve_rep(session, current_user, rep_id)
+    rep_uuid = rep.id if rep else None
+
+    rows, stage_map = await _open_close_date_deal_rows(session, p, rep_uuid)
+    stage_order = {sid: i for i, sid in enumerate(stage_map.keys())}
+
+    # By Stage is a fixed, curated subset — not "every open stage" — in this
+    # exact top-to-bottom order. Reprospect, Marketing Lead (MQL), Demo
+    # Scheduled and Demo Done are excluded entirely (they don't represent
+    # forecastable near-close pipeline the way these six do).
+    BY_STAGE_ORDER = [
+        "msa_review", "commercial_negotiation", "poc_done",
+        "poc_wip", "poc_agreed", "qualified_lead",
+    ]
+    by_stage_order_index = {sid: i for i, sid in enumerate(BY_STAGE_ORDER)}
+
+    by_stage: dict[str, dict] = {}
+    by_rep: dict[str, dict] = {}
+    for r in rows:
+        amount = float(r.value or 0)
+        stage_info = stage_map.get(r.stage, {})
+
+        if r.stage in by_stage_order_index:
+            sb = by_stage.setdefault(
+                r.stage,
+                {"key": r.stage, "label": stage_info.get("label", r.stage), "color": stage_info.get("color"), "amount": 0.0, "deal_count": 0},
+            )
+            sb["amount"] += amount
+            sb["deal_count"] += 1
+
+        # SDRs are excluded — a deal can end up owned by an SDR (a stray
+        # assignment, a test deal) and that shouldn't put an SDR bar in a
+        # chart whose whole point is deal-owner forecast visibility. Admins
+        # who legitimately own a deal (e.g. Shahruk) still show.
+        if r.assigned_to_id and r.ae_role != "sdr":
+            rep_key = str(r.assigned_to_id)
+            rb = by_rep.setdefault(
+                rep_key,
+                {"key": rep_key, "label": r.ae_name or "Unassigned", "amount": 0.0, "deal_count": 0, "stages": {}},
+            )
+            rb["amount"] += amount
+            rb["deal_count"] += 1
+            rseg = rb["stages"].setdefault(
+                r.stage,
+                {"key": r.stage, "label": stage_info.get("label", r.stage), "color": stage_info.get("color"), "amount": 0.0, "deal_count": 0},
+            )
+            rseg["amount"] += amount
+            rseg["deal_count"] += 1
+
+    # Every one of the six curated stages gets a row — even $0 / no deals
+    # this period — so the fixed order never shifts based on what happens to
+    # have pipeline this window.
+    for stage_id in BY_STAGE_ORDER:
+        stage_info = stage_map.get(stage_id, {})
+        by_stage.setdefault(
+            stage_id,
+            {"key": stage_id, "label": stage_info.get("label", stage_id), "color": stage_info.get("color"), "amount": 0.0, "deal_count": 0},
+        )
+
+    # Every active AE gets a row too, even $0 / no deals this period — an AE
+    # whose whole pipeline happens to close outside the selected window (e.g.
+    # this week) would otherwise vanish from "By Rep" entirely instead of
+    # reading as "nothing closing this window."
+    ae_stmt = select(User.id, User.name).where(User.is_active == True, User.role == "ae")  # noqa: E712
+    if rep_uuid:
+        ae_stmt = ae_stmt.where(User.id == rep_uuid)
+    ae_rows = (await session.execute(ae_stmt)).all()
+    for ae_id, ae_name in ae_rows:
+        by_rep.setdefault(
+            str(ae_id),
+            {"key": str(ae_id), "label": ae_name, "amount": 0.0, "deal_count": 0, "stages": {}},
+        )
+
+    for rb in by_rep.values():
+        rb["stages"] = sorted(rb["stages"].values(), key=lambda s: stage_order.get(s["key"], 999))
+
+    return CloseDateBucketsResponse(
+        period_label=period_label,
+        period_start=p.start if p else None,
+        period_end=p.end if p else None,
+        by_stage=[CloseDateBucket(**b) for b in sorted(by_stage.values(), key=lambda x: by_stage_order_index.get(x["key"], 999))],
+        by_rep=[CloseDateOwnerRow(**b) for b in sorted(by_rep.values(), key=lambda x: x["amount"], reverse=True)],
+    )
+
+
+@router.get("/close-date-deals", response_model=list[RedAlertDeal])
+async def get_close_date_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    stage: Annotated[Optional[str], Query(description="Narrow to one stage — a By Stage bar click")] = None,
+    period: Annotated[CloseDatePeriod, Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+    rep_id: Annotated[Optional[UUID], Query(description="Narrow to one AE — either the panel's rep filter, or a By Rep bar click")] = None,
+):
+    """The exact deals behind one Open Deals by Close Date bar."""
+    settings = await get_analytics_settings(session)
+    p, _ = _resolve_close_date_period(period, anchor, settings.get("workspace_timezone"))
+    rep = await _resolve_rep(session, current_user, rep_id)
+    rep_uuid = rep.id if rep else None
+
+    rows, _ = await _open_close_date_deal_rows(session, p, rep_uuid)
+    if stage:
+        rows = [r for r in rows if r.stage == stage]
+
+    return [
+        RedAlertDeal(
+            deal_id=str(r.id),
+            deal_name=r.name,
+            amount=float(r.value) if r.value else None,
+            stage_entered_at=r.stage_entered_at.isoformat() if r.stage_entered_at else None,
+            ae_name=r.ae_name,
+            sdr_name=r.sdr_name,
+            close_date=r.close_date.isoformat() if r.close_date else None,
         )
         for r in rows
     ]
@@ -726,116 +1002,6 @@ async def get_pipeline_buckets(session: DBSession, current_user: CurrentUser):
         small_avg_deals=bucket2_deals,
     )
 
-
-# ── Forecast ─────────────────────────────────────────────────────────────────
-
-
-class ForecastCategoryBucket(BaseModel):
-    category: str  # booked | commit | best | pipeline
-    deal_count: int
-    acv: float
-    weighted_acv: float
-
-
-class ForecastResponse(BaseModel):
-    period_label: str
-    quota: Optional[float]
-    commit_number: float
-    best_case_number: float
-    weighted_pipeline: float
-    gap_to_quota: Optional[float]
-    buckets: list[ForecastCategoryBucket]
-
-
-@router.get("/forecast", response_model=ForecastResponse)
-async def get_forecast(
-    session: DBSession,
-    current_user: CurrentUser,
-    period: Annotated[Literal["month", "quarter"], Query()] = "quarter",
-    anchor: Annotated[Optional[date], Query()] = None,
-    rep_id: Annotated[Optional[UUID], Query()] = None,
-    quota: Annotated[Optional[float], Query()] = None,
-):
-    from app.models.deal import Deal
-    from app.models.deal_stage_history import DealStageHistory
-    from sqlalchemy import func, select
-
-    rep = await _resolve_rep(session, current_user, rep_id)
-    rep_uuid = rep.id if rep else None
-    settings = await get_analytics_settings(session)
-    probs = settings.get("stage_probabilities", {})
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
-
-    # Booked (closed_won in period)
-    booked_stmt = (
-        select(func.count(distinct(DealStageHistory.deal_id)), func.coalesce(func.sum(Deal.value), 0))
-        .select_from(DealStageHistory)
-        .join(Deal, Deal.id == DealStageHistory.deal_id)
-        .where(
-            DealStageHistory.to_stage == "closed_won",
-            DealStageHistory.changed_at >= p.start,
-            DealStageHistory.changed_at < p.end,
-        )
-    )
-    if rep_uuid:
-        booked_stmt = booked_stmt.where(Deal.assigned_to_id == rep_uuid)
-    booked_count, booked_acv = (await session.execute(booked_stmt)).one()
-    booked_acv = float(booked_acv or 0)
-
-    # Open deals expected to close in period.
-    open_stmt = select(
-        Deal.id, Deal.stage, Deal.value, Deal.commit_to_deal, Deal.close_date_est
-    ).where(
-        Deal.pipeline_type == "deal",
-        Deal.stage.not_in(["closed_won", "closed_lost", "not_a_fit", "churned", "closed"]),
-        Deal.close_date_est >= p.start.date(),
-        Deal.close_date_est < p.end.date(),
-    )
-    if rep_uuid:
-        open_stmt = open_stmt.where(Deal.assigned_to_id == rep_uuid)
-    open_rows = (await session.execute(open_stmt)).all()
-
-    commit_count = commit_acv = 0.0
-    best_count = best_acv = 0.0
-    pipe_count = pipe_acv = 0.0
-    weighted_total = 0.0
-    for r in open_rows:
-        v = float(r.value or 0)
-        prob = probs.get(r.stage, 0.0)
-        weighted_total += v * prob
-        if r.commit_to_deal:
-            commit_count += 1
-            commit_acv += v
-        elif prob >= 0.5:  # default "best" if prob ≥ 50%
-            best_count += 1
-            best_acv += v
-        else:
-            pipe_count += 1
-            pipe_acv += v
-
-    commit_number = commit_acv + booked_acv
-    best_case_number = commit_number + best_acv
-
-    buckets = [
-        ForecastCategoryBucket(category="booked", deal_count=booked_count or 0, acv=booked_acv, weighted_acv=booked_acv),
-        ForecastCategoryBucket(category="commit", deal_count=int(commit_count), acv=commit_acv, weighted_acv=commit_acv * 1.0),
-        ForecastCategoryBucket(category="best", deal_count=int(best_count), acv=best_acv, weighted_acv=best_acv * 0.5),
-        ForecastCategoryBucket(category="pipeline", deal_count=int(pipe_count), acv=pipe_acv, weighted_acv=pipe_acv * 0.15),
-    ]
-
-    gap = None
-    if quota is not None:
-        gap = quota - commit_number
-
-    return ForecastResponse(
-        period_label=p.label,
-        quota=quota,
-        commit_number=commit_number,
-        best_case_number=best_case_number,
-        weighted_pipeline=booked_acv + weighted_total,
-        gap_to_quota=gap,
-        buckets=buckets,
-    )
 
 
 # ── Leaderboards ─────────────────────────────────────────────────────────────

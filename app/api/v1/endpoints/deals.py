@@ -374,6 +374,18 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
             await reconcile_deal_stakeholders(session, deal, create_from_signals=False)
         except Exception:
             logger.exception("deal create: stakeholder link failed for %s", deal.id)
+        # A contact whose status pill was set to "Meeting Booked" before this
+        # account had any deal never got promoted to Meeting Contact —
+        # link_contact_as_meeting_booked only links deals that exist at save
+        # time. Catch those up now that a deal finally exists. See
+        # disposition_effects.backfill_meeting_booked_contacts_for_new_deal.
+        try:
+            from app.services.disposition_effects import backfill_meeting_booked_contacts_for_new_deal
+            await backfill_meeting_booked_contacts_for_new_deal(
+                session, deal_id=deal.id, company_id=deal.company_id,
+            )
+        except Exception:
+            logger.exception("deal create: meeting-booked contact backfill failed for %s", deal.id)
         # A rep who logs a meeting-booked call and then manually creates the
         # deal (rather than accepting the bell notification) leaves that call
         # Activity's deal_id NULL forever — see

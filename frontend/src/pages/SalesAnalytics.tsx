@@ -2767,6 +2767,7 @@ function TabStrip({ active, search = "" }: { active: string; search?: string }) 
         width: "fit-content",
         maxWidth: "100%",
         overflowX: "auto",
+        margin: "0 auto",
       }}
     >
       {ALL_TABS.map((t) => {

@@ -12,7 +12,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   LabelList,
   Legend,
   PolarAngleAxis,
@@ -49,7 +48,6 @@ import {
   type RedAlertDeal,
   type PipelineBucketDeal,
   type PipelineBucketsResponse,
-  type ForecastResponse,
   type FunnelResponse,
   type LeaderboardResponse,
   type RepSummary,
@@ -64,6 +62,9 @@ import {
   type IncentiveResponse,
   type IncentiveDealRow,
   type IncentiveDealsResponse,
+  type CloseDateBucket,
+  type CloseDateOwnerRow,
+  type CloseDateBucketsResponse,
 } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 
@@ -691,7 +692,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     setStageDealsLoading(true);
     setStageDealsError(null);
     performanceApi
-      .getFunnelTransitionDeals({ fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, period, repId })
+      .getFunnelTransitionDeals({ fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, isOverall: stageDealsQuery.isOverall, period, repId })
       .then((payload) => {
         if (!cancelled) setStageDealsData(payload);
       })
@@ -798,8 +799,8 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
                         key={`${row.from_stage}-${row.to_stage}-${overall ? "overall" : idx}`}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — entered this period" : `Entered ${prettyStage(row.from_stage)}`, isOverall: overall })}
-                        onKeyDown={(e) => e.key === "Enter" && setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — entered this period" : `Entered ${prettyStage(row.from_stage)}`, isOverall: overall })}
+                        onClick={() => setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — every stage move this period" : `Entered ${prettyStage(row.to_stage)}`, isOverall: overall })}
+                        onKeyDown={(e) => e.key === "Enter" && setStageDealsQuery({ stage: row.from_stage, toStage: row.to_stage, label: overall ? "Overall funnel — every stage move this period" : `Entered ${prettyStage(row.to_stage)}`, isOverall: overall })}
                         style={{ cursor: "pointer", background: overall ? "#f7f4fd" : idx % 2 === 1 ? "#fafaf8" : "#fff" }}
                       >
                         <td style={{ padding: "11px 14px", borderBottom: rowBorder }}>
@@ -861,8 +862,9 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
               </table>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: PALETTE.subtle }}>
-              Conversion reflects deals that entered the "from" stage during this period. Historical transitions
-              before the stage-history backfill are not counted.
+              Deals counts the literal, direct "from" → "to" move made during this period. Conversion % is that
+              count divided by how many deals were already sitting in the "from" stage when the period began.
+              Historical transitions before the stage-history backfill are not counted.
             </p>
           </Panel>
         </div>
@@ -875,7 +877,6 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
           loading={stageDealsLoading}
           error={stageDealsError}
           showStageEntered={stageDealsQuery.isOverall}
-          enteredStageLabel={prettyStage(stageDealsQuery.stage)}
           onClose={() => {
             setStageDealsQuery(null);
             setStageDealsData([]);
@@ -1032,6 +1033,90 @@ function PipelineOwnerChart({ rows, onSelectSegment }: { rows: SalesPipelineOwne
   );
 }
 
+// ── Open Deals by Close Date chart (Forecast tab) ──────────────────────────
+// Same horizontal-bar structure as Pipeline by Stage, in a distinct blue
+// palette so the two charts read as different views at a glance.
+
+const CHART_FORECAST = {
+  bar: "#a9c2f5",
+  grid: "#eef2f8",
+  axis: "#7d8ea3",
+};
+
+function CloseDateBarChart({ rows, onSelectBar }: { rows: CloseDateBucket[]; onSelectBar?: (key: string, label: string) => void }) {
+  const chartData = useMemo(
+    () => rows.map((r) => ({ key: r.key, label: r.label, amount: r.amount, deal_count: r.deal_count })),
+    [rows],
+  );
+  if (rows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No open deals with a Close Date in this period.</p>;
+  const height = rows.length * 52 + 44;
+  return (
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart layout="vertical" data={chartData} margin={{ top: 8, right: 56, bottom: 0, left: 4 }} barGap={2}>
+          <CartesianGrid horizontal={false} stroke={CHART_FORECAST.grid} />
+          <XAxis type="number" tick={{ fill: CHART_FORECAST.axis, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtShortCurrency(Number(v))} />
+          <YAxis type="category" dataKey="label" tick={{ fill: "#46586d", fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} width={132} />
+          <Tooltip content={<PipelineCurrencyTooltip />} cursor={{ fill: "rgba(79,109,223,0.06)" }} />
+          <Bar
+            dataKey="amount"
+            name="Open"
+            fill={CHART_FORECAST.bar}
+            radius={[0, 6, 6, 0]}
+            maxBarSize={16}
+            cursor={onSelectBar ? "pointer" : undefined}
+            onClick={(point: { key?: string; label?: string; payload?: { key?: string; label?: string } }) => {
+              const key = point?.key ?? point?.payload?.key;
+              const label = point?.label ?? point?.payload?.label;
+              if (onSelectBar && key) onSelectBar(key, label ?? key);
+            }}
+          >
+            <LabelList dataKey="amount" position="right" formatter={(v: number) => fmtShortCurrency(Number(v))} fill="#46586d" fontSize={11} fontWeight={700} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// By Rep view — a segmented bar per rep, each segment colored by stage
+// (same stage colors as Pipeline Health's By Rep chart), matching that
+// chart's structure exactly.
+function CloseDateOwnerChart({ rows, onSelectSegment }: { rows: CloseDateOwnerRow[]; onSelectSegment?: (stageKey: string, stageLabel: string, repKey: string, repLabel: string) => void }) {
+  if (rows.length === 0) return <p style={{ margin: 0, color: PALETTE.muted }}>No open deals with a Close Date in this period.</p>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {rows.map((row) => (
+        <div key={row.key} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1fr) minmax(180px, 3fr) auto", gap: 12, alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#213547", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#76879b" }}>{row.deal_count} deals</p>
+          </div>
+          <div style={{ height: 16, borderRadius: 999, background: "#eef2f8", overflow: "hidden", display: "flex" }}>
+            {row.stages.map((stage) => {
+              const width = row.amount > 0 ? `${(stage.amount / row.amount) * 100}%` : "0%";
+              const clickable = Boolean(onSelectSegment);
+              return (
+                <div
+                  key={stage.key}
+                  title={`${stage.label}: ${fmtShortCurrency(stage.amount)}`}
+                  onClick={() => {
+                    if (onSelectSegment) onSelectSegment(stage.key, stage.label, row.key, row.label);
+                  }}
+                  style={{ width, background: stage.color ?? CHART_FORECAST.bar, minWidth: stage.amount > 0 ? 8 : 0, cursor: clickable ? "pointer" : undefined }}
+                />
+              );
+            })}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#203244" }}>{fmtShortCurrency(row.amount)}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Helpers (local to this file) ──────────────────────────────────────────
 
 function fmtCurrency(val: number | null | undefined): string {
@@ -1078,7 +1163,7 @@ function RedAlertModal({
   loading,
   error,
   showStageEntered,
-  enteredStageLabel,
+  showCloseDate,
 }: {
   label: string;
   deals: RedAlertDeal[];
@@ -1087,14 +1172,17 @@ function RedAlertModal({
   // Deal Health tiles pass already-loaded data, so both default to unset.
   loading?: boolean;
   error?: string | null;
-  // The Funnel "Overall" row spans every stage, so unlike a single-step row
-  // its deals can currently sit anywhere in the pipeline — worth its own
-  // column there. Other callers of this shared modal leave it unset.
+  // The Funnel "Overall" row pools moves from every step of the funnel, so
+  // unlike a single-step row each deal here made a different from/to move —
+  // worth its own column there. Other callers of this shared modal leave it
+  // unset.
   showStageEntered?: boolean;
-  // Pretty label for the stage this deal-list's "entered" filter matched
-  // (e.g. "Reprospect") — shown as the left side of "Entered -> Current".
-  enteredStageLabel?: string;
+  // Forecast tab's Open Deals by Close Date click-through — adds a Close
+  // Date column. Mutually exclusive with showStageEntered in practice (no
+  // caller sets both).
+  showCloseDate?: boolean;
 }) {
+  const extraColumn = showStageEntered || showCloseDate;
   const total = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
   return (
     <div
@@ -1133,10 +1221,14 @@ function RedAlertModal({
                 onClick={() => dlCsv(
                   label.toLowerCase().replace(/\s+/g, "-"),
                   showStageEntered
-                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Stage Entered"]
+                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Stage Move"]
+                    : showCloseDate
+                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Close Date"]
                     : ["Deal", "AE", "SDR", "Days in Stage", "Amount"],
                   deals.map((d) => showStageEntered
-                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", `${enteredStageLabel ?? "—"} -> ${d.stage ? prettyStage(d.stage) : "—"}`]
+                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", `${d.move_from_stage ? prettyStage(d.move_from_stage) : "—"} -> ${d.move_to_stage ? prettyStage(d.move_to_stage) : "—"}`]
+                    : showCloseDate
+                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", d.close_date ? fmtDate(d.close_date) : ""]
                     : [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? ""]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
@@ -1162,7 +1254,9 @@ function RedAlertModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 {(showStageEntered
-                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Stage Entered"]
+                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Stage Move"]
+                  : showCloseDate
+                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Close Date"]
                   : ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount"]
                 ).map((h, i) => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: i === 4 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
@@ -1179,13 +1273,18 @@ function RedAlertModal({
                   <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
                   {showStageEntered && (
                     <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {enteredStageLabel ?? "—"} <span style={{ color: PALETTE.subtle }}>→</span> {d.stage ? prettyStage(d.stage) : "—"}
+                      {d.move_from_stage ? prettyStage(d.move_from_stage) : "—"} <span style={{ color: PALETTE.subtle }}>→</span> {d.move_to_stage ? prettyStage(d.move_to_stage) : "—"}
+                    </td>
+                  )}
+                  {showCloseDate && (
+                    <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {d.close_date ? fmtDate(d.close_date) : "—"}
                     </td>
                   )}
                 </tr>
               ))}
               {deals.length === 0 && (
-                <tr><td colSpan={showStageEntered ? 6 : 5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                <tr><td colSpan={extraColumn ? 6 : 5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
               )}
             </tbody>
           </table>
@@ -1589,251 +1688,139 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
 
 export function ForecastTab({ reps }: { reps: RepSummary[] }) {
   const { isAdmin } = useAuth();
-  const [period, setPeriod] = useState<"month" | "quarter">("quarter");
-  const [repId, setRepId] = useState<string | undefined>(undefined);
-  const [quotaStr, setQuotaStr] = useState<string>("");
-  const [data, setData] = useState<ForecastResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  // Open Deals by Close Date — its own period/rep controls (this chart
+  // supports Week, unlike the Commit/Best-Case panel below), independent
+  // state so the two panels never fight over what they mean by "period".
+  const [cdPeriod, setCdPeriod] = useState<"week" | "month" | "quarter" | "overall">("month");
+  const [cdRepId, setCdRepId] = useState<string | undefined>(undefined);
+  const [cdView, setCdView] = useState<"stage" | "rep">("stage");
+  const [cdBuckets, setCdBuckets] = useState<CloseDateBucketsResponse | null>(null);
+  const [cdLoading, setCdLoading] = useState(true);
+  const [cdError, setCdError] = useState<string | null>(null);
+  const [cdDealsQuery, setCdDealsQuery] = useState<{ stage?: string; repId?: string; label: string } | null>(null);
+  const [cdDealsData, setCdDealsData] = useState<RedAlertDeal[]>([]);
+  const [cdDealsLoading, setCdDealsLoading] = useState(false);
+  const [cdDealsError, setCdDealsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    const quotaNum = quotaStr.trim() ? Number(quotaStr) : undefined;
+    setCdLoading(true);
+    setCdError(null);
     performanceApi
-      .getForecast({ period, rep_id: repId, quota: quotaNum })
+      .getCloseDateBuckets({ period: cdPeriod, repId: cdRepId })
       .then((payload) => {
-        if (!cancelled) setData(payload);
+        if (!cancelled) setCdBuckets(payload);
       })
       .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
+        if (!cancelled) setCdError(e.message);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setCdLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [period, repId, quotaStr]);
+  }, [cdPeriod, cdRepId]);
 
-  const bucketColors: Record<string, string> = {
-    booked: "#2b8a5d",
-    commit: "#4261d6",
-    best: "#d08e22",
-    pipeline: "#8b9db2",
-  };
+  useEffect(() => {
+    if (!cdDealsQuery) return;
+    let cancelled = false;
+    setCdDealsLoading(true);
+    setCdDealsError(null);
+    performanceApi
+      .getCloseDateDeals({ stage: cdDealsQuery.stage, repId: cdDealsQuery.repId, period: cdPeriod })
+      .then((payload) => {
+        if (!cancelled) setCdDealsData(payload);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setCdDealsError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setCdDealsLoading(false);
+      });
 
-  const chartData = useMemo(
-    () =>
-      (data?.buckets ?? []).map((b) => ({
-        name: b.category.charAt(0).toUpperCase() + b.category.slice(1),
-        ACV: b.acv,
-        Weighted: b.weighted_acv,
-        color: bucketColors[b.category] ?? PALETTE.subtle,
-      })),
-    [data],
-  );
-
-  const commit = data?.commit_number ?? 0;
-  const best = data?.best_case_number ?? 0;
-  const weighted = data?.weighted_pipeline ?? 0;
-  const quota = data?.quota ?? null;
-  const attainment = quota ? Math.min(1.2, commit / quota) : 0;
-  const attainmentPct = Math.round(attainment * 100);
+    return () => {
+      cancelled = true;
+    };
+  }, [cdDealsQuery, cdPeriod]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <Panel
-        title="Forecast"
-        subtitle="Commit and best-case revenue visibility against an optional quota. Deals counted by expected close date inside the period."
+        title="Open Deals by Close Date"
+        subtitle="Live open pipeline whose Close Date falls inside the selected period."
         action={
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            {isAdmin && <RepPicker reps={reps} value={repId} onChange={setRepId} />}
-            <input
-              placeholder="Quota $"
-              inputMode="numeric"
-              value={quotaStr}
-              onChange={(e) => setQuotaStr(e.target.value)}
-              style={{
-                height: 36,
-                width: 130,
-                padding: "0 12px",
-                borderRadius: 10,
-                border: `1px solid ${PALETTE.hairline}`,
-                background: "#fff",
-                fontSize: 13,
-                color: PALETTE.text,
-                outline: "none",
-              }}
-            />
+            {isAdmin && <RepPicker reps={reps} value={cdRepId} onChange={setCdRepId} />}
+            <div style={{ display: "inline-flex", borderRadius: 999, border: "1px solid #dde6f0", background: "#f8fafc", padding: 4 }}>
+              {(["stage", "rep"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setCdView(v)}
+                  style={{
+                    height: 34, padding: "0 12px", borderRadius: 999, border: "none",
+                    background: cdView === v ? "#fff" : "transparent",
+                    color: cdView === v ? "#2948b9" : "#5d6f84",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    boxShadow: cdView === v ? "0 1px 6px rgba(32,53,84,0.08)" : "none",
+                  }}
+                >
+                  {v === "stage" ? "By Stage" : "By Rep"}
+                </button>
+              ))}
+            </div>
             <SegmentedControl
-              value={period}
-              onChange={setPeriod}
+              value={cdPeriod}
+              onChange={setCdPeriod}
               options={[
+                { value: "week", label: "Week" },
                 { value: "month", label: "Month" },
                 { value: "quarter", label: "Quarter" },
+                { value: "overall", label: "Overall" },
               ]}
             />
           </div>
         }
       >
-        {data && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
-            <ForecastStat label="Commit" value={fmtMoney(commit)} hint="Booked + committed deals" color={bucketColors.commit} />
-            <ForecastStat label="Best case" value={fmtMoney(best)} hint="Commit + best-case deals" color={bucketColors.best} />
-            <ForecastStat label="Weighted pipeline" value={fmtMoney(weighted)} hint="Σ (ACV × stage probability)" color={PALETTE.subtle} />
-          </div>
+        {cdError && <ErrorBanner message={cdError} />}
+        {cdLoading && !cdBuckets ? (
+          <Loading />
+        ) : (
+          cdBuckets && (
+            cdView === "stage" ? (
+              <CloseDateBarChart
+                rows={cdBuckets.by_stage}
+                onSelectBar={(key, label) => setCdDealsQuery({ stage: key, repId: cdRepId, label: `Close Date — ${label}` })}
+              />
+            ) : (
+              <CloseDateOwnerChart
+                rows={cdBuckets.by_rep.filter((r) => r.key !== "unassigned")}
+                onSelectSegment={(stageKey, stageLabel, repKey, repLabel) =>
+                  setCdDealsQuery({ stage: stageKey, repId: repKey, label: `Close Date — ${stageLabel} — ${repLabel}` })
+                }
+              />
+            )
+          )
         )}
       </Panel>
 
-      {error && <ErrorBanner message={error} />}
-      {loading && !data && <Loading />}
-
-      {data && (
-        <>
-          {quota != null && (
-            <Panel title="Quota attainment" subtitle={`${data.period_label} · commit vs. quota`}>
-              <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-                <div style={{ width: 160, height: 160, position: "relative", flexShrink: 0 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadialBarChart
-                      innerRadius="68%"
-                      outerRadius="100%"
-                      data={[{ name: "q", value: attainmentPct, fill: attainment >= 1 ? bucketColors.booked : bucketColors.commit }]}
-                      startAngle={90}
-                      endAngle={-270}
-                    >
-                      <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
-                      <RadialBar background={{ fill: "#f1f5fa" }} dataKey="value" cornerRadius={10} />
-                    </RadialBarChart>
-                  </ResponsiveContainer>
-                  <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 28, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>{attainmentPct}%</div>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: PALETTE.subtle, textTransform: "uppercase", marginTop: 4, letterSpacing: "0.1em" }}>to quota</div>
-                    </div>
-                  </div>
-                </div>
-                <div style={{ flex: 1, minWidth: 220, display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: PALETTE.muted }}>
-                    <span>Commit</span>
-                    <span style={{ fontWeight: 800, color: PALETTE.text }}>{fmtMoney(commit)}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: PALETTE.muted }}>
-                    <span>Quota</span>
-                    <span style={{ fontWeight: 800, color: PALETTE.text }}>{fmtMoney(quota)}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: PALETTE.muted, borderTop: `1px solid ${PALETTE.hairline}`, paddingTop: 8 }}>
-                    <span>Gap</span>
-                    <span style={{ fontWeight: 800, color: (data.gap_to_quota ?? 0) <= 0 ? PALETTE.tintGreenText : PALETTE.tintRedText }}>
-                      {fmtMoney(data.gap_to_quota ?? 0)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Panel>
-          )}
-
-          <Panel title="Forecast breakdown" subtitle={`ACV and weighted contribution per category · ${data.period_label}`}>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: PALETTE.hairline }} tick={{ fontSize: 12, fill: PALETTE.muted }} />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 11, fill: PALETTE.subtle }}
-                    tickFormatter={(v) => fmtMoney(v as number)}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "rgba(67, 97, 214, 0.05)" }}
-                    contentStyle={{
-                      border: `1px solid ${PALETTE.hairline}`,
-                      borderRadius: 10,
-                      fontSize: 12,
-                      boxShadow: "0 12px 28px rgba(23,43,77,0.12)",
-                    }}
-                    formatter={(v: number) => fmtMoney(v)}
-                  />
-                  <Bar dataKey="ACV" radius={[8, 8, 0, 0]}>
-                    {chartData.map((entry, i) => (
-                      <Cell key={i} fill={entry.color} />
-                    ))}
-                  </Bar>
-                  <Bar dataKey="Weighted" radius={[8, 8, 0, 0]} fill="#dfe8f5" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ textAlign: "left", color: PALETTE.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  <th style={{ padding: "10px 8px", fontWeight: 700 }}>Category</th>
-                  <th style={{ padding: "10px 8px", fontWeight: 700, textAlign: "right" }}>Deals</th>
-                  <th style={{ padding: "10px 8px", fontWeight: 700, textAlign: "right" }}>ACV</th>
-                  <th style={{ padding: "10px 8px", fontWeight: 700, textAlign: "right" }}>Weighted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.buckets.map((b) => (
-                  <tr key={b.category} style={{ borderTop: `1px solid ${PALETTE.hairline}` }}>
-                    <td style={{ padding: "12px 8px" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <span
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: 999,
-                            background: bucketColors[b.category] ?? PALETTE.subtle,
-                          }}
-                        />
-                        <span style={{ textTransform: "capitalize", fontWeight: 700, color: PALETTE.text }}>{b.category}</span>
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.deal_count}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtMoney(b.acv)}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: PALETTE.muted }}>{fmtMoney(b.weighted_acv)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
-        </>
+      {cdDealsQuery && (
+        <RedAlertModal
+          label={cdDealsQuery.label}
+          deals={cdDealsData}
+          loading={cdDealsLoading}
+          error={cdDealsError}
+          showCloseDate
+          onClose={() => {
+            setCdDealsQuery(null);
+            setCdDealsData([]);
+            setCdDealsError(null);
+          }}
+        />
       )}
-    </div>
-  );
-}
-
-function ForecastStat({
-  label,
-  value,
-  hint,
-  color,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  color: string;
-}) {
-  return (
-    <div
-      style={{
-        padding: 18,
-        borderRadius: 16,
-        border: `1px solid ${PALETTE.hairline}`,
-        background: "#fff",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
-        <span style={{ fontSize: 11, fontWeight: 800, color: PALETTE.subtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
-      </div>
-      <div style={{ fontSize: 30, fontWeight: 800, color: PALETTE.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 12, color: PALETTE.muted }}>{hint}</div>
     </div>
   );
 }
@@ -2888,14 +2875,14 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
 // Visibility flags — set to false to hide a tab, true to show
 const SHOW_TAB_SCORECARD   = false;
 const SHOW_TAB_FUNNEL      = true;
-const SHOW_TAB_FORECAST    = false;
+const SHOW_TAB_FORECAST    = true;
 const SHOW_TAB_TARGETS     = false;
 
 const _ALL_PERFORMANCE_TABS = [
   { key: "scorecard",          label: "Scorecard",         icon: Target,        show: SHOW_TAB_SCORECARD },
   { key: "funnel",             label: "Funnel",            icon: Layers,        show: SHOW_TAB_FUNNEL },
-  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle, show: true },
   { key: "forecast",           label: "Forecast",          icon: TrendingUp,    show: SHOW_TAB_FORECAST },
+  { key: "risk",               label: "Pipeline Health",   icon: AlertTriangle, show: true },
   { key: "targets",            label: "Targets",           icon: Gauge,         show: SHOW_TAB_TARGETS },
   { key: "outreach-analysis",  label: "Outreach Analysis", icon: BarChart3,     show: true },
   { key: "incentive",          label: "Incentive",         icon: Trophy,        show: true },

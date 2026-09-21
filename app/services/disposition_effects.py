@@ -153,6 +153,58 @@ async def link_contact_as_meeting_booked(session: AsyncSession, contact: Contact
     return changed
 
 
+async def backfill_meeting_booked_contacts_for_new_deal(
+    session: AsyncSession, *, deal_id: UUID, company_id: Optional[UUID]
+) -> bool:
+    """The inverse of `link_contact_as_meeting_booked`, run from the deal
+    side: that function only links deals that already exist at the moment a
+    contact's status is saved as "meeting booked", so a contact marked
+    meeting-booked BEFORE their account had any deal is stuck at
+    deal_contacts.role="auto_linked" forever once one finally appears — never
+    promoted to "primary", so the deal drawer's Meeting Contact list never
+    shows them even though the status pill says otherwise.
+
+    Verisk Specialty Business Solutions, 2026-09-18: Greg Jaeger's contact was
+    marked "Meeting Booked" on 17 Jul 2026; the deal wasn't created until 17
+    Sept 2026, two months later, so link_contact_as_meeting_booked found zero
+    deals and did nothing at save time.
+
+    Call this once, right after a new deal is created for a company (same
+    idempotent upsert as link_contact_as_meeting_booked — safe to call on
+    every deal creation, not just ones where it turns out to matter).
+    """
+    if not company_id:
+        return False
+
+    from app.models.deal import DealContact
+
+    contact_ids = (await session.execute(
+        select(Contact.id).where(
+            Contact.company_id == company_id,
+            Contact.account_status == "meeting_booked",
+        )
+    )).scalars().all()
+    if not contact_ids:
+        return False
+
+    changed = False
+    for contact_id in contact_ids:
+        existing_link = (await session.execute(
+            select(DealContact).where(
+                DealContact.deal_id == deal_id,
+                DealContact.contact_id == contact_id,
+            )
+        )).scalar_one_or_none()
+        if existing_link is None:
+            session.add(DealContact(deal_id=deal_id, contact_id=contact_id, role="primary"))
+            changed = True
+        elif existing_link.role not in ("primary", "champion"):
+            existing_link.role = "primary"
+            session.add(existing_link)
+            changed = True
+    return changed
+
+
 async def _maybe_suggest_deal_from_disposition(
     session: AsyncSession, contact: Contact, disposition: str, *, activity_id: Optional[UUID] = None
 ) -> bool:

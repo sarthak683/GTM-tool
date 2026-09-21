@@ -796,6 +796,10 @@ export default function AccountSourcingCompanyDetail() {
     message: string;
   }>({ tone: "idle", message: "" });
   const [showAddStakeholder, setShowAddStakeholder] = useState(false);
+  // Stakeholders panel defaults to the curated "priority" subset
+  // (isPriorityStakeholder) — this lets a rep see every linked contact,
+  // including ones whose title/persona didn't match that heuristic.
+  const [showAllStakeholders, setShowAllStakeholders] = useState(false);
   // F8 — bulk add-to-sequence selection state
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [bulkLaunchOpen, setBulkLaunchOpen] = useState(false);
@@ -1041,6 +1045,7 @@ export default function AccountSourcingCompanyDetail() {
     const filtered = contacts.filter(isPriorityStakeholder);
     return filtered.length ? filtered : contacts;
   }, [contacts]);
+  const displayedContacts = showAllStakeholders ? contacts : relevantContacts;
   const contactMomentum = useMemo(() => {
     if (!relevantContacts.length) return null;
     const ranked = [...relevantContacts].sort((a, b) => (b.tracking_score || 0) - (a.tracking_score || 0));
@@ -2497,7 +2502,7 @@ export default function AccountSourcingCompanyDetail() {
             </Section>
 
             <div id="stakeholders-section">
-            <Section title={`Stakeholders (${relevantContacts.length})`} icon={<Users size={15} color={colors.primary} />}>
+            <Section title={`Stakeholders (${displayedContacts.length})`} icon={<Users size={15} color={colors.primary} />}>
               <div
                 style={{
                   marginBottom: 12,
@@ -2512,8 +2517,32 @@ export default function AccountSourcingCompanyDetail() {
               >
                 Company research is temporarily not pulling contacts automatically. Upload prospects from the Prospecting page or add stakeholders here when you have them.
               </div>
-              {/* Add Stakeholder button */}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+              {/* Priority / All toggle + Add Stakeholder button */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+                {contacts.length !== relevantContacts.length ? (
+                  <div style={{ display: "inline-flex", borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+                    <button
+                      onClick={() => setShowAllStakeholders(false)}
+                      style={{
+                        padding: "6px 12px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
+                        background: showAllStakeholders ? "#fff" : colors.primary,
+                        color: showAllStakeholders ? colors.sub : "#fff",
+                      }}
+                    >
+                      Priority ({relevantContacts.length})
+                    </button>
+                    <button
+                      onClick={() => setShowAllStakeholders(true)}
+                      style={{
+                        padding: "6px 12px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
+                        background: showAllStakeholders ? colors.primary : "#fff",
+                        color: showAllStakeholders ? "#fff" : colors.sub,
+                      }}
+                    >
+                      All ({contacts.length})
+                    </button>
+                  </div>
+                ) : <div />}
                 <button
                   onClick={() => setShowAddStakeholder(true)}
                   style={{
@@ -2527,9 +2556,9 @@ export default function AccountSourcingCompanyDetail() {
               </div>
 
               {/* Buying Committee grouped view */}
-              {relevantContacts.length > 0 && (() => {
+              {displayedContacts.length > 0 && (() => {
                 const grouped: Record<string, Contact[]> = {};
-                for (const c of relevantContacts) {
+                for (const c of displayedContacts) {
                   const role = canonicalPersona(c.persona, c.persona_type);
                   (grouped[role] ??= []).push(c);
                 }
@@ -2555,9 +2584,9 @@ export default function AccountSourcingCompanyDetail() {
                 return null;
               })()}
 
-              {relevantContacts.length === 0 ? (
+              {displayedContacts.length === 0 ? (
                 <div style={{ color: colors.faint }}>No prospects have been added to this account yet.</div>
-              ) : relevantContacts.length > 0 ? (
+              ) : displayedContacts.length > 0 ? (
                 <>
                   {/* F8 selection toolbar */}
                   <div style={{
@@ -2569,10 +2598,10 @@ export default function AccountSourcingCompanyDetail() {
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: colors.sub, cursor: "pointer" }}>
                         <input
                           type="checkbox"
-                          checked={relevantContacts.length > 0 && relevantContacts.every((c) => selectedContactIds.has(c.id))}
+                          checked={displayedContacts.length > 0 && displayedContacts.every((c) => selectedContactIds.has(c.id))}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedContactIds(new Set(relevantContacts.map((c) => c.id)));
+                              setSelectedContactIds(new Set(displayedContacts.map((c) => c.id)));
                             } else {
                               setSelectedContactIds(new Set());
                             }
@@ -2598,7 +2627,7 @@ export default function AccountSourcingCompanyDetail() {
                     </button>
                   </div>
                   <div style={{ display: "grid", gap: 10 }}>
-                    {relevantContacts.map((c) => (
+                    {displayedContacts.map((c) => (
                       <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                         <input
                           type="checkbox"
