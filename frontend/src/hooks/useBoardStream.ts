@@ -119,6 +119,8 @@ export function useBoardStream(onChange: (event: BoardChangeEvent) => void, enab
     let closed = false;
     let failures = 0;
     let reconnectTimer: number | undefined;
+    let changeTimer: number | undefined;
+    let latestChange: BoardChangeEvent | undefined;
     const controller = new AbortController();
 
     const scheduleRetry = () => {
@@ -177,7 +179,15 @@ export function useBoardStream(onChange: (event: BoardChangeEvent) => void, enab
           const { events, rest } = parseSseFrames(buffer);
           buffer = rest;
           for (const event of events) {
-            if (KNOWN_KINDS.has(event.kind)) onChangeRef.current(event);
+            if (KNOWN_KINDS.has(event.kind)) {
+              latestChange = event;
+              // Fixed coalescing window: continuous traffic cannot postpone
+              // updates forever, and a burst causes only one board refresh.
+              if (changeTimer === undefined) changeTimer = window.setTimeout(() => {
+                changeTimer = undefined;
+                if (!closed && latestChange) onChangeRef.current(latestChange);
+              }, 500);
+            }
           }
         }
       } catch {
@@ -197,6 +207,7 @@ export function useBoardStream(onChange: (event: BoardChangeEvent) => void, enab
     return () => {
       closed = true;
       window.clearTimeout(reconnectTimer);
+      window.clearTimeout(changeTimer);
       controller.abort();
     };
   }, [enabled]);

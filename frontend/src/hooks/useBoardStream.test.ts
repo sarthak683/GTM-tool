@@ -101,7 +101,7 @@ describe("useBoardStream", () => {
     expect(String(url)).not.toContain(TOKEN);
   });
 
-  it("delivers each board event to the handler", async () => {
+  it("delivers a board change to the handler", async () => {
     const stream = openResponse();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stream.response));
     const onChange = vi.fn();
@@ -116,6 +116,26 @@ describe("useBoardStream", () => {
       expect.objectContaining({ kind: "deal.stage_changed", deal_id: "d9", stage: "won" }),
     );
     stream.close();
+  });
+
+  it("coalesces a burst into one refresh and cancels pending work on unmount", async () => {
+    vi.useFakeTimers();
+    const stream = openResponse();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stream.response));
+    const onChange = vi.fn();
+    const { unmount } = renderHook(() => useBoardStream(onChange));
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 100; i++) stream.push(`event: deal.updated\ndata: {"kind":"deal.updated","deal_id":"${i}"}\n\n`);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ deal_id: "99" }));
+    stream.push('event: deal.updated\ndata: {"kind":"deal.updated"}\n\n');
+    await vi.advanceTimersByTimeAsync(0);
+    unmount();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    stream.close();
+    vi.useRealTimers();
   });
 
   it("does not retry a 401 — the exact loop that flooded production", async () => {

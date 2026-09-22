@@ -13,9 +13,11 @@ type SearchableCompanySelectProps = {
   disabled?: boolean;
 };
 
+const EMPTY_COMPANIES: Company[] = [];
+
 export default function SearchableCompanySelect({
   value,
-  companies = [],
+  companies = EMPTY_COMPANIES,
   onChange,
   placeholder = "Select company",
   noneLabel = "No company",
@@ -26,13 +28,23 @@ export default function SearchableCompanySelect({
   const [query, setQuery] = useState("");
   const [remoteResults, setRemoteResults] = useState<Company[]>([]);
   const [searching, setSearching] = useState(false);
+  const [retainedCompany, setRetainedCompany] = useState<Company>();
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCompany = useMemo(
-    () => [...remoteResults, ...companies].find((company) => company.id === value),
-    [companies, remoteResults, value],
+    () => companies.find((company) => company.id === value) ?? (retainedCompany?.id === value ? retainedCompany : undefined) ?? remoteResults.find((company) => company.id === value),
+    [companies, remoteResults, retainedCompany, value],
   );
+
+  useEffect(() => {
+    if (!value || selectedCompany) return;
+    let cancelled = false;
+    companiesApi.get(value).then(company => {
+      if (!cancelled) setRetainedCompany(company);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [value, selectedCompany]);
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -58,10 +70,8 @@ export default function SearchableCompanySelect({
   }, [open]);
 
   // Search on demand. Fetching every rich CompanyRead row to populate a picker
-  // made ordinary page visits download the catalog in multiple 500-row pages;
-  // production already has enough accounts for that to stall the Pipeline.
-  // A two-character query remains exhaustive because both backing services
-  // search server-side, without putting the whole catalog in the browser.
+  // adds multiple large requests. Both backing services search server-side;
+  // results are capped, so users can refine the query for additional matches.
   useEffect(() => {
     if (!open) return;
     const needle = query.trim();
@@ -122,6 +132,7 @@ export default function SearchableCompanySelect({
 
   const selectCompany = (companyId?: string) => {
     const company = [...remoteResults, ...companies].find((entry) => entry.id === companyId);
+    setRetainedCompany(company);
     onChange(companyId);
     setQuery(company?.name ?? "");
     setOpen(false);
