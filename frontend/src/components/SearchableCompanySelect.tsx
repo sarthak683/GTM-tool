@@ -24,17 +24,14 @@ export default function SearchableCompanySelect({
 }: SearchableCompanySelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [catalog, setCatalog] = useState<Company[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [remoteResults, setRemoteResults] = useState<Company[]>([]);
   const [searching, setSearching] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCompany = useMemo(
-    () => [...catalog, ...companies].find((company) => company.id === value),
-    [catalog, companies, value],
+    () => [...remoteResults, ...companies].find((company) => company.id === value),
+    [companies, remoteResults, value],
   );
 
   useEffect(() => {
@@ -60,52 +57,11 @@ export default function SearchableCompanySelect({
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    let cancelled = false;
-    if (catalogLoaded) return;
-
-    const loadCatalog = async () => {
-      setLoading(true);
-      try {
-        const [crmCompanies, sourcingCompanies] = await Promise.all([
-          companiesApi.listAll().catch(() => []),
-          accountSourcingApi.listCompanies(0, 1000).catch(() => []),
-        ]);
-        const merged = new Map<string, Company>();
-        for (const company of [...crmCompanies, ...sourcingCompanies, ...companies]) {
-          if (!company?.id) continue;
-          merged.set(company.id, company);
-        }
-        if (!cancelled) {
-          setCatalog(Array.from(merged.values()));
-          setCatalogLoaded(true);
-        }
-      } catch {
-        if (!cancelled) {
-          setCatalog(companies);
-          setCatalogLoaded(true);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void loadCatalog();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [catalogLoaded, companies, open]);
-
-  // Server-side search. The loaded catalog is only the first page of companies
-  // (top-N by ICP), so client-only filtering can't find accounts past that cap
-  // — which is why typing an existing account like "Haily HR" returned nothing.
-  // When the user types, query the backend (CRM + sourcing) so any matching
-  // account surfaces regardless of the catalog cap.
+  // Search on demand. Fetching every rich CompanyRead row to populate a picker
+  // made ordinary page visits download the catalog in multiple 500-row pages;
+  // production already has enough accounts for that to stall the Pipeline.
+  // A two-character query remains exhaustive because both backing services
+  // search server-side, without putting the whole catalog in the browser.
   useEffect(() => {
     if (!open) return;
     const needle = query.trim();
@@ -149,22 +105,23 @@ export default function SearchableCompanySelect({
       // matches (the latter render instantly while the server call is in flight).
       const merged = new Map<string, Company>();
       for (const company of remoteResults) merged.set(company.id, company);
-      for (const company of catalog) {
+      for (const company of companies) {
         if (company.name.toLowerCase().includes(needle)) merged.set(company.id, company);
       }
       next = Array.from(merged.values());
     } else {
-      // Browse mode (empty/short query): show the loaded catalog.
-      next = catalog;
+      // Browse mode exposes only the caller's already-needed local context;
+      // type two characters to search the complete catalog.
+      next = companies;
     }
     if (selectedCompany && !next.some((company) => company.id === selectedCompany.id)) {
       next = [selectedCompany, ...next];
     }
     return next.slice(0, 50);
-  }, [catalog, query, selectedCompany, remoteResults]);
+  }, [companies, query, selectedCompany, remoteResults]);
 
   const selectCompany = (companyId?: string) => {
-    const company = [...catalog, ...companies].find((entry) => entry.id === companyId);
+    const company = [...remoteResults, ...companies].find((entry) => entry.id === companyId);
     onChange(companyId);
     setQuery(company?.name ?? "");
     setOpen(false);
@@ -283,14 +240,14 @@ export default function SearchableCompanySelect({
               </button>
             )}
 
-            {(loading || searching) && results.length === 0 ? (
+            {searching && results.length === 0 ? (
               <div style={{ padding: "12px 14px", fontSize: 13, color: "#7a96b0", display: "flex", alignItems: "center", gap: 8 }}>
                 <Loader2 size={14} className="animate-spin" />
                 Searching companies...
               </div>
             ) : results.length === 0 ? (
               <div style={{ padding: "12px 14px", fontSize: 13, color: "#7a96b0" }}>
-                No matching companies found.
+                {query.trim().length < 2 ? "Type at least 2 characters to search companies." : "No matching companies found."}
               </div>
             ) : (
               results.map((company) => (

@@ -637,26 +637,6 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
   const [duplicateWarning, setDuplicateWarning] = useState<{ id: string; name: string; stage: string; created_at: string | null } | null>(null);
   const [, setSearchParams] = useSearchParams();
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
-  const [companySearch, setCompanySearch] = useState("");
-  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
-  const companyDropdownRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const handleClick = (event: MouseEvent) => {
-      if (!companyDropdownRef.current?.contains(event.target as Node)) {
-        setCompanyDropdownOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  const filteredCompanies = companySearch
-    ? companies.filter((c) => c.name.toLowerCase().includes(companySearch.toLowerCase()))
-    : companies;
-
-  const selectedCompanyName = companies.find((c) => c.id === form.company_id)?.name ?? "";
-
   const handleCreate = async (confirmDuplicate = false) => {
     setDuplicateWarning(null);
     const needsMarketingCustom = form.is_marketing_lead && (form.marketing_source === "other" || form.marketing_source === "events");
@@ -763,57 +743,18 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 }
               }}
             />
-            {/* Searchable company combobox */}
-            <div ref={companyDropdownRef} style={{ position: "relative" }}>
-              <div
-                onClick={() => setCompanyDropdownOpen((o) => !o)}
-                style={{
-                  ...modalInputStyle,
-                  background: validationErrors.company_id ? "#fffbf5" : "#fff",
-                  border: validationErrors.company_id ? "1.5px solid #f59e0b" : modalInputStyle.border,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  cursor: "pointer",
-                  userSelect: "none",
+            <div style={{ border: validationErrors.company_id ? "1.5px solid #f59e0b" : "none", borderRadius: 12 }}>
+              <SearchableCompanySelect
+                value={form.company_id}
+                companies={companies}
+                onChange={(companyId) => {
+                  setForm((current) => ({ ...current, company_id: companyId ?? "" }));
+                  setValidationErrors((current) => ({ ...current, company_id: false }));
+                  if (error) setError("");
                 }}
-              >
-                <span style={{ color: form.company_id ? "#1f2d3d" : "#94a3b8", fontSize: 14 }}>
-                  {form.company_id ? selectedCompanyName : "Select company (required)"}
-                </span>
-                <ChevronDown size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />
-              </div>
-              {companyDropdownOpen && (
-                <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60, borderRadius: 12, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 12px 32px rgba(15,23,42,0.14)", display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "8px 8px 4px", flexShrink: 0, position: "relative" }}>
-                    <Search size={13} style={{ position: "absolute", left: 18, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none", marginTop: 2 }} />
-                    <input
-                      autoFocus
-                      type="text"
-                      placeholder="Search companies…"
-                      value={companySearch}
-                      onChange={(e) => setCompanySearch(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      style={{ width: "100%", height: 34, borderRadius: 8, border: "1px solid #e2eaf2", background: "#f8fafc", paddingLeft: 32, paddingRight: 10, fontSize: 13, outline: "none", boxSizing: "border-box" }}
-                    />
-                  </div>
-                  <div style={{ overflowY: "auto", maxHeight: 220 }}>
-                    {filteredCompanies.length === 0 && (
-                      <div style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>No matches</div>
-                    )}
-                    {filteredCompanies.map((company) => (
-                      <button
-                        key={company.id}
-                        type="button"
-                        onClick={() => { setForm((c) => ({ ...c, company_id: company.id })); setCompanySearch(""); setCompanyDropdownOpen(false); setValidationErrors((c) => ({ ...c, company_id: false })); if (error) setError(""); }}
-                        style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: form.company_id === company.id ? "#f0f6ff" : "transparent", color: form.company_id === company.id ? "#175089" : "#1f2d3d", cursor: "pointer", fontWeight: form.company_id === company.id ? 600 : 400 }}
-                      >
-                        {company.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+                placeholder="Select company (type 2+ characters)"
+                allowNone={false}
+              />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select style={{ ...modalInputStyle, background: "#fff" }} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))}>
@@ -1949,12 +1890,10 @@ export default function Pipeline() {
   const loadSupportingData = async () => {
     setLoadingSummarySettings(true);
     try {
-      const [companyList, userList, summarySettings] = await Promise.all([
-        companiesApi.listAll(),
+      const [userList, summarySettings] = await Promise.all([
         getCachedUsers().catch(() => []),
         settingsApi.getPipelineSummarySettings().catch(() => normalizePipelineSummarySettings()),
       ]);
-      setCompanies(companyList);
       setUsers(userList);
       setPipelineSummaryConfig(normalizePipelineSummarySettings(summarySettings));
     } catch {
@@ -2006,10 +1945,8 @@ export default function Pipeline() {
     loadDealBoard().catch(() => undefined);
   });
 
-  // Companies (~1000 rows), users, and summary settings rarely change, so load
-  // them once on mount instead of refetching on every board reload (loadBoard
-  // runs after each drag-drop). Flows that can create companies (CRM import,
-  // prospect migration) call loadSupportingData explicitly.
+  // Pipeline needs users and summary settings on mount. Company pickers search
+  // on demand so every visit does not download the full rich company catalog.
   useEffect(() => {
     void loadSupportingData();
   }, []);
