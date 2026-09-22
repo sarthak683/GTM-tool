@@ -67,3 +67,10 @@ instance. The follow-up creates the editor after React commits, guards destroyed
 instances in effects/toolbars/blur, and disables the duplicate StarterKit Link
 extension. Strict lifecycle testing and the Chromium smoke now cover editor
 mounting, changed note values and opening a deal. All 37 frontend tests pass.
+
+The editor follow-up image is `v0.260921-bdc603c-browserperf`, promoted from
+staging revision 256 to production revision 227. The subsequent source-only lint
+cleanup removes an obsolete ESLint suppression; it does not change browser code.
+Frontend lint exits successfully (existing warnings remain). CI also reports two
+backend failures in unchanged code: pod roster consistency and the visibility
+guard for `deals.py:310`; backend code and images were not changed by this fix.

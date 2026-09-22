@@ -315,7 +315,6 @@ export function RichTextDisplay({ html }: { html?: string | null }) {
   return (
     <div
       // Pre-sanitized; dangerouslySetInnerHTML is intentional.
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: clean }}
       className="rte-display"
       style={{ fontSize: 13, lineHeight: 1.55, color: "#1f2d3d", wordBreak: "break-word" }}
