@@ -53,3 +53,17 @@ implementation without expecting the new rendering bound.
 John must reload to receive the deployed frontend. Resolution of the original
 device-specific freeze requires his fresh-session confirmation; successful pod
 readiness or an HTML HTTP 200 response alone is not that confirmation.
+
+## Live verification and editor follow-up
+
+The first performance release was verified in staging (revision 255) and
+production (revision 226). John’s read-only production view mounted 3,883 DOM
+elements and 59 cards while retaining all 719 deals. Search worked.
+
+Opening a deal then exposed a separate rich-text editor lifecycle crash:
+`Cannot read properties of null (reading 'cached')` in `getHTML()`. Tiptap clears
+the schema on destruction, and the synchronization effect could read a stale
+instance. The follow-up creates the editor after React commits, guards destroyed
+instances in effects/toolbars/blur, and disables the duplicate StarterKit Link
+extension. Strict lifecycle testing and the Chromium smoke now cover editor
+mounting, changed note values and opening a deal. All 37 frontend tests pass.

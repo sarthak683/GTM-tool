@@ -77,7 +77,7 @@ function ToolbarButton({
 }
 
 function Toolbar({ editor }: { editor: Editor | null }) {
-  if (!editor) return null;
+  if (!editor || editor.isDestroyed) return null;
   const can = editor.can();
   return (
     <div
@@ -221,8 +221,12 @@ export function RichTextEditor({
   }, []); // initial only — we re-set below if value changes externally
 
   const editor = useEditor({
+    // Create after React commits. A drawer can suspend or be replaced before
+    // its first effect; an editor created during render may already be destroyed.
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({
+        link: false, // configured explicitly below (StarterKit v3 includes Link)
         // Keep history tight; defaults are fine for short notes.
         heading: { levels: [2, 3] },
       }),
@@ -242,6 +246,7 @@ export function RichTextEditor({
     content: initialHtml,
     editable: !readOnly,
     onBlur: ({ editor: ed }) => {
+      if (ed.isDestroyed || readOnly) return;
       const html = ed.getHTML();
       onChange(sanitizeHtml(html));
     },
@@ -250,7 +255,7 @@ export function RichTextEditor({
   // If the parent swaps the value while we're mounted (e.g. drawer reopened
   // for a different deal), reset the editor. Without this, stale HTML lingers.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const next = value ?? "";
     const current = editor.getHTML();
     if (next !== current) {

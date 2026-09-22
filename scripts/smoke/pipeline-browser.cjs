@@ -67,6 +67,10 @@ const assert = require('node:assert/strict');
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole('button', { name: 'Synthetic Deal 0', exact: true }).waitFor();
       assert.equal(apiCalls.filter(p => p === '/api/v1/companies/').length, 0, 'Pipeline downloaded the company catalog');
+      await page.getByRole('button', { name: 'Synthetic Deal 0', exact: true }).click();
+      await page.locator('.tiptap').first().waitFor();
+      await page.waitForTimeout(500);
+      assert.equal(await page.getByRole('heading', { name: 'Something went wrong' }).count(), 0, 'Opening a deal crashed');
     }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ url, baseline, cpuSlowdown: 6, syntheticDeals: 1000, ...metrics, assertions: 'passed' }));
