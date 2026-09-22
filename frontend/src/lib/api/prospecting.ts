@@ -723,7 +723,7 @@ export const accountSourcingApi = {
   getCompany: (companyId: string) =>
     request<Company>(`/api/v1/account-sourcing/companies/${companyId}`),
 
-  createManualCompany: (data: { name: string; domain?: string }) =>
+  createManualCompany: (data: { name: string; domain?: string; assigned_to_id?: string; sdr_id?: string }) =>
     request<SourcingBatch>("/api/v1/account-sourcing/companies/manual", {
       method: "POST",
       body: JSON.stringify(data),

@@ -7,6 +7,7 @@ export const MARKETING_LEAD_SOURCES = [
   { value: "bing_ads", label: "Bing Ads" },
   { value: "quora_ads", label: "Quora Ads" },
   { value: "g2_ads", label: "G2 Ads" },
+  { value: "linkedin_ads", label: "LinkedIn Ads" },
   { value: "other", label: "Other" },
   { value: "events", label: "Events" },
 ] as const;
@@ -34,6 +35,7 @@ export const MARKETING_SOURCE_LABELS: Record<string, string> = {
   bing_ads: "Bing Ads",
   quora_ads: "Quora Ads",
   g2_ads: "G2 Ads",
+  linkedin_ads: "LinkedIn Ads",
   other: "Other",
   events: "Events",
 };

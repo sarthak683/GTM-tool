@@ -21,7 +21,7 @@ from dataclasses import dataclass, fields as dataclass_fields, replace as datacl
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, case, func, literal_column, or_
@@ -89,6 +89,12 @@ logger = logging.getLogger(__name__)
 class ManualCompanyCreate(BaseModel):
     name: str
     domain: str | None = None
+    # Assign AE/SDR at creation, same slots as the per-row AE/SDR chips in the
+    # Accounts table. Validated the same way as PATCH /assignments/company/{id}
+    # (an assignable team member: admin/ae/sdr/agency) — this endpoint is
+    # already admin-only, so no separate permission gate is needed.
+    assigned_to_id: UUID | None = None
+    sdr_id: UUID | None = None
 
 
 class BatchConfirmPayload(BaseModel):
@@ -1770,6 +1776,7 @@ async def get_sourced_company_summary(
 async def create_manual_company(
     payload: ManualCompanyCreate,
     current_user: AdminUser,
+    background_tasks: BackgroundTasks,
     session: DBSession = None,
 ):
     name = _clean_company_name(payload.name or "")
@@ -1897,9 +1904,65 @@ async def create_manual_company(
         )
     company = refresh_company_prospecting_fields(company)
     company.icp_score, company.icp_tier = score_company(company)
+
+    # Assign AE/SDR at creation, if picked — same validation as the
+    # per-account AE/SDR chips (PATCH /assignments/company/{id}): the target
+    # must be an assignable team member. A brand-new company has no contacts
+    # yet, so there is nothing to cascade-sync the way the assignment
+    # endpoint does for an existing account.
+    assignable_roles = {"admin", "ae", "sdr", "agency"}
+    if payload.assigned_to_id:
+        ae_user = (await session.execute(select(User).where(User.id == payload.assigned_to_id))).scalar_one_or_none()
+        if not ae_user:
+            raise HTTPException(status_code=404, detail="AE user not found")
+        if (ae_user.role or "").lower() not in assignable_roles:
+            raise HTTPException(status_code=422, detail=f"Cannot assign {ae_user.name} as AE — not an assignable team member")
+        company.assigned_to_id = ae_user.id
+        company.assigned_rep = ae_user.name
+        company.assigned_rep_email = ae_user.email
+        company.assigned_rep_name = ae_user.name
+    if payload.sdr_id:
+        sdr_user = (await session.execute(select(User).where(User.id == payload.sdr_id))).scalar_one_or_none()
+        if not sdr_user:
+            raise HTTPException(status_code=404, detail="SDR user not found")
+        if (sdr_user.role or "").lower() not in assignable_roles:
+            raise HTTPException(status_code=422, detail=f"Cannot assign {sdr_user.name} as SDR — not an assignable team member")
+        company.sdr_id = sdr_user.id
+        company.sdr_email = sdr_user.email
+        company.sdr_name = sdr_user.name
+
     session.add(company)
     await session.commit()
     await session.refresh(company)
+
+    # Live email — the assigned AE/SDR (plus maithili@beacon.li and
+    # annie@beacon.li on every send) learn a new account landed on them
+    # immediately, not via the weekly digest.
+    from app.services.account_assignment_notify import notify_account_assigned
+
+    assigned_at = datetime.utcnow()
+    if payload.assigned_to_id and company.assigned_to_id and company.assigned_rep_email:
+        background_tasks.add_task(
+            notify_account_assigned,
+            account_name=company.name,
+            role_label="AE",
+            assignee_name=company.assigned_rep_name or company.assigned_rep_email,
+            assignee_email=company.assigned_rep_email,
+            assigned_by_name=current_user.name or current_user.email,
+            assigned_at=assigned_at,
+            is_new_account=True,
+        )
+    if payload.sdr_id and company.sdr_id and company.sdr_email:
+        background_tasks.add_task(
+            notify_account_assigned,
+            account_name=company.name,
+            role_label="SDR",
+            assignee_name=company.sdr_name or company.sdr_email,
+            assignee_email=company.sdr_email,
+            assigned_by_name=current_user.name or current_user.email,
+            assigned_at=assigned_at,
+            is_new_account=True,
+        )
 
     # Bell alert so admins + the assigned owner know an account was added.
     try:
