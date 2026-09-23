@@ -9,6 +9,8 @@ import { CLOSE_REASONS, isCloseReasonStage } from "../lib/closeReasons";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
 import { useBoardStream } from "../hooks/useBoardStream";
+import { useMobileLayout } from "../hooks/useMobileLayout";
+import PagedCards from "../components/PagedCards";
 import type { Activity, Company, Contact, CrmImportResponse, Deal, DealStageSetting, PipelineSummarySettings, RolePermissionsSettings, User } from "../types";
 import { avatarColor, formatCurrency, formatDate, formatDateOnly, getInitials, parseDateOnly } from "../lib/utils";
 import { formatCurrencyAmount } from "../lib/currencies";
@@ -1234,8 +1236,20 @@ function ProspectCard({ contact, company, onOpen, onDragStart, onDragEnd, onDele
 }
 
 function BoardColumn({ stage, count, totalValue, weightedValue, dropActive, onAdd, onExport, onDrop, children }: { stage: StageMeta; count: number; totalValue?: number; weightedValue?: number; dropActive: boolean; onAdd?: () => void; onExport?: () => void; onDrop: () => void; children: ReactNode }) {
+  const columnRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    if (columnRef.current) observer.observe(columnRef.current);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <div style={{ width: BOARD_COLUMN_WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div ref={columnRef} style={{ width: BOARD_COLUMN_WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, padding: "0 4px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
@@ -1268,7 +1282,7 @@ function BoardColumn({ stage, count, totalValue, weightedValue, dropActive, onAd
         )}
       </div>
       <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} style={{ flex: 1, minHeight: 0, maxHeight: "100%", borderRadius: 14, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: dropActive ? "#f3fbe3" : stage.group === "closed" ? "#f4f6f9" : "#f9fbfe", border: dropActive ? "1px solid #9ace3d" : "1px solid #e8eef5", boxShadow: dropActive ? "0 0 0 3px rgba(154, 206, 61, 0.18)" : "none", overflowY: "auto", transition: "all 0.15s ease", scrollbarGutter: "stable" }}>
-        {children}
+        {visible ? children : null}
       </div>
     </div>
   );
@@ -1689,6 +1703,7 @@ export default function Pipeline() {
   const { isAdmin, user } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState<PipelineTab>("deal");
+  const mobileLayout = useMobileLayout();
   const viewMode = reduceViewMode("board", {
     type: "hydrate",
     value: searchParams.get("view"),
@@ -1848,8 +1863,14 @@ export default function Pipeline() {
     return prospectStageMeta.length ? prospectStageMeta : PROSPECT_STAGES;
   }, [prospectStageMeta]);
 
-  const loadDealBoard = async () => {
-    setLoadingDeals(true);
+  const dealLoadRef = useRef<Promise<void> | null>(null);
+  const dealReloadQueuedRef = useRef(false);
+  const loadDealBoard = (): Promise<void> => {
+    if (dealLoadRef.current) {
+      dealReloadQueuedRef.current = true;
+      return dealLoadRef.current;
+    }
+    const pending = (async () => {
     try {
       const [board, dealStageSettings] = await Promise.all([
         dealsApi.board("deal"),
@@ -1864,7 +1885,15 @@ export default function Pipeline() {
       })));
     } finally {
       setLoadingDeals(false);
+      dealLoadRef.current = null;
+      if (dealReloadQueuedRef.current) {
+        dealReloadQueuedRef.current = false;
+        void loadDealBoard().catch(() => undefined);
+      }
     }
+    })();
+    dealLoadRef.current = pending;
+    return pending;
   };
 
   const loadProspectBoard = async () => {
@@ -1876,10 +1905,12 @@ export default function Pipeline() {
       // board, and because rows come back newest-first it silently hid the
       // OLDEST prospects. The slim board payload is ~10x lighter per row, so
       // the complete board now costs less to load than the truncated one did.
-      const [board, prospectStageSettings] = await Promise.all([
+      const [board, prospectStageSettings, prospectCompanies] = await Promise.all([
         contactsApi.board(),
         settingsApi.getProspectStages().catch(() => ({ stages: PROSPECT_STAGES as DealStageSetting[] })),
+        companiesApi.listAll(),
       ]);
+      setCompanies(prospectCompanies);
       setContacts(board.items as Contact[]);
       setProspectsTruncated(board.truncated);
       setProspectTotal(board.total);
@@ -2870,7 +2901,7 @@ export default function Pipeline() {
 
   return (
     <>
-      <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
+      {!mobileLayout && <div className="crm-page pipeline-page" style={{ display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", height: "100%", minHeight: 0, gap: 0, overflow: "hidden" }}>
         <div className="desktop-only pipeline-sidebar" style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", background: "#fff", borderRight: "1px solid #e8eef5", padding: "16px 14px", gap: 14, overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, position: "relative" }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#142335" }}>Pipeline</div>
@@ -3207,14 +3238,14 @@ export default function Pipeline() {
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
                         ))
                       ) : tab === "deal" ? (
-                        dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => {
+                        dealItems.length ? <PagedCards key={`${stage.id}-${search}-${JSON.stringify([stageFilters, assigneeFilters, geographyFilters, tagFilters, sourceFilters, priorityFilters, healthFilters, commitFilter, stalledOnly, overdueOnly, missingCloseDateOnly, needsAttentionOnly, closeMonthFilter, closeDateFilters, nextStepFilters, activityFilters, contactFilters])}`}>{dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => {
                           setSelectedDeal(deal);
                           setSearchParams((current) => {
                             const next = new URLSearchParams(current);
                             next.set("deal", deal.id);
                             return next;
                           }, { replace: true });
-                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} priorityTag={deal.priority_tag ?? undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
+                        }} onDragStart={() => setDragItem({ kind: "deal", id: deal.id, fromStage: deal.stage })} onDragEnd={clearDragState} priorityTag={deal.priority_tag ?? undefined} selected={selectedDealIds.has(deal.id)} onToggleSelect={() => toggleDealSelect(deal.id)} />)}</PagedCards> : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No deals</span></div>
                       ) : (
                         prospectItems.length ? prospectItems.map((contact) => <ProspectCard key={contact.id} contact={contact} company={contact.company_id ? companyMap.get(contact.company_id) : undefined} onOpen={() => openProspect(contact)} onDragStart={() => setDragItem({ kind: "prospect", id: contact.id, fromStage: prospectStage(contact) })} onDragEnd={clearDragState} onDelete={isAdmin ? () => handleDeleteProspect(contact.id) : undefined} />) : <div style={{ display: "flex", height: 88, alignItems: "center", justifyContent: "center", borderRadius: 12, border: "2px dashed #dbe6f2" }}><span style={{ fontSize: 11, color: "#96a7ba" }}>No prospects</span></div>
                       )}
@@ -3227,9 +3258,9 @@ export default function Pipeline() {
           </>
           )}
         </div>
-      </div>
+      </div>}
 
-      <div className="mobile-only" style={{ padding: "4px 2px 80px", display: "flex", flexDirection: "column", gap: 8 }}>
+      {mobileLayout && <div className="mobile-only" style={{ padding: "4px 2px 80px", display: "flex", flexDirection: "column", gap: 8 }}>
         <div className="mobile-card" style={{ position: "sticky", top: 0, zIndex: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div>
@@ -3255,12 +3286,12 @@ export default function Pipeline() {
             return (
               <div key={stage.id}>
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: stage.color ?? "#64748b", padding: "6px 4px 4px" }}>{stage.label} ({items.length})</div>
-                {items.map(deal => (
+                <PagedCards>{items.map(deal => (
                   <div key={deal.id} className="mobile-card" onClick={() => { setSelectedDeal(deal); setSearchParams(c => { c.set("deal", deal.id); return c; }, { replace: true }); }} style={{ cursor: "pointer" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 800, color: "#1f2d3d", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deal.name}</div>
-                        <div style={{ fontSize: 12, color: "#71859b" }}>{deal.company_id ? companyMap.get(deal.company_id)?.name ?? "Unknown" : "No company"}</div>
+                        <div style={{ fontSize: 12, color: "#71859b" }}>{deal.company_name || (deal.company_id ? companyMap.get(deal.company_id)?.name ?? "Unknown" : "No company")}</div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#1f2a37" }}>{formatCurrencyAmount(deal.value, deal.currency_code)}</span>
@@ -3268,7 +3299,7 @@ export default function Pipeline() {
                       </div>
                     </div>
                   </div>
-                ))}
+                ))}</PagedCards>
               </div>
             );
           })
@@ -3279,7 +3310,7 @@ export default function Pipeline() {
             return (
               <div key={stage.id}>
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: "#64748b", padding: "6px 4px 4px" }}>{stage.label} ({items.length})</div>
-                {items.map(contact => (
+                <PagedCards>{items.map(contact => (
                   <div key={contact.id} className="mobile-card" onClick={() => openProspect(contact)} style={{ cursor: "pointer" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3290,12 +3321,12 @@ export default function Pipeline() {
                       <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>{stage.label}</span>
                     </div>
                   </div>
-                ))}
+                ))}</PagedCards>
               </div>
             );
           })
         )}
-      </div>
+      </div>}
 
       {tab === "deal" && selectedDealIds.size > 0 && (
         <div style={{ position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 60, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderRadius: 14, background: "#0b0c0e", boxShadow: "0 18px 44px rgba(11,12,14,0.42)", border: "1px solid #23262b", maxWidth: "calc(100vw - 24px)" }}>
