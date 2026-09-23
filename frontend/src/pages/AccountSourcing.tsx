@@ -1328,7 +1328,7 @@ export default function AccountSourcing() {
   const [pendingBatchApproval, setPendingBatchApproval] = useState<SourcingBatch | null>(null);
   const [confirmingBatchId, setConfirmingBatchId] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState({ companiesText: "" });
+  const [createForm, setCreateForm] = useState({ companiesText: "", assignedToId: "", sdrId: "" });
   const [creatingCompany, setCreatingCompany] = useState(false);
   const [createError, setCreateError] = useState("");
   const [bulkEnriching, setBulkEnriching] = useState(false);
@@ -1354,7 +1354,7 @@ export default function AccountSourcing() {
   useEffect(() => {
     if (searchParams.get("new") !== "company") return;
     const requestedName = (searchParams.get("name") || "").trim();
-    setCreateForm({ companiesText: requestedName });
+    setCreateForm({ companiesText: requestedName, assignedToId: "", sdrId: "" });
     setCreateError("");
     setShowCreateModal(true);
     setSearchParams((prev) => {
@@ -1800,11 +1800,13 @@ export default function AccountSourcing() {
         const batch = await accountSourcingApi.createManualCompany({
           name: entry.name,
           domain: entry.domain,
+          assigned_to_id: createForm.assignedToId || undefined,
+          sdr_id: createForm.sdrId || undefined,
         });
         createdBatches.push(batch);
       }
       setShowCreateModal(false);
-      setCreateForm({ companiesText: "" });
+      setCreateForm({ companiesText: "", assignedToId: "", sdrId: "" });
       setSuccessModal({
         title: entries.length === 1 ? "Account added" : "Accounts added",
         message:
@@ -1822,7 +1824,7 @@ export default function AccountSourcing() {
     } finally {
       setCreatingCompany(false);
     }
-  }, [createForm.companiesText, load]);
+  }, [createForm.companiesText, createForm.assignedToId, createForm.sdrId, load]);
 
   // Import-status card, rendered in one of two slots: above the table while the
   // import actively needs attention (running / awaiting review), below the
@@ -3557,7 +3559,7 @@ export default function AccountSourcing() {
               </div>
               <textarea
                 value={createForm.companiesText}
-                onChange={(e) => setCreateForm({ companiesText: e.target.value })}
+                onChange={(e) => setCreateForm((current) => ({ ...current, companiesText: e.target.value }))}
                 placeholder={"BlackLine\nSerrala, serrala.com\nNetcore Cloud | netcorecloud.com"}
                 rows={8}
                 style={{
@@ -3571,6 +3573,38 @@ export default function AccountSourcing() {
                   lineHeight: 1.6,
                 }}
               />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ASSIGN AE (OPTIONAL)</span>
+                  <select
+                    value={createForm.assignedToId}
+                    onChange={(e) => setCreateForm((current) => ({ ...current, assignedToId: e.target.value }))}
+                    style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 10px", fontSize: 13, color: colors.text, background: "#fff" }}
+                  >
+                    <option value="">Unassigned</option>
+                    {teamUsers
+                      .filter((u) => ["admin", "ae", "sdr", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                      ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>ASSIGN SDR (OPTIONAL)</span>
+                  <select
+                    value={createForm.sdrId}
+                    onChange={(e) => setCreateForm((current) => ({ ...current, sdrId: e.target.value }))}
+                    style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 10px", fontSize: 13, color: colors.text, background: "#fff" }}
+                  >
+                    <option value="">Unassigned</option>
+                    {teamUsers
+                      .filter((u) => ["admin", "ae", "sdr", "agency"].includes((u.role || "").toLowerCase()))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                      ))}
+                  </select>
+                </label>
+              </div>
               {createError ? <div style={{ color: colors.red, fontSize: 13, fontWeight: 700 }}>{createError}</div> : null}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                 <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, padding: "9px 14px", fontWeight: 700, cursor: "pointer" }}>

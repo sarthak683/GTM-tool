@@ -418,59 +418,97 @@ def _e(value: Any) -> str:
 
 
 def _render_digest_html(digest: WeeklyDigest) -> str:
+    """Every style is inlined and every layout is a <table> — no <style>
+    block, no flexbox. Gmail (and most other clients) strip <style> blocks
+    in a lot of render paths and never support display:flex, which used to
+    leave this digest as an unstyled, misaligned list."""
     tz = ZoneInfo(digest.timezone)
 
+    FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
+    TH_STYLE = "padding:9px 12px;color:#94a3b8;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e5e3dc;"
+    TD_STYLE = "padding:10px 12px;border-bottom:1px solid #eeece5;font-size:12.5px;color:#1f2a37;vertical-align:middle;"
+    TD_STYLE_LAST = "padding:10px 12px;font-size:12.5px;color:#1f2a37;vertical-align:middle;"
+    WHO_STYLE = "font-size:12px;color:#6b7280;"
+    WHEN_STYLE = "font-size:11.5px;color:#94a3b8;white-space:nowrap;"
+    TABLE_STYLE = "border:1px solid #e5e3dc;border-radius:12px;border-collapse:separate;overflow:hidden;"
+
+    def _pill(text: str, bg: str, fg: str) -> str:
+        return f'<span style="display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:{bg};color:{fg};white-space:nowrap;">{text}</span>'
+
+    def _stage_pill(text: str) -> str:
+        return _pill(_e(text), "#eaf0fb", "#2c4f9e") if text != "—" else _pill("&mdash;", "#f3f1ea", "#6b6355")
+
     def _empty_row(colspan: int) -> str:
-        return f'<tr class="empty-row"><td colspan="{colspan}">No activity this week</td></tr>'
+        return f'<tr><td colspan="{colspan}" style="padding:16px;color:#94a3b8;font-style:italic;text-align:center;font-size:12.5px;">No activity this week</td></tr>'
+
+    def _section_header(dot_color: str, title: str, badge_bg: str, badge_fg: str, badge_text: str) -> str:
+        return f"""<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">
+          <tr>
+            <td style="width:7px;height:7px;border-radius:999px;background:{dot_color};font-size:0;line-height:0;">&nbsp;</td>
+            <td style="padding-left:9px;font-size:13.5px;font-weight:600;color:#1f2a37;">{title}</td>
+            <td style="padding-left:8px;">{_pill(badge_text, badge_bg, badge_fg)}</td>
+          </tr>
+        </table>"""
+
+    def _rows(items, row_fn, colspan: int) -> str:
+        n = len(items)
+        out = []
+        for i, row in enumerate(items):
+            out.append(row_fn(row, i == n - 1))
+        return "".join(out) or _empty_row(colspan)
 
     # Section 1 rows
-    stage_rows_html = "".join(
-        f"""<tr>
-              <td><strong>{_e(row.deal_name)}</strong></td>
-              <td><span class="pill pill-stage">{_e(_stage_label(row.from_stage))}</span><span class="arrow">&rarr;</span><span class="pill pill-stage">{_e(_stage_label(row.to_stage))}</span></td>
-              <td class="who">{_e(row.changed_by)}</td>
-              <td class="when">{_e(_fmt_when(row.changed_at, tz))}</td>
+    def _stage_row(row: StageChangeRow, is_last: bool) -> str:
+        td = TD_STYLE_LAST if is_last else TD_STYLE
+        return f"""<tr>
+              <td style="{td}"><strong>{_e(row.deal_name)}</strong></td>
+              <td style="{td}">{_stage_pill(_stage_label(row.from_stage))}<span style="color:#94a3b8;margin:0 4px;font-size:11px;">&rarr;</span>{_stage_pill(_stage_label(row.to_stage))}</td>
+              <td style="{td}{WHO_STYLE}">{_e(row.changed_by)}</td>
+              <td style="{td}{WHEN_STYLE}">{_e(_fmt_when(row.changed_at, tz))}</td>
             </tr>"""
-        for row in digest.stage_changes
-    ) or _empty_row(4)
+
+    stage_rows_html = _rows(digest.stage_changes, _stage_row, 4)
 
     # Section 2 rows
     def _status_pill(status: str | None) -> str:
         label = ACCOUNT_STATUS_LABELS.get(status or "", status or "—")
-        cls = "pill-danger" if status == "dnd" else "pill-warn"
-        return f'<span class="pill {cls}">{_e(label)}</span>'
+        bg, fg = ("#fbeaea", "#a53434") if status == "dnd" else ("#fdf1e3", "#a5590b")
+        return _pill(_e(label), bg, fg)
 
-    account_rows_html = "".join(
-        f"""<tr>
-              <td><strong>{_e(row.account_name)}</strong></td>
-              <td>{_status_pill(row.to_status)}</td>
-              <td class="who">{_e(row.changed_by)}</td>
-              <td class="when">{_e(_fmt_when(row.changed_at, tz))}</td>
+    def _account_row(row: AccountStatusRow, is_last: bool) -> str:
+        td = TD_STYLE_LAST if is_last else TD_STYLE
+        return f"""<tr>
+              <td style="{td}"><strong>{_e(row.account_name)}</strong></td>
+              <td style="{td}">{_status_pill(row.to_status)}</td>
+              <td style="{td}{WHO_STYLE}">{_e(row.changed_by)}</td>
+              <td style="{td}{WHEN_STYLE}">{_e(_fmt_when(row.changed_at, tz))}</td>
             </tr>"""
-        for row in digest.account_status_changes
-    ) or _empty_row(4)
+
+    account_rows_html = _rows(digest.account_status_changes, _account_row, 4)
 
     # Section 3 rows
-    prospect_rows_html = "".join(
-        f"""<tr>
-              <td><strong>{_e(row.contact_name)}</strong></td>
-              <td class="who">{_e(row.account_name)}</td>
-              <td class="who">{_e(row.changed_by)}</td>
-              <td class="when">{_e(_fmt_when(row.changed_at, tz))}</td>
+    def _prospect_row(row: ProspectDndRow, is_last: bool) -> str:
+        td = TD_STYLE_LAST if is_last else TD_STYLE
+        return f"""<tr>
+              <td style="{td}"><strong>{_e(row.contact_name)}</strong></td>
+              <td style="{td}{WHO_STYLE}">{_e(row.account_name)}</td>
+              <td style="{td}{WHO_STYLE}">{_e(row.changed_by)}</td>
+              <td style="{td}{WHEN_STYLE}">{_e(_fmt_when(row.changed_at, tz))}</td>
             </tr>"""
-        for row in digest.prospect_dnd
-    ) or _empty_row(4)
+
+    prospect_rows_html = _rows(digest.prospect_dnd, _prospect_row, 4)
 
     # Section 4 rows
-    import_rows_html = "".join(
-        f"""<tr>
-              <td><strong>{_e(row.filename)}</strong></td>
-              <td class="num">{row.accounts_created}</td>
-              <td class="who">{_e(row.uploaded_by)}</td>
-              <td class="when">{_e(_fmt_when(row.uploaded_at, tz))}</td>
+    def _import_row(row: ImportRow, is_last: bool) -> str:
+        td = TD_STYLE_LAST if is_last else TD_STYLE
+        return f"""<tr>
+              <td style="{td}"><strong>{_e(row.filename)}</strong></td>
+              <td align="right" style="{td}">{row.accounts_created}</td>
+              <td style="{td}{WHO_STYLE}">{_e(row.uploaded_by)}</td>
+              <td style="{td}{WHEN_STYLE}">{_e(_fmt_when(row.uploaded_at, tz))}</td>
             </tr>"""
-        for row in digest.imports
-    ) or _empty_row(4)
+
+    import_rows_html = _rows(digest.imports, _import_row, 4)
 
     total_import_accounts = sum(r.accounts_created for r in digest.imports)
     period_label = f"{digest.period_start.strftime('%a, %b %d')} &ndash; {digest.period_end.strftime('%a, %b %d, %Y')}"
@@ -479,107 +517,93 @@ def _render_digest_html(digest: WeeklyDigest) -> str:
 <html>
 <head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f3f1ea;">
-<style>
-  .email-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }}
-  .pill {{ display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap; }}
-  .pill-stage {{ background:#eaf0fb;color:#2c4f9e; }}
-  .pill-danger {{ background:#fbeaea;color:#a53434; }}
-  .pill-warn {{ background:#fdf1e3;color:#a5590b; }}
-  .pill-import {{ background:#f1eefe;color:#5b3fa0; }}
-  table {{ border-collapse:collapse;width:100%;background:#ffffff; }}
-  thead tr {{ background:#fafaf8; }}
-  th {{ text-align:left;padding:9px 12px;color:#94a3b8;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e5e3dc; }}
-  th.num, td.num {{ text-align:right; }}
-  td {{ padding:10px 12px;border-bottom:1px solid #eeece5;font-size:12.5px;color:#1f2a37;vertical-align:middle; }}
-  tr:last-child td {{ border-bottom:none; }}
-  .who {{ color:#6b7280;font-size:12px; }}
-  .when {{ color:#94a3b8;font-size:11.5px;white-space:nowrap; }}
-  .arrow {{ color:#94a3b8;margin:0 4px;font-size:11px; }}
-  .empty-row td {{ color:#94a3b8;font-style:italic;text-align:center;padding:16px; }}
-</style>
-<div style="max-width:640px;margin:0 auto;padding:28px 22px 34px;">
-  <div class="email-body" style="background:#ffffff;border-radius:14px;padding:32px 30px 28px;">
-    <div style="display:flex;align-items:center;gap:8px;margin:0 0 22px;">
-      <div style="width:22px;height:22px;border-radius:6px;background:#4d7c0f;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">b</div>
-      <div style="font-size:13px;font-weight:600;color:#1f2a37;">Beacon CRM</div>
-    </div>
+<div style="max-width:640px;margin:0 auto;padding:28px 22px 34px;font-family:{FONT};">
+  <div style="background:#ffffff;border-radius:14px;padding:32px 30px 28px;">
 
-    <h1 style="font-size:19px;font-weight:600;color:#1f2a37;margin:0 0 4px;letter-spacing:-0.01em;">Weekly Activity Digest</h1>
-    <p style="font-size:12.5px;color:#94a3b8;margin:0 0 22px;">{period_label} &middot; {_e(digest.timezone)}</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;">
+      <tr>
+        <td style="width:22px;height:22px;border-radius:6px;background:#4d7c0f;color:#fff;font-size:12px;font-weight:700;text-align:center;vertical-align:middle;">b</td>
+        <td style="padding-left:8px;font-size:13px;font-weight:600;color:#1f2a37;">Beacon CRM</td>
+      </tr>
+    </table>
 
-    <div style="display:flex;gap:10px;margin:0 0 26px;">
-      <div style="flex:1;border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
-        <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.stage_changes)}</div>
-        <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Stage moves</div>
-      </div>
-      <div style="flex:1;border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
-        <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.account_status_changes)}</div>
-        <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Accounts flagged</div>
-      </div>
-      <div style="flex:1;border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
-        <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.prospect_dnd)}</div>
-        <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Prospects DND</div>
-      </div>
-      <div style="flex:1;border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
-        <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.imports)}</div>
-        <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">New imports</div>
-      </div>
+    <div style="font-size:19px;font-weight:600;color:#1f2a37;margin:0 0 4px;letter-spacing:-0.01em;">Weekly Activity Digest</div>
+    <div style="font-size:12.5px;color:#94a3b8;margin:0 0 22px;">{period_label} &middot; {_e(digest.timezone)}</div>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 26px;">
+      <tr>
+        <td width="25%" style="border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
+          <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.stage_changes)}</div>
+          <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Stage moves</div>
+        </td>
+        <td width="4"></td>
+        <td width="25%" style="border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
+          <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.account_status_changes)}</div>
+          <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Accounts flagged</div>
+        </td>
+        <td width="4"></td>
+        <td width="25%" style="border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
+          <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.prospect_dnd)}</div>
+          <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Prospects DND</div>
+        </td>
+        <td width="4"></td>
+        <td width="25%" style="border:1px solid #e5e3dc;border-radius:10px;padding:12px 10px;text-align:center;">
+          <div style="font-size:19px;font-weight:700;color:#1f2a37;line-height:1.1;">{len(digest.imports)}</div>
+          <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">New imports</div>
+        </td>
+      </tr>
+    </table>
+
+    <div style="margin:0 0 26px;">
+      {_section_header("#2c4f9e", "Pipeline stage changes", "#eaf0fb", "#2c4f9e", str(len(digest.stage_changes)))}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="{TABLE_STYLE}">
+        <tr style="background:#fafaf8;">
+          <th align="left" style="{TH_STYLE}">Deal</th>
+          <th align="left" style="{TH_STYLE}">Move</th>
+          <th align="left" style="{TH_STYLE}">Changed by</th>
+          <th align="left" style="{TH_STYLE}">When</th>
+        </tr>
+        {stage_rows_html}
+      </table>
     </div>
 
     <div style="margin:0 0 26px;">
-      <div style="display:flex;align-items:center;gap:9px;margin:0 0 12px;">
-        <span style="width:7px;height:7px;border-radius:999px;flex-shrink:0;background:#2c4f9e;display:inline-block;"></span>
-        <span style="font-size:13.5px;font-weight:600;color:#1f2a37;">Pipeline stage changes</span>
-        <span class="pill pill-stage">{len(digest.stage_changes)}</span>
-      </div>
-      <div style="border:1px solid #e5e3dc;border-radius:12px;overflow:hidden;">
-        <table>
-          <thead><tr><th>Deal</th><th>Move</th><th>Changed by</th><th>When</th></tr></thead>
-          <tbody>{stage_rows_html}</tbody>
-        </table>
-      </div>
+      {_section_header("#a53434", "Accounts marked DND / Not a Fit / Reach Out Later", "#fbeaea", "#a53434", str(len(digest.account_status_changes)))}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="{TABLE_STYLE}">
+        <tr style="background:#fafaf8;">
+          <th align="left" style="{TH_STYLE}">Account</th>
+          <th align="left" style="{TH_STYLE}">Marked as</th>
+          <th align="left" style="{TH_STYLE}">Changed by</th>
+          <th align="left" style="{TH_STYLE}">When</th>
+        </tr>
+        {account_rows_html}
+      </table>
     </div>
 
     <div style="margin:0 0 26px;">
-      <div style="display:flex;align-items:center;gap:9px;margin:0 0 12px;">
-        <span style="width:7px;height:7px;border-radius:999px;flex-shrink:0;background:#a53434;display:inline-block;"></span>
-        <span style="font-size:13.5px;font-weight:600;color:#1f2a37;">Accounts marked DND / Not a Fit / Reach Out Later</span>
-        <span class="pill pill-danger">{len(digest.account_status_changes)}</span>
-      </div>
-      <div style="border:1px solid #e5e3dc;border-radius:12px;overflow:hidden;">
-        <table>
-          <thead><tr><th>Account</th><th>Marked as</th><th>Changed by</th><th>When</th></tr></thead>
-          <tbody>{account_rows_html}</tbody>
-        </table>
-      </div>
-    </div>
-
-    <div style="margin:0 0 26px;">
-      <div style="display:flex;align-items:center;gap:9px;margin:0 0 12px;">
-        <span style="width:7px;height:7px;border-radius:999px;flex-shrink:0;background:#a5590b;display:inline-block;"></span>
-        <span style="font-size:13.5px;font-weight:600;color:#1f2a37;">Prospects marked DND</span>
-        <span class="pill pill-warn">{len(digest.prospect_dnd)}</span>
-      </div>
-      <div style="border:1px solid #e5e3dc;border-radius:12px;overflow:hidden;">
-        <table>
-          <thead><tr><th>Prospect</th><th>Account</th><th>Marked by</th><th>When</th></tr></thead>
-          <tbody>{prospect_rows_html}</tbody>
-        </table>
-      </div>
+      {_section_header("#a5590b", "Prospects marked DND", "#fdf1e3", "#a5590b", str(len(digest.prospect_dnd)))}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="{TABLE_STYLE}">
+        <tr style="background:#fafaf8;">
+          <th align="left" style="{TH_STYLE}">Prospect</th>
+          <th align="left" style="{TH_STYLE}">Account</th>
+          <th align="left" style="{TH_STYLE}">Marked by</th>
+          <th align="left" style="{TH_STYLE}">When</th>
+        </tr>
+        {prospect_rows_html}
+      </table>
     </div>
 
     <div style="margin:0 0 4px;">
-      <div style="display:flex;align-items:center;gap:9px;margin:0 0 12px;">
-        <span style="width:7px;height:7px;border-radius:999px;flex-shrink:0;background:#5b3fa0;display:inline-block;"></span>
-        <span style="font-size:13.5px;font-weight:600;color:#1f2a37;">New accounts added (Recent Imports)</span>
-        <span class="pill pill-import">{len(digest.imports)} uploads &middot; {total_import_accounts} accounts</span>
-      </div>
-      <div style="border:1px solid #e5e3dc;border-radius:12px;overflow:hidden;">
-        <table>
-          <thead><tr><th>File</th><th class="num">Accounts</th><th>Uploaded by</th><th>When</th></tr></thead>
-          <tbody>{import_rows_html}</tbody>
-        </table>
-      </div>
+      {_section_header("#5b3fa0", "New accounts added (Recent Imports)", "#f1eefe", "#5b3fa0", f"{len(digest.imports)} uploads &middot; {total_import_accounts} accounts")}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="{TABLE_STYLE}">
+        <tr style="background:#fafaf8;">
+          <th align="left" style="{TH_STYLE}">File</th>
+          <th align="right" style="{TH_STYLE}">Accounts</th>
+          <th align="left" style="{TH_STYLE}">Uploaded by</th>
+          <th align="left" style="{TH_STYLE}">When</th>
+        </tr>
+        {import_rows_html}
+      </table>
     </div>
 
     <div style="margin-top:30px;padding-top:16px;border-top:1px solid #e5e3dc;font-size:11px;color:#94a3b8;line-height:1.6;">

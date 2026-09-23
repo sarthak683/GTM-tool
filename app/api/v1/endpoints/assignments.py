@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 
 # Shared filter contract with the prospects list + CSV export — importing it
 # (instead of re-declaring params) is what guarantees "assign all matching"
@@ -246,6 +246,7 @@ async def assign_company(
     body: AssignRequest,
     session: DBSession,
     actor: CurrentUser,
+    background_tasks: BackgroundTasks,
 ):
     """Assign a company-level AE or SDR. Admins can assign anyone; non-admin
     reps can only self-claim an unassigned slot that matches their role, or
@@ -337,6 +338,24 @@ async def assign_company(
     session.add(company)
     await session.commit()
     await session.refresh(company)
+
+    # Live email on an actual assignment (never on unassign) — the new
+    # owner (plus maithili@beacon.li and annie@beacon.li on every send)
+    # learns immediately instead of via the weekly digest.
+    if body.user_id and user and user.email:
+        from app.services.account_assignment_notify import notify_account_assigned
+
+        background_tasks.add_task(
+            notify_account_assigned,
+            account_name=company.name,
+            role_label="SDR" if is_sdr else "AE",
+            assignee_name=user.name or user.email,
+            assignee_email=user.email,
+            assigned_by_name=actor.name or actor.email,
+            assigned_at=company.updated_at,
+            is_new_account=False,
+        )
+
     return company
 
 
@@ -443,6 +462,7 @@ async def bulk_assign_companies(
     body: BulkAssignRequest,
     session: DBSession,
     actor: CurrentUser,
+    background_tasks: BackgroundTasks,
 ):
     """Bulk assign multiple companies to a sales rep.
 
@@ -495,6 +515,22 @@ async def bulk_assign_companies(
         updated += 1
 
     await session.commit()
+
+    # One summary email, not one per account — a bulk reassignment of 200
+    # accounts to one rep should not put 200 emails in their inbox.
+    if body.user_id and user and user.email and updated > 0:
+        from app.services.account_assignment_notify import notify_accounts_bulk_assigned
+
+        background_tasks.add_task(
+            notify_accounts_bulk_assigned,
+            count=updated,
+            role_label=role_key.upper(),
+            assignee_name=user.name or user.email,
+            assignee_email=user.email,
+            assigned_by_name=actor.name or actor.email,
+            assigned_at=datetime.utcnow(),
+        )
+
     return {
         "updated": updated,
         "skipped": skipped,
@@ -701,6 +737,7 @@ async def bulk_assign_companies_by_filter(
     body: FilterAssignRequest,
     session: DBSession,
     actor: CurrentUser,
+    background_tasks: BackgroundTasks,
     filters: CompanySourcingFilters = Depends(),
 ):
     """Assign EVERY account matching the current Account Sourcing filters —
@@ -781,6 +818,21 @@ async def bulk_assign_companies_by_filter(
         updated += 1
 
     await session.commit()
+
+    # One summary email, not one per account.
+    if body.user_id and user and user.email and updated > 0:
+        from app.services.account_assignment_notify import notify_accounts_bulk_assigned
+
+        background_tasks.add_task(
+            notify_accounts_bulk_assigned,
+            count=updated,
+            role_label=role_key.upper(),
+            assignee_name=user.name or user.email,
+            assignee_email=user.email,
+            assigned_by_name=actor.name or actor.email,
+            assigned_at=datetime.utcnow(),
+        )
+
     return {
         "matched": total,
         "updated": updated,
@@ -842,6 +894,7 @@ def _serialize_planned(entry) -> AssignmentUploadRow:
 async def bulk_assign_from_upload(
     admin: AdminUser,
     session: DBSession,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     dry_run: bool = Query(True, description="Preview only. Set false to write."),
 ):
@@ -873,6 +926,48 @@ async def bulk_assign_from_upload(
     if not dry_run:
         applied = await apply_assignment_plan(session, planned, actor=admin)
         await session.commit()
+
+        # A CSV can assign different people on different rows, so this is NOT
+        # a single-recipient bulk op like the other two — group by who
+        # actually ended up with accounts and send ONE summary email per
+        # person, not one per row. `planned` was computed fresh right above
+        # apply_assignment_plan in this same request, so ae_moves/sdr_moves
+        # here exactly match what was just written.
+        from collections import defaultdict
+
+        from app.services.account_assignment_notify import notify_accounts_bulk_assigned
+
+        ae_tally: dict[UUID, int] = defaultdict(int)
+        ae_users: dict[UUID, User] = {}
+        sdr_tally: dict[UUID, int] = defaultdict(int)
+        sdr_users: dict[UUID, User] = {}
+        for entry in planned:
+            if entry.ae_moves and entry.ae.user and not entry.ae.unassign:
+                ae_tally[entry.ae.user.id] += 1
+                ae_users[entry.ae.user.id] = entry.ae.user
+            if entry.sdr_moves and entry.sdr.user and not entry.sdr.unassign:
+                sdr_tally[entry.sdr.user.id] += 1
+                sdr_users[entry.sdr.user.id] = entry.sdr.user
+
+        assigned_at = datetime.utcnow()
+        for uid, count in ae_tally.items():
+            u = ae_users[uid]
+            if u.email:
+                background_tasks.add_task(
+                    notify_accounts_bulk_assigned,
+                    count=count, role_label="AE", assignee_name=u.name or u.email,
+                    assignee_email=u.email, assigned_by_name=admin.name or admin.email,
+                    assigned_at=assigned_at,
+                )
+        for uid, count in sdr_tally.items():
+            u = sdr_users[uid]
+            if u.email:
+                background_tasks.add_task(
+                    notify_accounts_bulk_assigned,
+                    count=count, role_label="SDR", assignee_name=u.name or u.email,
+                    assignee_email=u.email, assigned_by_name=admin.name or admin.email,
+                    assigned_at=assigned_at,
+                )
 
     return AssignmentUploadResult(
         dry_run=dry_run,

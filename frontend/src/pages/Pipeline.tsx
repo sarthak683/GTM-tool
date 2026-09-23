@@ -639,6 +639,13 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
   const [duplicateWarning, setDuplicateWarning] = useState<{ id: string; name: string; stage: string; created_at: string | null } | null>(null);
   const [, setSearchParams] = useSearchParams();
   const [validationErrors, setValidationErrors] = useState<{ name: boolean; company_id: boolean; source: boolean; assigned_to_id: boolean; sdr_id: boolean; meeting_booked_with: boolean; meeting_booked_from: boolean; close_date_est: boolean; marketing_source: boolean; marketing_custom: boolean }>({ name: false, company_id: false, source: false, assigned_to_id: false, sdr_id: false, meeting_booked_with: false, meeting_booked_from: false, close_date_est: false, marketing_source: false, marketing_custom: false });
+  // Marketing Lead (MQL) is a workspace-configurable stage (its id varies by
+  // workspace, e.g. "new_stage_19"), so it's detected by label rather than a
+  // hardcoded id. A deal dropped straight into this bucket hasn't had a
+  // meeting booked yet — that's the whole point of the stage — so those
+  // three fields shouldn't block creation the way they do for every other
+  // stage, where a meeting is exactly why the deal exists.
+  const isMarketingLeadStage = (stages.find((s) => s.id === form.stage)?.label || "").toLowerCase().includes("marketing lead");
   const handleCreate = async (confirmDuplicate = false) => {
     setDuplicateWarning(null);
     const needsMarketingCustom = form.is_marketing_lead && (form.marketing_source === "other" || form.marketing_source === "events");
@@ -648,9 +655,9 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
       source: !form.source,
       assigned_to_id: !form.assigned_to_id,
       sdr_id: !form.sdr_id,
-      meeting_booked_with: !form.meeting_booked_with,
-      meeting_booked_from: !form.meeting_booked_from,
-      close_date_est: !form.close_date_est,
+      meeting_booked_with: !isMarketingLeadStage && !form.meeting_booked_with,
+      meeting_booked_from: !isMarketingLeadStage && !form.meeting_booked_from,
+      close_date_est: !isMarketingLeadStage && !form.close_date_est,
       marketing_source: form.is_marketing_lead && !form.marketing_source,
       marketing_custom: needsMarketingCustom && !form.marketing_custom.trim(),
     };
@@ -797,7 +804,7 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 value={form.meeting_booked_with}
                 onChange={(event) => { setForm((current) => ({ ...current, meeting_booked_with: event.target.value })); if (validationErrors.meeting_booked_with && event.target.value) setValidationErrors((current) => ({ ...current, meeting_booked_with: false })); }}
               >
-                <option value="">Meeting Booked with *</option>
+                <option value="">{isMarketingLeadStage ? "Meeting Booked with" : "Meeting Booked with *"}</option>
                 <option value="Director">Director</option>
                 <option value="S. Director">S. Director</option>
                 <option value="AVP">AVP</option>
@@ -812,7 +819,7 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 value={form.meeting_booked_from}
                 onChange={(event) => { setForm((current) => ({ ...current, meeting_booked_from: event.target.value })); if (validationErrors.meeting_booked_from && event.target.value) setValidationErrors((current) => ({ ...current, meeting_booked_from: false })); }}
               >
-                <option value="">Meeting Booked from *</option>
+                <option value="">{isMarketingLeadStage ? "Meeting Booked from" : "Meeting Booked from *"}</option>
                 <option value="Call">Call</option>
                 <option value="LinkedIn">LinkedIn</option>
                 <option value="Email">Email</option>
@@ -823,7 +830,7 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
               <input type="number" style={modalInputStyle} placeholder="Value" value={form.value} onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))} />
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
-                  Meeting Booked Date <span style={{ color: "#dc2626" }}>*</span>
+                  Meeting Booked Date {!isMarketingLeadStage && <span style={{ color: "#dc2626" }}>*</span>}
                 </label>
                 <input
                   type="date"
