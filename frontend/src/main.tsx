@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { installChunkRecovery } from "./lib/chunkRecovery";
 
 // Every deploy ships lazy-loaded chunks (DealDetailDrawer, Pipeline, etc.)
 // under a NEW content hash, and the old hashed files stop existing on the
@@ -15,18 +16,11 @@ import "./index.css";
 // enough to fix it, so do that automatically instead of surfacing an error
 // for something that isn't actually broken.
 //
-// Guarded by sessionStorage so a genuinely broken deploy (one where the
-// reload doesn't fix it) reloads once, not in an infinite loop — the guard
-// is cleared once a page load actually completes.
-window.addEventListener("vite:preloadError", () => {
-  const key = "beacon:stale-chunk-reload";
-  if (sessionStorage.getItem(key)) return;
-  sessionStorage.setItem(key, "1");
-  window.location.reload();
-});
-window.addEventListener("load", () => {
-  sessionStorage.removeItem("beacon:stale-chunk-reload");
-});
+// Use wrappers so browsers that deny storage access do not fail at startup.
+installChunkRecovery(window, {
+  getItem: (key) => window.sessionStorage.getItem(key),
+  setItem: (key, value) => window.sessionStorage.setItem(key, value),
+}, () => window.location.reload());
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
