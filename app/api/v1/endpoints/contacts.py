@@ -644,6 +644,8 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     # editing an unassigned one claims it.
     await authorize_contact_edit(session, _user, contact)
     update_data = payload.model_dump(exclude_unset=True)
+    # Not a Contact column — pulled out before the generic setattr loop below.
+    cadence_task_id = update_data.pop("cadence_task_id", None)
     previous_call_disposition = contact.call_disposition
     for key, value in update_data.items():
         # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
@@ -717,6 +719,14 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     if "call_disposition" in update_data or "linkedin_status" in update_data or "account_status" in update_data:
         await session.commit()
         await session.refresh(saved)
+
+    # This save came from a reused Call/LinkedIn/Email dialog opened off an
+    # Outreach Sequence task — advance that step now that the real action
+    # (whatever it was) already succeeded above.
+    if cadence_task_id:
+        from app.services.sequences import complete_cadence_step
+
+        await complete_cadence_step(session, task_id=cadence_task_id)
 
     return await to_contact_read(session, saved)
 

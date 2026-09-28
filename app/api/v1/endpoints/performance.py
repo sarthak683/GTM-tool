@@ -301,8 +301,10 @@ class RedAlertDeal(BaseModel):
 async def get_funnel(
     session: DBSession,
     current_user: CurrentUser,
-    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    period: Annotated[Literal["week", "month", "quarter", "custom"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    custom_start: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    custom_end: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
     rep_id: Annotated[Optional[UUID], Query()] = None,
 ):
     from app.models.deal import Deal, DEAL_STAGES
@@ -310,7 +312,12 @@ async def get_funnel(
     from sqlalchemy import func, select
 
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    if period == "custom" and not (custom_start and custom_end):
+        raise HTTPException(status_code=422, detail="custom_start and custom_end are required when period=custom")
+    p = pm.resolve_period(
+        period, anchor=anchor, custom_start=custom_start, custom_end=custom_end,
+        tz_name=settings.get("workspace_timezone"),
+    )
 
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
@@ -479,8 +486,10 @@ async def get_funnel_transition_deals(
     from_stage: Annotated[str, Query(description="Row's from_stage, e.g. 'demo_scheduled' — ignored when is_overall is true")],
     to_stage: Annotated[Optional[str], Query(description="Row's to_stage, e.g. 'demo_done' — ignored when is_overall is true")] = None,
     is_overall: Annotated[bool, Query(description="Pool every configured transition's moves into one list, for the Overall row")] = False,
-    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    period: Annotated[Literal["week", "month", "quarter", "custom"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    custom_start: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    custom_end: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
     rep_id: Annotated[Optional[UUID], Query()] = None,
 ):
     """The exact deals behind a Funnel "Stage conversion" row's Deals count —
@@ -492,7 +501,12 @@ async def get_funnel_transition_deals(
     /funnel), since that row no longer represents a single from/to pair.
     """
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    if period == "custom" and not (custom_start and custom_end):
+        raise HTTPException(status_code=422, detail="custom_start and custom_end are required when period=custom")
+    p = pm.resolve_period(
+        period, anchor=anchor, custom_start=custom_start, custom_end=custom_end,
+        tz_name=settings.get("workspace_timezone"),
+    )
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
 

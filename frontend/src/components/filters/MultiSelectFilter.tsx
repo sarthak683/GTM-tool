@@ -121,7 +121,7 @@ export default function MultiSelectFilter({
           <ChevronDown size={compact ? 12 : 13} style={{ position: "absolute", right: compact ? 8 : 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: compact ? "#7a96b0" : "#7f8fa5" }} />
         </button>
         {open && (
-          <div className="beacon-pop" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: compact ? 280 : 300 }}>
+          <div className="beacon-pop" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 20, borderRadius: 14, border: "1px solid #dbe6f2", background: "#fff", boxShadow: "0 18px 36px rgba(15,23,42,0.14)", padding: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: compact ? 280 : 300, width: "max-content", minWidth: "100%", maxWidth: 260, boxSizing: "border-box" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 0" }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: "#6f8095", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
               {values.length > 0 && (

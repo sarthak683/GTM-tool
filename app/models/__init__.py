@@ -10,6 +10,11 @@ from app.models.assignment_update import (
     ExecutionTrackerSummary,
 )
 from app.models.outreach import OutreachSequence, OutreachSequenceRead
+from app.models.sequence import (
+    Sequence, SequenceCreate, SequenceRead, SequenceUpdate,
+    SequenceStep, SequenceStepCreate, SequenceStepRead,
+    Enrollment, EnrollmentRead,
+)
 from app.models.signal import Signal, SignalCreate, SignalRead
 from app.models.meeting import Meeting, MeetingCreate, MeetingRead, MeetingUpdate
 from app.models.battlecard import Battlecard, BattlecardCreate, BattlecardRead, BattlecardUpdate

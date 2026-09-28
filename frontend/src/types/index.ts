@@ -66,6 +66,10 @@ export type Contact = Omit<
   enrichment_data?: Record<string, unknown> | null;
   warm_intro_path?: Record<string, unknown> | null;
   talking_points?: string[] | null;
+  // Update-only, not a real column — set on contactsApi.update(...) when the
+  // save came from an Outreach Sequence cadence task, so the backend can
+  // advance that task's step. See app.services.sequences.complete_cadence_step.
+  cadence_task_id?: string;
 };
 
 /** Slim card the prospect board renders — see ContactBoardCard on the API.
@@ -370,6 +374,16 @@ export interface TaskItem {
   created_at: string;
   updated_at: string;
   comments: TaskComment[];
+  // Outreach Sequence context — populated only for source="cadence" tasks.
+  enrollment_id?: string;
+  step_id?: string;
+  sequence_name?: string;
+  step_number?: number;
+  step_type?: "email" | "call" | "linkedin";
+  step_send_via?: "personal" | "instantly";
+  step_instantly_campaign_id?: string;
+  step_linkedin_category?: "dm" | "follow_up" | "inmail";
+  contact_id?: string;
 }
 
 export interface TaskWorkspaceItem extends TaskItem {

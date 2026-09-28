@@ -260,6 +260,11 @@ class ContactUpdate(SQLModel):
     linkedin_last_at: Optional[datetime] = None
     timezone: Optional[str] = None
     next_followup_at: Optional[datetime] = None
+    # Not a Contact column — popped off before the update loop. Set when this
+    # save came from an Outreach Sequence cadence task (Call/LinkedIn/Email
+    # dialogs reused as-is); on success it advances that task's Enrollment to
+    # its next step. See app.services.sequences.complete_cadence_step.
+    cadence_task_id: Optional[UUID] = None
 
     @field_validator("account_status", mode="before")
     @classmethod

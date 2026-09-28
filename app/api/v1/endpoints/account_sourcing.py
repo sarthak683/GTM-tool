@@ -107,6 +107,14 @@ def _parse_multi_query(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _headquarters_country_expr():
+    """SQL expression for the country portion of the free-text `headquarters`
+    field (e.g. "San Francisco, USA" -> "USA") — the text after its last
+    comma, trimmed. `headquarters` has no separate structured city/country
+    columns, so this is parsed rather than stored."""
+    return func.trim(func.regexp_replace(Company.headquarters, r"^.*,\s*", ""))
+
+
 def _apply_text_multi_filter(stmt, column, raw_value: str | None):
     values = _parse_multi_query(raw_value)
     if not values:
@@ -190,6 +198,7 @@ class CompanySourcingFilters:
     ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only. Use '__unassigned__' for accounts with no AE.")
     sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only. Use '__unassigned__' for accounts with no SDR.")
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage.")
+    headquarters_country: str | None = Query(default=None, description="One or more headquarters countries (comma-separated), parsed from the free-text `headquarters` field (the text after its last comma). Use '__empty__' for accounts with no headquarters set.")
     batch_id: UUID | None = Query(default=None, description="Only accounts attached to this sourcing batch (import).")
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account.")
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account.")
@@ -303,6 +312,17 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
         if status_clauses:
             stmt = stmt.where(or_(*status_clauses))
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, filters.recommended_outreach_lane)
+    if filters.headquarters_country:
+        tokens = _parse_multi_query(filters.headquarters_country)
+        include_empty = "__empty__" in tokens
+        real_countries = [t for t in tokens if t != "__empty__"]
+        clauses = []
+        if real_countries:
+            clauses.append(_headquarters_country_expr().in_(real_countries))
+        if include_empty:
+            clauses.append(or_(Company.headquarters.is_(None), Company.headquarters == ""))
+        if clauses:
+            stmt = stmt.where(or_(*clauses))
     if filters.assigned_rep:
         stmt = stmt.where(Company.assigned_rep == filters.assigned_rep)
     if filters.assigned_rep_email:
@@ -1635,6 +1655,23 @@ async def get_batch_companies(batch_id: UUID, _user: CurrentUser, session: DBSes
         .order_by(Company.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/companies/headquarters-countries", response_model=list[str])
+async def list_headquarters_countries(_user: CurrentUser, session: DBSession):
+    """Distinct headquarters countries across visible accounts, for the
+    Account Sourcing headquarters-country filter dropdown. Parsed from the
+    free-text `headquarters` field the same way the filter itself matches it.
+    """
+    stmt = (
+        CompanyRepository.visible_to(_user)
+        .where(_account_sourcing_visibility_filter())
+        .where(Company.headquarters.isnot(None), Company.headquarters != "")
+        .with_only_columns(_headquarters_country_expr())
+        .distinct()
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return sorted({r for r in rows if r})
 
 
 # ── All Sourced Companies ──────────────────────────────────────────────────────

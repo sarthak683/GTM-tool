@@ -775,6 +775,38 @@ async def instantly_webhook(request: Request, session: DBSession) -> dict:
     # ── Route by event type ────────────────────────────────────────────────────
 
     if event_type == "email_sent":
+        # Outreach Sequence: an Instantly-routed Email step doesn't complete
+        # on a rep's click (unlike Personal) — it completes HERE, whenever
+        # Instantly confirms the send. Find any still-open cadence task for
+        # this contact whose step is an Instantly email step on this exact
+        # campaign, and advance it. Best-effort: never let this block the
+        # rest of the (unrelated) webhook processing below.
+        if contact_id and campaign_id:
+            try:
+                from app.models.sequence import SequenceStep
+                from app.models.task import Task
+                from app.services.sequences import complete_cadence_step
+
+                pending_task = (
+                    await session.execute(
+                        select(Task)
+                        .join(SequenceStep, SequenceStep.id == Task.step_id)
+                        .where(
+                            Task.entity_type == "contact",
+                            Task.entity_id == contact_id,
+                            Task.source == "cadence",
+                            Task.status == "open",
+                            SequenceStep.type == "email",
+                            SequenceStep.send_via == "instantly",
+                            SequenceStep.instantly_campaign_id == str(campaign_id),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if pending_task:
+                    await complete_cadence_step(session, task_id=pending_task.id)
+            except Exception:
+                logger.exception("instantly webhook: cadence step completion failed for contact %s", contact_id)
+
         step_note = f" (step {step_number})" if step_number else ""
         # Use the actual email body if Instantly includes it in the payload;
         # fall back to a short log line so the activity still has a description.

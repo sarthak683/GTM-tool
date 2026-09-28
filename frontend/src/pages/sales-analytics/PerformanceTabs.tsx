@@ -674,7 +674,7 @@ function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
 
 // ── Funnel tab ─────────────────────────────────────────────────────────────
 
-export function FunnelTab({ reps }: { reps: RepSummary[] }) {
+export function FunnelTab({ reps, filters = EMPTY_FILTER_SCOPE }: { reps: RepSummary[]; filters?: AnalyticsFilterScope }) {
   const { isAdmin } = useAuth();
   const [period, setPeriod] = useState<"week" | "month" | "quarter">("month");
   const [repId, setRepId] = useState<string | undefined>(undefined);
@@ -686,13 +686,23 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
   const [stageDealsLoading, setStageDealsLoading] = useState(false);
   const [stageDealsError, setStageDealsError] = useState<string | null>(null);
 
+  // The global filter bar's "Custom Range" box (fromDate/toDate) overrides
+  // Week/Month/Quarter when both dates are set — reusing that existing
+  // control instead of adding a second one inside this tab. It reverts to
+  // normal Week/Month/Quarter the moment the custom range is cleared.
+  const customRangeActive = Boolean(filters.fromDate && filters.toDate);
+  const effectivePeriod = customRangeActive ? "custom" : period;
+
   useEffect(() => {
     if (!stageDealsQuery) return;
     let cancelled = false;
     setStageDealsLoading(true);
     setStageDealsError(null);
     performanceApi
-      .getFunnelTransitionDeals({ fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, isOverall: stageDealsQuery.isOverall, period, repId })
+      .getFunnelTransitionDeals({
+        fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, isOverall: stageDealsQuery.isOverall,
+        period: effectivePeriod, customStart: filters.fromDate, customEnd: filters.toDate, repId,
+      })
       .then((payload) => {
         if (!cancelled) setStageDealsData(payload);
       })
@@ -706,14 +716,14 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     return () => {
       cancelled = true;
     };
-  }, [stageDealsQuery, repId, period]);
+  }, [stageDealsQuery, repId, effectivePeriod, filters.fromDate, filters.toDate]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
-      .getFunnel({ period, rep_id: repId })
+      .getFunnel({ period: effectivePeriod, customStart: filters.fromDate, customEnd: filters.toDate, rep_id: repId })
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -727,7 +737,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     return () => {
       cancelled = true;
     };
-  }, [period, repId]);
+  }, [effectivePeriod, filters.fromDate, filters.toDate, repId]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -737,19 +747,28 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
         action={
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {isAdmin && <RepPicker reps={reps} value={repId} onChange={setRepId} />}
-            <SegmentedControl
-              value={period}
-              onChange={setPeriod}
-              options={[
-                { value: "week", label: "Week" },
-                { value: "month", label: "Month" },
-                { value: "quarter", label: "Quarter" },
-              ]}
-            />
+            <div
+              title={customRangeActive ? "Clear the Custom Range box above to use Week / Month / Quarter again" : undefined}
+              style={{ opacity: customRangeActive ? 0.45 : 1, pointerEvents: customRangeActive ? "none" : undefined }}
+            >
+              <SegmentedControl
+                value={period}
+                onChange={setPeriod}
+                options={[
+                  { value: "week", label: "Week" },
+                  { value: "month", label: "Month" },
+                  { value: "quarter", label: "Quarter" },
+                ]}
+              />
+            </div>
           </div>
         }
       >
-        {null}
+        {customRangeActive && (
+          <p style={{ margin: 0, fontSize: 12.5, color: PALETTE.subtle }}>
+            Showing custom range: <strong>{filters.fromDate}</strong> → <strong>{filters.toDate}</strong>
+          </p>
+        )}
       </Panel>
 
       {error && <ErrorBanner message={error} />}
@@ -757,7 +776,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
 
       {data && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18 }}>
-          <Panel title="Stage conversion" subtitle={`For deals that entered the stage this ${period}`}>
+          <Panel title="Stage conversion" subtitle={customRangeActive ? "For deals that entered the stage in the selected custom range" : `For deals that entered the stage this ${period}`}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13 }}>
                 <colgroup>
@@ -2903,13 +2922,15 @@ export function PerformanceTabContent({
   filters?: AnalyticsFilterScope;
 }) {
   switch (tab) {
-    // Scorecard / Funnel / Forecast / Targets are behind SHOW_TAB_* flags and
-    // keep their own period + rep controls; they are not wired to the global
-    // bar until they are turned back on.
+    // Scorecard / Forecast / Targets are behind SHOW_TAB_* flags and keep
+    // their own period + rep controls; they are not wired to the global bar
+    // until they are turned back on. Funnel now reads the global bar's
+    // Custom Range box (see FunnelTab's customRangeActive) but otherwise
+    // keeps its own Week/Month/Quarter control the same as before.
     case "scorecard":
       return <ScorecardTab reps={reps} />;
     case "funnel":
-      return <FunnelTab reps={reps} />;
+      return <FunnelTab reps={reps} filters={filters} />;
     case "risk":
       return <RiskTab filters={filters} />;
     case "forecast":

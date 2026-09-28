@@ -31,7 +31,8 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, settingsApi } from "../lib/api";
+import { accountSourcingApi, companiesApi, contactsApi, dealsApi, outreachApi, sequencesApi, settingsApi } from "../lib/api";
+import type { Sequence } from "../lib/api/sequences";
 import { trashApi, type CompanyTombstone } from "../lib/api/trash";
 import SearchableCompanySelect from "../components/SearchableCompanySelect";
 import { Plus, Trash2, UserPlus } from "lucide-react";
@@ -51,6 +52,7 @@ import type { ContactStatusValue } from "../lib/contactStatus";
 import { saveContactAccountStatus, shouldSyncContactStatusToAccount } from "../lib/contactStatusSync";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
+import AddToSequenceButton from "../components/AddToSequenceButton";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
@@ -329,6 +331,8 @@ function ContactItem({
               <CheckCircle2 size={14} /> Tasks
             </button>
           </div>
+
+          <AddToSequenceButton contactId={contact.id} />
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at ?? undefined)}</div>
           <Link
@@ -771,6 +775,13 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
   );
 }
 
+// Hidden per request 2026-09-23 — not deleted, just off for now; flip back
+// to true if the raw website-scrape text needs to reappear on this page.
+const SHOW_WEBSITE_RESEARCH = false;
+// Same request 2026-09-23 — covers the timestamp list and the Apollo
+// Snapshot sub-block beneath it, which live in this same Section.
+const SHOW_DATA_FRESHNESS = false;
+
 export default function AccountSourcingCompanyDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -802,11 +813,11 @@ export default function AccountSourcingCompanyDetail() {
   const [showAllStakeholders, setShowAllStakeholders] = useState(false);
   // F8 — bulk add-to-sequence selection state
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
-  const [bulkLaunchOpen, setBulkLaunchOpen] = useState(false);
-  const [bulkLaunchAccount, setBulkLaunchAccount] = useState("");
-  const [bulkLaunchName, setBulkLaunchName] = useState("");
-  const [bulkLaunching, setBulkLaunching] = useState(false);
-  const [bulkLaunchError, setBulkLaunchError] = useState("");
+  const [bulkSequenceOpen, setBulkSequenceOpen] = useState(false);
+  const [bulkSequences, setBulkSequences] = useState<Sequence[]>([]);
+  const [bulkSequenceId, setBulkSequenceId] = useState("");
+  const [bulkEnrolling, setBulkEnrolling] = useState(false);
+  const [bulkEnrollError, setBulkEnrollError] = useState("");
 
   const toggleContactSelected = useCallback((cid: string) => {
     setSelectedContactIds((prev) => {
@@ -2614,7 +2625,12 @@ export default function AccountSourcingCompanyDetail() {
                       </span>
                     </div>
                     <button
-                      onClick={() => { setBulkLaunchOpen(true); setBulkLaunchError(""); }}
+                      onClick={() => {
+                        setBulkSequenceOpen(true);
+                        setBulkEnrollError("");
+                        setBulkSequenceId("");
+                        sequencesApi.list().then(setBulkSequences).catch(() => setBulkSequences([]));
+                      }}
                       disabled={selectedContactIds.size === 0}
                       style={{
                         padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -2653,42 +2669,46 @@ export default function AccountSourcingCompanyDetail() {
             </Section>
             </div>
 
-            <Section title="Website Research" icon={<Globe size={15} color={colors.primary} />}>
-              {websiteText ? (
-                <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "16px 18px", maxHeight: 420, overflow: "auto" }}>
-                  <div style={{ color: colors.sub, lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap" }}>{websiteText.slice(0, 4000)}</div>
-                </div>
-              ) : (
-                <div style={{ color: colors.faint }}>No website scrape content available.</div>
-              )}
-            </Section>
-            <Section title="Data Freshness" icon={<TrendingUp size={15} color={colors.primary} />}>
-              {[
-                ["Website Scrape", cacheTs(cache, "web_scrape")],
-                ["Intent Signals", cacheTs(cache, "intent_signals")],
-                ["Apollo Company", cacheTs(cache, "apollo_company")],
-                ["Apollo Contacts", cacheTs(cache, "apollo_contacts")],
-                ["Committee Coverage", cacheTs(cache, "committee_coverage")],
-                ["AI Summary", cacheTs(cache, "ai_summary") || cacheTs(cache, "icp_analysis")],
-              ].map(([name, t]) => (
-                <div key={String(name)} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: colors.sub }}>
-                  <span style={{ fontWeight: 700 }}>{name}</span>
-                  <span style={{ color: colors.faint, fontSize: 13 }}>{t ? ts(String(t)) : "-"}</span>
-                </div>
-              ))}
+            {SHOW_WEBSITE_RESEARCH && (
+              <Section title="Website Research" icon={<Globe size={15} color={colors.primary} />}>
+                {websiteText ? (
+                  <div style={{ border: `1px solid ${colors.border}`, background: "#fbfdff", borderRadius: 14, padding: "16px 18px", maxHeight: 420, overflow: "auto" }}>
+                    <div style={{ color: colors.sub, lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap" }}>{websiteText.slice(0, 4000)}</div>
+                  </div>
+                ) : (
+                  <div style={{ color: colors.faint }}>No website scrape content available.</div>
+                )}
+              </Section>
+            )}
+            {SHOW_DATA_FRESHNESS && (
+              <Section title="Data Freshness" icon={<TrendingUp size={15} color={colors.primary} />}>
+                {[
+                  ["Website Scrape", cacheTs(cache, "web_scrape")],
+                  ["Intent Signals", cacheTs(cache, "intent_signals")],
+                  ["Apollo Company", cacheTs(cache, "apollo_company")],
+                  ["Apollo Contacts", cacheTs(cache, "apollo_contacts")],
+                  ["Committee Coverage", cacheTs(cache, "committee_coverage")],
+                  ["AI Summary", cacheTs(cache, "ai_summary") || cacheTs(cache, "icp_analysis")],
+                ].map(([name, t]) => (
+                  <div key={String(name)} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: colors.sub }}>
+                    <span style={{ fontWeight: 700 }}>{name}</span>
+                    <span style={{ color: colors.faint, fontSize: 13 }}>{t ? ts(String(t)) : "-"}</span>
+                  </div>
+                ))}
 
-              {apollo ? (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${colors.border}` }}>
-                  <div style={{ fontWeight: 800, color: colors.text, marginBottom: 6 }}>Apollo Snapshot</div>
-                  {Object.entries(apollo).slice(0, 8).map(([k, v]) => (
-                    <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: colors.sub, fontSize: 13, marginBottom: 3 }}>
-                      <span>{k}</span>
-                      <span>{String(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </Section>
+                {apollo ? (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${colors.border}` }}>
+                    <div style={{ fontWeight: 800, color: colors.text, marginBottom: 6 }}>Apollo Snapshot</div>
+                    {Object.entries(apollo).slice(0, 8).map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: colors.sub, fontSize: 13, marginBottom: 3 }}>
+                        <span>{k}</span>
+                        <span>{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </Section>
+            )}
         </div>
       </div>
 
@@ -2917,94 +2937,84 @@ export default function AccountSourcingCompanyDetail() {
           onCreated={() => { setShowAddStakeholder(false); load(); }}
         />
       )}
-      {bulkLaunchOpen && (
+      {bulkSequenceOpen && (
         <div
           style={{
             position: "fixed", inset: 0, zIndex: 9000,
             background: "rgba(15, 39, 68, 0.4)",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
-          onClick={() => !bulkLaunching && setBulkLaunchOpen(false)}
+          onClick={() => !bulkEnrolling && setBulkSequenceOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 480, background: "#fff", borderRadius: 16, padding: "22px 24px", maxWidth: "92vw" }}
+            style={{ width: 420, background: "#fff", borderRadius: 16, padding: "22px 24px", maxWidth: "92vw" }}
           >
             <h3 style={{ margin: 0, marginBottom: 6, fontSize: 16, fontWeight: 700, color: colors.text }}>
               Add {selectedContactIds.size} prospects to sequence
             </h3>
             <p style={{ margin: 0, marginBottom: 14, fontSize: 13, color: colors.sub }}>
-              We'll create or reuse each contact's sequence, then launch a single Instantly campaign with them all.
-              Contacts missing an email will be skipped.
+              Enrolls every selected prospect into the chosen sequence. Anyone already running an active sequence is skipped.
             </p>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: colors.sub, marginBottom: 6 }}>
-              Sending account email *
-            </label>
-            <input
-              type="email"
-              placeholder="rep@beacon.li"
-              value={bulkLaunchAccount}
-              onChange={(e) => setBulkLaunchAccount(e.target.value)}
-              style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, marginBottom: 12 }}
-            />
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: colors.sub, marginBottom: 6 }}>
-              Campaign name (optional)
-            </label>
-            <input
-              type="text"
-              placeholder={`Bulk · ${selectedContactIds.size} prospects`}
-              value={bulkLaunchName}
-              onChange={(e) => setBulkLaunchName(e.target.value)}
-              style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 13, marginBottom: 14 }}
-            />
-            {bulkLaunchError && (
-              <div style={{ color: colors.red, fontSize: 12, marginBottom: 10 }}>{bulkLaunchError}</div>
+            {bulkSequences.length === 0 ? (
+              <div style={{ fontSize: 13, color: colors.faint, marginBottom: 14 }}>No sequences yet — build one from the Sequences tab.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 6, maxHeight: 260, overflowY: "auto", marginBottom: 14 }}>
+                {bulkSequences.map((s) => (
+                  <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 9, border: `1px solid ${bulkSequenceId === s.id ? "#93c5fd" : colors.border}`, background: bulkSequenceId === s.id ? "#eff6ff" : "#fff", cursor: "pointer" }}>
+                    <input type="radio" name="bulk-sequence" checked={bulkSequenceId === s.id} onChange={() => setBulkSequenceId(s.id)} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>{s.name}</div>
+                      <div style={{ fontSize: 11.5, color: colors.faint }}>{s.step_count} steps{s.shared ? " · Team" : ""}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {bulkEnrollError && (
+              <div style={{ color: colors.red, fontSize: 12, marginBottom: 10 }}>{bulkEnrollError}</div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button
-                onClick={() => setBulkLaunchOpen(false)}
-                disabled={bulkLaunching}
+                onClick={() => setBulkSequenceOpen(false)}
+                disabled={bulkEnrolling}
                 style={{
                   padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600,
                   background: "#f1f5f9", color: colors.sub, border: "none",
-                  cursor: bulkLaunching ? "not-allowed" : "pointer",
+                  cursor: bulkEnrolling ? "not-allowed" : "pointer",
                 }}
               >
                 Cancel
               </button>
               <button
-                disabled={bulkLaunching || !bulkLaunchAccount.trim()}
+                disabled={bulkEnrolling || !bulkSequenceId}
                 onClick={async () => {
-                  setBulkLaunching(true);
-                  setBulkLaunchError("");
-                  try {
-                    const result = await outreachApi.launchContactsCampaign(
-                      Array.from(selectedContactIds),
-                      bulkLaunchAccount.trim(),
-                      { campaignName: bulkLaunchName.trim() || undefined }
-                    );
-                    setBulkLaunchOpen(false);
-                    setSelectedContactIds(new Set());
-                    setBulkLaunchAccount("");
-                    setBulkLaunchName("");
-                    toast.success(
-                      `${result.pushed} pushed · ${result.failed} failed · ${result.skipped_no_email} no-email · ${result.skipped_already_launched} already launched`
-                    );
-                    await load();
-                  } catch (e) {
-                    setBulkLaunchError(e instanceof Error ? e.message : "Launch failed");
-                  } finally {
-                    setBulkLaunching(false);
+                  setBulkEnrolling(true);
+                  setBulkEnrollError("");
+                  let enrolled = 0;
+                  let skipped = 0;
+                  for (const contactId of Array.from(selectedContactIds)) {
+                    try {
+                      await sequencesApi.enroll(contactId, bulkSequenceId);
+                      enrolled += 1;
+                    } catch {
+                      skipped += 1;
+                    }
                   }
+                  setBulkEnrolling(false);
+                  setBulkSequenceOpen(false);
+                  setSelectedContactIds(new Set());
+                  toast.success(`${enrolled} enrolled${skipped ? ` · ${skipped} skipped (already in a sequence)` : ""}`);
+                  await load();
                 }}
                 style={{
                   padding: "9px 18px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                  background: bulkLaunching || !bulkLaunchAccount.trim() ? "#e8eef5" : colors.primary,
-                  color: bulkLaunching || !bulkLaunchAccount.trim() ? "#9aafbe" : "#fff",
-                  border: "none", cursor: bulkLaunching || !bulkLaunchAccount.trim() ? "not-allowed" : "pointer",
+                  background: bulkEnrolling || !bulkSequenceId ? "#e8eef5" : colors.primary,
+                  color: bulkEnrolling || !bulkSequenceId ? "#9aafbe" : "#fff",
+                  border: "none", cursor: bulkEnrolling || !bulkSequenceId ? "not-allowed" : "pointer",
                 }}
               >
-                {bulkLaunching ? "Launching…" : "Launch campaign"}
+                {bulkEnrolling ? "Enrolling…" : "Enroll"}
               </button>
             </div>
           </div>

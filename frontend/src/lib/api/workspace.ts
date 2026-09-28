@@ -74,6 +74,8 @@ export const tasksApi = {
     entityType?: "company" | "contact" | "deal";
     dealId?: string;
     scope?: "mine" | "team";
+    source?: string;
+    sequenceId?: string;
   }) => {
     const search = new URLSearchParams();
     search.set("include_closed", params?.includeClosed ? "true" : "false");
@@ -81,6 +83,8 @@ export const tasksApi = {
     if (params?.entityType) search.set("entity_type", params.entityType);
     if (params?.dealId) search.set("deal_id", params.dealId);
     if (params?.scope) search.set("scope", params.scope);
+    if (params?.source) search.set("source", params.source);
+    if (params?.sequenceId) search.set("sequence_id", params.sequenceId);
     return request<TaskWorkspaceItem[]>(`/api/v1/tasks/workspace?${search}`);
   },
   create: (data: {
@@ -186,10 +190,12 @@ export const performanceApi = {
   },
   listReps: () => request<RepSummary[]>("/api/v1/performance/reps"),
   getPods: () => request<PodSummary[]>("/api/v1/performance/pods"),
-  getFunnel: (params: { period?: "week" | "month" | "quarter"; anchor?: string; rep_id?: string }) => {
+  getFunnel: (params: { period?: "week" | "month" | "quarter" | "custom"; anchor?: string; customStart?: string; customEnd?: string; rep_id?: string }) => {
     const qs = new URLSearchParams();
     if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.customStart) qs.set("custom_start", params.customStart);
+    if (params.customEnd) qs.set("custom_end", params.customEnd);
     if (params.rep_id) qs.set("rep_id", params.rep_id);
     const tail = qs.toString();
     return request<FunnelResponse>(`/api/v1/performance/funnel${tail ? `?${tail}` : ""}`);
@@ -215,13 +221,15 @@ export const performanceApi = {
   // made that row's literal, direct from_stage -> to_stage move during the
   // period, matching that row's own Deals count exactly. isOverall pools
   // every configured transition's moves into one list (for the Overall row).
-  getFunnelTransitionDeals: (params: { fromStage: string; toStage?: string; isOverall?: boolean; period?: "week" | "month" | "quarter"; anchor?: string; repId?: string }) => {
+  getFunnelTransitionDeals: (params: { fromStage: string; toStage?: string; isOverall?: boolean; period?: "week" | "month" | "quarter" | "custom"; anchor?: string; customStart?: string; customEnd?: string; repId?: string }) => {
     const qs = new URLSearchParams();
     qs.set("from_stage", params.fromStage);
     if (params.toStage) qs.set("to_stage", params.toStage);
     if (params.isOverall) qs.set("is_overall", "true");
     if (params.period) qs.set("period", params.period);
     if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.customStart) qs.set("custom_start", params.customStart);
+    if (params.customEnd) qs.set("custom_end", params.customEnd);
     if (params.repId) qs.set("rep_id", params.repId);
     return request<RedAlertDeal[]>(`/api/v1/performance/funnel-transition-deals?${qs.toString()}`);
   },

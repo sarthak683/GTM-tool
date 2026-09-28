@@ -31,9 +31,12 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onLogged?: () => void;
+  /** Set when opened from an Outreach Sequence cadence task — logging the
+   * touch (unchanged below) also advances that task's step. */
+  cadenceTaskId?: string;
 }
 
-export default function LogLinkedInDialog({ contactId, contactName, linkedinUrl, dealId, sequenceStatus, initialStatus, open, onClose, onLogged }: Props) {
+export default function LogLinkedInDialog({ contactId, contactName, linkedinUrl, dealId, sequenceStatus, initialStatus, open, onClose, onLogged, cadenceTaskId }: Props) {
   const [action, setAction] = useState<string>("sent");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -62,6 +65,7 @@ export default function LogLinkedInDialog({ contactId, contactName, linkedinUrl,
         linkedin_status: action,
         linkedin_last_at: new Date().toISOString(),
         ...(derivedSeq && derivedSeq !== sequenceStatus ? { sequence_status: derivedSeq } : {}),
+        ...(cadenceTaskId ? { cadence_task_id: cadenceTaskId } : {}),
       } as never);
       // 2) Write the timeline activity (with rep attribution + structured subtype).
       await activitiesApi.create({

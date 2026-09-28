@@ -1302,6 +1302,8 @@ export default function AccountSourcing() {
   const [dispositionFilter, setDispositionFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("disp")));
   const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("status")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("lane")));
+  const [hqCountryFilter, setHqCountryFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("hq")));
+  const [hqCountryOptions, setHqCountryOptions] = useState<{ value: string; label: string }[]>([]);
   // Import drill-in: "View accounts" on an Imports row pins batch_id here. It
   // has no dedicated control, so it surfaces as a removable chip.
   const [batchFilter, setBatchFilter] = useState<string>(() => initParams.get("batch") ?? "");
@@ -1350,6 +1352,15 @@ export default function AccountSourcing() {
   const [assignAllConflict, setAssignAllConflict] = useState<string | null>(null);
   const { isAdmin, user } = useAuth();
   const toast = useToast();
+
+  useEffect(() => {
+    accountSourcingApi.headquartersCountries()
+      .then((countries) => setHqCountryOptions([
+        ...countries.map((c) => ({ value: c, label: c })),
+        { value: "__empty__", label: "No headquarters" },
+      ]))
+      .catch(() => setHqCountryOptions([]));
+  }, []);
 
   useEffect(() => {
     if (searchParams.get("new") !== "company") return;
@@ -1402,12 +1413,13 @@ export default function AccountSourcing() {
     accountStatus: statusFilter.length ? statusFilter : undefined,
     recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
     journeyStage: journeyFilter.length ? journeyFilter : undefined,
+    headquartersCountry: hqCountryFilter.length ? hqCountryFilter : undefined,
     batchId: batchFilter || undefined,
     prospectsMin,
     prospectsMax,
   }), [
     debouncedSearch, ownerScope, user?.id, ownerFilter, sdrFilter, tierFilter,
-    dispositionFilter, statusFilter, laneFilter, journeyFilter, batchFilter,
+    dispositionFilter, statusFilter, laneFilter, journeyFilter, hqCountryFilter, batchFilter,
     prospectsMin, prospectsMax,
   ]);
 
@@ -1499,6 +1511,7 @@ export default function AccountSourcing() {
       statusFilter.length ? next.set("status", statusFilter.join(",")) : next.delete("status");
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       journeyFilter.length ? next.set("journey", journeyFilter.join(",")) : next.delete("journey");
+      hqCountryFilter.length ? next.set("hq", hqCountryFilter.join(",")) : next.delete("hq");
       batchFilter ? next.set("batch", batchFilter) : next.delete("batch");
       sortBy !== "recent" ? next.set("sort", sortBy) : next.delete("sort");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
@@ -1514,7 +1527,7 @@ export default function AccountSourcing() {
       }
       return next;
     }, { replace: true });
-  }, [activeTab, batchFilter, laneFilter, dispositionFilter, statusFilter, journeyFilter, ownerFilter, sdrFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [activeTab, batchFilter, laneFilter, dispositionFilter, statusFilter, journeyFilter, hqCountryFilter, ownerFilter, sdrFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   // "Needs review" is admin-only; a stale tab=review (URL or the saved filter
   // string) must never leave a rep staring at an empty 403 tab.
@@ -1542,7 +1555,7 @@ export default function AccountSourcing() {
       return;
     }
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, batchFilter, sortBy, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, hqCountryFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, batchFilter, sortBy, prospectsMin, prospectsMax]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -1687,11 +1700,11 @@ export default function AccountSourcing() {
     }
   }, [assignAllUserId, assignAllBusy, assignAllRole, activeFilters, companyTotal, teamUsers, toast, clearCompanySelection, load]);
 
-  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length || batchFilter || hasAdvancedFilter);
+  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length || hqCountryFilter.length || batchFilter || hasAdvancedFilter);
   // Count of active filters living behind the "More filters" toggle, so the
   // collapsed toggle still signals that hidden filters are narrowing the list.
   const moreFilterCount =
-    tierFilter.length + ownerFilter.length + dispositionFilter.length + laneFilter.length + journeyFilter.length + (hasAdvancedFilter ? 1 : 0);
+    tierFilter.length + ownerFilter.length + dispositionFilter.length + laneFilter.length + journeyFilter.length + hqCountryFilter.length + (hasAdvancedFilter ? 1 : 0);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -2260,6 +2273,7 @@ export default function AccountSourcing() {
             setStatusFilter([]);
             setLaneFilter([]);
             setJourneyFilter([]);
+            setHqCountryFilter([]);
             setBatchFilter("");
           };
           const toggleTier = (t: string) => {
@@ -2663,6 +2677,7 @@ export default function AccountSourcing() {
                       setStatusFilter([]);
                       setLaneFilter([]);
                       setJourneyFilter([]);
+                      setHqCountryFilter([]);
                       setBatchFilter("");
                       setProspectsMin(undefined);
                       setProspectsMax(undefined);
@@ -2773,6 +2788,15 @@ export default function AccountSourcing() {
                     options={JOURNEY_FILTER_OPTIONS}
                     label="Journey Stage"
                     allLabel="Journey: All"
+                    minWidth={140}
+                    hideLabel
+                  />
+                  <MultiSelectFilter
+                    values={hqCountryFilter}
+                    onChange={setHqCountryFilter}
+                    options={hqCountryOptions}
+                    label="Headquarters"
+                    allLabel="HQ: All"
                     minWidth={140}
                     hideLabel
                   />
