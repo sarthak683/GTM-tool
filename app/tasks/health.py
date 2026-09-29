@@ -153,16 +153,20 @@ def reconcile_recent_deal_tasks() -> dict:
 
 async def _async_reconcile_recent_deal_tasks() -> int:
     from app.config import settings
+    from app.database import task_session
+    from app.services.tasks import backfill_open_task_assignments
 
-    # Manual-tasks-only mode: skip the candidate query + assignment sweep entirely
-    # instead of running 96x/day just to no-op inside refresh_system_tasks_for_entity.
+    # Manual-tasks-only mode still needs the periodic assignment repair now that
+    # the high-frequency /tasks/count badge endpoint is read-only.
     if not settings.ENABLE_SYSTEM_TASKS:
+        async with task_session() as session:
+            await backfill_open_task_assignments(session)
+            await session.commit()
         return 0
 
-    from app.database import task_session
     from app.models.deal import Deal
     from app.models.task import Task
-    from app.services.tasks import backfill_open_task_assignments, refresh_system_tasks_for_entity
+    from app.services.tasks import refresh_system_tasks_for_entity
 
     refreshed = 0
     now = datetime.utcnow()
@@ -217,9 +221,10 @@ async def _async_reconcile_recent_deal_tasks() -> int:
                 await session.rollback()
                 continue
 
-        if refreshed:
-            await backfill_open_task_assignments(session)
-            await session.commit()
+        # Also repair assignments when no deal qualified for refresh. The
+        # badge no longer performs this full sweep on every page load/poll.
+        await backfill_open_task_assignments(session)
+        await session.commit()
 
     logger.info("Reconciled deal tasks for %d deals", refreshed)
     return refreshed
