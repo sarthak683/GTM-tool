@@ -391,9 +391,12 @@ async def list_tasks(
 
 @router.get("/count")
 async def get_task_count(session: DBSession, current_user: CurrentUser):
-    """Return the number of open tasks assigned to the current user."""
-    await backfill_open_task_assignments(session)
-    await session.commit()
+    """Return the open-task badge count without a workspace-wide repair sweep.
+
+    Assignment repair runs on the scheduled deal-task reconciliation and when
+    the Tasks workspace is opened. This endpoint is polled by every visible
+    CRM tab, so it must remain a cheap, read-only query.
+    """
     count = (
         await session.execute(
             select(func.count(Task.id)).where(

@@ -3,7 +3,6 @@ from app.services.us_pod_call_report import INDIA_POD_REPS, US_POD_REPS
 
 
 EXPECTED_US_REPS = {
-    "awinja@beacon.li",
     "jacob@beacon.li",
     "pravalika@beacon.li",
     "mahesh@beacon.li",
