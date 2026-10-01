@@ -57,6 +57,8 @@ from app.models.settings import (
     ProspectVisibilityUpdate,
     SyncScheduleSettingsRead,
     SyncScheduleSettingsUpdate,
+    TeamActivityReportSettingsRead,
+    TeamActivityReportSettingsUpdate,
     WeeklyDigestSettingsRead,
     WeeklyDigestSettingsUpdate,
     WorkspaceSettings,
@@ -85,6 +87,11 @@ from app.services.meeting_automation import normalize_pre_meeting_settings, run_
 from app.services.permissions import normalize_role_permissions, require_workspace_permission
 from app.services.us_pod_call_report import INDIA_DEFAULT_SALES_REPORT_SETTINGS, normalize_sales_report_settings
 from app.services.weekly_digest import WEEKLY_DIGEST_CONFIG_KEY, normalize_weekly_digest_settings
+from app.services.team_activity_report import (
+    TEAM_ACTIVITY_REPORT_CONFIG_KEY,
+    load_team_activity_report_settings,
+    normalize_team_activity_report_settings,
+)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -1101,6 +1108,63 @@ async def update_weekly_digest_settings(body: WeeklyDigestSettingsUpdate, sessio
     await session.commit()
     await session.refresh(row)
     return WeeklyDigestSettingsRead(**normalized)
+
+
+def _team_activity_report_settings_from_sync(value: dict | None) -> TeamActivityReportSettingsRead:
+    raw = value.get(TEAM_ACTIVITY_REPORT_CONFIG_KEY) if isinstance(value, dict) else None
+    return TeamActivityReportSettingsRead(**normalize_team_activity_report_settings(raw if isinstance(raw, dict) else None))
+
+
+@router.get("/team-activity-report", response_model=TeamActivityReportSettingsRead)
+async def get_team_activity_report_settings(session: DBSession, _user: CurrentUser):
+    row = await _get_or_create(session)
+    return _team_activity_report_settings_from_sync(row.sync_schedule_settings)
+
+
+@router.patch("/team-activity-report", response_model=TeamActivityReportSettingsRead)
+async def update_team_activity_report_settings(
+    body: TeamActivityReportSettingsUpdate, session: DBSession, _admin: AdminUser
+):
+    row = await _get_or_create(session)
+    sync_settings = dict(row.sync_schedule_settings or {})
+    raw = sync_settings.get(TEAM_ACTIVITY_REPORT_CONFIG_KEY)
+    current = normalize_team_activity_report_settings(raw if isinstance(raw, dict) else None)
+    updates = body.model_dump(exclude_unset=True)
+    # Same dedup-reset rule as the weekly digest: only clear "already sent
+    # this week" bookkeeping when a schedule value actually changes.
+    schedule_keys = {"send_timezone", "send_hour", "send_minute", "send_days"}
+    if any(key in updates and updates[key] != current.get(key) for key in schedule_keys):
+        current["last_scheduled_send_key"] = None
+        current["last_scheduled_send_at"] = None
+    current.update(updates)
+    normalized = normalize_team_activity_report_settings(current)
+    sync_settings[TEAM_ACTIVITY_REPORT_CONFIG_KEY] = normalized
+    row.sync_schedule_settings = sync_settings
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return TeamActivityReportSettingsRead(**normalized)
+
+
+@router.post("/team-activity-report/send-test", response_model=dict)
+async def send_test_team_activity_report(session: DBSession, current_user: CurrentUser):
+    """Send an on-demand copy of the team activity report to the calling
+    user only — does not touch the per-week dedup key, so the real Monday
+    scheduled send still goes out normally afterward."""
+    from app.services.team_activity_report import send_team_activity_report_email, team_activity_report_period
+
+    report_settings = await load_team_activity_report_settings(session)
+    period_start, period_end = team_activity_report_period(report_settings=report_settings)
+    report = await send_team_activity_report_email(
+        session, period_start, period_end,
+        recipients=[current_user.email],
+        report_settings=report_settings,
+    )
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "send_results": report.send_results,
+    }
 
 
 @router.post("/sync-schedule/tldv-now", response_model=dict)

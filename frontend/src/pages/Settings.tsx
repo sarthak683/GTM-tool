@@ -45,6 +45,7 @@ import type {
   PreMeetingAutomationSettings,
   RolePermissionsSettings,
   SyncScheduleSettings,
+  TeamActivityReportSettings,
   WeeklyDigestSettings,
 } from "../types";
 
@@ -215,6 +216,9 @@ export default function SettingsPage() {
   const [sendingSalesReportTest, setSendingSalesReportTest] = useState(false);
   const [weeklyDigestSettings, setWeeklyDigestSettings] = useState<WeeklyDigestSettings | null>(null);
   const [savingWeeklyDigestSettings, setSavingWeeklyDigestSettings] = useState(false);
+  const [teamActivityReportSettings, setTeamActivityReportSettings] = useState<TeamActivityReportSettings | null>(null);
+  const [savingTeamActivityReportSettings, setSavingTeamActivityReportSettings] = useState(false);
+  const [sendingTeamActivityReportTest, setSendingTeamActivityReportTest] = useState(false);
   // Live email alert on every pipeline stage move (separate from the
   // scheduled reports above — this fires immediately, not on a cron).
   const [stageAlertEmailsDraft, setStageAlertEmailsDraft] = useState("");
@@ -286,12 +290,13 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailData, reportSenderData, salesReportData, indiaSalesReportData, weeklyDigestData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
+      const [gmailData, reportSenderData, salesReportData, indiaSalesReportData, weeklyDigestData, teamActivityReportData, outreachContentData, outreachTiming, dealStageData, prospectStageData, clickupCrmData, rolePermissionData, preMeetingData, syncScheduleData, personalEmailData] = await Promise.all([
         getCachedGmailSync(),
         settingsApi.getReportSender().catch(() => null),
         settingsApi.getSalesReportSettings().catch(() => null),
         settingsApi.getIndiaSalesReportSettings().catch(() => null),
         settingsApi.getWeeklyDigestSettings().catch(() => null),
+        settingsApi.getTeamActivityReportSettings().catch(() => null),
         settingsApi.getOutreachContent(),
         settingsApi.getOutreach(),
         settingsApi.getDealStages(),
@@ -311,6 +316,7 @@ export default function SettingsPage() {
       if (salesReportData) setSalesReportSettings(salesReportData);
       if (indiaSalesReportData) setIndiaSalesReportSettings(indiaSalesReportData);
       if (weeklyDigestData) setWeeklyDigestSettings(weeklyDigestData);
+      if (teamActivityReportData) setTeamActivityReportSettings(teamActivityReportData);
       if (personalEmailData) setPersonalEmail(personalEmailData);
       setOutreachContent(outreachContentData);
       setOutreachStepDelays(outreachTiming.step_delays);
@@ -1277,6 +1283,55 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Failed to send test digest");
     } finally {
       setSendingWeeklyDigestTest(false);
+    }
+  };
+
+  const updateTeamActivityReportField = <K extends keyof TeamActivityReportSettings>(field: K, value: TeamActivityReportSettings[K]) => {
+    if (!teamActivityReportSettings) return;
+    setTeamActivityReportSettings({ ...teamActivityReportSettings, [field]: value });
+  };
+
+  const updateTeamActivityReportList = (field: "recipients" | "nonprod_recipients", value: string) => {
+    updateTeamActivityReportField(
+      field,
+      value.split(",").map((item) => item.trim()).filter(Boolean) as TeamActivityReportSettings[typeof field],
+    );
+  };
+
+  const handleSaveTeamActivityReportSettings = async () => {
+    if (!teamActivityReportSettings) return;
+    setSavingTeamActivityReportSettings(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await settingsApi.updateTeamActivityReportSettings(teamActivityReportSettings);
+      setTeamActivityReportSettings(updated);
+      setMessage("Team activity report settings saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save team activity report settings");
+    } finally {
+      setSavingTeamActivityReportSettings(false);
+    }
+  };
+
+  const handleSendTeamActivityReportTest = async () => {
+    setSendingTeamActivityReportTest(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await settingsApi.sendTeamActivityReportTest();
+      const results = result.send_results ?? [];
+      const sentCount = results.filter((r) => r.status === "sent").length;
+      if (results.length > 0 && sentCount === 0) {
+        const firstError = (results[0]?.error as string) || "Report sender Gmail account is not connected.";
+        setError(`Test report was not sent: ${firstError}`);
+      } else {
+        setMessage("Test report sent to your own email");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test report");
+    } finally {
+      setSendingTeamActivityReportTest(false);
     }
   };
 
@@ -2762,6 +2817,97 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change digest settings.</p>
+              )}
+            </div>
+
+            <div className="crm-panel" style={{ padding: 18, borderRadius: 14, boxShadow: "none", display: "grid", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: "#142335", margin: 0 }}>Team activity report</h4>
+                  <p className="crm-muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                    One email every Monday with Calls, Email, and LinkedIn activity numbers for every active AE and SDR — one row per rep plus a team-total row. Calls and Email are synced automatically (Aircall, Gmail); LinkedIn only counts what a rep logged via "Log LinkedIn" — there's no LinkedIn API.
+                  </p>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, color: "#142335" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(teamActivityReportSettings?.enabled)}
+                    disabled={!isAdmin || !teamActivityReportSettings}
+                    onChange={(event) => updateTeamActivityReportField("enabled", event.target.checked)}
+                  />
+                  Scheduled report enabled
+                </label>
+              </div>
+
+              <div className="report-settings-grid-three">
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send timezone</span>
+                  <input value={teamActivityReportSettings?.send_timezone ?? "Asia/Kolkata"} onChange={(e) => updateTeamActivityReportField("send_timezone", e.target.value)} disabled={!isAdmin || !teamActivityReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>IANA timezone used for the Monday send clock.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send hour</span>
+                  <input type="number" min={0} max={23} value={teamActivityReportSettings?.send_hour ?? 9} onChange={(e) => updateTeamActivityReportField("send_hour", Number(e.target.value))} disabled={!isAdmin || !teamActivityReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>24-hour local hour in the send timezone. Use 9 for 9 AM.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Send minute</span>
+                  <input type="number" min={0} max={59} value={teamActivityReportSettings?.send_minute ?? 30} onChange={(e) => updateTeamActivityReportField("send_minute", Number(e.target.value))} disabled={!isAdmin || !teamActivityReportSettings} style={{ height: 36, padding: "0 10px", fontSize: 13 }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Minute after the hour. Use 30 for exactly 9:30.</span>
+                </label>
+              </div>
+
+              <ReportDaySelector
+                selectedDays={teamActivityReportSettings?.send_days ?? ["mon"]}
+                disabled={!isAdmin || !teamActivityReportSettings}
+                onToggle={(day) => {
+                  if (!teamActivityReportSettings) return;
+                  const current = new Set(teamActivityReportSettings.send_days);
+                  if (current.has(day)) current.delete(day);
+                  else current.add(day);
+                  const ordered = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].filter((item) => current.has(item));
+                  setTeamActivityReportSettings({ ...teamActivityReportSettings, send_days: ordered });
+                }}
+              />
+
+              <label style={{ display: "grid", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Production recipients</span>
+                <textarea value={(teamActivityReportSettings?.recipients ?? []).join(", ")} onChange={(e) => updateTeamActivityReportList("recipients", e.target.value)} disabled={!isAdmin || !teamActivityReportSettings} rows={3} style={{ padding: 12, resize: "vertical" }} />
+                <span className="crm-muted" style={{ fontSize: 12 }}>Comma-separated emails. Anyone on this list gets the full report — Calls, Email, and LinkedIn numbers for every AE and SDR.</span>
+              </label>
+
+              <div style={{ border: "1px solid #e3e9f2", borderRadius: 14, padding: 16, background: "#fbfcff", display: "grid", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#142335" }}>Staging safety</div>
+                <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <input type="checkbox" checked={Boolean(teamActivityReportSettings?.nonprod_scheduled_enabled)} onChange={(e) => updateTeamActivityReportField("nonprod_scheduled_enabled", e.target.checked)} disabled={!isAdmin || !teamActivityReportSettings} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Allow scheduled sends in non-production. Recipients are still restricted to the allowlist below.</span>
+                </label>
+                <label style={{ display: "grid", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#142335" }}>Non-production allowed recipients</span>
+                  <textarea value={(teamActivityReportSettings?.nonprod_recipients ?? []).join(", ")} onChange={(e) => updateTeamActivityReportList("nonprod_recipients", e.target.value)} disabled={!isAdmin || !teamActivityReportSettings} rows={2} style={{ padding: 12, resize: "vertical" }} />
+                  <span className="crm-muted" style={{ fontSize: 12 }}>Only these addresses can receive staging report emails. Keep this as your email while testing.</span>
+                </label>
+              </div>
+
+              {teamActivityReportSettings?.last_scheduled_send_at && (
+                <div className="crm-muted" style={{ fontSize: 12 }}>
+                  Last scheduled send: {new Date(teamActivityReportSettings.last_scheduled_send_at).toLocaleString()} ({teamActivityReportSettings.last_scheduled_send_key})
+                </div>
+              )}
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <button className="crm-button soft" type="button" onClick={handleSendTeamActivityReportTest} disabled={sendingTeamActivityReportTest || !teamActivityReportSettings}>
+                    {sendingTeamActivityReportTest ? <RefreshCw size={15} className="animate-spin" /> : <Mail size={15} />}
+                    Send test report
+                  </button>
+                  <button className="crm-button primary" type="button" onClick={handleSaveTeamActivityReportSettings} disabled={savingTeamActivityReportSettings || !teamActivityReportSettings}>
+                    {savingTeamActivityReportSettings ? <RefreshCw size={15} className="animate-spin" /> : <CalendarDays size={15} />}
+                    Save report settings
+                  </button>
+                </div>
+              ) : (
+                <p className="crm-muted" style={{ fontSize: 12 }}>Only admins can change report settings.</p>
               )}
             </div>
           </div>

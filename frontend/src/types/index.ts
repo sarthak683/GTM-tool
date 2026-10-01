@@ -669,6 +669,19 @@ export interface WeeklyDigestSettings {
   last_scheduled_send_at?: string | null;
 }
 
+export interface TeamActivityReportSettings {
+  enabled: boolean;
+  recipients: string[];
+  send_timezone: string;
+  send_hour: number;
+  send_minute: number;
+  send_days: string[];
+  nonprod_scheduled_enabled: boolean;
+  nonprod_recipients: string[];
+  last_scheduled_send_key?: string | null;
+  last_scheduled_send_at?: string | null;
+}
+
 export interface SalesReportRunResult {
   report_type: "daily" | "weekly" | "month_to_date" | "prior_quarter" | "custom";
   report_date: string;

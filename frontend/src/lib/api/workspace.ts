@@ -26,6 +26,7 @@ import type {
   TaskComment,
   TaskItem,
   TaskWorkspaceItem,
+  TeamActivityReportSettings,
   User,
   WeeklyDigestSettings,
 } from "../../types";
@@ -232,6 +233,19 @@ export const performanceApi = {
     if (params.customEnd) qs.set("custom_end", params.customEnd);
     if (params.repId) qs.set("rep_id", params.repId);
     return request<RedAlertDeal[]>(`/api/v1/performance/funnel-transition-deals?${qs.toString()}`);
+  },
+  // Click-through behind one bar of the Funnel "Spilled Pipeline" chart —
+  // every deal that moved INTO that one stage during the period, from
+  // anywhere (any origin stage, not just active pipeline).
+  getSpilledPipelineDeals: (params: { stage: string; period?: "week" | "month" | "quarter" | "custom"; anchor?: string; customStart?: string; customEnd?: string; repId?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("stage", params.stage);
+    if (params.period) qs.set("period", params.period);
+    if (params.anchor) qs.set("anchor", params.anchor);
+    if (params.customStart) qs.set("custom_start", params.customStart);
+    if (params.customEnd) qs.set("custom_end", params.customEnd);
+    if (params.repId) qs.set("rep_id", params.repId);
+    return request<RedAlertDeal[]>(`/api/v1/performance/spilled-pipeline-deals?${qs.toString()}`);
   },
   // Forecast tab's "Open Deals by Close Date" chart — every open deal with a
   // Close Date inside the period, summed by stage and by owning AE.
@@ -444,6 +458,7 @@ export type FunnelResponse = {
     is_overall?: boolean;
   }>;
   movement: { advanced: number; regressed: number; exited: number; entered: number };
+  spilled_pipeline: Array<{ stage: string; deals: number; total_value: number }>;
 };
 
 export type MilestoneDealRow = {
@@ -1294,6 +1309,17 @@ export const settingsApi = {
     }),
   sendWeeklyDigestTest: () =>
     request<{ period_start: string; period_end: string; recipients: string[]; send_results?: Array<Record<string, unknown>> }>("/api/v1/sales-reports/weekly-digest/send", {
+      method: "POST",
+    }),
+  getTeamActivityReportSettings: () =>
+    request<TeamActivityReportSettings>("/api/v1/settings/team-activity-report"),
+  updateTeamActivityReportSettings: (data: Partial<TeamActivityReportSettings>) =>
+    request<TeamActivityReportSettings>("/api/v1/settings/team-activity-report", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  sendTeamActivityReportTest: () =>
+    request<{ period_start: string; period_end: string; send_results?: Array<Record<string, unknown>> }>("/api/v1/settings/team-activity-report/send-test", {
       method: "POST",
     }),
   previewUsPodCallReport: (params: {

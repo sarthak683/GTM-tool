@@ -385,8 +385,8 @@ export interface AccountSourcingFilters {
   sdrId?: string | string[];
   /** `not_scored` = no Recotap journey stage. */
   journeyStage?: string[];
-  /** Country parsed from the free-text `headquarters` field. `__empty__` = no headquarters set. */
-  headquartersCountry?: string[];
+  /** Continent derived from the free-text `headquarters` field. `__empty__` = no headquarters set. */
+  headquartersContinent?: string[];
   batchId?: string;
   prospectsMin?: number;
   prospectsMax?: number;
@@ -429,7 +429,7 @@ export function buildAccountSourcingQuery(
   appendMulti(search, "ae_id", filters?.aeId);
   appendMulti(search, "sdr_id", filters?.sdrId);
   appendMulti(search, "journey_stage", filters?.journeyStage);
-  appendMulti(search, "headquarters_country", filters?.headquartersCountry);
+  appendMulti(search, "headquarters_continent", filters?.headquartersContinent);
   if (filters?.batchId) search.set("batch_id", filters.batchId);
   if (filters?.prospectsMin !== undefined) search.set("prospects_min", String(filters.prospectsMin));
   if (filters?.prospectsMax !== undefined) search.set("prospects_max", String(filters.prospectsMax));
@@ -600,11 +600,6 @@ export const accountSourcingApi = {
 
   batchCompanies: (batchId: string) =>
     requestList<Company>(`/api/v1/account-sourcing/batches/${batchId}/companies`),
-
-  /** Distinct headquarters countries across visible accounts — populates the
-   *  headquarters-country filter dropdown. */
-  headquartersCountries: () =>
-    request<string[]>("/api/v1/account-sourcing/companies/headquarters-countries"),
 
   listCompanies: (skip = 0, limit = 200, assignedRepEmail?: string) =>
     requestList<Company>(`/api/v1/account-sourcing/companies?skip=${skip}&limit=${limit}${assignedRepEmail ? `&assigned_rep_email=${encodeURIComponent(assignedRepEmail)}` : ""}`),

@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.tasks.cadence_scheduler",
         "app.tasks.sales_reports",
         "app.tasks.weekly_digest",
+        "app.tasks.team_activity_report",
         "app.tasks.instantly_sync",
         "app.tasks.pre_meeting_brief",
         "app.tasks.transcribe_call",
@@ -156,6 +157,14 @@ celery_app.conf.update(
         # a per-week dedup key. Default 9:00 AM Asia/Kolkata.
         "send-weekly-crm-digest": {
             "task": "app.tasks.weekly_digest.send_weekly_digest",
+            "schedule": crontab(minute="*/15"),
+        },
+        # Weekly Calls/Email/LinkedIn team activity report — self-gates on its
+        # own config block (team_activity_report): enabled flag, Monday-only
+        # send_days, send time, and a per-week dedup key. Default 9:30 AM
+        # Asia/Kolkata (staggered 30 min after the CRM digest above).
+        "send-team-activity-report": {
+            "task": "app.tasks.team_activity_report.send_team_activity_report",
             "schedule": crontab(minute="*/15"),
         },
         "sync-instantly-campaigns": {

@@ -77,7 +77,14 @@ function SortableStepCard({
         </div>
         <span style={{ fontSize: 12, fontWeight: 800, color: "#7a96b0" }}>STEP {index + 1}</span>
         <div style={{ flex: 1 }} />
-        <button type="button" onClick={onRemove} style={{ border: "1px solid #f0c1c8", background: "#fff5f6", color: "#b42336", borderRadius: 8, width: 28, height: 28, cursor: "pointer" }}><Trash2 size={13} /></button>
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove step"
+          style={{ border: "1px solid #f0c1c8", background: "#fff5f6", color: "#b42336", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+        >
+          <Trash2 size={13} />
+        </button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

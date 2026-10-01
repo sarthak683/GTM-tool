@@ -24,6 +24,8 @@ export const EVENT_OPTIONS = [
   "Ortus Club, London",
   "CS Summit, London",
   "CCO Summit, London",
+  "Virtual RT Sept3",
+  "Virtual RT Oct 15",
 ] as const;
 
 export const MARKETING_SOURCE_LABELS: Record<string, string> = {
