@@ -286,7 +286,45 @@
     padding: 14px 12px 88px !important;
   }
   .prospect-detail-page .prospect-detail-main-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .prospect-detail-page .prospect-detail-hero-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .prospect-detail-page .prospect-detail-hero-row > *,
+  .prospect-detail-page .prospect-detail-main-grid > * {
+    min-width: 0;
+  }
+  .prospect-detail-page .prospect-detail-primary-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .prospect-detail-page .prospect-detail-secondary-action {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .prospect-detail-page .prospect-detail-secondary-action > span {
+    min-width: 0;
+    white-space: normal !important;
+  }
+  .prospect-detail-page .prospect-detail-secondary-action > button,
+  .prospect-detail-page .prospect-detail-secondary-action > svg {
+    flex-shrink: 0;
+  }
+  .prospect-detail-page .prospect-detail-mobile-card div,
+  .prospect-detail-page .prospect-detail-mobile-card input {
+    min-width: 0;
+  }
+  .prospect-detail-page .prospect-detail-mobile-card span {
+    overflow-wrap: anywhere;
+  }
+  .prospect-detail-page .prospect-detail-key-value {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 4px !important;
+    overflow-wrap: anywhere;
+  }
+  .prospect-detail-page .prospect-detail-key-value a {
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
   .prospect-detail-page .prospect-detail-main-grid > *:nth-child(2) {
     position: static !important;

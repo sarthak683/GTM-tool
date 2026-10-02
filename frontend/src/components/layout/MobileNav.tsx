@@ -42,8 +42,9 @@ function MobileNav({ onSearch }: { onSearch?: () => void }) {
       borderTop: "1px solid #e8eef5",
       padding: "6px 4px max(6px, env(safe-area-inset-bottom))",
       boxShadow: "0 -4px 20px rgba(15,23,42,0.08)",
+      overflowX: "auto",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", maxWidth: 560, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", minWidth: "max-content", maxWidth: 560, margin: "0 auto" }}>
         {NAV.map((item) => {
           const Icon = item.icon;
           return (

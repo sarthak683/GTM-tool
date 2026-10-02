@@ -1580,6 +1580,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/performance/spilled-pipeline-deals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Spilled Pipeline Deals
+         * @description The exact deals behind one bar of the Funnel's "Spilled Pipeline"
+         *     chart — every deal that moved INTO `stage` during the period, from
+         *     anywhere (any origin stage, not just active pipeline).
+         */
+        get: operations["get_spilled_pipeline_deals_api_v1_performance_spilled_pipeline_deals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/performance/close-date-buckets": {
         parameters: {
             query?: never;
@@ -2633,6 +2655,156 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sequences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sequences
+         * @description scope=mine | team | omitted (both, mine first).
+         */
+        get: operations["list_sequences_api_v1_sequences_get"];
+        put?: never;
+        /** Create Sequence */
+        post: operations["create_sequence_api_v1_sequences_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/{sequence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sequence */
+        get: operations["get_sequence_api_v1_sequences__sequence_id__get"];
+        /**
+         * Update Sequence
+         * @description Full replace of name/shared/steps. In-flight Enrollments are
+         *     unaffected — they keep advancing through whichever SequenceStep rows
+         *     their current_step index still points at; only steps AT OR AFTER an
+         *     enrollment's current position could shift meaning, which is an accepted
+         *     tradeoff of "edit anytime" rather than versioning every edit.
+         */
+        put: operations["update_sequence_api_v1_sequences__sequence_id__put"];
+        post?: never;
+        /**
+         * Delete Sequence
+         * @description Deleting a template never deletes past Enrollments or their Task
+         *     history — only future enrollment into this exact template stops being
+         *     possible.
+         */
+        delete: operations["delete_sequence_api_v1_sequences__sequence_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/{sequence_id}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sequence Steps */
+        get: operations["list_sequence_steps_api_v1_sequences__sequence_id__steps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enroll */
+        post: operations["enroll_api_v1_sequences_enroll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/contacts/{contact_id}/enrollment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Contact Enrollment
+         * @description The contact's current active enrollment, if any — backs the "In:
+         *     Sequence Name — Step N/M" status line that replaces the Add-to-sequence
+         *     button once enrolled.
+         */
+        get: operations["get_contact_enrollment_api_v1_sequences_contacts__contact_id__enrollment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/enrollments/{enrollment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unenroll */
+        delete: operations["unenroll_api_v1_sequences_enrollments__enrollment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sequences/tasks/{task_id}/instantly-add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Task Contact To Instantly
+         * @description The one-click action for an Instantly-routed Email step's task.
+         *
+         *     Adds the contact as a lead to the step's chosen campaign right now, but
+         *     does NOT complete the task or advance the enrollment — Instantly sends
+         *     on its own schedule, and the existing Instantly webhook is what
+         *     eventually confirms the send and calls complete_cadence_step.
+         */
+        post: operations["add_task_contact_to_instantly_api_v1_sequences_tasks__task_id__instantly_add_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks/": {
         parameters: {
             query?: never;
@@ -2660,7 +2832,11 @@ export interface paths {
         };
         /**
          * Get Task Count
-         * @description Return the number of open tasks assigned to the current user.
+         * @description Return the open-task badge count without a workspace-wide repair sweep.
+         *
+         *     Assignment repair runs on the scheduled deal-task reconciliation and when
+         *     the Tasks workspace is opened. This endpoint is polled by every visible
+         *     CRM tab, so it must remain a cheap, read-only query.
          */
         get: operations["get_task_count_api_v1_tasks_count_get"];
         put?: never;
@@ -4790,6 +4966,46 @@ export interface paths {
         head?: never;
         /** Update Weekly Digest Settings */
         patch: operations["update_weekly_digest_settings_api_v1_settings_weekly_digest_patch"];
+        trace?: never;
+    };
+    "/api/v1/settings/team-activity-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Team Activity Report Settings */
+        get: operations["get_team_activity_report_settings_api_v1_settings_team_activity_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Team Activity Report Settings */
+        patch: operations["update_team_activity_report_settings_api_v1_settings_team_activity_report_patch"];
+        trace?: never;
+    };
+    "/api/v1/settings/team-activity-report/send-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Test Team Activity Report
+         * @description Send an on-demand copy of the team activity report to the calling
+         *     user only — does not touch the per-week dedup key, so the real Monday
+         *     scheduled send still goes out normally afterward.
+         */
+        post: operations["send_test_team_activity_report_api_v1_settings_team_activity_report_send_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/settings/sync-schedule/tldv-now": {
@@ -8211,6 +8427,8 @@ export interface components {
             timezone?: string | null;
             /** Next Followup At */
             next_followup_at?: string | null;
+            /** Cadence Task Id */
+            cadence_task_id?: string | null;
         };
         /** ConversionRow */
         ConversionRow: {
@@ -8961,6 +9179,66 @@ export interface components {
             /** Scenes */
             scenes: components["schemas"]["SceneIn"][];
         };
+        /** EnrollPayload */
+        EnrollPayload: {
+            /**
+             * Contact Id
+             * Format: uuid
+             */
+            contact_id: string;
+            /**
+             * Sequence Id
+             * Format: uuid
+             */
+            sequence_id: string;
+        };
+        /** EnrollmentRead */
+        EnrollmentRead: {
+            /**
+             * Contact Id
+             * Format: uuid
+             */
+            contact_id: string;
+            /**
+             * Sequence Id
+             * Format: uuid
+             */
+            sequence_id: string;
+            /**
+             * Current Step
+             * @default 1
+             */
+            current_step: number;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Enrolled By
+             * Format: uuid
+             */
+            enrolled_by: string;
+            /**
+             * Enrolled At
+             * Format: date-time
+             */
+            enrolled_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Sequence Name */
+            sequence_name?: string | null;
+            /**
+             * Total Steps
+             * @default 0
+             */
+            total_steps: number;
+        };
         /** ExecutionTrackerItemRead */
         ExecutionTrackerItemRead: {
             /** Entity Type */
@@ -9059,6 +9337,8 @@ export interface components {
             movement: {
                 [key: string]: unknown;
             };
+            /** Spilled Pipeline */
+            spilled_pipeline: components["schemas"]["SpilledPipelineRow"][];
         };
         /** GlobalSearchItem */
         GlobalSearchItem: {
@@ -11453,6 +11733,104 @@ export interface components {
             conversation_id: string;
             message: components["schemas"]["ZippyMessageResponse"];
         };
+        /** SequenceCreatePayload */
+        SequenceCreatePayload: {
+            /** Name */
+            name: string;
+            /**
+             * Shared
+             * @default false
+             */
+            shared: boolean;
+            /** Steps */
+            steps: components["schemas"]["SequenceStepCreate"][];
+        };
+        /** SequenceRead */
+        SequenceRead: {
+            /** Name */
+            name: string;
+            /**
+             * Shared
+             * @default false
+             */
+            shared: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Owner Name */
+            owner_name?: string | null;
+            /**
+             * Step Count
+             * @default 0
+             */
+            step_count: number;
+            /**
+             * Active Enrollment Count
+             * @default 0
+             */
+            active_enrollment_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** SequenceStepCreate */
+        SequenceStepCreate: {
+            /** Type */
+            type: string;
+            /**
+             * Delay Minutes
+             * @default 0
+             */
+            delay_minutes: number;
+            /** Send Via */
+            send_via?: string | null;
+            /** Instantly Campaign Id */
+            instantly_campaign_id?: string | null;
+            /** Linkedin Category */
+            linkedin_category?: string | null;
+        };
+        /** SequenceStepRead */
+        SequenceStepRead: {
+            /** Type */
+            type: string;
+            /**
+             * Delay Minutes
+             * @default 0
+             */
+            delay_minutes: number;
+            /** Send Via */
+            send_via?: string | null;
+            /** Instantly Campaign Id */
+            instantly_campaign_id?: string | null;
+            /** Linkedin Category */
+            linkedin_category?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Sequence Id
+             * Format: uuid
+             */
+            sequence_id: string;
+            /** Order */
+            order: number;
+        };
         /** SignalCreate */
         SignalCreate: {
             /**
@@ -11568,6 +11946,15 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** SpilledPipelineRow */
+        SpilledPipelineRow: {
+            /** Stage */
+            stage: string;
+            /** Deals */
+            deals: number;
+            /** Total Value */
+            total_value: number;
         };
         /** StageBucket */
         StageBucket: {
@@ -11796,6 +12183,24 @@ export interface components {
              * @default []
              */
             comments: components["schemas"]["TaskCommentRead"][];
+            /** Enrollment Id */
+            enrollment_id?: string | null;
+            /** Step Id */
+            step_id?: string | null;
+            /** Sequence Name */
+            sequence_name?: string | null;
+            /** Step Number */
+            step_number?: number | null;
+            /** Step Type */
+            step_type?: string | null;
+            /** Step Send Via */
+            step_send_via?: string | null;
+            /** Step Instantly Campaign Id */
+            step_instantly_campaign_id?: string | null;
+            /** Step Linkedin Category */
+            step_linkedin_category?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
         };
         /** TaskUpdate */
         TaskUpdate: {
@@ -11888,12 +12293,72 @@ export interface components {
              * @default []
              */
             comments: components["schemas"]["TaskCommentRead"][];
+            /** Enrollment Id */
+            enrollment_id?: string | null;
+            /** Step Id */
+            step_id?: string | null;
+            /** Sequence Name */
+            sequence_name?: string | null;
+            /** Step Number */
+            step_number?: number | null;
+            /** Step Type */
+            step_type?: string | null;
+            /** Step Send Via */
+            step_send_via?: string | null;
+            /** Step Instantly Campaign Id */
+            step_instantly_campaign_id?: string | null;
+            /** Step Linkedin Category */
+            step_linkedin_category?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
             /** Entity Name */
             entity_name: string;
             /** Entity Subtitle */
             entity_subtitle?: string | null;
             /** Entity Link */
             entity_link: string;
+        };
+        /** TeamActivityReportSettingsRead */
+        TeamActivityReportSettingsRead: {
+            /** Enabled */
+            enabled: boolean;
+            /** Recipients */
+            recipients: string[];
+            /** Send Timezone */
+            send_timezone: string;
+            /** Send Hour */
+            send_hour: number;
+            /** Send Minute */
+            send_minute: number;
+            /** Send Days */
+            send_days: string[];
+            /** Nonprod Scheduled Enabled */
+            nonprod_scheduled_enabled: boolean;
+            /** Nonprod Recipients */
+            nonprod_recipients: string[];
+            /** Last Scheduled Send Key */
+            last_scheduled_send_key?: string | null;
+            /** Last Scheduled Send At */
+            last_scheduled_send_at?: string | null;
+        };
+        /** TeamActivityReportSettingsUpdate */
+        TeamActivityReportSettingsUpdate: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Recipients */
+            recipients?: string[] | null;
+            /** Send Timezone */
+            send_timezone?: string | null;
+            /** Send Hour */
+            send_hour?: number | null;
+            /** Send Minute */
+            send_minute?: number | null;
+            /** Send Days */
+            send_days?: string[] | null;
+            /** Nonprod Scheduled Enabled */
+            nonprod_scheduled_enabled?: boolean | null;
+            /** Nonprod Recipients */
+            nonprod_recipients?: string[] | null;
         };
         /** UnsubscribePayload */
         UnsubscribePayload: {
@@ -12804,6 +13269,8 @@ export interface operations {
                 sdr_id?: string | null;
                 /** @description Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage. */
                 journey_stage?: string | null;
+                /** @description One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set. */
+                headquarters_continent?: string | null;
                 /** @description Only accounts attached to this sourcing batch (import). */
                 batch_id?: string | null;
                 /** @description Inclusive lower bound on the count of contacts (prospects) per account. */
@@ -15398,8 +15865,12 @@ export interface operations {
     get_funnel_api_v1_performance_funnel_get: {
         parameters: {
             query?: {
-                period?: "week" | "month" | "quarter";
+                period?: "week" | "month" | "quarter" | "custom";
                 anchor?: string | null;
+                /** @description Required when period=custom */
+                custom_start?: string | null;
+                /** @description Required when period=custom */
+                custom_end?: string | null;
                 rep_id?: string | null;
             };
             header?: {
@@ -15439,8 +15910,53 @@ export interface operations {
                 to_stage?: string | null;
                 /** @description Pool every configured transition's moves into one list, for the Overall row */
                 is_overall?: boolean;
-                period?: "week" | "month" | "quarter";
+                period?: "week" | "month" | "quarter" | "custom";
                 anchor?: string | null;
+                /** @description Required when period=custom */
+                custom_start?: string | null;
+                /** @description Required when period=custom */
+                custom_end?: string | null;
+                rep_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedAlertDeal"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spilled_pipeline_deals_api_v1_performance_spilled_pipeline_deals_get: {
+        parameters: {
+            query: {
+                /** @description One of SPILLED_TO_STAGES, e.g. 'reprospect' */
+                stage: string;
+                period?: "week" | "month" | "quarter" | "custom";
+                anchor?: string | null;
+                /** @description Required when period=custom */
+                custom_start?: string | null;
+                /** @description Required when period=custom */
+                custom_end?: string | null;
                 rep_id?: string | null;
             };
             header?: {
@@ -17418,6 +17934,340 @@ export interface operations {
             };
         };
     };
+    list_sequences_api_v1_sequences_get: {
+        parameters: {
+            query?: {
+                scope?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SequenceRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_sequence_api_v1_sequences_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SequenceCreatePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SequenceRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sequence_api_v1_sequences__sequence_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                sequence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SequenceRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_sequence_api_v1_sequences__sequence_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                sequence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SequenceCreatePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SequenceRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_sequence_api_v1_sequences__sequence_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                sequence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sequence_steps_api_v1_sequences__sequence_id__steps_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                sequence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SequenceStepRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enroll_api_v1_sequences_enroll_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrollPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_contact_enrollment_api_v1_sequences_contacts__contact_id__enrollment_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentRead"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unenroll_api_v1_sequences_enrollments__enrollment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                enrollment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_task_contact_to_instantly_api_v1_sequences_tasks__task_id__instantly_add_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_tasks_api_v1_tasks__get: {
         parameters: {
             query: {
@@ -17528,6 +18378,8 @@ export interface operations {
                 entity_type?: string | null;
                 deal_id?: string | null;
                 scope?: string;
+                source?: string | null;
+                sequence_id?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -19847,6 +20699,8 @@ export interface operations {
                 sdr_id?: string | null;
                 /** @description Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage. */
                 journey_stage?: string | null;
+                /** @description One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set. */
+                headquarters_continent?: string | null;
                 /** @description Only accounts attached to this sourcing batch (import). */
                 batch_id?: string | null;
                 /** @description Inclusive lower bound on the count of contacts (prospects) per account. */
@@ -19909,6 +20763,8 @@ export interface operations {
                 sdr_id?: string | null;
                 /** @description Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage. */
                 journey_stage?: string | null;
+                /** @description One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set. */
+                headquarters_continent?: string | null;
                 /** @description Only accounts attached to this sourcing batch (import). */
                 batch_id?: string | null;
                 /** @description Inclusive lower bound on the count of contacts (prospects) per account. */
@@ -20111,6 +20967,8 @@ export interface operations {
                 sdr_id?: string | null;
                 /** @description Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage. */
                 journey_stage?: string | null;
+                /** @description One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set. */
+                headquarters_continent?: string | null;
                 /** @description Only accounts attached to this sourcing batch (import). */
                 batch_id?: string | null;
                 /** @description Inclusive lower bound on the count of contacts (prospects) per account. */
@@ -20382,6 +21240,8 @@ export interface operations {
                 sdr_id?: string | null;
                 /** @description Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage. */
                 journey_stage?: string | null;
+                /** @description One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set. */
+                headquarters_continent?: string | null;
                 /** @description Only accounts attached to this sourcing batch (import). */
                 batch_id?: string | null;
                 /** @description Inclusive lower bound on the count of contacts (prospects) per account. */
@@ -22197,6 +23057,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WeeklyDigestSettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_team_activity_report_settings_api_v1_settings_team_activity_report_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamActivityReportSettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_team_activity_report_settings_api_v1_settings_team_activity_report_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamActivityReportSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamActivityReportSettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_test_team_activity_report_api_v1_settings_team_activity_report_send_test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

@@ -366,6 +366,7 @@ export function ZippyPanel({ open, onClose }: ZippyPanelProps) {
 
       {/* Slide-over panel */}
       <aside
+        style={{ display: open ? undefined : "none" }}
         className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-[520px] transform flex-col bg-white shadow-2xl transition-transform duration-300 ease-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
