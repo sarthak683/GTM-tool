@@ -28,6 +28,7 @@ from sqlmodel import select
 
 logger = logging.getLogger(__name__)
 
+from app.clients.lifecycle import closing_client
 from app.core.dependencies import DBSession
 from app.clients.aircall import AircallClient, AircallError
 from app.config import settings
@@ -633,19 +634,19 @@ async def _summarize_aircall_signal(
     try:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Summarize this sales call in one short sentence (max 18 words). "
-                    "Focus on buyer intent, risk, or next step.\n\n"
-                    f"{source_text[:2500]}"
-                ),
-            }],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=100,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Summarize this sales call in one short sentence (max 18 words). "
+                        "Focus on buyer intent, risk, or next step.\n\n"
+                        f"{source_text[:2500]}"
+                    ),
+                }],
+            )
         return response.content[0].text.strip()
     except Exception as exc:  # pragma: no cover - external API fallback
         logger.warning("Aircall call summary failed: %s", exc)

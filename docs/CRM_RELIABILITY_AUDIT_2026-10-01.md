@@ -62,7 +62,11 @@ test from the installed Home Screen app later. No test push was sent on her beha
 
 ## Release and limits
 
-These application fixes are local and require production deployment. No production
-rollout, restart, or image change was performed. Actual iPhone display remains
-pending the user's device test. This is a broad regression and workflow smoke
+Deployed commit `2317d7c` to staging (`gtm`, Helm revision 264) and production
+(`gtm-prod`, Helm revision 235), using tag `v0.261001-2317d7c-reliability` for
+both backend and frontend. Both upgrades passed image-only drift and workload
+preservation checks. All new pods are healthy with zero restarts. Staging passed
+21 disposable workflow checks; production passed nine authenticated read-only
+checks. Migration head remains `143`. Post-release logs contain no tracebacks or
+HTTP 5xx responses. Actual iPhone display remains pending the user's device test. This is a broad regression and workflow smoke
 audit; it does not establish that every possible application path is bug-free.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Sequence
 
+from app.clients.lifecycle import closing_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,8 @@ class OpenAIEmbeddingsClient:
         cleaned = [t if t and t.strip() else " " for t in texts]
 
         try:
-            client = _get_client()
-            response = await client.embeddings.create(model=self.model, input=cleaned)
+            async with closing_client(_get_client()) as client:
+                response = await client.embeddings.create(model=self.model, input=cleaned)
             return [item.embedding for item in response.data]
         except Exception as e:
             logger.error(f"OpenAI embedding call failed: {e}")
