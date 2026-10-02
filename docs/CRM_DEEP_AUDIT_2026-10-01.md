@@ -10,11 +10,36 @@ Staging passed 21 disposable workflow checks; production passed nine authenticat
 read checks. All new pods have zero restarts. Post-release logs show no Python
 tracebacks or HTTP 5xx responses.
 
-Production inspection after this release is read-only. Follow-up code commit
-`ffa223b` is deployed to staging only (Helm revision 265), using backend and
+Production inspection after this release was read-only until the user approved
+promoting the follow-up fixes. Code commit `ffa223b` was first deployed to staging
+(Helm revision 265), using backend and
 frontend tag `v0.261001-ffa223b-deep-audit`. The image-only drift check found six
 image fields and no resource additions or removals. Migration head remains 143.
 Draft PR #16 is based on #15; neither PR was merged during this work.
+
+## Approved production promotion
+
+On October 1 at 19:48 PDT, promoted the exact staging-tested backend and frontend
+images to production (`gtm-prod`, Helm revision 236). The user explicitly approved
+this additional deployment. Live three-way Helm diff and server-side rendering
+verified only six image fields changed. Both rendered Secrets match live values;
+all seven Deployment/StatefulSet resources, configuration and storage were preserved.
+Backend, frontend, worker, priority worker and beat are ready. All seven new
+application pods have zero restarts. Their image IDs match the staging-tested
+registry digests; the backend reports code SHA `ffa223b`, with migration head 143.
+
+Post-promotion verification is read-only: 11 authenticated API checks passed,
+including corrected badge counts of 1 for Dyuthith and 4 for Sipra;
+all 163 protected GET routes rejected anonymous access, and production browser
+Settings shows the corrected prospect-matching guidance without console errors.
+Pravalika still sees all 59 CSV prospects (777 total visible owned prospects),
+and her Gmail connection is active with historical backfill complete. Current
+application logs contain zero tracebacks, HTTP 5xx, closed-loop errors or unexpected
+task failures. Her deferred physical iPhone notification test remains pending.
+
+Evidence: `production-promotion-gate.json`, `production-promoted-runtime.json`,
+`production-promoted-api-checks.json`, `production-promoted-anonymous-auth-surface.json`
+and `production-settings-promoted.jpg` under the local audit artifacts directory.
 
 ## Follow-up fixes
 
