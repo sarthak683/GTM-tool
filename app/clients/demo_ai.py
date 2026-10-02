@@ -17,6 +17,7 @@ import logging
 import re
 import time
 
+from app.clients.lifecycle import closing_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -358,66 +359,66 @@ async def generate_demo_html(
     # max_retries=0: _call_model already retries transient errors with its own
     # backoff/logging; the SDK's default max_retries=2 would multiply that into
     # up to 12 HTTP attempts of a 30K-max_tokens request. One retry layer total.
-    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
+    async with closing_client(anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)) as client:
 
-    logger.info(
-        "[demo_ai] starting generation — client=%s model=%s "
-        "max_tokens=%d thinking_budget=%d guide_chars=%d",
-        client_name, model, max_tokens, thinking_budget, len(production_guide),
-    )
+        logger.info(
+            "[demo_ai] starting generation — client=%s model=%s "
+            "max_tokens=%d thinking_budget=%d guide_chars=%d",
+            client_name, model, max_tokens, thinking_budget, len(production_guide),
+        )
 
-    # ── Attempt 1: full generation ──
-    html = await _call_model(
-        client, SYSTEM_PROMPT, user_message,
-        model=model, max_tokens=max_tokens,
-        thinking_budget=thinking_budget,
-        timeout_seconds=timeout,
-        label="initial",
-    )
+        # ── Attempt 1: full generation ──
+        html = await _call_model(
+            client, SYSTEM_PROMPT, user_message,
+            model=model, max_tokens=max_tokens,
+            thinking_budget=thinking_budget,
+            timeout_seconds=timeout,
+            label="initial",
+        )
 
-    report = validate_demo_html(html)
-    if report["valid"]:
-        logger.info("[demo_ai] initial generation VALID — %d chars", len(html))
-        return html
+        report = validate_demo_html(html)
+        if report["valid"]:
+            logger.info("[demo_ai] initial generation VALID — %d chars", len(html))
+            return html
 
-    logger.warning(
-        "[demo_ai] initial generation INVALID — %s — trying compact retry",
-        report["details"],
-    )
+        logger.warning(
+            "[demo_ai] initial generation INVALID — %s — trying compact retry",
+            report["details"],
+        )
 
-    # ── Attempt 2: compact retry with explicit structural reminders ──
-    compact_message = (
-        user_message
-        + "\n\n"
-        + "IMPORTANT — YOUR PREVIOUS OUTPUT WAS INCOMPLETE OR INVALID.\n"
-        + "RETRY RULES:\n"
-        + "- Keep to 5-6 scenes max to stay within output limits.\n"
-        + "- You MUST define global JS functions: startDemo, prevScene, nextScene, playScene, skipScene.\n"
-        + "- You MUST start with <!DOCTYPE html> and end with </html>.\n"
-        + "- Output ONLY raw HTML — no markdown fences, no commentary.\n"
-        + "- Make sure ALL script tags and functions are complete — do not truncate.\n"
-    )
+        # ── Attempt 2: compact retry with explicit structural reminders ──
+        compact_message = (
+            user_message
+            + "\n\n"
+            + "IMPORTANT — YOUR PREVIOUS OUTPUT WAS INCOMPLETE OR INVALID.\n"
+            + "RETRY RULES:\n"
+            + "- Keep to 5-6 scenes max to stay within output limits.\n"
+            + "- You MUST define global JS functions: startDemo, prevScene, nextScene, playScene, skipScene.\n"
+            + "- You MUST start with <!DOCTYPE html> and end with </html>.\n"
+            + "- Output ONLY raw HTML — no markdown fences, no commentary.\n"
+            + "- Make sure ALL script tags and functions are complete — do not truncate.\n"
+        )
 
-    html_retry = await _call_model(
-        client, SYSTEM_PROMPT, compact_message,
-        model=model, max_tokens=max_tokens,
-        thinking_budget=thinking_budget,
-        timeout_seconds=timeout,
-        label="compact-retry",
-    )
+        html_retry = await _call_model(
+            client, SYSTEM_PROMPT, compact_message,
+            model=model, max_tokens=max_tokens,
+            thinking_budget=thinking_budget,
+            timeout_seconds=timeout,
+            label="compact-retry",
+        )
 
-    report2 = validate_demo_html(html_retry)
-    if report2["valid"]:
-        logger.info("[demo_ai] compact retry VALID — %d chars", len(html_retry))
-        return html_retry
+        report2 = validate_demo_html(html_retry)
+        if report2["valid"]:
+            logger.info("[demo_ai] compact retry VALID — %d chars", len(html_retry))
+            return html_retry
 
-    # Both attempts failed validation
-    raise RuntimeError(
-        f"Generated HTML failed validation after 2 generation attempts.\n"
-        f"Attempt 1: {report['details']} ({len(html)} chars)\n"
-        f"Attempt 2: {report2['details']} ({len(html_retry)} chars)\n"
-        f"Try simplifying the production guide or reducing scene count."
-    )
+        # Both attempts failed validation
+        raise RuntimeError(
+            f"Generated HTML failed validation after 2 generation attempts.\n"
+            f"Attempt 1: {report['details']} ({len(html)} chars)\n"
+            f"Attempt 2: {report2['details']} ({len(html_retry)} chars)\n"
+            f"Try simplifying the production guide or reducing scene count."
+        )
 
 
 async def repair_demo_html(existing_html: str, client_name: str = "Client") -> str:
@@ -430,38 +431,38 @@ async def repair_demo_html(existing_html: str, client_name: str = "Client") -> s
         raise RuntimeError("Claude API key is not configured.")
 
     # max_retries=0 — _call_model owns retries (see generate_demo_html).
-    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
+    async with closing_client(anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)) as client:
 
-    repair_prompt = f"""The following HTML demo is broken or truncated.
-Fix it into a complete, valid, self-contained interactive HTML document.
+        repair_prompt = f"""The following HTML demo is broken or truncated.
+    Fix it into a complete, valid, self-contained interactive HTML document.
 
-Requirements:
-- Output ONLY HTML starting with <!DOCTYPE html> and ending with </html>.
-- Keep the same visual intent and scene narrative where possible.
-- Ensure global functions exist: startDemo, prevScene, nextScene, playScene, skipScene.
-- Keep inline onclick handlers working.
-- No external JS/CSS dependencies.
-- Limit to 5 scenes if the original was longer.
+    Requirements:
+    - Output ONLY HTML starting with <!DOCTYPE html> and ending with </html>.
+    - Keep the same visual intent and scene narrative where possible.
+    - Ensure global functions exist: startDemo, prevScene, nextScene, playScene, skipScene.
+    - Keep inline onclick handlers working.
+    - No external JS/CSS dependencies.
+    - Limit to 5 scenes if the original was longer.
 
-Client: {client_name}
+    Client: {client_name}
 
-BROKEN HTML INPUT:
-{existing_html[:100000]}
-"""
+    BROKEN HTML INPUT:
+    {existing_html[:100000]}
+    """
 
-    repaired = await _call_model(
-        client, SYSTEM_PROMPT, repair_prompt,
-        model=settings.DEMO_MODEL,
-        max_tokens=settings.DEMO_MAX_TOKENS,
-        thinking_budget=settings.DEMO_THINKING_BUDGET,
-        timeout_seconds=180,
-        label="repair",
-    )
-
-    if not is_valid_demo_html(repaired):
-        report = validate_demo_html(repaired)
-        raise RuntimeError(
-            f"HTML repair failed validation: {report['details']}. "
-            "Please regenerate the demo."
+        repaired = await _call_model(
+            client, SYSTEM_PROMPT, repair_prompt,
+            model=settings.DEMO_MODEL,
+            max_tokens=settings.DEMO_MAX_TOKENS,
+            thinking_budget=settings.DEMO_THINKING_BUDGET,
+            timeout_seconds=180,
+            label="repair",
         )
-    return repaired
+
+        if not is_valid_demo_html(repaired):
+            report = validate_demo_html(repaired)
+            raise RuntimeError(
+                f"HTML repair failed validation: {report['details']}. "
+                "Please regenerate the demo."
+            )
+        return repaired

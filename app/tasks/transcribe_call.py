@@ -27,6 +27,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.clients.lifecycle import closing_client
 from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -217,20 +218,20 @@ async def _transcribe_with_whisper(audio_path: str) -> Optional[str]:
         logger.error("openai package not installed in worker image")
         return None
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     # whisper-1 takes a file-like object; we open the temp file and let
     # the SDK stream the upload.
     try:
-        with open(audio_path, "rb") as audio_file:
-            result = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                # English-only for now — Beacon's primary market. If
-                # multi-language calls become a need, drop this param
-                # and Whisper auto-detects (slightly slower).
-                language="en",
-                response_format="text",
-            )
+        async with closing_client(AsyncOpenAI(api_key=settings.OPENAI_API_KEY)) as client:
+            with open(audio_path, "rb") as audio_file:
+                result = await client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    # English-only for now — Beacon's primary market. If
+                    # multi-language calls become a need, drop this param
+                    # and Whisper auto-detects (slightly slower).
+                    language="en",
+                    response_format="text",
+                )
         # response_format="text" returns a plain string, not a dict.
         text = result if isinstance(result, str) else getattr(result, "text", None)
         if not text:

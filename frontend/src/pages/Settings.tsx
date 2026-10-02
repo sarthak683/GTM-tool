@@ -2046,7 +2046,7 @@ export default function SettingsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                 {[
                   { title: "Conversation mapping", body: "Matches emails to deals via contact address, company domain, or AI classification." },
-                  { title: "Auto-create contacts", body: "New stakeholders found in email threads are added to the CRM and linked to the deal." },
+                  { title: "Existing prospect matching", body: "Emails are matched to existing CRM prospects and deals. Add new prospects through Prospecting or Account Sourcing." },
                   { title: "AI task generation", body: "Detects key moments — POC agreed, pricing asked, meeting requested — and creates tasks automatically." },
                   { title: "Historical backfill", body: "On first connect, scans the last 90 days of your inbox to surface past conversations." },
                 ].map((item) => (

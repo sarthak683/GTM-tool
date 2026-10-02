@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parseaddr, parsedate_to_datetime
 
+from app.clients.lifecycle import closing_client
 from app.celery_app import celery_app
 from app.services.zippy_tagging import BEACON_SENDING_DOMAINS, is_our_sending_address
 from app.config import settings
@@ -690,21 +691,21 @@ async def _summarize_email(subject: str, body: str) -> str | None:
     try:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
 
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=80,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Summarize this sales email in one short sentence (max 15 words). "
-                    "Focus on the key action or decision.\n\n"
-                    f"Subject: {subject}\n\n"
-                    f"{body[:1500]}"
-                ),
-            }],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=80,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Summarize this sales email in one short sentence (max 15 words). "
+                        "Focus on the key action or decision.\n\n"
+                        f"Subject: {subject}\n\n"
+                        f"{body[:1500]}"
+                    ),
+                }],
+            )
         return response.content[0].text.strip()
 
     except Exception as e:

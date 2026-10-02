@@ -247,8 +247,9 @@ export function RichTextEditor({
     editable: !readOnly,
     onBlur: ({ editor: ed }) => {
       if (ed.isDestroyed || readOnly) return;
-      const html = ed.getHTML();
-      onChange(sanitizeHtml(html));
+      // ProseMirror represents a cleared note as <p></p>. Save an empty
+      // value so optional notes and qualification checks remain empty too.
+      onChange(ed.isEmpty ? "" : sanitizeHtml(ed.getHTML()));
     },
   });
 

@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.lifecycle import closing_client
 from app.repositories.visibility import unscoped_for_background_job
 from app.clients.tldv import TldvClient, TldvError
 from app.clients.claude import ClaudeClient
@@ -454,24 +455,24 @@ async def _analyze_meeting_intelligence(
     try:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=700,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Analyze this customer meeting and return JSON only with keys: "
-                        "summary (string), action_items (array of strings), topics (array of strings), "
-                        "intents (array of strings), risks (array of strings), next_steps (array of strings), "
-                        "sentiment (string), stage_signal (string), meeting_outcome (string).\n\n"
-                        f"Meeting title: {title}\n\n"
-                        f"{source_text[:12000]}"
-                    ),
-                }
-            ],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=700,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Analyze this customer meeting and return JSON only with keys: "
+                            "summary (string), action_items (array of strings), topics (array of strings), "
+                            "intents (array of strings), risks (array of strings), next_steps (array of strings), "
+                            "sentiment (string), stage_signal (string), meeting_outcome (string).\n\n"
+                            f"Meeting title: {title}\n\n"
+                            f"{source_text[:12000]}"
+                        ),
+                    }
+                ],
+            )
         raw = response.content[0].text.strip()
         start = raw.find("{")
         end = raw.rfind("}")

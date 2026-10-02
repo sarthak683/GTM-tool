@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any
 
+from app.clients.lifecycle import closing_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,6 @@ async def summarize_company(
         logger.warning("Claude API key not configured — skipping summarization for %s", company_name)
         return None
 
-    client = _get_client()
 
     system = (
         "You are a B2B sales intelligence analyst for Beacon.li, an AI implementation "
@@ -139,15 +139,16 @@ async def summarize_company(
                     user_data += f"  - {item}\n"
 
     try:
-        response = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=2000,
-            # Cache the static system prompt: account-sourcing processes companies
-            # in batches, so the identical prefix is reused within the 5-min cache
-            # window. Below the model's cache threshold it's a silent no-op.
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user_data}],
-        )
+        async with closing_client(_get_client()) as client:
+            response = await client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=2000,
+                # Cache the static system prompt: account-sourcing processes companies
+                # in batches, so the identical prefix is reused within the 5-min cache
+                # window. Below the model's cache threshold it's a silent no-op.
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user_data}],
+            )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
         text = "\n".join(text_blocks).strip() if text_blocks else ""
         payload = _extract_json_object(text)
@@ -171,24 +172,24 @@ async def classify_contact_persona(
     if not settings.claude_api_key:
         return _rule_based_persona(title, seniority)
 
-    client = _get_client()
 
     try:
-        response = await client.messages.create(
-            # One-word persona classification — Haiku is ~20x cheaper than Sonnet
-            # and accurate enough here; _rule_based_persona backstops any miss.
-            model=settings.CLAUDE_MODEL_SIMPLE,
-            max_tokens=50,
-            system=(
-                "Classify this B2B contact into exactly one role for a SaaS implementation sale. "
-                "Respond with ONLY one word: champion, buyer, evaluator, or blocker.\n"
-                "- champion: HR/People leaders who own the problem Beacon solves\n"
-                "- buyer: C-suite/VPs who control budget (CEO, CFO, COO)\n"
-                "- evaluator: Technical leaders who assess feasibility (CTO, VP Eng)\n"
-                "- blocker: Procurement, legal, or incumbents who may resist"
-            ),
-            messages=[{"role": "user", "content": f"Title: {title}\nSeniority: {seniority or 'unknown'}\nCompany context: {company_context or 'unknown'}"}],
-        )
+        async with closing_client(_get_client()) as client:
+            response = await client.messages.create(
+                # One-word persona classification — Haiku is ~20x cheaper than Sonnet
+                # and accurate enough here; _rule_based_persona backstops any miss.
+                model=settings.CLAUDE_MODEL_SIMPLE,
+                max_tokens=50,
+                system=(
+                    "Classify this B2B contact into exactly one role for a SaaS implementation sale. "
+                    "Respond with ONLY one word: champion, buyer, evaluator, or blocker.\n"
+                    "- champion: HR/People leaders who own the problem Beacon solves\n"
+                    "- buyer: C-suite/VPs who control budget (CEO, CFO, COO)\n"
+                    "- evaluator: Technical leaders who assess feasibility (CTO, VP Eng)\n"
+                    "- blocker: Procurement, legal, or incumbents who may resist"
+                ),
+                messages=[{"role": "user", "content": f"Title: {title}\nSeniority: {seniority or 'unknown'}\nCompany context: {company_context or 'unknown'}"}],
+            )
         result = response.content[0].text.strip().lower()
         if result in ("champion", "buyer", "evaluator", "blocker"):
             return result

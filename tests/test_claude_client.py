@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -20,7 +21,7 @@ def _client_with_response(response):
     client.api_key = "test-key"
     client.mock = False
     messages = _Messages(response)
-    client._get_client = lambda: SimpleNamespace(messages=messages)
+    client._get_client = lambda: SimpleNamespace(messages=messages, close=AsyncMock())
     return client, messages
 
 

@@ -15,7 +15,7 @@ async def test_task_count_only_reads_assigned_open_tasks():
         execute=AsyncMock(return_value=Mock(scalar_one=Mock(return_value=7))),
         commit=AsyncMock(),
     )
-    user = SimpleNamespace(id=uuid4())
+    user = SimpleNamespace(id=uuid4(), is_admin=True)
 
     assert await get_task_count(session, user) == {"open": 7}
     session.execute.assert_awaited_once()
