@@ -15,6 +15,7 @@ AES-GCM encryption, and the JWT-signed Authorization header.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -66,14 +67,15 @@ def _send_one(subscription: PushSubscription, payload: dict[str, Any]) -> tuple[
             vapid_private_key=settings.VAPID_PRIVATE_KEY,
             vapid_claims={"sub": settings.VAPID_SUBJECT},
             ttl=60,  # short TTL — a stale "ring this call" is worthless
+            timeout=5,
         )
         return True, 201
     except WebPushException as exc:  # type: ignore[misc]
         status = getattr(exc.response, "status_code", None)
-        logger.info("push send failed for %s: status=%s", subscription.endpoint, status)
+        logger.info("push send failed for subscription %s: status=%s", subscription.id, status)
         return False, status
     except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("push send crashed: %s", exc)
+        logger.warning("push send failed for subscription %s: %s", subscription.id, type(exc).__name__)
         return False, None
 
 
@@ -102,7 +104,7 @@ async def send_to_user(
     removed = 0
     stale_ids: list[UUID] = []
     for sub in rows:
-        ok, status = _send_one(sub, payload)
+        ok, status = await asyncio.to_thread(_send_one, sub, payload)
         if ok:
             sent += 1
             sub.last_used_at = datetime.utcnow()

@@ -102,10 +102,10 @@ export default function CallDispositionDrawer({
       window.__aircallDial(target.phone, `${target.first_name} ${target.last_name}`.trim());
     }
     pushApi
-      .ringMobile(target.id)
+      .ringMobile(target.id, target.phone)
       .then((res) => {
         if (res.sent > 0) {
-          toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
+          toast.info(`Sent to ${res.sent} device${res.sent === 1 ? "" : "s"}. If it doesn't appear, check Beacon notifications and Focus on your phone.`, "Call notification sent");
         } else if (res.configured === 0) {
           toast.warning("Mobile push is not configured yet. The call drawer is ready here.", "Mobile ring unavailable");
         } else if (res.total === 0) {

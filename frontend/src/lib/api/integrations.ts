@@ -1,6 +1,8 @@
 import { BASE, getAuthHeaders, request } from "./core";
 
 export const pushApi = {
+  listSubscriptions: () =>
+    request<{ id: string; endpoint: string; user_agent: string | null; label: string | null }[]>("/api/v1/push/subscriptions"),
   getVapidPublicKey: () =>
     request<{ publicKey: string; configured: boolean }>("/api/v1/push/vapid-public-key"),
   subscribe: (payload: { endpoint: string; keys: { p256dh: string; auth: string }; user_agent?: string; label?: string }) =>
@@ -18,10 +20,10 @@ export const pushApi = {
       "/api/v1/push/test",
       { method: "POST" },
     ),
-  ringMobile: (contactId: string) =>
+  ringMobile: (contactId: string, phone?: string) =>
     request<{ sent: number; removed: number; total: number; configured: number }>(
       `/api/v1/push/contacts/${contactId}/ring-mobile`,
-      { method: "POST" }
+      { method: "POST", body: JSON.stringify({ phone }) }
     ),
 };
 
