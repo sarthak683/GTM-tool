@@ -307,7 +307,7 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
     if not confirm_duplicate and data.get("name"):
         existing = (
             await session.execute(
-                select(Deal).where(
+                DealRepository.visible_to(_user).where(
                     Deal.company_id == data["company_id"],
                     func.lower(Deal.name) == data["name"].strip().lower(),
                     Deal.deleted_at.is_(None),

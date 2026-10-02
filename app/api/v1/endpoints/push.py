@@ -19,11 +19,12 @@ POST   /push/contacts/{contact_id}/ring-mobile → send a "tap to call X"
                                                   failure.
 """
 from datetime import datetime
+import re
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import settings
@@ -52,11 +53,32 @@ class UnsubscribePayload(BaseModel):
     endpoint: str
 
 
+class RingMobilePayload(BaseModel):
+    phone: Optional[str] = Field(default=None, max_length=80)
+
+
+def _dialable_phone(value: str | None) -> str:
+    stripped = re.sub(r"^[^0-9+]+", "", (value or "").strip())
+    digits = re.sub(r"[^0-9]", "", stripped)
+    if len(digits) < 7:
+        return ""
+    return ("+" if stripped.startswith("+") else "") + digits
+
+
 class RingMobileResult(BaseModel):
     sent: int
     removed: int
     total: int
     configured: int  # 0 if the server has no VAPID keys yet
+
+
+@router.get("/subscriptions", response_model=list[PushSubscriptionRead])
+async def list_subscriptions(current_user: CurrentUser, session: DBSession):
+    """Registered devices for this user, so Settings can verify phone pairing."""
+    rows = await session.execute(
+        select(PushSubscription).where(PushSubscription.user_id == current_user.id)
+    )
+    return rows.scalars().all()
 
 
 @router.get("/vapid-public-key")
@@ -174,6 +196,7 @@ async def ring_mobile(
     contact_id: UUID,
     current_user: CurrentUser,
     session: DBSession,
+    payload: RingMobilePayload | None = None,
 ):
     """Notify the *calling user's* mobile devices that they're about to call X.
 
@@ -188,7 +211,18 @@ async def ring_mobile(
     contact = await get_actionable_contact(session, current_user, contact_id)
 
     contact_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or contact.email or "Prospect"
-    phone = (contact.phone or "").strip()
+    phone = _dialable_phone(contact.phone)
+    if payload and payload.phone is not None:
+        selected = _dialable_phone(payload.phone)
+        saved_numbers = {phone}
+        for entry in contact.additional_phones or []:
+            if isinstance(entry, dict):
+                saved_numbers.add(_dialable_phone(entry.get("number")))
+        if not selected or selected not in saved_numbers:
+            raise HTTPException(status_code=422, detail="Select a saved phone number for this prospect.")
+        phone = selected
+    if not phone:
+        raise HTTPException(status_code=422, detail="This prospect has no dialable phone number.")
 
     payload = {
         "type": "ring-mobile",

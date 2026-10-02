@@ -1164,6 +1164,82 @@ export interface paths {
         patch: operations["move_stage_api_v1_deals__deal_id__stage_patch"];
         trace?: never;
     };
+    "/api/v1/deals/{deal_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Deal Documents */
+        get: operations["list_deal_documents_api_v1_deals__deal_id__documents_get"];
+        put?: never;
+        /** Upload Deal Document */
+        post: operations["upload_deal_document_api_v1_deals__deal_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deals/{deal_id}/documents/drive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Drive Document
+         * @description Attach an EXISTING Google Drive file to a deal — a reference only, no
+         *     bytes ever land in Postgres for this path. The rep picked the file from
+         *     their own Drive (GET /drive/folders + GET /drive/folders/{id}/files), so
+         *     it already lives in their Drive; this just records that it's relevant to
+         *     this deal.
+         */
+        post: operations["link_drive_document_api_v1_deals__deal_id__documents_drive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deals/{deal_id}/documents/{document_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Deal Document */
+        get: operations["download_deal_document_api_v1_deals__deal_id__documents__document_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deals/{deal_id}/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Deal Document */
+        delete: operations["delete_deal_document_api_v1_deals__deal_id__documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/deals/{deal_id}/restore": {
         parameters: {
             query?: never;
@@ -1478,6 +1554,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/performance/funnel-transition-deals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Funnel Transition Deals
+         * @description The exact deals behind a Funnel "Stage conversion" row's Deals count —
+         *     those that made that row's literal, direct from_stage -> to_stage move
+         *     during the period. Unlike /pipeline-stage-deals (every deal currently
+         *     sitting in a stage), this is a historical count of moves, not a live
+         *     snapshot. `is_overall=true` pools the moves from every configured
+         *     transition into one list (mirroring the Overall row's rollup in
+         *     /funnel), since that row no longer represents a single from/to pair.
+         */
+        get: operations["get_funnel_transition_deals_api_v1_performance_funnel_transition_deals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/performance/close-date-buckets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Close Date Buckets
+         * @description Open Deals by Close Date — every live, open deal with a Close Date
+         *     inside the period (or, for period="overall", ever), summed by current
+         *     stage and by owning AE. Backs the Forecast tab's chart (toggle: By
+         *     Stage / By Rep).
+         */
+        get: operations["get_close_date_buckets_api_v1_performance_close_date_buckets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/performance/close-date-deals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Close Date Deals
+         * @description The exact deals behind one Open Deals by Close Date bar.
+         */
+        get: operations["get_close_date_deals_api_v1_performance_close_date_deals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/performance/deal-health": {
         parameters: {
             query?: never;
@@ -1529,23 +1674,6 @@ export interface paths {
         };
         /** Get Pipeline Buckets */
         get: operations["get_pipeline_buckets_api_v1_performance_pipeline_buckets_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/performance/forecast": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Forecast */
-        get: operations["get_forecast_api_v1_performance_forecast_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5263,6 +5391,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/drive/folders/{folder_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Drive Files
+         * @description Files directly inside a folder (not sub-folders) — the second half of
+         *     the deal-document Drive picker, after the rep drills into a folder with
+         *     GET /drive/folders.
+         */
+        get: operations["list_drive_files_api_v1_drive_folders__folder_id__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/drive/folder/select": {
         parameters: {
             query?: never;
@@ -5364,6 +5514,26 @@ export interface paths {
          * @description Clear the current user's folder selection (does not touch admin folder).
          */
         post: operations["clear_user_folder_api_v1_drive_folder_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Subscriptions
+         * @description Registered devices for this user, so Settings can verify phone pairing.
+         */
+        get: operations["list_subscriptions_api_v1_push_subscriptions_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6081,7 +6251,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health Check */
+        /**
+         * Health Check
+         * @description Liveness plus build provenance.
+         *
+         *     `git_sha` is stamped into the image at build time (see the Dockerfile).
+         *     It exists because an image tag is not proof of its contents: production
+         *     once ran `gtm-be:v0.260904-3b904af` whose code was actually `ea2f3fb`,
+         *     which could only be established by grepping inside a running pod. Reading
+         *     the sha here turns a rollback from a guess into a check.
+         */
         get: operations["health_check_health_get"];
         put?: never;
         post?: never;
@@ -6845,6 +7024,14 @@ export interface components {
              */
             file: string;
         };
+        /** Body_upload_deal_document_api_v1_deals__deal_id__documents_post */
+        Body_upload_deal_document_api_v1_deals__deal_id__documents_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+        };
         /** Body_upload_resource_api_v1_resources_upload_post */
         Body_upload_resource_api_v1_resources_upload_post: {
             /**
@@ -7139,6 +7326,45 @@ export interface components {
             /** Deals List Id */
             deals_list_id?: string | null;
         };
+        /** CloseDateBucket */
+        CloseDateBucket: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Color */
+            color?: string | null;
+            /** Amount */
+            amount: number;
+            /** Deal Count */
+            deal_count: number;
+        };
+        /** CloseDateBucketsResponse */
+        CloseDateBucketsResponse: {
+            /** Period Label */
+            period_label: string;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** By Stage */
+            by_stage: components["schemas"]["CloseDateBucket"][];
+            /** By Rep */
+            by_rep: components["schemas"]["CloseDateOwnerRow"][];
+        };
+        /** CloseDateOwnerRow */
+        CloseDateOwnerRow: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Amount */
+            amount: number;
+            /** Deal Count */
+            deal_count: number;
+            /** Stages */
+            stages: components["schemas"]["CloseDateBucket"][];
+        };
         /** CompanyCreate */
         CompanyCreate: {
             /** Name */
@@ -7271,6 +7497,11 @@ export interface components {
             account_status?: string | null;
             /** Outbound Summary */
             outbound_summary?: string | null;
+            /**
+             * Use Case
+             * @default []
+             */
+            use_case: string[];
             /** Rep Feedback */
             rep_feedback?: string | null;
             /** Account Thesis */
@@ -7533,6 +7764,8 @@ export interface components {
             account_status?: string | null;
             /** Outbound Summary */
             outbound_summary?: string | null;
+            /** Use Case */
+            use_case?: string[] | null;
             /** Rep Feedback */
             rep_feedback?: string | null;
             /** Account Thesis */
@@ -7991,6 +8224,11 @@ export interface components {
             conv_rate: number;
             /** Median Days */
             median_days: number | null;
+            /**
+             * Is Overall
+             * @default false
+             */
+            is_overall: boolean;
         };
         /** DataRoomItemCreatePayload */
         DataRoomItemCreatePayload: {
@@ -8134,12 +8372,59 @@ export interface components {
             /** Meeting Booked From */
             meeting_booked_from?: string | null;
             /**
+             * Use Case
+             * @default []
+             */
+            use_case: string[];
+            /**
              * Is Marketing Lead
              * @default false
              */
             is_marketing_lead: boolean;
             /** Marketing Source */
             marketing_source?: string | null;
+            /**
+             * Confirm Duplicate
+             * @default false
+             */
+            confirm_duplicate: boolean;
+        };
+        /** DealDocumentRead */
+        DealDocumentRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Deal Id
+             * Format: uuid
+             */
+            deal_id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type?: string | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /**
+             * Source
+             * @default upload
+             */
+            source: string;
+            /** Drive File Id */
+            drive_file_id?: string | null;
+            /** Drive Web View Link */
+            drive_web_view_link?: string | null;
+            /** Uploaded By Id */
+            uploaded_by_id?: string | null;
+            /** Uploaded By Name */
+            uploaded_by_name?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** DealFunnelSettingsRead */
         DealFunnelSettingsRead: {
@@ -8336,6 +8621,11 @@ export interface components {
             meeting_booked_with?: string | null;
             /** Meeting Booked From */
             meeting_booked_from?: string | null;
+            /**
+             * Use Case
+             * @default []
+             */
+            use_case: string[];
             /** Ai Tasks Refreshed At */
             ai_tasks_refreshed_at?: string | null;
             /** Ai Tasks Refresh Requested At */
@@ -8497,6 +8787,8 @@ export interface components {
             meeting_booked_with?: string | null;
             /** Meeting Booked From */
             meeting_booked_from?: string | null;
+            /** Use Case */
+            use_case?: string[] | null;
             /** Is Marketing Lead */
             is_marketing_lead?: boolean | null;
             /** Marketing Source */
@@ -8578,6 +8870,28 @@ export interface components {
             status: string;
             /** Error Message */
             error_message: string | null;
+        };
+        /** DriveFile */
+        DriveFile: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Mime Type */
+            mime_type: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Modified Time */
+            modified_time?: string | null;
+            /** Web View Link */
+            web_view_link?: string | null;
+        };
+        /** DriveFileList */
+        DriveFileList: {
+            /** Files */
+            files: components["schemas"]["DriveFile"][];
+            /** Folder Id */
+            folder_id: string;
         };
         /** DriveFolder */
         DriveFolder: {
@@ -8709,34 +9023,6 @@ export interface components {
             role?: string | null;
             /** Expected Total */
             expected_total?: number | null;
-        };
-        /** ForecastCategoryBucket */
-        ForecastCategoryBucket: {
-            /** Category */
-            category: string;
-            /** Deal Count */
-            deal_count: number;
-            /** Acv */
-            acv: number;
-            /** Weighted Acv */
-            weighted_acv: number;
-        };
-        /** ForecastResponse */
-        ForecastResponse: {
-            /** Period Label */
-            period_label: string;
-            /** Quota */
-            quota: number | null;
-            /** Commit Number */
-            commit_number: number;
-            /** Best Case Number */
-            best_case_number: number;
-            /** Weighted Pipeline */
-            weighted_pipeline: number;
-            /** Gap To Quota */
-            gap_to_quota: number | null;
-            /** Buckets */
-            buckets: components["schemas"]["ForecastCategoryBucket"][];
         };
         /** ForecastRow */
         ForecastRow: {
@@ -8872,6 +9158,8 @@ export interface components {
             meeting_booked_with: string | null;
             /** Deal Source */
             deal_source: string | null;
+            /** Current Stage */
+            current_stage: string | null;
         };
         /** IncentiveDealsResponse */
         IncentiveDealsResponse: {
@@ -9074,12 +9362,29 @@ export interface components {
             /** Contact Ids */
             contact_ids: string[];
         };
+        /** LinkDriveDocumentRequest */
+        LinkDriveDocumentRequest: {
+            /** Drive File Id */
+            drive_file_id: string;
+            /** Filename */
+            filename: string;
+            /** Web View Link */
+            web_view_link?: string | null;
+            /** Mime Type */
+            mime_type?: string | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+        };
         /** ManualCompanyCreate */
         ManualCompanyCreate: {
             /** Name */
             name: string;
             /** Domain */
             domain?: string | null;
+            /** Assigned To Id */
+            assigned_to_id?: string | null;
+            /** Sdr Id */
+            sdr_id?: string | null;
         };
         /** MeetingBookedFromDealItem */
         MeetingBookedFromDealItem: {
@@ -10068,6 +10373,14 @@ export interface components {
             ae_name?: string | null;
             /** Sdr Name */
             sdr_name?: string | null;
+            /** Stage */
+            stage?: string | null;
+            /** Move From Stage */
+            move_from_stage?: string | null;
+            /** Move To Stage */
+            move_to_stage?: string | null;
+            /** Close Date */
+            close_date?: string | null;
         };
         /** ReindexResponse */
         ReindexResponse: {
@@ -10489,6 +10802,11 @@ export interface components {
         RevisePayload: {
             /** Instruction */
             instruction: string;
+        };
+        /** RingMobilePayload */
+        RingMobilePayload: {
+            /** Phone */
+            phone?: string | null;
         };
         /** RingMobileResult */
         RingMobileResult: {
@@ -14323,6 +14641,179 @@ export interface operations {
             };
         };
     };
+    list_deal_documents_api_v1_deals__deal_id__documents_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealDocumentRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_deal_document_api_v1_deals__deal_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_deal_document_api_v1_deals__deal_id__documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealDocumentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_drive_document_api_v1_deals__deal_id__documents_drive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkDriveDocumentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealDocumentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_deal_document_api_v1_deals__deal_id__documents__document_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deal_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_deal_document_api_v1_deals__deal_id__documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deal_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     restore_deal_api_v1_deals__deal_id__restore_post: {
         parameters: {
             query?: never;
@@ -14939,6 +15430,120 @@ export interface operations {
             };
         };
     };
+    get_funnel_transition_deals_api_v1_performance_funnel_transition_deals_get: {
+        parameters: {
+            query: {
+                /** @description Row's from_stage, e.g. 'demo_scheduled' — ignored when is_overall is true */
+                from_stage: string;
+                /** @description Row's to_stage, e.g. 'demo_done' — ignored when is_overall is true */
+                to_stage?: string | null;
+                /** @description Pool every configured transition's moves into one list, for the Overall row */
+                is_overall?: boolean;
+                period?: "week" | "month" | "quarter";
+                anchor?: string | null;
+                rep_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedAlertDeal"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_close_date_buckets_api_v1_performance_close_date_buckets_get: {
+        parameters: {
+            query?: {
+                period?: "week" | "month" | "quarter" | "overall";
+                anchor?: string | null;
+                rep_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseDateBucketsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_close_date_deals_api_v1_performance_close_date_deals_get: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one stage — a By Stage bar click */
+                stage?: string | null;
+                period?: "week" | "month" | "quarter" | "overall";
+                anchor?: string | null;
+                /** @description Narrow to one AE — either the panel's rep filter, or a By Rep bar click */
+                rep_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedAlertDeal"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_deal_health_api_v1_performance_deal_health_get: {
         parameters: {
             query?: {
@@ -15027,42 +15632,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PipelineBucketsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_forecast_api_v1_performance_forecast_get: {
-        parameters: {
-            query?: {
-                period?: "month" | "quarter";
-                anchor?: string | null;
-                rep_id?: string | null;
-                quota?: number | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForecastResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22753,6 +23322,39 @@ export interface operations {
             };
         };
     };
+    list_drive_files_api_v1_drive_folders__folder_id__files_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriveFileList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     select_user_folder_api_v1_drive_folder_select_post: {
         parameters: {
             query?: never;
@@ -22916,6 +23518,37 @@ export interface operations {
             };
         };
     };
+    list_subscriptions_api_v1_push_subscriptions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_vapid_public_key_api_v1_push_vapid_public_key_get: {
         parameters: {
             query?: never;
@@ -23059,7 +23692,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RingMobilePayload"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

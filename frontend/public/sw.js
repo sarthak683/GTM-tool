@@ -28,7 +28,8 @@ self.addEventListener("push", (event) => {
   // push being silently dropped.
   let payload = {};
   try {
-    payload = event.data ? event.data.json() : {};
+    const parsed = event.data ? event.data.json() : {};
+    payload = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch (err) {
     payload = { title: "Beacon", body: event.data ? event.data.text() : "" };
   }
@@ -93,8 +94,8 @@ self.addEventListener("notificationclick", (event) => {
       });
       if (sameOriginClient && tel && "navigate" in sameOriginClient) {
         try {
-          await sameOriginClient.navigate(targetUrl);
-          return sameOriginClient.focus();
+          const navigated = await sameOriginClient.navigate(targetUrl);
+          if (navigated) return await navigated.focus();
         } catch {
           // Some browsers throw on cross-document navigate(); fall through
           // to openWindow which always works for same-origin HTTPS.

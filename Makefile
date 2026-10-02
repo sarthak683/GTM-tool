@@ -22,7 +22,7 @@ migrate:
 	docker compose exec -T backend alembic upgrade head
 
 test-backend:
-	docker compose exec -T backend pytest
+	scripts/smoke/backend-tests.sh
 
 smoke:
 	scripts/smoke/local-health.sh
@@ -40,4 +40,3 @@ seed-demo:
 seed-pipeline:
 	docker compose cp scripts/seed_pipeline_deals.py backend:/tmp/seed_pipeline_deals.py
 	docker compose exec -T backend python /tmp/seed_pipeline_deals.py
-

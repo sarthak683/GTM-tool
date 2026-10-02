@@ -22,6 +22,7 @@ export type PushSubscriptionState = {
   permission: NotificationPermission | "unsupported";
   subscribed: boolean;       // a PushSubscription already exists for this browser
   endpoint: string | null;
+  reason?: string;
 };
 
 // VAPID public keys come from the server as base64url; the Web Push API
@@ -89,8 +90,9 @@ async function swReady(timeoutMs = 10_000): Promise<ServiceWorkerRegistration | 
 }
 
 export async function getSubscriptionState(): Promise<PushSubscriptionState> {
+  const installBlocker = iosInstallBlocker();
   if (!isSupported()) {
-    return { supported: false, configured: false, permission: "unsupported", subscribed: false, endpoint: null };
+    return { supported: false, configured: false, permission: "unsupported", subscribed: false, endpoint: null, reason: installBlocker ?? undefined };
   }
   const reg = await swReady();
   if (!reg) {
@@ -98,19 +100,26 @@ export async function getSubscriptionState(): Promise<PushSubscriptionState> {
   }
   const existing = await reg.pushManager.getSubscription();
   let configured = false;
+  let registered = false;
+  let reason = installBlocker ?? undefined;
   try {
     const k = await pushApi.getVapidPublicKey();
     configured = !!k.configured && !!k.publicKey;
+    if (existing && Notification.permission === "granted" && !installBlocker) {
+      const registrations = await pushApi.listSubscriptions();
+      registered = registrations.some((subscription) => subscription.endpoint === existing.endpoint);
+      if (!registered) reason = "This device isn't paired with your CRM account. Tap Enable to reconnect notifications.";
+    }
   } catch {
-    // If the endpoint errors (likely auth) treat as not configured for now.
-    configured = false;
+    reason = installBlocker ?? "Couldn't verify notification settings. Reload and try again.";
   }
   return {
     supported: true,
     configured,
     permission: Notification.permission,
-    subscribed: !!existing,
+    subscribed: !!existing && registered && Notification.permission === "granted" && !installBlocker,
     endpoint: existing?.endpoint ?? null,
+    reason,
   };
 }
 
@@ -122,15 +131,14 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string; endp
   const iosBlocker = iosInstallBlocker();
   if (iosBlocker) return { ok: false, reason: iosBlocker };
 
-  const reg = await swReady();
-  if (!reg) {
-    return { ok: false, reason: "Service worker isn't ready. Reload the page and try again." };
-  }
-
   // Permission must be requested from a user gesture, so callers should
   // invoke this from a click handler — the browser will throw otherwise
   // on Safari.
-  const permission = await Notification.requestPermission();
+  // Ask before awaiting service-worker readiness: Safari requires the click's
+  // transient user activation, which can expire during that wait.
+  const permission = Notification.permission === "granted"
+    ? "granted"
+    : await Notification.requestPermission();
   if (permission !== "granted") {
     return {
       ok: false,
@@ -139,6 +147,11 @@ export async function enablePush(): Promise<{ ok: boolean; reason?: string; endp
           ? "Notifications are blocked for this site. Enable them in your browser/site settings, then try again."
           : `Notification permission ${permission}.`,
     };
+  }
+
+  const reg = await swReady();
+  if (!reg) {
+    return { ok: false, reason: "Service worker isn't ready. Reload the page and try again." };
   }
 
   const keyResp = await pushApi.getVapidPublicKey();
