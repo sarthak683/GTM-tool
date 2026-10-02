@@ -10,8 +10,11 @@ Staging passed 21 disposable workflow checks; production passed nine authenticat
 read checks. All new pods have zero restarts. Post-release logs show no Python
 tracebacks or HTTP 5xx responses.
 
-Production inspection after this release is read-only. Follow-up changes below
-are a separate staging release.
+Production inspection after this release is read-only. Follow-up code commit
+`ffa223b` is deployed to staging only (Helm revision 265), using backend and
+frontend tag `v0.261001-ffa223b-deep-audit`. The image-only drift check found six
+image fields and no resource additions or removals. Migration head remains 143.
+Draft PR #16 is based on #15; neither PR was merged during this work.
 
 ## Follow-up fixes
 
@@ -115,9 +118,24 @@ Raw observations and browser results are kept locally under
 - Desktop navigation, deal drawer/editor, and mobile layout smoke checks.
 - All 163 protected GET routes reject anonymous requests in both environments.
   A full route auth regression covers the nested-router framework representation.
-- Authenticated disposable staging CRUD with cleanup, and
-  authenticated disposable staging CRUD with cleanup.
-- Deployment gates preserve configuration, storage and existing workloads.
+- Authenticated disposable staging CRUD with cleanup.
+- Exact deployed amd64 staging image: all 667 tests passed in an isolated test
+  pod, and installed-package pip-audit reported zero known advisories.
+- Staging: 23 authenticated workflow checks with cleanup; six synthetic parser
+  checks passed (PDF, text, CSV, DOCX, XLSX and PPTX).
+- Browser: ten main routes, deal drawer, formatted notes, clearing notes and the
+  returned qualification warning; no console errors. Local mobile Settings
+  controls fit a 390px viewport.
+- All four PR CI checks passed. Deployment gates preserve configuration, storage
+  and existing workloads.
+
+Running the full unit suite inside the serving staging backend initially
+exceeded its memory limit, restarted that pod once and briefly caused 503s in an
+overlapping workflow test. Staging recovered. The interrupted synthetic account
+was cleaned up, the suite was moved to a separate 2Gi test pod without integration
+credentials, and all suite and workflow checks then passed. The isolated pod was
+deleted afterward. This test-induced restart is recorded separately from the
+earlier production OOM; production was unaffected.
 
 A native macOS virtualenv run stalled while loading a protobuf extension in a
 fresh subprocess. The authoritative Linux Docker suite completes successfully;
@@ -127,3 +145,19 @@ Actual iPhone notification display still awaits the user's deferred device test.
 No audit can establish that all possible application paths are bug-free. Historical
 orphan data, revoked Google authorization, and the earlier OOM remain operational
 findings, separate from the code fixes verified here.
+
+## Changed files
+
+- Backend routes: `app/api/v1/endpoints/tasks.py`, `webhooks.py`.
+- SDK clients: `app/clients/lifecycle.py`, `claude.py`, `claude_enrichment.py`,
+  `demo_ai.py`, `openai_embeddings.py`.
+- Services: `app/services/icp_intelligence.py`, `personal_email_sync.py`,
+  `tldv_sync.py`. Tasks: `app/tasks/_runner.py`, `email_sync.py`, `transcribe_call.py`.
+- Frontend: `frontend/src/App.tsx`, `pages/Settings.tsx`,
+  `components/RichTextEditor.tsx`, `components/RichTextEditor.test.tsx`,
+  `frontend/package.json`, `package-lock.json`, `yarn.lock`.
+- Runtime: `Dockerfile`, `requirements.txt`.
+- Backend tests: `tests/test_async_client_lifecycle.py`, `test_claude_client.py`,
+  `test_task_badge_visibility.py`, `test_task_count_readonly.py`,
+  `test_get_route_auth_surface.py`.
+- Reports: this file and `docs/CRM_RELIABILITY_AUDIT_2026-10-01.md`.
