@@ -50,6 +50,9 @@ interface CallDispositionDrawerProps {
   onAdvance?: (contact: Contact) => void;
   /** Current user — used to assign the follow-up reminder. */
   user?: { id?: string } | null;
+  /** Set when opened from an Outreach Sequence cadence task — saving the
+   * disposition (unchanged below) also advances that task's step. */
+  cadenceTaskId?: string;
 }
 
 export default function CallDispositionDrawer({
@@ -59,6 +62,7 @@ export default function CallDispositionDrawer({
   nextContact,
   onAdvance,
   user,
+  cadenceTaskId,
 }: CallDispositionDrawerProps) {
   const toast = useToast();
   const [dialCountdown, setDialCountdown] = useState<number | null>(null);
@@ -190,6 +194,7 @@ export default function CallDispositionDrawer({
         ...(derivedAccountStatus && derivedAccountStatus !== contact.account_status
           ? { account_status: derivedAccountStatus }
           : {}),
+        ...(cadenceTaskId ? { cadence_task_id: cadenceTaskId } : {}),
       });
 
       if (contact.company_id && derivedAccountStatus && shouldSyncContactStatusToAccount(derivedAccountStatus)) {

@@ -38,6 +38,11 @@ class Task(TaskBase, table=True):
     created_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
     assigned_role: Optional[str] = Field(default=None, index=True)
     assigned_to_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    # Cadence context — set only when source="cadence" (an Outreach Sequence
+    # step's task). Lets the step-completion hook find which enrollment/step
+    # to advance when the rep saves the reused Call/LinkedIn/Email dialog.
+    enrollment_id: Optional[UUID] = Field(default=None, foreign_key="enrollments.id", index=True)
+    step_id: Optional[UUID] = Field(default=None, foreign_key="sequence_steps.id")
     accepted_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
@@ -116,6 +121,17 @@ class TaskRead(TaskBase):
     created_at: datetime
     updated_at: datetime
     comments: list[TaskCommentRead] = []
+    # Cadence context (source="cadence" tasks only) — populated by the
+    # endpoint from the linked Enrollment/SequenceStep for display in Tasks.
+    enrollment_id: Optional[UUID] = None
+    step_id: Optional[UUID] = None
+    sequence_name: Optional[str] = None
+    step_number: Optional[int] = None
+    step_type: Optional[str] = None
+    step_send_via: Optional[str] = None
+    step_instantly_campaign_id: Optional[str] = None
+    step_linkedin_category: Optional[str] = None
+    contact_id: Optional[UUID] = None
 
 
 class TaskWorkspaceRead(TaskRead):

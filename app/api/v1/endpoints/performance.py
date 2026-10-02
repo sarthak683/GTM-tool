@@ -268,6 +268,22 @@ class ConversionRow(BaseModel):
     is_overall: bool = False  # the whole-funnel summary row (first stage -> last stage), not one step
 
 
+# "Spilled Pipeline" — a deal moving into an exit/parked/dead stage, from
+# anywhere (not restricted to coming from an active pipeline stage — that
+# narrower definition was tried and dropped as redundant with this one,
+# since this one's drilldown already shows each deal's Stage Move column).
+SPILLED_TO_STAGES = [
+    "reprospect", "nurture", "backlog", "churned", "not_a_fit",
+    "cold", "closed_lost", "on_hold", "closed",
+]
+
+
+class SpilledPipelineRow(BaseModel):
+    stage: str
+    deals: int
+    total_value: float
+
+
 class FunnelResponse(BaseModel):
     period_label: str
     period_start: datetime
@@ -275,6 +291,10 @@ class FunnelResponse(BaseModel):
     funnel: list[StageCount]
     conversion: list[ConversionRow]
     movement: dict  # {"advanced": int, "regressed": int, "exited": int, "entered": int}
+    # One row per SPILLED_TO_STAGES value, in that order (zero-filled) — every
+    # deal move INTO that stage this period, regardless of where it came
+    # from. Backs the Funnel's "Spilled Pipeline" bar chart.
+    spilled_pipeline: list[SpilledPipelineRow]
 
 
 class RedAlertDeal(BaseModel):
@@ -301,8 +321,10 @@ class RedAlertDeal(BaseModel):
 async def get_funnel(
     session: DBSession,
     current_user: CurrentUser,
-    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    period: Annotated[Literal["week", "month", "quarter", "custom"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    custom_start: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    custom_end: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
     rep_id: Annotated[Optional[UUID], Query()] = None,
 ):
     from app.models.deal import Deal, DEAL_STAGES
@@ -310,7 +332,12 @@ async def get_funnel(
     from sqlalchemy import func, select
 
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    if period == "custom" and not (custom_start and custom_end):
+        raise HTTPException(status_code=422, detail="custom_start and custom_end are required when period=custom")
+    p = pm.resolve_period(
+        period, anchor=anchor, custom_start=custom_start, custom_end=custom_end,
+        tz_name=settings.get("workspace_timezone"),
+    )
 
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
@@ -401,6 +428,16 @@ async def get_funnel(
         elif t_idx < f_idx:
             regressed += cnt
 
+    exit_counts = await pm.exit_stage_counts(session, p, SPILLED_TO_STAGES, rep_uuid)
+    spilled_pipeline = [
+        SpilledPipelineRow(
+            stage=stage,
+            deals=exit_counts.get(stage, (0, 0.0))[0],
+            total_value=exit_counts.get(stage, (0, 0.0))[1],
+        )
+        for stage in SPILLED_TO_STAGES
+    ]
+
     return FunnelResponse(
         period_label=p.label,
         period_start=p.start,
@@ -408,6 +445,7 @@ async def get_funnel(
         funnel=funnel,
         conversion=conversion,
         movement={"advanced": advanced, "regressed": regressed, "exited": exited, "entered": entered},
+        spilled_pipeline=spilled_pipeline,
     )
 
 
@@ -437,6 +475,7 @@ async def _stage_move_deals(
             hist.c.entered_from_at,
             Deal.name,
             Deal.value,
+            Deal.stage,
             AeUser.name.label("ae_name"),
             SdrUser.name.label("sdr_name"),
         )
@@ -465,6 +504,7 @@ async def _stage_move_deals(
             stage_entered_at=r.entered_from_at.isoformat() if r.entered_from_at else None,
             ae_name=r.ae_name,
             sdr_name=r.sdr_name,
+            stage=r.stage,
             move_from_stage=from_stage,
             move_to_stage=to_stage,
         )
@@ -479,8 +519,10 @@ async def get_funnel_transition_deals(
     from_stage: Annotated[str, Query(description="Row's from_stage, e.g. 'demo_scheduled' — ignored when is_overall is true")],
     to_stage: Annotated[Optional[str], Query(description="Row's to_stage, e.g. 'demo_done' — ignored when is_overall is true")] = None,
     is_overall: Annotated[bool, Query(description="Pool every configured transition's moves into one list, for the Overall row")] = False,
-    period: Annotated[Literal["week", "month", "quarter"], Query()] = "month",
+    period: Annotated[Literal["week", "month", "quarter", "custom"], Query()] = "month",
     anchor: Annotated[Optional[date], Query()] = None,
+    custom_start: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    custom_end: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
     rep_id: Annotated[Optional[UUID], Query()] = None,
 ):
     """The exact deals behind a Funnel "Stage conversion" row's Deals count —
@@ -492,7 +534,12 @@ async def get_funnel_transition_deals(
     /funnel), since that row no longer represents a single from/to pair.
     """
     settings = await get_analytics_settings(session)
-    p = pm.resolve_period(period, anchor=anchor, tz_name=settings.get("workspace_timezone"))
+    if period == "custom" and not (custom_start and custom_end):
+        raise HTTPException(status_code=422, detail="custom_start and custom_end are required when period=custom")
+    p = pm.resolve_period(
+        period, anchor=anchor, custom_start=custom_start, custom_end=custom_end,
+        tz_name=settings.get("workspace_timezone"),
+    )
     rep = await _resolve_rep(session, current_user, rep_id)
     rep_uuid = rep.id if rep else None
 
@@ -506,6 +553,82 @@ async def get_funnel_transition_deals(
     if not to_stage:
         raise HTTPException(status_code=422, detail="to_stage is required unless is_overall=true")
     return await _stage_move_deals(session, p, from_stage, to_stage, rep_uuid)
+
+
+async def _enrich_stage_move_rows(session: DBSession, rows) -> list[RedAlertDeal]:
+    """Shared tail for any drilldown built on a from/to stage-history row set
+    (deal_id, entered_from_at, moved_at, from_stage, to_stage, deal_name,
+    value): joins in AE/SDR names and each deal's live current stage."""
+    from sqlalchemy.orm import aliased
+
+    from app.models.deal import Deal
+
+    if not rows:
+        return []
+
+    deal_ids = [r.deal_id for r in rows]
+    AeUser = aliased(User)
+    SdrUser = aliased(User)
+    name_stmt = (
+        select(
+            Deal.id,
+            Deal.stage,
+            AeUser.name.label("ae_name"),
+            SdrUser.name.label("sdr_name"),
+        )
+        .select_from(Deal)
+        .outerjoin(AeUser, AeUser.id == Deal.assigned_to_id)
+        .outerjoin(SdrUser, SdrUser.id == Deal.sdr_id)
+        .where(Deal.id.in_(deal_ids))
+    )
+    by_deal = {row.id: row for row in (await session.execute(name_stmt)).all()}
+
+    return [
+        RedAlertDeal(
+            deal_id=str(r.deal_id),
+            deal_name=r.deal_name,
+            amount=float(r.value) if r.value else None,
+            stage_entered_at=r.entered_from_at.isoformat() if r.entered_from_at else None,
+            ae_name=by_deal[r.deal_id].ae_name if r.deal_id in by_deal else None,
+            sdr_name=by_deal[r.deal_id].sdr_name if r.deal_id in by_deal else None,
+            stage=by_deal[r.deal_id].stage if r.deal_id in by_deal else None,
+            move_from_stage=r.from_stage,
+            move_to_stage=r.to_stage,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/spilled-pipeline-deals", response_model=list[RedAlertDeal])
+async def get_spilled_pipeline_deals(
+    session: DBSession,
+    current_user: CurrentUser,
+    stage: Annotated[str, Query(description="One of SPILLED_TO_STAGES, e.g. 'reprospect'")],
+    period: Annotated[Literal["week", "month", "quarter", "custom"], Query()] = "month",
+    anchor: Annotated[Optional[date], Query()] = None,
+    custom_start: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    custom_end: Annotated[Optional[date], Query(description="Required when period=custom")] = None,
+    rep_id: Annotated[Optional[UUID], Query()] = None,
+):
+    """The exact deals behind one bar of the Funnel's "Spilled Pipeline"
+    chart — every deal that moved INTO `stage` during the period, from
+    anywhere (any origin stage, not just active pipeline)."""
+    if stage not in SPILLED_TO_STAGES:
+        raise HTTPException(status_code=422, detail=f"stage must be one of: {SPILLED_TO_STAGES}")
+    settings = await get_analytics_settings(session)
+    if period == "custom" and not (custom_start and custom_end):
+        raise HTTPException(status_code=422, detail="custom_start and custom_end are required when period=custom")
+    p = pm.resolve_period(
+        period, anchor=anchor, custom_start=custom_start, custom_end=custom_end,
+        tz_name=settings.get("workspace_timezone"),
+    )
+    rep = await _resolve_rep(session, current_user, rep_id)
+    rep_uuid = rep.id if rep else None
+
+    from app.models.deal import DEAL_STAGES
+
+    rows = await pm.spilled_pipeline_rows(session, p, DEAL_STAGES, [stage], rep_uuid)
+    return await _enrich_stage_move_rows(session, rows)
 
 
 # ── Open deals by Close Date (Forecast tab) ──────────────────────────────────

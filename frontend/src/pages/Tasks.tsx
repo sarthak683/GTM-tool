@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, CheckCircle2, ChevronDown, ExternalLink, Filter, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { globalSearchApi, tasksApi } from "../lib/api";
+import { globalSearchApi, sequencesApi, tasksApi } from "../lib/api";
+import type { Sequence } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { formatDate, formatDomain, isPlaceholderDomain } from "../lib/utils";
 import type { GlobalSearchItem, TaskWorkspaceItem } from "../types";
 import { getSystemTaskGuidance } from "../components/tasks/systemTaskGuidance";
 import { SkeletonList } from "../components/ui/Skeleton";
+import CadenceStepAction from "../components/CadenceStepAction";
 
 const colors = {
   border: "#e3e9f2",
@@ -179,6 +181,7 @@ type EntityFilter = "all" | "company" | "contact" | "deal";
 type CreateTaskEntityType = Exclude<EntityFilter, "all">;
 type TaskPriority = "low" | "medium" | "high";
 type QueueScope = "mine" | "team";
+type TaskViewMode = "manual" | "sequences";
 type DueDateFilter = "all" | "overdue" | "today" | "tomorrow" | "this_week" | "upcoming" | "unscheduled";
 
 type DueBadge = {
@@ -278,6 +281,7 @@ function TaskWorkspaceCard({
   onDelete,
   onReschedule,
   canDelete,
+  onCadenceAdvanced,
 }: {
   task: TaskWorkspaceItem;
   commentDraft: string;
@@ -292,6 +296,9 @@ function TaskWorkspaceCard({
   onDelete: () => void;
   onReschedule: (newDate: string) => void;
   canDelete: boolean;
+  /** Called after a cadence task's reused dialog save advances its Outreach
+   * Sequence step — reloads the list so the next step's task shows up. */
+  onCadenceAdvanced?: () => void;
 }) {
   const priorityStyle = PRIORITY_STYLE[task.priority as keyof typeof PRIORITY_STYLE] ?? PRIORITY_STYLE.normal;
   const typeStyle = TYPE_STYLE[task.task_type];
@@ -330,7 +337,16 @@ function TaskWorkspaceCard({
         }}
         style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 50, maxHeight: 56, padding: "6px 14px", cursor: "pointer", boxSizing: "border-box", overflow: "hidden" }}
       >
-        {isOpen ? (
+        {isOpen && task.source === "cadence" ? (
+          // Cadence steps only complete as a side effect of the reused Call/
+          // LinkedIn/Email dialog (via CadenceStepAction below) — a bare
+          // checkbox-complete here would mark the task done without ever
+          // advancing the Enrollment, leaving it stuck.
+          <div
+            title="Complete this step by logging the call/email/LinkedIn below"
+            style={{ width: 17, height: 17, borderRadius: 4, background: "#eef2ff", border: "2px solid #c7d2fe", flexShrink: 0, boxSizing: "border-box" }}
+          />
+        ) : isOpen ? (
           <input
             type="checkbox"
             checked={false}
@@ -354,6 +370,11 @@ function TaskWorkspaceCard({
           {task.title}
           {task.entity_name ? <span style={{ color: colors.faint, fontWeight: 600 }}>{" · "}{task.entity_name}</span> : null}
         </span>
+        {task.source === "cadence" && task.sequence_name && (
+          <span style={{ borderRadius: 999, padding: "3px 8px", background: "#eef2ff", border: "1px solid #c7d2fe", color: "#4338ca", fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace: "nowrap" }}>
+            {task.sequence_name} · Step {task.step_number}
+          </span>
+        )}
         {dueBadge ? (
           <span style={{ borderRadius: 999, padding: "3px 8px", background: dueBadge.tone.background, border: `1px solid ${dueBadge.tone.border}`, color: dueBadge.tone.color, fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace: "nowrap" }}>
             {task.status === "completed" ? dueBadge.exactLabel : dueBadge.label}
@@ -394,6 +415,9 @@ function TaskWorkspaceCard({
         {displayEntitySubtitle(task.entity_subtitle) ? <span style={{ color: colors.faint, fontSize: 12 }}>{displayEntitySubtitle(task.entity_subtitle)}</span> : null}
       </div>
       {task.description ? <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.6 }}>{task.description}</div> : null}
+      {task.source === "cadence" && (
+        <CadenceStepAction task={task} onAdvanced={() => onCadenceAdvanced?.()} />
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, rowGap: 6, flexWrap: "wrap", color: colors.faint, fontSize: 12 }}>
         <span>Updated {formatDate(task.updated_at)}</span>
@@ -494,7 +518,7 @@ function TaskWorkspaceCard({
         </div>
       ) : null}
 
-      {task.task_type === "manual" && isOpen ? (
+      {task.task_type === "manual" && task.source !== "cadence" && isOpen ? (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onDismiss} className="crm-button soft">Dismiss</button>
           <button type="button" onClick={onComplete} className="crm-button primary" style={{ background: colors.green, borderColor: colors.green }}>
@@ -569,6 +593,11 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>(() => (searchParams.get("status") as TaskStatusFilter) ?? "open");
   const [entityFilter, setEntityFilter] = useState<EntityFilter>(() => (searchParams.get("entity") as EntityFilter) ?? "all");
   const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>(() => (searchParams.get("due") as DueDateFilter) ?? "all");
+  // Top-level split: Manual (unchanged today's product) vs Sequences (cadence
+  // tasks only, filterable by which Sequence template generated them).
+  const [viewMode, setViewMode] = useState<TaskViewMode>(() => (searchParams.get("view") as TaskViewMode) ?? "manual");
+  const [sequenceFilter, setSequenceFilter] = useState<string>(() => searchParams.get("sequence") || "");
+  const [sequenceOptions, setSequenceOptions] = useState<Sequence[]>([]);
   const [queueScope, setQueueScope] = useState<QueueScope>(() => (searchParams.get("scope") as QueueScope) ?? "mine");
   // Client-side pagination for the task list. Filtering happens above; we
   // just slice the filtered set into pages so the workspace doesn't render
@@ -609,10 +638,12 @@ export default function TasksPage() {
       dueDateFilter !== "all" ? next.set("due", dueDateFilter) : next.delete("due");
       queueScope !== "mine" ? next.set("scope", queueScope) : next.delete("scope");
       dealFilter ? next.set("deal", dealFilter) : next.delete("deal");
+      viewMode !== "manual" ? next.set("view", viewMode) : next.delete("view");
+      sequenceFilter ? next.set("sequence", sequenceFilter) : next.delete("sequence");
       showCreateTask ? next.set("new", "task") : next.delete("new");
       return next;
     }, { replace: true });
-  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter, showCreateTask]);
+  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter, viewMode, sequenceFilter, showCreateTask]);
 
   useEffect(() => {
     if (searchParams.get("new") === "task") setShowCreateTask(true);
@@ -677,6 +708,10 @@ export default function TasksPage() {
     };
   }, [dealSearch]);
 
+  useEffect(() => {
+    sequencesApi.list().then(setSequenceOptions).catch(() => setSequenceOptions([]));
+  }, []);
+
   const load = async () => {
     const seq = ++loadSeqRef.current;
     setLoading(true);
@@ -690,10 +725,15 @@ export default function TasksPage() {
         entityType: entityFilter === "all" ? undefined : entityFilter,
         dealId: dealFilter || undefined,
         scope: isAdmin ? queueScope : "mine",
+        // Manual tab: everything except cadence (unchanged from before the
+        // split — cadence tasks just moved to their own tab). Sequences tab:
+        // cadence only, optionally narrowed to one specific Sequence template.
+        source: viewMode === "sequences" ? "cadence" : undefined,
+        sequenceId: viewMode === "sequences" && sequenceFilter ? sequenceFilter : undefined,
       });
       // A newer request superseded this one — drop the stale response.
       if (seq !== loadSeqRef.current) return;
-      setTasks(rows);
+      setTasks(viewMode === "manual" ? rows.filter((task) => task.source !== "cadence") : rows);
       if (dealFilter && !dealFilterLabel) {
         const matched = rows.find((task) => task.entity_type === "deal" && task.entity_id === dealFilter);
         if (matched) setDealFilterLabel(matched.entity_name);
@@ -705,10 +745,10 @@ export default function TasksPage() {
 
   useEffect(() => {
     void load();
-  }, [entityFilter, queueScope, dealFilter, isAdmin]);
+  }, [entityFilter, queueScope, dealFilter, isAdmin, viewMode, sequenceFilter]);
 
   const visibleTasks = useMemo(() => {
-    let filtered = statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter);
+    const filtered = statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter);
 
     if (dueDateFilter === "all") return filtered;
 
@@ -735,7 +775,7 @@ export default function TasksPage() {
   // produced fewer than 4 pages of results.
   useEffect(() => {
     setTasksPage(1);
-  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter]);
+  }, [statusFilter, entityFilter, dueDateFilter, queueScope, dealFilter, viewMode, sequenceFilter]);
 
   const summary = useMemo(() => ({
     open: tasks.filter((task) => task.status === "open").length,
@@ -910,6 +950,22 @@ export default function TasksPage() {
               ? "Loading…"
               : `${mobileTasks.length} open · ${summary.overdue} overdue · ${summary.dueToday} due today`}
           </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setViewMode("manual")}
+              style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${viewMode === "manual" ? "#d5e5ff" : "#dce8f4"}`, background: viewMode === "manual" ? colors.primarySoft : "#fff", color: viewMode === "manual" ? colors.primary : colors.sub, fontSize: 12, fontWeight: 700 }}
+            >
+              Manual
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("sequences")}
+              style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${viewMode === "sequences" ? "#eadbff" : "#dce8f4"}`, background: viewMode === "sequences" ? colors.violetSoft : "#fff", color: viewMode === "sequences" ? colors.violet : colors.sub, fontSize: 12, fontWeight: 700 }}
+            >
+              Sequences
+            </button>
+          </div>
         </div>
         <div className="tasks-mobile-list">
           {loading ? (
@@ -957,14 +1013,20 @@ export default function TasksPage() {
                       {task.entity_subtitle ? ` · ${displayEntitySubtitle(task.entity_subtitle)}` : ""}
                     </Link>
                   )}
-                  <button
-                    type="button"
-                    className="tasks-mobile-complete"
-                    onClick={() => completeTask(task)}
-                  >
-                    <CheckCircle2 size={16} />
-                    Mark complete
-                  </button>
+                  {task.source === "cadence" ? (
+                    <div style={{ fontSize: 12, color: colors.faint, fontWeight: 600 }}>
+                      Log the {task.step_type} on the full Tasks view to advance this sequence.
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="tasks-mobile-complete"
+                      onClick={() => completeTask(task)}
+                    >
+                      <CheckCircle2 size={16} />
+                      Mark complete
+                    </button>
+                  )}
                 </div>
               );
             })
@@ -1031,6 +1093,32 @@ export default function TasksPage() {
           <Filter size={14} />
           <span>Filters</span>
         </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setViewMode("manual")}
+            className="crm-button soft"
+            style={{
+              borderColor: viewMode === "manual" ? "#d5e5ff" : colors.border,
+              background: viewMode === "manual" ? colors.primarySoft : "#fff",
+              color: viewMode === "manual" ? colors.primary : colors.sub,
+            }}
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("sequences")}
+            className="crm-button soft"
+            style={{
+              borderColor: viewMode === "sequences" ? "#eadbff" : colors.border,
+              background: viewMode === "sequences" ? colors.violetSoft : "#fff",
+              color: viewMode === "sequences" ? colors.violet : colors.sub,
+            }}
+          >
+            Sequences
+          </button>
+        </div>
         {isAdmin ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
@@ -1072,6 +1160,14 @@ export default function TasksPage() {
             <option value="contact">Prospects</option>
             <option value="company">Companies</option>
           </select>
+          {viewMode === "sequences" && (
+            <select value={sequenceFilter} onChange={(e) => setSequenceFilter(e.target.value)} style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
+              <option value="">All sequences</option>
+              {sequenceOptions.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
           <select value={dueDateFilter} onChange={(e) => setDueDateFilter(e.target.value as DueDateFilter)} style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.border}`, padding: "0 12px", fontSize: 13, background: "#fff" }}>
             <option value="all">All due dates</option>
             <option value="overdue">Overdue</option>
@@ -1151,6 +1247,7 @@ export default function TasksPage() {
                 onReschedule={(newDate) => patchTask(task.id, { due_at: new Date(newDate).toISOString() })}
                 onDelete={() => deleteTask(task)}
                 canDelete={Boolean(user && (isAdmin || user.id === task.created_by_id))}
+                onCadenceAdvanced={load}
               />
             ))}
             {tasksPageCount > 1 ? (

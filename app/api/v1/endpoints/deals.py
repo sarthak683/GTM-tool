@@ -307,13 +307,15 @@ async def create_deal(payload: DealCreate, session: DBSession, _user: CurrentUse
     if not confirm_duplicate and data.get("name"):
         existing = (
             await session.execute(
-                DealRepository.visible_to(_user).where(
+                DealRepository.visible_to(_user).with_only_columns(
+                    Deal.id, Deal.name, Deal.stage, Deal.created_at,
+                ).where(
                     Deal.company_id == data["company_id"],
                     func.lower(Deal.name) == data["name"].strip().lower(),
                     Deal.deleted_at.is_(None),
                 )
             )
-        ).scalars().first()
+        ).first()
         if existing:
             raise DuplicateDealError(
                 f"A deal named '{existing.name}' already exists for this account.",

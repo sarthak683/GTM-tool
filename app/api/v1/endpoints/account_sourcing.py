@@ -24,11 +24,12 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, case, func, literal_column, or_
+from sqlalchemy import and_, case, func, literal_column, null, or_
 from sqlalchemy.orm import aliased, load_only
 from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
+from app.core.geo import COUNTRY_TO_CONTINENT, OTHER
 from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact, ContactRead, ContactUpdate
@@ -105,6 +106,30 @@ def _parse_multi_query(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _headquarters_country_expr():
+    """SQL expression for the country portion of the free-text `headquarters`
+    field (e.g. "San Francisco, USA" -> "USA") — the text after its last
+    comma, trimmed. `headquarters` has no separate structured city/country
+    columns, so this is parsed rather than stored."""
+    return func.trim(func.regexp_replace(Company.headquarters, r"^.*,\s*", ""))
+
+
+def _headquarters_continent_expr():
+    """SQL expression resolving the parsed headquarters country to one of the
+    6 continent buckets in app.core.geo, via a CASE built from
+    COUNTRY_TO_CONTINENT. A recognized country resolves to its continent; an
+    unrecognized one (typo, unusual formatting) resolves to "other"; a
+    company with no `headquarters` at all resolves to SQL NULL, so it never
+    matches "other" — "no headquarters" is handled as its own `__empty__`
+    clause wherever this filter is applied."""
+    country_lower = func.lower(_headquarters_country_expr())
+    return case(
+        *[(country_lower == country, continent) for country, continent in COUNTRY_TO_CONTINENT.items()],
+        (or_(Company.headquarters.is_(None), Company.headquarters == ""), null()),
+        else_=OTHER,
+    )
 
 
 def _apply_text_multi_filter(stmt, column, raw_value: str | None):
@@ -190,6 +215,7 @@ class CompanySourcingFilters:
     ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only. Use '__unassigned__' for accounts with no AE.")
     sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only. Use '__unassigned__' for accounts with no SDR.")
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage.")
+    headquarters_continent: str | None = Query(default=None, description="One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set.")
     batch_id: UUID | None = Query(default=None, description="Only accounts attached to this sourcing batch (import).")
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account.")
     prospects_max: int | None = Query(default=None, ge=0, description="Inclusive upper bound on the count of contacts (prospects) per account.")
@@ -303,6 +329,17 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
         if status_clauses:
             stmt = stmt.where(or_(*status_clauses))
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, filters.recommended_outreach_lane)
+    if filters.headquarters_continent:
+        tokens = _parse_multi_query(filters.headquarters_continent)
+        include_empty = "__empty__" in tokens
+        real_continents = [t for t in tokens if t != "__empty__"]
+        clauses = []
+        if real_continents:
+            clauses.append(_headquarters_continent_expr().in_(real_continents))
+        if include_empty:
+            clauses.append(or_(Company.headquarters.is_(None), Company.headquarters == ""))
+        if clauses:
+            stmt = stmt.where(or_(*clauses))
     if filters.assigned_rep:
         stmt = stmt.where(Company.assigned_rep == filters.assigned_rep)
     if filters.assigned_rep_email:

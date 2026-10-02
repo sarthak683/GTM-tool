@@ -17,6 +17,7 @@ const ImportPage = lazy(() => import("./pages/Import"));
 const Companies = lazy(() => import("./pages/Companies"));
 const CompanyDetail = lazy(() => import("./pages/CompanyDetail"));
 const Contacts = lazy(() => import("./pages/Contacts"));
+const Sequences = lazy(() => import("./pages/Sequences"));
 const ContactDetail = lazy(() => import("./pages/ContactDetail"));
 const DealDetail = lazy(() => import("./pages/DealDetail"));
 const Meetings = lazy(() => import("./pages/Meetings"));
@@ -120,6 +121,7 @@ export default function App() {
                 <Route path="companies/:id" element={<CompanyDetail />} />
                 <Route path="contacts" element={<Contacts />} />
                 <Route path="prospecting" element={<Contacts />} />
+                <Route path="sequences" element={<Sequences />} />
                 <Route path="contacts/:id" element={<ContactDetail />} />
                 <Route path="meetings" element={<PreMeetingAssistance />} />
                 <Route path="meetings/manage" element={<Meetings />} />

@@ -12,6 +12,7 @@ import {
   Users,
   PanelLeftClose,
   PanelLeftOpen,
+  Repeat,
 } from "lucide-react";
 import { tasksApi } from "../../lib/api";
 import { getCachedRolePermissions } from "../../lib/cachedFetch";
@@ -28,6 +29,7 @@ const NAV_GROUPS = [
       { to: "/pipeline", label: "Pipeline", description: "Drag stages, manage forecast, and move revenue forward.", icon: KanbanSquare },
       { to: "/account-sourcing", label: "Account Sourcing", description: "Import, score, and prioritize target accounts.", icon: Building2 },
       { to: "/prospecting", label: "Prospecting", description: "Activate personas, ownership, and outreach readiness.", icon: UserSearch },
+      { to: "/sequences", label: "Sequences", description: "Build outreach cadences and enroll contacts.", icon: Repeat },
     ],
   },
   {

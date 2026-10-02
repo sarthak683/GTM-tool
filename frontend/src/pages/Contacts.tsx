@@ -1,9 +1,9 @@
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, sequencesApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
-import type { ContactEngagementStats, PreCallBrief, SequenceLifecycle, LifecycleSummary } from "../lib/api";
+import type { ContactEngagementStats, PreCallBrief, SequenceLifecycle, LifecycleSummary, Sequence } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, Deal, RolePermissionsSettings, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { useToast } from "../lib/ToastContext";
@@ -12,7 +12,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin, Pencil, Check,
+  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin, Pencil, Check, Repeat,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -327,12 +327,13 @@ export default function Contacts() {
   // account's prospects across SDRs by timezone).
   const [assignableUsers, setAssignableUsers] = useState<Array<{ id: string; name?: string | null; role: string }>>([]);
   const [bulkAssigningSdr, setBulkAssigningSdr] = useState(false);
-  // Bulk "start campaign" — enroll the selected prospects into an existing Instantly campaign.
-  const [campaignModalOpen, setCampaignModalOpen] = useState(false);
-  const [campaignOptions, setCampaignOptions] = useState<{ id: string; name: string }[]>([]);
-  const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
-  const [selectedCampaignId, setSelectedCampaignId] = useState("");
-  const [startingCampaign, setStartingCampaign] = useState(false);
+  // Bulk "add to sequence" — enroll every selected prospect into an existing
+  // Outreach Sequence, same picker as Account Sourcing's stakeholder list.
+  const [bulkSequenceOpen, setBulkSequenceOpen] = useState(false);
+  const [bulkSequences, setBulkSequences] = useState<Sequence[]>([]);
+  const [bulkSequencesLoading, setBulkSequencesLoading] = useState(false);
+  const [bulkSequenceId, setBulkSequenceId] = useState("");
+  const [bulkEnrolling, setBulkEnrolling] = useState(false);
   // Bulk "add follow-up" — set a per-contact Reminder on every selected
   // prospect so it surfaces on each of their detail pages. `bulkFollowupAt` is
   // a naive datetime-local string (rep's local time); `bulkFollowupNote` is an
@@ -1948,33 +1949,39 @@ export default function Contacts() {
     }
   };
 
-  // Open the bulk "start campaign" modal and load the available Instantly campaigns.
-  const openCampaignModal = () => {
+  // Open the bulk "add to sequence" modal and load the rep's Outreach Sequences.
+  const openSequenceModal = () => {
     if (selectedContactIds.size === 0) return;
-    setCampaignModalOpen(true);
-    setSelectedCampaignId("");
-    setCampaignOptionsLoading(true);
-    outreachApi
-      .listInstantlyCampaigns()
-      .then((res) => setCampaignOptions(res.campaigns || []))
-      .catch(() => setCampaignOptions([]))
-      .finally(() => setCampaignOptionsLoading(false));
+    setBulkSequenceOpen(true);
+    setBulkSequenceId("");
+    setBulkSequencesLoading(true);
+    sequencesApi
+      .list()
+      .then(setBulkSequences)
+      .catch(() => setBulkSequences([]))
+      .finally(() => setBulkSequencesLoading(false));
   };
 
-  const startBulkCampaign = async () => {
-    if (!selectedCampaignId || selectedContactIds.size === 0) return;
-    setStartingCampaign(true);
+  const startBulkEnroll = async () => {
+    if (!bulkSequenceId || selectedContactIds.size === 0) return;
+    setBulkEnrolling(true);
     try {
-      const res = await outreachApi.bulkAddToInstantlyCampaign(Array.from(selectedContactIds), selectedCampaignId);
-      const skipped = res.skipped_no_email ? ` · ${res.skipped_no_email} skipped (no email)` : "";
-      toast.success(`${res.enrolled} prospect${res.enrolled === 1 ? "" : "s"} added to the campaign${skipped}.`, "Campaign started");
-      setCampaignModalOpen(false);
+      let enrolled = 0;
+      let skipped = 0;
+      for (const contactId of Array.from(selectedContactIds)) {
+        try {
+          await sequencesApi.enroll(contactId, bulkSequenceId);
+          enrolled += 1;
+        } catch {
+          skipped += 1;
+        }
+      }
+      toast.success(`${enrolled} enrolled${skipped ? ` · ${skipped} skipped (already in a sequence)` : ""}`, "Added to sequence");
+      setBulkSequenceOpen(false);
       setSelectedContactIds(new Set());
       loadContacts({ silent: true });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to start campaign.", "Error");
     } finally {
-      setStartingCampaign(false);
+      setBulkEnrolling(false);
     }
   };
 
@@ -3550,7 +3557,7 @@ export default function Contacts() {
                   </button>
                   <button
                     type="button"
-                    onClick={openCampaignModal}
+                    onClick={openSequenceModal}
                     disabled={selectedContactIds.size === 0}
                     style={{
                       height: 36,
@@ -3567,7 +3574,7 @@ export default function Contacts() {
                       cursor: selectedContactIds.size ? "pointer" : "not-allowed",
                     }}
                   >
-                    <Send size={14} /> Start campaign
+                    <Repeat size={14} /> Add to sequence
                   </button>
                   <button
                     type="button"
@@ -6342,9 +6349,9 @@ export default function Contacts() {
         </div>
       )}
 
-      {campaignModalOpen && (
+      {bulkSequenceOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setCampaignModalOpen(false)}
+          onClick={() => !bulkEnrolling && setBulkSequenceOpen(false)}
         >
           <div style={{ position: "absolute", inset: 0, background: "rgba(10,20,40,0.45)" }} />
           <div
@@ -6354,53 +6361,53 @@ export default function Contacts() {
             <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0f9d58,#0b7a43)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Send size={16} color="#fff" />
+                  <Repeat size={16} color="#fff" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Start campaign</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2744" }}>Add to sequence</div>
                   <div style={{ fontSize: 12, color: "#7a96b0" }}>{selectedContactIds.size} prospect{selectedContactIds.size === 1 ? "" : "s"} selected</div>
                 </div>
               </div>
-              <button onClick={() => setCampaignModalOpen(false)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
+              <button onClick={() => setBulkSequenceOpen(false)} style={{ border: 0, background: "transparent", color: "#7a96b0", cursor: "pointer", padding: 4 }}>
                 <X size={18} />
               </button>
             </div>
 
             <div style={{ padding: "18px 22px 22px", display: "grid", gap: 14 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "#2c4a63", display: "block", marginBottom: 6 }}>Instantly campaign *</label>
-                {campaignOptionsLoading ? (
-                  <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading campaigns…</div>
-                ) : campaignOptions.length === 0 ? (
-                  <div style={{ fontSize: 13, color: "#b06a00" }}>No Instantly campaigns found. Create one in Instantly first.</div>
-                ) : (
-                  <select
-                    value={selectedCampaignId}
-                    onChange={(e) => setSelectedCampaignId(e.target.value)}
-                    style={{ width: "100%", height: 42, border: "1px solid #c8d9e8", borderRadius: 10, padding: "0 12px", fontSize: 13, color: "#0f2744", background: "#fff", outline: "none" }}
-                  >
-                    <option value="">Select a campaign…</option>
-                    {campaignOptions.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                )}
-                <p className="crm-muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
-                  Selected prospects are added as leads to this campaign. Prospects without an email are skipped.
+                <p className="crm-muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 10, lineHeight: 1.5 }}>
+                  Enrolls every selected prospect into the chosen sequence. Anyone already running an active sequence is skipped.
                 </p>
+                {bulkSequencesLoading ? (
+                  <div style={{ fontSize: 13, color: "#7a96b0" }}>Loading sequences…</div>
+                ) : bulkSequences.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#b06a00" }}>No sequences yet — build one from the Sequences tab.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                    {bulkSequences.map((s) => (
+                      <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 9, border: `1px solid ${bulkSequenceId === s.id ? "#93c5fd" : "#e8eef5"}`, background: bulkSequenceId === s.id ? "#eff6ff" : "#fff", cursor: "pointer" }}>
+                        <input type="radio" name="bulk-sequence-prospecting" checked={bulkSequenceId === s.id} onChange={() => setBulkSequenceId(s.id)} />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#0f2744" }}>{s.name}</div>
+                          <div style={{ fontSize: 11.5, color: "#7a96b0" }}>{s.step_count} steps{s.shared ? " · Team" : ""}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setCampaignModalOpen(false)} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                <button onClick={() => setBulkSequenceOpen(false)} disabled={bulkEnrolling} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #dce8f4", background: "#f7faff", color: "#4a6580", fontSize: 14, fontWeight: 700, cursor: bulkEnrolling ? "not-allowed" : "pointer" }}>
                   Cancel
                 </button>
                 <button
-                  onClick={() => void startBulkCampaign()}
-                  disabled={startingCampaign || !selectedCampaignId}
-                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: selectedCampaignId ? "linear-gradient(135deg,#0f9d58,#0b7a43)" : "#c7d2dd", color: "#fff", fontSize: 14, fontWeight: 700, cursor: selectedCampaignId ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                  onClick={() => void startBulkEnroll()}
+                  disabled={bulkEnrolling || !bulkSequenceId}
+                  style={{ flex: 2, padding: "11px 0", borderRadius: 12, border: "none", background: bulkSequenceId ? "linear-gradient(135deg,#0f9d58,#0b7a43)" : "#c7d2dd", color: "#fff", fontSize: 14, fontWeight: 700, cursor: bulkSequenceId && !bulkEnrolling ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
                 >
-                  {startingCampaign ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                  {startingCampaign ? "Starting…" : "Start campaign"}
+                  {bulkEnrolling ? <Loader2 size={15} className="animate-spin" /> : <Repeat size={15} />}
+                  {bulkEnrolling ? "Enrolling…" : "Enroll"}
                 </button>
               </div>
             </div>

@@ -1,11 +1,12 @@
 import { memo } from "react";
 import { NavLink } from "react-router-dom";
-import { Building2, CalendarDays, CheckSquare, Database, KanbanSquare, Radar, Search } from "lucide-react";
+import { Building2, CalendarDays, CheckSquare, Database, KanbanSquare, Radar, Repeat, Search } from "lucide-react";
 
 const NAV = [
   { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
   { to: "/account-sourcing", label: "Sourcing", icon: Building2 },
   { to: "/prospecting", label: "Prospects", icon: Radar },
+  { to: "/sequences", label: "Sequences", icon: Repeat },
   { to: "/meetings", label: "Meetings", icon: CalendarDays },
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
   { to: "/data-room", label: "Data Room", icon: Database },

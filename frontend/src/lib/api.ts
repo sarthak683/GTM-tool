@@ -7,3 +7,5 @@ export type { ScorecardMetric, ScorecardBlock, ScorecardResponse, RepSummary, Po
 export type { DataRoomCategory, DataRoomItem } from "../types";
 export { aircallApi, remindersApi, personalEmailSyncApi, driveApi, zippyApi, knowledgeApi, pushApi } from "./api/integrations";
 export type { PersonalEmailStatus, PersonalEmailThread, SendEmailPayload, DriveFolder, DriveFolderList, DriveFile, DriveFileList, SelectedDriveFolder, ZippyCitation, ZippyArtifact, ZippyMessage, ZippyConversationSummary, ZippyConversationDetail, ZippySendResponse, IndexedFile, IndexReport, ReindexResponse, IndexStatus } from "./api/integrations";
+export { sequencesApi } from "./api/sequences";
+export type { Sequence, SequenceStep, SequenceStepType, SequenceEmailSendVia, SequenceLinkedinCategory, SequenceStepDraft, Enrollment } from "./api/sequences";

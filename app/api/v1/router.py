@@ -45,6 +45,7 @@ from app.api.v1.endpoints import (
     reminders,
     sales_reports,
     sales_resources,
+    sequences,
     settings,
     signals,
     tasks,
@@ -73,6 +74,7 @@ router.include_router(prospecting.router)
 router.include_router(outreach.router)
 router.include_router(intelligence.router)
 router.include_router(signals.router)
+router.include_router(sequences.router)
 router.include_router(tasks.router)
 router.include_router(tldv.router)
 router.include_router(meetings.router)

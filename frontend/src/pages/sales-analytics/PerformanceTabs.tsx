@@ -674,25 +674,40 @@ function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
 
 // ── Funnel tab ─────────────────────────────────────────────────────────────
 
-export function FunnelTab({ reps }: { reps: RepSummary[] }) {
+export function FunnelTab({ reps, filters = EMPTY_FILTER_SCOPE }: { reps: RepSummary[]; filters?: AnalyticsFilterScope }) {
   const { isAdmin } = useAuth();
   const [period, setPeriod] = useState<"week" | "month" | "quarter">("month");
   const [repId, setRepId] = useState<string | undefined>(undefined);
   const [data, setData] = useState<FunnelResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage: string; toStage: string; label: string; isOverall?: boolean } | null>(null);
+  const [stageDealsQuery, setStageDealsQuery] = useState<{ stage?: string; toStage?: string; label: string; isOverall?: boolean; exitStage?: string } | null>(null);
   const [stageDealsData, setStageDealsData] = useState<RedAlertDeal[]>([]);
   const [stageDealsLoading, setStageDealsLoading] = useState(false);
   const [stageDealsError, setStageDealsError] = useState<string | null>(null);
+
+  // The global filter bar's "Custom Range" box (fromDate/toDate) overrides
+  // Week/Month/Quarter when both dates are set — reusing that existing
+  // control instead of adding a second one inside this tab. It reverts to
+  // normal Week/Month/Quarter the moment the custom range is cleared.
+  const customRangeActive = Boolean(filters.fromDate && filters.toDate);
+  const effectivePeriod = customRangeActive ? "custom" : period;
 
   useEffect(() => {
     if (!stageDealsQuery) return;
     let cancelled = false;
     setStageDealsLoading(true);
     setStageDealsError(null);
-    performanceApi
-      .getFunnelTransitionDeals({ fromStage: stageDealsQuery.stage, toStage: stageDealsQuery.toStage, isOverall: stageDealsQuery.isOverall, period, repId })
+    (stageDealsQuery.exitStage
+      ? performanceApi.getSpilledPipelineDeals({
+          stage: stageDealsQuery.exitStage,
+          period: effectivePeriod, customStart: filters.fromDate, customEnd: filters.toDate, repId,
+        })
+      : performanceApi.getFunnelTransitionDeals({
+          fromStage: stageDealsQuery.stage!, toStage: stageDealsQuery.toStage, isOverall: stageDealsQuery.isOverall,
+          period: effectivePeriod, customStart: filters.fromDate, customEnd: filters.toDate, repId,
+        })
+    )
       .then((payload) => {
         if (!cancelled) setStageDealsData(payload);
       })
@@ -706,14 +721,14 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     return () => {
       cancelled = true;
     };
-  }, [stageDealsQuery, repId, period]);
+  }, [stageDealsQuery, repId, effectivePeriod, filters.fromDate, filters.toDate]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     performanceApi
-      .getFunnel({ period, rep_id: repId })
+      .getFunnel({ period: effectivePeriod, customStart: filters.fromDate, customEnd: filters.toDate, rep_id: repId })
       .then((payload) => {
         if (!cancelled) setData(payload);
       })
@@ -727,7 +742,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
     return () => {
       cancelled = true;
     };
-  }, [period, repId]);
+  }, [effectivePeriod, filters.fromDate, filters.toDate, repId]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -737,19 +752,28 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
         action={
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {isAdmin && <RepPicker reps={reps} value={repId} onChange={setRepId} />}
-            <SegmentedControl
-              value={period}
-              onChange={setPeriod}
-              options={[
-                { value: "week", label: "Week" },
-                { value: "month", label: "Month" },
-                { value: "quarter", label: "Quarter" },
-              ]}
-            />
+            <div
+              title={customRangeActive ? "Clear the Custom Range box above to use Week / Month / Quarter again" : undefined}
+              style={{ opacity: customRangeActive ? 0.45 : 1, pointerEvents: customRangeActive ? "none" : undefined }}
+            >
+              <SegmentedControl
+                value={period}
+                onChange={setPeriod}
+                options={[
+                  { value: "week", label: "Week" },
+                  { value: "month", label: "Month" },
+                  { value: "quarter", label: "Quarter" },
+                ]}
+              />
+            </div>
           </div>
         }
       >
-        {null}
+        {customRangeActive && (
+          <p style={{ margin: 0, fontSize: 12.5, color: PALETTE.subtle }}>
+            Showing custom range: <strong>{filters.fromDate}</strong> → <strong>{filters.toDate}</strong>
+          </p>
+        )}
       </Panel>
 
       {error && <ErrorBanner message={error} />}
@@ -757,7 +781,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
 
       {data && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18 }}>
-          <Panel title="Stage conversion" subtitle={`For deals that entered the stage this ${period}`}>
+          <Panel title="Stage conversion" subtitle={customRangeActive ? "For deals that entered the stage in the selected custom range" : `For deals that entered the stage this ${period}`}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 13 }}>
                 <colgroup>
@@ -805,25 +829,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
                       >
                         <td style={{ padding: "11px 14px", borderBottom: rowBorder }}>
                           {overall ? (
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 800,
-                                  letterSpacing: "0.05em",
-                                  textTransform: "uppercase",
-                                  color: "#7556cb",
-                                  background: "#ece6fa",
-                                  padding: "3px 8px",
-                                  borderRadius: 999,
-                                }}
-                              >
-                                Overall
-                              </span>
-                              <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
-                              <span style={{ color: PALETTE.subtle }}>→</span>
-                              <span style={{ color: PALETTE.text, fontWeight: 700 }}>{prettyStage(row.to_stage)}</span>
-                            </div>
+                            <span style={{ color: "#7556cb", fontWeight: 700 }}>Overall Pipeline Movement</span>
                           ) : (
                             <>
                               <span style={{ color: PALETTE.muted, fontWeight: 600 }}>{prettyStage(row.from_stage)}</span>
@@ -867,6 +873,18 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
               Historical transitions before the stage-history backfill are not counted.
             </p>
           </Panel>
+
+          <Panel title="Spilled Pipeline" subtitle={customRangeActive ? "Deals that moved into each exit stage in the selected custom range" : `Deals that moved into each exit stage this ${period}`}>
+            <ExitStageBarChart
+              rows={data.spilled_pipeline}
+              onSelectStage={(stage, label) => setStageDealsQuery({ label: `Moved into ${label}`, exitStage: stage })}
+            />
+            <p style={{ margin: 0, fontSize: 12, color: PALETTE.subtle }}>
+              Every deal that moved into an exit stage (Reprospect, Nurture, Backlog, Churned, Not a Fit, Cold,
+              Closed Lost, On Hold, Closed) this period, from anywhere — falling out of active motion. Click a
+              bar to see the deals, including which stage each one came from.
+            </p>
+          </Panel>
         </div>
       )}
 
@@ -876,7 +894,7 @@ export function FunnelTab({ reps }: { reps: RepSummary[] }) {
           deals={stageDealsData}
           loading={stageDealsLoading}
           error={stageDealsError}
-          showStageEntered={stageDealsQuery.isOverall}
+          showStageEntered={Boolean(stageDealsQuery.isOverall || stageDealsQuery.exitStage)}
           onClose={() => {
             setStageDealsQuery(null);
             setStageDealsData([]);
@@ -1079,6 +1097,80 @@ function CloseDateBarChart({ rows, onSelectBar }: { rows: CloseDateBucket[]; onS
   );
 }
 
+// ── Exit Stage Breakdown chart (Funnel tab) ────────────────────────────────
+// Deal count per exit stage (red/parked-pipeline palette, distinct from the
+// green "open pipeline" and blue "forecast" charts above) — how many deals
+// landed in each dead/parked stage this period, from anywhere.
+
+const CHART_EXIT = {
+  bar: "#f3b4ad",
+  grid: "#f8ecea",
+  axis: "#9a7d7a",
+};
+
+function ExitStageTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  const totalValue = (payload[0]?.payload as { total_value?: number } | undefined)?.total_value;
+  return (
+    <div style={{ borderRadius: 14, border: "1px solid #dfe7f2", background: "rgba(255,255,255,0.96)", boxShadow: "0 18px 34px rgba(21,42,68,0.12)", padding: "12px 14px", minWidth: 170 }}>
+      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#1f3144" }}>{label}</p>
+      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span style={{ fontSize: 12, color: "#62748a" }}>Deals</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{payload[0]?.value ?? 0}</span>
+        </div>
+        {typeof totalValue === "number" && totalValue > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ fontSize: 12, color: "#62748a" }}>Total value</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#203244" }}>{fmtShortCurrency(totalValue)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExitStageBarChart({ rows, onSelectStage }: { rows: Array<{ stage: string; deals: number; total_value: number }>; onSelectStage?: (stage: string, label: string) => void }) {
+  const chartData = useMemo(
+    () => rows.map((r) => ({ stage: r.stage, label: prettyStage(r.stage), deals: r.deals, total_value: r.total_value })),
+    [rows],
+  );
+  // Recharts' "auto" YAxis domain doesn't reliably rescale to the real max
+  // when the data updates (e.g. switching the custom date range) — it can
+  // get stuck on a stale, too-low ceiling and clip the tallest bar right
+  // through the panel's edge. Computing the domain ourselves guarantees it
+  // always covers the actual max.
+  const maxDeals = Math.max(1, ...chartData.map((d) => d.deals));
+  const yMax = Math.ceil(maxDeals * 1.15);
+  return (
+    <div style={{ width: "100%", height: 320 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 4 }} barCategoryGap="28%">
+          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={CHART_EXIT.grid} />
+          <XAxis dataKey="label" tick={{ fill: "#46586d", fontSize: 11, fontWeight: 600 }} axisLine={false} tickLine={false} interval={0} height={30} />
+          <YAxis type="number" allowDecimals={false} domain={[0, yMax]} tick={{ fill: CHART_EXIT.axis, fontSize: 11 }} axisLine={false} tickLine={false} />
+          <Tooltip content={<ExitStageTooltip />} cursor={{ fill: "rgba(179,38,30,0.06)" }} />
+          <Bar
+            dataKey="deals"
+            name="Deals"
+            fill={CHART_EXIT.bar}
+            radius={[6, 6, 0, 0]}
+            maxBarSize={56}
+            cursor={onSelectStage ? "pointer" : undefined}
+            onClick={(point: { stage?: string; label?: string; payload?: { stage?: string; label?: string } }) => {
+              const stage = point?.stage ?? point?.payload?.stage;
+              const label = point?.label ?? point?.payload?.label;
+              if (onSelectStage && stage) onSelectStage(stage, label ?? stage);
+            }}
+          >
+            <LabelList dataKey="deals" position="top" fill="#46586d" fontSize={11} fontWeight={700} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 // By Rep view — a segmented bar per rep, each segment colored by stage
 // (same stage colors as Pipeline Health's By Rep chart), matching that
 // chart's structure exactly.
@@ -1221,15 +1313,15 @@ function RedAlertModal({
                 onClick={() => dlCsv(
                   label.toLowerCase().replace(/\s+/g, "-"),
                   showStageEntered
-                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Stage Move"]
+                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Current Stage", "Stage Move"]
                     : showCloseDate
-                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Close Date"]
-                    : ["Deal", "AE", "SDR", "Days in Stage", "Amount"],
+                    ? ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Current Stage", "Close Date"]
+                    : ["Deal", "AE", "SDR", "Days in Stage", "Amount", "Current Stage"],
                   deals.map((d) => showStageEntered
-                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", `${d.move_from_stage ? prettyStage(d.move_from_stage) : "—"} -> ${d.move_to_stage ? prettyStage(d.move_to_stage) : "—"}`]
+                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", d.stage ? prettyStage(d.stage) : "", `${d.move_from_stage ? prettyStage(d.move_from_stage) : "—"} -> ${d.move_to_stage ? prettyStage(d.move_to_stage) : "—"}`]
                     : showCloseDate
-                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", d.close_date ? fmtDate(d.close_date) : ""]
-                    : [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? ""]),
+                    ? [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", d.stage ? prettyStage(d.stage) : "", d.close_date ? fmtDate(d.close_date) : ""]
+                    : [d.deal_name, d.ae_name ?? "", d.sdr_name ?? "", daysInStage(d.stage_entered_at), d.amount ?? "", d.stage ? prettyStage(d.stage) : ""]),
                 )}
                 style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, background: "#f4f6fa", border: "1px solid #e0e6ef", fontSize: 12, fontWeight: 700, color: "#3d5a80", cursor: "pointer" }}
               >
@@ -1254,10 +1346,10 @@ function RedAlertModal({
             <thead>
               <tr style={{ background: "#fafbfd", position: "sticky", top: 0 }}>
                 {(showStageEntered
-                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Stage Move"]
+                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Current Stage", "Stage Move"]
                   : showCloseDate
-                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Close Date"]
-                  : ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount"]
+                  ? ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Current Stage", "Close Date"]
+                  : ["Deal", "AE Assigned", "SDR Assigned", "Days in Stage", "Amount", "Current Stage"]
                 ).map((h, i) => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: i === 4 ? "right" : "left", fontSize: 11, fontWeight: 800, color: "#68788d", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #ebeff5" }}>{h}</th>
                 ))}
@@ -1271,6 +1363,7 @@ function RedAlertModal({
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{d.sdr_name || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "#62748a" }}>{daysInStage(d.stage_entered_at)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, color: d.amount ? "#1d4ed8" : "#aab4c2", whiteSpace: "nowrap" }}>{fmtCurrency(d.amount)}</td>
+                  <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600, whiteSpace: "nowrap" }}>{d.stage ? prettyStage(d.stage) : "—"}</td>
                   {showStageEntered && (
                     <td style={{ padding: "10px 14px", color: "#62748a", fontWeight: 600, whiteSpace: "nowrap" }}>
                       {d.move_from_stage ? prettyStage(d.move_from_stage) : "—"} <span style={{ color: PALETTE.subtle }}>→</span> {d.move_to_stage ? prettyStage(d.move_to_stage) : "—"}
@@ -1284,7 +1377,7 @@ function RedAlertModal({
                 </tr>
               ))}
               {deals.length === 0 && (
-                <tr><td colSpan={extraColumn ? 6 : 5} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
+                <tr><td colSpan={extraColumn ? 7 : 6} style={{ padding: 32, textAlign: "center", color: "#aab4c2" }}>No deals</td></tr>
               )}
             </tbody>
           </table>
@@ -2903,13 +2996,15 @@ export function PerformanceTabContent({
   filters?: AnalyticsFilterScope;
 }) {
   switch (tab) {
-    // Scorecard / Funnel / Forecast / Targets are behind SHOW_TAB_* flags and
-    // keep their own period + rep controls; they are not wired to the global
-    // bar until they are turned back on.
+    // Scorecard / Forecast / Targets are behind SHOW_TAB_* flags and keep
+    // their own period + rep controls; they are not wired to the global bar
+    // until they are turned back on. Funnel now reads the global bar's
+    // Custom Range box (see FunnelTab's customRangeActive) but otherwise
+    // keeps its own Week/Month/Quarter control the same as before.
     case "scorecard":
       return <ScorecardTab reps={reps} />;
     case "funnel":
-      return <FunnelTab reps={reps} />;
+      return <FunnelTab reps={reps} filters={filters} />;
     case "risk":
       return <RiskTab filters={filters} />;
     case "forecast":

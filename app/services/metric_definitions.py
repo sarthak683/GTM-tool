@@ -84,14 +84,21 @@ def email_event_type():
 def outbound_email_filter():
     """Predicate: this Activity row is an email a rep actually SENT.
 
-    Two producer families, matched by construction (see app/tasks/email_sync.py
-    and app/api/v1/endpoints/webhooks.py):
-      * Instantly/webhook + manual rows: medium="email" — but the webhook also
+    Three producer families, matched by construction (see app/tasks/email_sync.py,
+    app/api/v1/endpoints/webhooks.py, and frontend/src/components/LogEmailDialog.tsx):
+      * Instantly/webhook + synced rows: medium="email" — but the webhook also
         logs replies/opens/clicks under type="email", so gate on
-        event_type == 'email_sent' (old rows without one are sends).
+        event_type == 'email_sent' (old rows without one are sends). Also
+        covers personal_email_sync rows, which carry medium="email" the same way.
       * Gmail-synced sends: NO medium, source="gmail_sync"; rep sends carry
         created_by_id (resolved from the sender address). Deal-thread rows
         without created_by_id include the PROSPECT's inbound mail — excluded.
+      * Manually logged sends (the "Log Email" dialog): source="manual", NO
+        medium set at all, event_metadata.event_type="manual_email_logged" —
+        satisfies neither branch above, so these were silently excluded from
+        every "emails sent" number (Scorecard, SalesAnalytics, team activity
+        report) until this branch was added. created_by_id is always set by
+        the activities-create endpoint, so attribution was never the problem.
     """
     return and_(
         Activity.type == "email",
@@ -105,6 +112,7 @@ def outbound_email_filter():
                 Activity.source == "gmail_sync",
                 Activity.created_by_id.is_not(None),
             ),
+            Activity.source == "manual",
         ),
     )
 

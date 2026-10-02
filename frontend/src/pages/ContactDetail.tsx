@@ -13,6 +13,7 @@ import { avatarColor, getInitials } from "../lib/utils";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import AddToSequenceButton from "../components/AddToSequenceButton";
 import UnifiedTimeline from "../components/UnifiedTimeline";
 import { SkeletonList } from "../components/ui/Skeleton";
 
@@ -340,7 +341,14 @@ export default function ContactDetail() {
 
         <section className="crm-panel p-6" style={{ padding: 26 }}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[16px] font-bold">Outreach</h3>
+            <h3 className="text-[16px] font-bold">Outreach Sequence</h3>
+            <AddToSequenceButton contactId={contact.id} />
+          </div>
+        </section>
+
+        <section className="crm-panel p-6" style={{ padding: 26 }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[16px] font-bold">Outreach (legacy)</h3>
             {sequence ? (
               <button className="crm-button soft" onClick={() => setDrawerOpen(true)}>
                 Open Sequence

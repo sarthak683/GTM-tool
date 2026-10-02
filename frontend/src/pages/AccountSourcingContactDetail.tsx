@@ -26,6 +26,7 @@ import AssignDropdown from "../components/AssignDropdown";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import ProvenanceBar from "../components/ProvenanceBar";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
+import AddToSequenceButton from "../components/AddToSequenceButton";
 import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import { useToast } from "../lib/ToastContext";
 import {
@@ -984,6 +985,10 @@ export default function AccountSourcingContactDetail() {
               <OutreachDrawer contact={contact} onClose={() => {}} mode="inline" onCallContact={() => setCallDrawerOpen(true)} />
               </Section>
             </div>
+
+            <Section title="Outreach Sequence" icon={<UserRound size={15} color={colors.primary} />}>
+              <AddToSequenceButton contactId={contact.id} />
+            </Section>
 
             <Section title="Automation Signals" icon={<UserRound size={15} color={colors.primary} />}>
               <div

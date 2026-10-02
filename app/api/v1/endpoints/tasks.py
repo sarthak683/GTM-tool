@@ -127,12 +127,54 @@ async def _build_task_reads(session: DBSession, tasks: list[Task]) -> list[TaskR
         ).all()
         users = {user_id: name for user_id, name in user_rows}
 
+    # Outreach Sequence context — populated only for source="cadence" tasks,
+    # so the Tasks tab can tag each row with "Sequence name — Step N/M" and
+    # know which channel dialog to open.
+    step_ids = [task.step_id for task in tasks if task.step_id]
+    step_info: dict[UUID, tuple[str, int, int]] = {}  # step_id -> (sequence_name, step_number, total_steps)
+    step_obj_by_id: dict[UUID, object] = {}
+    if step_ids:
+        from app.models.sequence import Sequence, SequenceStep
+
+        all_steps_rows = (
+            await session.execute(
+                select(SequenceStep, Sequence.name)
+                .join(Sequence, Sequence.id == SequenceStep.sequence_id)
+                .where(SequenceStep.sequence_id.in_(
+                    select(SequenceStep.sequence_id).where(SequenceStep.id.in_(step_ids))
+                ))
+                .order_by(SequenceStep.sequence_id, SequenceStep.order)
+            )
+        ).all()
+        by_sequence: dict[UUID, list] = defaultdict(list)
+        seq_name_by_id: dict[UUID, str] = {}
+        for step, seq_name in all_steps_rows:
+            by_sequence[step.sequence_id].append(step)
+            seq_name_by_id[step.sequence_id] = seq_name
+            step_obj_by_id[step.id] = step
+        for seq_id, steps in by_sequence.items():
+            total = len(steps)
+            for i, step in enumerate(steps):
+                step_info[step.id] = (seq_name_by_id[seq_id], i + 1, total)
+
     reads: list[TaskRead] = []
     for task in tasks:
         read = TaskRead.model_validate(task)
         read.created_by_name = users.get(task.created_by_id)
         read.assigned_to_name = users.get(task.assigned_to_id)
         read.comments = comments_by_task.get(task.id or UUID(int=0), [])
+        if task.step_id and task.step_id in step_info:
+            seq_name, step_number, total_steps = step_info[task.step_id]
+            read.sequence_name = seq_name
+            read.step_number = step_number
+            step_obj = step_obj_by_id.get(task.step_id)
+            if step_obj is not None:
+                read.step_type = step_obj.type
+                read.step_send_via = step_obj.send_via
+                read.step_instantly_campaign_id = step_obj.instantly_campaign_id
+                read.step_linkedin_category = step_obj.linkedin_category
+        if task.entity_type == "contact":
+            read.contact_id = task.entity_id
         reads.append(read)
     return reads
 
@@ -349,9 +391,12 @@ async def list_tasks(
 
 @router.get("/count")
 async def get_task_count(session: DBSession, current_user: CurrentUser):
-    """Return the number of open tasks assigned to the current user."""
-    await backfill_open_task_assignments(session)
-    await session.commit()
+    """Return the open-task badge count without a workspace-wide repair sweep.
+
+    Assignment repair runs on the scheduled deal-task reconciliation and when
+    the Tasks workspace is opened. This endpoint is polled by every visible
+    CRM tab, so it must remain a cheap, read-only query.
+    """
     count = (
         await session.execute(
             select(func.count(Task.id)).where(
@@ -372,6 +417,8 @@ async def list_workspace_tasks(
     entity_type: str | None = Query(default=None),
     deal_id: UUID | None = Query(default=None),
     scope: str = Query(default="mine"),
+    source: str | None = Query(default=None),
+    sequence_id: UUID | None = Query(default=None),
 ):
     if task_type and task_type not in {"manual", "system"}:
         raise ValidationError("task_type must be one of: ['manual', 'system']")
@@ -410,6 +457,14 @@ async def list_workspace_tasks(
                 and_(Task.entity_type == "deal", Task.entity_id == deal_id),
                 Task.action_payload["deal_id"].astext == str(deal_id),
             )
+        )
+    if source:
+        stmt = stmt.where(Task.source == source)
+    if sequence_id:
+        from app.models.sequence import SequenceStep
+
+        stmt = stmt.join(SequenceStep, SequenceStep.id == Task.step_id).where(
+            SequenceStep.sequence_id == sequence_id
         )
 
     tasks = (await session.execute(stmt)).scalars().all()

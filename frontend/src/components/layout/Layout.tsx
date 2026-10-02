@@ -166,7 +166,7 @@ function Layout() {
                   {[
                     { label: "Deal", hint: "Add a pipeline opportunity", path: "/pipeline?new=deal", icon: Briefcase },
                     { label: "Prospect", hint: "Create a person to work", path: "/prospecting?new=prospect", icon: UserPlus },
-                    { label: "Meeting", hint: "Log or schedule a call", path: "/meetings?new=meeting", icon: CalendarDays },
+                    { label: "Meeting", hint: "Log or schedule a call", path: "/meetings/manage?new=meeting", icon: CalendarDays },
                     { label: "Task", hint: "Assign a follow-up", path: "/tasks?new=task", icon: CheckSquare },
                   ].map((item) => {
                     const Icon = item.icon;

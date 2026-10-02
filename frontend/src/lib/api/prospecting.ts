@@ -385,6 +385,8 @@ export interface AccountSourcingFilters {
   sdrId?: string | string[];
   /** `not_scored` = no Recotap journey stage. */
   journeyStage?: string[];
+  /** Continent derived from the free-text `headquarters` field. `__empty__` = no headquarters set. */
+  headquartersContinent?: string[];
   batchId?: string;
   prospectsMin?: number;
   prospectsMax?: number;
@@ -427,6 +429,7 @@ export function buildAccountSourcingQuery(
   appendMulti(search, "ae_id", filters?.aeId);
   appendMulti(search, "sdr_id", filters?.sdrId);
   appendMulti(search, "journey_stage", filters?.journeyStage);
+  appendMulti(search, "headquarters_continent", filters?.headquartersContinent);
   if (filters?.batchId) search.set("batch_id", filters.batchId);
   if (filters?.prospectsMin !== undefined) search.set("prospects_min", String(filters.prospectsMin));
   if (filters?.prospectsMax !== undefined) search.set("prospects_max", String(filters.prospectsMax));

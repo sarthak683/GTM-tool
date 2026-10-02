@@ -277,6 +277,38 @@ async def emails_sent(
     return (await session.execute(stmt)).scalar_one() or 0
 
 
+async def emails_sent_manual(
+    session: AsyncSession, rep_id: Optional[UUID], period: Period
+) -> int:
+    """``emails_sent``, narrowed to real sends — Gmail-synced (shared inbox
+    or personal) plus manually logged — excluding Instantly automated
+    sequence sends. See ``emails_sent_instantly`` for the other half; the two
+    always sum to ``emails_sent``."""
+    stmt = select(func.count(Activity.id)).where(
+        outbound_email_filter(),
+        Activity.source.is_distinct_from("instantly"),
+        Activity.created_at >= period.start,
+        Activity.created_at < period.end,
+        _activity_rep_filter(rep_id),
+    )
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
+async def emails_sent_instantly(
+    session: AsyncSession, rep_id: Optional[UUID], period: Period
+) -> int:
+    """``emails_sent``, narrowed to Instantly automated sequence sends only.
+    See ``emails_sent_manual`` for the other half."""
+    stmt = select(func.count(Activity.id)).where(
+        outbound_email_filter(),
+        Activity.source == "instantly",
+        Activity.created_at >= period.start,
+        Activity.created_at < period.end,
+        _activity_rep_filter(rep_id),
+    )
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
 async def emails_replied_to(
     session: AsyncSession, rep_id: Optional[UUID], period: Period, lookback_days: int = 1
 ) -> int:
@@ -296,6 +328,23 @@ async def linkedin_whatsapp_touches(
 ) -> int:
     stmt = select(func.count(Activity.id)).where(
         Activity.medium.in_(["linkedin", "whatsapp"]),
+        Activity.created_at >= period.start,
+        Activity.created_at < period.end,
+        _activity_rep_filter(rep_id),
+    )
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
+async def linkedin_touches(
+    session: AsyncSession, rep_id: Optional[UUID], period: Period
+) -> int:
+    """LinkedIn only, split out of ``linkedin_whatsapp_touches`` for reports
+    that need the channel on its own (e.g. the team activity report). There
+    is no LinkedIn API integration in this app — every row here exists only
+    because a rep manually clicked "Log LinkedIn", so this counts logging
+    activity, not raw LinkedIn usage."""
+    stmt = select(func.count(Activity.id)).where(
+        Activity.medium == "linkedin",
         Activity.created_at >= period.start,
         Activity.created_at < period.end,
         _activity_rep_filter(rep_id),
@@ -616,6 +665,79 @@ async def stage_move_rows(
         )
     )
     return (await session.execute(stmt)).all()
+
+
+async def spilled_pipeline_rows(
+    session: AsyncSession,
+    period: Period,
+    from_stages: list[str],
+    to_stages: list[str],
+    rep_id: Optional[UUID] = None,
+):
+    """Every deal that moved from one of `from_stages` (active pipeline) to
+    one of `to_stages` (exit/parked/dead) during the period — "Spilled
+    Pipeline": deals falling out of active motion, not a single from->to
+    pair. Same stage_history_with_lag shape as stage_move_rows so the two
+    drilldowns and their median/day math never disagree."""
+    hist = stage_history_with_lag()
+    stmt = (
+        select(
+            hist.c.deal_id,
+            hist.c.entered_from_at,
+            hist.c.moved_at,
+            hist.c.from_stage,
+            hist.c.to_stage,
+            Deal.name.label("deal_name"),
+            Deal.value.label("value"),
+        )
+        .select_from(hist)
+        .join(Deal, Deal.id == hist.c.deal_id)
+        .where(
+            hist.c.from_stage.in_(from_stages),
+            hist.c.to_stage.in_(to_stages),
+            hist.c.moved_at >= period.start,
+            hist.c.moved_at < period.end,
+            Deal.deleted_at.is_(None),
+            Deal.pipeline_type == "deal",
+            _deal_rep_filter(rep_id),
+        )
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def exit_stage_counts(
+    session: AsyncSession,
+    period: Period,
+    to_stages: list[str],
+    rep_id: Optional[UUID] = None,
+) -> dict[str, tuple[int, float]]:
+    """Per-stage (deal count, total value) for every move INTO one of
+    `to_stages` during the period, regardless of which stage the deal came
+    from — one grouped query, not `len(to_stages)` separate ones. Backs the
+    Funnel "Exit Stage Breakdown" chart: how many deals landed in each exit
+    stage this period, independent of Spilled Pipeline's "came from active
+    pipeline" restriction.
+    """
+    stmt = (
+        select(
+            DealStageHistory.to_stage,
+            func.count(DealStageHistory.id),
+            func.coalesce(func.sum(Deal.value), 0),
+        )
+        .select_from(DealStageHistory)
+        .join(Deal, Deal.id == DealStageHistory.deal_id)
+        .where(
+            DealStageHistory.to_stage.in_(to_stages),
+            DealStageHistory.changed_at >= period.start,
+            DealStageHistory.changed_at < period.end,
+            Deal.deleted_at.is_(None),
+            Deal.pipeline_type == "deal",
+            _deal_rep_filter(rep_id),
+        )
+        .group_by(DealStageHistory.to_stage)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {to_stage: (count, float(total)) for to_stage, count, total in rows}
 
 
 async def stage_occupancy_at(
