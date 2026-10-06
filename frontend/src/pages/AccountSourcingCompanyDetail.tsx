@@ -1,10 +1,11 @@
 import "./account-sourcing-refresh.css";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { SkeletonList } from "../components/ui/Skeleton";
 import {
   ArrowLeft,
   Brain,
+  BriefcaseBusiness,
   Building2,
   Check,
   CheckCircle2,
@@ -88,6 +89,8 @@ import {
   unwrapCache,
   wrapStyle,
 } from "./accountSourcingCompanyDetailShared";
+
+const AccountOpportunitiesModal = lazy(() => import("../components/deal/AccountOpportunitiesModal"));
 
 // ── Recotap (ABM) signals panel ─────────────────────────────────────────────
 const RTP_JOURNEY_STYLE: Record<string, { bg: string; color: string; border: string }> = {
@@ -830,6 +833,7 @@ export default function AccountSourcingCompanyDetail() {
   const [showDealModal, setShowDealModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [showTasksModal, setShowTasksModal] = useState(false);
+  const [showOpportunitiesModal, setShowOpportunitiesModal] = useState(false);
   const [noteInput, setNoteInput] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [editingDomain, setEditingDomain] = useState(false);
@@ -1953,6 +1957,13 @@ export default function AccountSourcingCompanyDetail() {
               <div style={{ display: "grid", gap: 8 }}>
               <button
                 type="button"
+                onClick={() => setShowOpportunitiesModal(true)}
+                style={{ width: "100%", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#2563eb", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+              >
+                <BriefcaseBusiness size={13} /> Opportunities
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowTasksModal(true)}
                 style={{ width: "100%", border: `1px solid #cfe89a`, background: "#f3fbe3", color: colors.primary, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
               >
@@ -2721,6 +2732,17 @@ export default function AccountSourcingCompanyDetail() {
             )}
         </div>
       </div>
+
+      {showOpportunitiesModal && (
+        <Suspense fallback={<div role="status" style={{ position: "fixed", inset: 0, zIndex: 100, display: "grid", placeItems: "center", background: "rgba(255,255,255,0.9)" }}>Loading opportunities…</div>}>
+          <AccountOpportunitiesModal
+            key={company.id}
+            company={company}
+            stages={availableDealStages}
+            onClose={() => { setShowOpportunitiesModal(false); void load(); }}
+          />
+        </Suspense>
+      )}
 
       <TaskCenterModal
         isOpen={showTasksModal}

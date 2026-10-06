@@ -1,0 +1,44 @@
+.account-opportunities-dialog {
+  width: min(800px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  margin: auto;
+  border: 1px solid #dfe8f2;
+  border-radius: 18px;
+  color: #142335;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
+}
+.account-opportunities-dialog[open] { display: flex; flex-direction: column; }
+.account-opportunities-dialog::backdrop { background: rgba(15, 23, 42, 0.28); backdrop-filter: blur(3px); }
+.account-opportunities-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px; border-bottom: 1px solid #dfe8f2; }
+.account-opportunities-header > div { min-width: 0; }
+.account-opportunities-header h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; font-weight: 800; }
+.account-opportunities-header h2 svg { flex-shrink: 0; color: #2563eb; }
+.account-opportunities-header p { margin: 6px 0 0; color: #62748a; overflow-wrap: anywhere; }
+.account-opportunities-close { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 1px solid #dfe8f2; border-radius: 10px; background: #fff; cursor: pointer; }
+.account-opportunities-body { padding: 20px; overflow-y: auto; min-height: 0; }
+.account-opportunities-list { display: grid; gap: 14px; }
+.account-opportunity-card { border: 1px solid #dfe8f2; border-radius: 14px; padding: 18px; background: #f8fafc; }
+.account-opportunity-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.account-opportunity-heading h3 { margin: 0; font-size: 16px; font-weight: 800; overflow-wrap: anywhere; flex: 1 1 180px; min-width: 0; }
+.account-opportunity-stage { border: 1px solid #bfdbfe; border-radius: 999px; padding: 4px 10px; background: #eff6ff; color: #2563eb; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; max-width: 100%; }
+.account-opportunity-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.account-opportunity-fields dt { color: #62748a; font-size: 12px; }
+.account-opportunity-fields dd { margin: 3px 0 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.account-opportunity-next-step { font-size: 13px; color: #62748a; overflow-wrap: anywhere; margin: 0 0 14px; }
+.account-opportunities-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 32px 12px; text-align: center; color: #62748a; }
+.account-opportunities-error { color: #b91c1c; padding-bottom: 16px; overflow-wrap: anywhere; }
+.account-opportunities-error p { margin: 0 0 12px; }
+.account-opportunity-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px 12px; background: #eff6ff; color: #2563eb; font-size: 13px; font-weight: 700; cursor: pointer; }
+.account-opportunity-open:hover { background: #dbeafe; }
+.account-opportunities-close:hover { background: #f1f5f9; }
+.account-opportunities-dialog button:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.account-opportunities-dialog button:disabled { opacity: 0.65; cursor: wait; }
+.account-opportunities-loading { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(255, 255, 255, 0.9); color: #62748a; }
+/* Keep this account's full deal view above the persistent mobile navigation. */
+.account-opportunities-detail { position: relative; z-index: 210; }
+@media (max-width: 480px) {
+  .account-opportunities-header, .account-opportunities-body { padding: 16px; }
+  .account-opportunity-card { padding: 14px; }
+}
