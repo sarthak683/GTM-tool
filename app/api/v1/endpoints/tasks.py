@@ -389,6 +389,18 @@ async def list_tasks(
     return await _build_task_reads(session, tasks)
 
 
+async def _visible_task_entity_filter(session: DBSession, current_user: User):
+    """Match workspace visibility without hydrating entities or repairing tasks."""
+    companies = CompanyRepository.visible_to(current_user, include_disabled=True)
+    contacts = await ContactRepository.visible_to(session, current_user)
+    deals = DealRepository.visible_to(current_user)
+    return or_(
+        and_(Task.entity_type == "company", companies.with_only_columns(Company.id).where(Company.id == Task.entity_id).exists()),
+        and_(Task.entity_type == "contact", contacts.with_only_columns(Contact.id).where(Contact.id == Task.entity_id).exists()),
+        and_(Task.entity_type == "deal", deals.with_only_columns(Deal.id).where(Deal.id == Task.entity_id).exists()),
+    )
+
+
 @router.get("/count")
 async def get_task_count(session: DBSession, current_user: CurrentUser):
     """Return the open-task badge count without a workspace-wide repair sweep.
@@ -397,11 +409,13 @@ async def get_task_count(session: DBSession, current_user: CurrentUser):
     the Tasks workspace is opened. This endpoint is polled by every visible
     CRM tab, so it must remain a cheap, read-only query.
     """
+    visible_entity = await _visible_task_entity_filter(session, current_user)
     count = (
         await session.execute(
             select(func.count(Task.id)).where(
                 Task.assigned_to_id == current_user.id,
                 Task.status == "open",
+                visible_entity,
             )
         )
     ).scalar_one()
@@ -440,7 +454,9 @@ async def list_workspace_tasks(
         else_=2,
     )
 
-    stmt = select(Task).order_by(status_rank, priority_rank, Task.updated_at.desc())
+    stmt = select(Task).where(
+        await _visible_task_entity_filter(session, current_user)
+    ).order_by(status_rank, priority_rank, Task.updated_at.desc())
     await backfill_open_task_assignments(session)
     await session.commit()
     if scope == "mine" or not current_user.is_admin:

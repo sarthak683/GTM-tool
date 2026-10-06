@@ -24,6 +24,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
+from app.clients.lifecycle import closing_client
 from app.repositories.visibility import unscoped_for_background_job
 from app.config import settings
 from app.services.log_safety import safe_error_message
@@ -590,7 +591,6 @@ async def _run_icp_analysis(
         return None
 
     import anthropic
-    client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
 
     # Build the user message with all collected intelligence
     user_data = f"## Company: {company_name}\n"
@@ -731,15 +731,16 @@ async def _run_icp_analysis(
         user_data += "\n"
 
     try:
-        response = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=5500,
-            # Cache the large static ICP framework prompt — batch ICP research
-            # reuses the identical prefix within the 5-min window, cutting input
-            # tokens on every call after the first.
-            system=[{"type": "text", "text": _ICP_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user_data}],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=5500,
+                # Cache the large static ICP framework prompt — batch ICP research
+                # reuses the identical prefix within the 5-min window, cutting input
+                # tokens on every call after the first.
+                system=[{"type": "text", "text": _ICP_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user_data}],
+            )
         text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
         text = "\n".join(text_blocks).strip()
 

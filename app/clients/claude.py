@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Any, Optional
 
+from app.clients.lifecycle import closing_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -77,16 +78,16 @@ class ClaudeClient:
 
         try:
             model = model_override or self._pick_model(system=system, user=user, max_tokens=max_tokens)
-            client = self._get_client()
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=[{"role": "user", "content": user}],
-                ),
-                timeout=40,
-            )
+            async with closing_client(self._get_client()) as client:
+                response = await asyncio.wait_for(
+                    client.messages.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        system=system,
+                        messages=[{"role": "user", "content": user}],
+                    ),
+                    timeout=40,
+                )
             text_blocks = [block.text for block in response.content if getattr(block, "type", None) == "text"]
             content = "\n".join(text_blocks).strip() if text_blocks else ""
             return content or None
@@ -115,24 +116,24 @@ class ClaudeClient:
 
         try:
             model = model_override or self._pick_model(system=system, user=user, max_tokens=max_tokens)
-            client = self._get_client()
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=[{"role": "user", "content": user}],
-                    tools=[
-                        {
-                            "name": tool_name,
-                            "description": tool_description,
-                            "input_schema": input_schema,
-                        }
-                    ],
-                    tool_choice={"type": "tool", "name": tool_name},
-                ),
-                timeout=40,
-            )
+            async with closing_client(self._get_client()) as client:
+                response = await asyncio.wait_for(
+                    client.messages.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        system=system,
+                        messages=[{"role": "user", "content": user}],
+                        tools=[
+                            {
+                                "name": tool_name,
+                                "description": tool_description,
+                                "input_schema": input_schema,
+                            }
+                        ],
+                        tool_choice={"type": "tool", "name": tool_name},
+                    ),
+                    timeout=40,
+                )
             for block in response.content:
                 if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
                     payload = getattr(block, "input", None)

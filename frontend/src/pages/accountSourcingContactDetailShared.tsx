@@ -173,7 +173,7 @@ export function Chip({
 export function KV({ label, value }: { label: string; value?: ReactNode }) {
   if (value === undefined || value === null || value === "") return null;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr)", gap: 10, alignItems: "start" }}>
+    <div className="prospect-detail-key-value" style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr)", gap: 10, alignItems: "start" }}>
       <div style={{ color: colors.faint, fontWeight: 700, fontSize: 12, letterSpacing: 0.3 }}>{label.toUpperCase()}</div>
       <div style={{ color: colors.sub, fontSize: 13, lineHeight: 1.55 }}>{value}</div>
     </div>

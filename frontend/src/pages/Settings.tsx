@@ -274,6 +274,7 @@ export default function SettingsPage() {
 
   const statusTone = useMemo(() => {
     if (!gmail) return { bg: "#eef2ff", color: "#4b56c7", label: "Loading" };
+    if (gmail.last_error) return { bg: "#fff6df", color: "#a26a00", label: "Sync needs attention" };
     if (gmail.configured) return { bg: "#e8f8ee", color: "#217a49", label: "Connected" };
     if (gmail.inbox) return { bg: "#fff6df", color: "#a26a00", label: "Needs connect" };
     return { bg: "#f3f5fc", color: "#66748f", label: "Not set up" };
@@ -1570,7 +1571,9 @@ export default function SettingsPage() {
     setPushTesting(true);
     try {
       const r = await pushApi.sendTest();
-      if (r.total === 0) {
+      if (r.configured === 0) {
+        toast.error("Call notifications are temporarily unavailable. Please ask your admin to check notification delivery.", "Notifications unavailable");
+      } else if (r.total === 0) {
         toast.error("No devices registered for this account. Tap Enable on the device you want notified.", "No devices");
       } else if (r.sent > 0) {
         // Delivery past the push service is invisible to the server, so say
@@ -1786,7 +1789,7 @@ export default function SettingsPage() {
                     Connection status
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 700, color: "#142335" }}>
-                    {loading ? "Loading..." : (gmail?.configured ? "Auto-sync active" : "Needs setup")}
+                    {loading ? "Loading..." : (gmail?.last_error ? "Sync needs attention" : gmail?.configured ? "Auto-sync active" : "Needs setup")}
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
@@ -2043,7 +2046,7 @@ export default function SettingsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                 {[
                   { title: "Conversation mapping", body: "Matches emails to deals via contact address, company domain, or AI classification." },
-                  { title: "Auto-create contacts", body: "New stakeholders found in email threads are added to the CRM and linked to the deal." },
+                  { title: "Existing prospect matching", body: "Emails are matched to existing CRM prospects and deals. Add new prospects through Prospecting or Account Sourcing." },
                   { title: "AI task generation", body: "Detects key moments — POC agreed, pricing asked, meeting requested — and creates tasks automatically." },
                   { title: "Historical backfill", body: "On first connect, scans the last 90 days of your inbox to surface past conversations." },
                 ].map((item) => (
@@ -3217,7 +3220,7 @@ export default function SettingsPage() {
                     {pushState?.subscribed ? "Notifications enabled on this device" : "Enable notifications on this device"}
                   </div>
                   <div className="crm-muted" style={{ fontSize: 12, marginTop: 4 }}>
-                    {pushState
+                    {pushState?.reason || (pushState
                       ? (pushState.supported
                           ? (pushState.configured
                               ? (pushState.permission === "denied"
@@ -3227,7 +3230,7 @@ export default function SettingsPage() {
                                       : "Tap to enable — your browser will ask for permission."))
                               : "Server hasn't been configured with VAPID keys yet. Ask an admin to set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY.")
                           : "This browser does not support Web Push. Try Chrome on Android or install the PWA on iOS 16.4+.")
-                      : "Checking…"}
+                      : "Checking…")}
                   </div>
                 </div>
                 <button

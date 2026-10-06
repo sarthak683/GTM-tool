@@ -1444,10 +1444,10 @@ export default function Contacts() {
     // their phone. Never blocks the sidebar — failures, missing VAPID, no
     // subscription, etc. all silently no-op.
     pushApi
-      .ringMobile(contact.id)
+      .ringMobile(contact.id, contact.phone)
       .then((res) => {
         if (res.sent > 0) {
-          toast.info(`Rang ${res.sent} device${res.sent === 1 ? "" : "s"}.`, "Mobile call ready");
+          toast.info(`Sent to ${res.sent} device${res.sent === 1 ? "" : "s"}. If it doesn't appear, check Beacon notifications and Focus on your phone.`, "Call notification sent");
         } else if (res.configured === 0) {
           toast.warning("Mobile push is not configured yet. The call drawer is ready here.", "Mobile ring unavailable");
         } else if (res.total === 0) {

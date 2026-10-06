@@ -52,8 +52,16 @@ async def get_personal_email_status(session: DBSession, current_user: CurrentUse
     # A user may have several mailboxes; the status header describes the PRIMARY.
     result = await session.execute(primary_connection_stmt(current_user.id))
     connection = result.scalars().first()
-    if not connection or not connection.is_active:
+    if not connection:
         return UserEmailConnectionStatus(connected=False)
+    if not connection.is_active:
+        return UserEmailConnectionStatus(
+            connected=False,
+            email_address=connection.email_address,
+            last_sync_epoch=connection.last_sync_epoch,
+            backfill_completed=connection.backfill_completed,
+            last_error=connection.last_error,
+        )
     scopes = connection.token_data.get("scopes") if isinstance(connection.token_data, dict) else []
     if isinstance(scopes, str):
         has_calendar_scope = CALENDAR_SCOPE in scopes

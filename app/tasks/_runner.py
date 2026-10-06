@@ -34,8 +34,9 @@ import asyncio
 # third-party httpx client whose __del__ schedules `AsyncClient.aclose()` —
 # that task is created during the drain, so a single pass closes the loop out
 # from under it and the worker logs "Task exception was never retrieved ...
-# RuntimeError('Event loop is closed')". Every one of our own clients uses
-# `async with`, so this noise comes from vendored SDKs we do not control.
+# RuntimeError('Event loop is closed')". Owned SDK clients must also be
+# explicitly closed while their task loop is still running; see
+# app.clients.lifecycle. Draining is a backstop, not client lifecycle management.
 #
 # Bounded because a pathological finalizer could otherwise schedule work
 # forever; three passes has been enough for every case seen in production, and

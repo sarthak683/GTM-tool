@@ -44,6 +44,9 @@ RUN apt-get update \
 # /usr/local (site-packages + console scripts like alembic and uvicorn).
 COPY --from=builder /install /usr/local
 
+# The runtime base carries its own pip; the builder upgrade is not copied.
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1
+
 # Create a non-root user up front. uvicorn binds 8000 (>1024, no privilege
 # needed) and Alembic only talks to the DB, so neither the migrate initContainer
 # nor the server require root. Fixed uid/gid 10001 matches the Helm

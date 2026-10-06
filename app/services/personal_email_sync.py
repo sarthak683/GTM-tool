@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.lifecycle import closing_client
 from app.repositories.visibility import unscoped_for_background_job
 from app.clients.google_docs import fetch_google_doc_context
 from app.clients.gmail_inbox import EmailMessage
@@ -421,7 +422,6 @@ async def _ai_classify_email(
     try:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
         known_companies = ", ".join(company_names[:20]) if company_names else "none known"
         known_contacts = ", ".join(contact_names[:20]) if contact_names else "none known"
 
@@ -440,11 +440,12 @@ async def _ai_classify_email(
             "Only match known CRM companies/contacts. Return null for unknowns."
         )
 
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=150,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}],
+            )
         text = response.content[0].text.strip()
         # Strip markdown code fences if present
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -465,19 +466,19 @@ async def _generate_email_summary(subject: str, body: str) -> str | None:
     try:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=80,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Summarize this sales email in one sentence (max 15 words). "
-                    "Focus on the key action or outcome.\n\n"
-                    f"Subject: {subject}\n\n{body[:1200]}"
-                ),
-            }],
-        )
+        async with closing_client(anthropic.AsyncAnthropic(api_key=settings.claude_api_key)) as client:
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=80,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "Summarize this sales email in one sentence (max 15 words). "
+                        "Focus on the key action or outcome.\n\n"
+                        f"Subject: {subject}\n\n{body[:1200]}"
+                    ),
+                }],
+            )
         return response.content[0].text.strip()
     except Exception:
         return None
