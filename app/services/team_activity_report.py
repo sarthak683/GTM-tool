@@ -55,6 +55,8 @@ DEFAULT_TEAM_ACTIVITY_REPORT_SETTINGS = {
     "nonprod_recipients": ["sarthak@beacon.li"],
     "last_scheduled_send_key": None,
     "last_scheduled_send_at": None,
+    "partial_send_key": None,
+    "partial_sent_recipients": [],
 }
 
 DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
@@ -105,6 +107,12 @@ def normalize_team_activity_report_settings(value: dict | None) -> dict[str, Any
         "nonprod_recipients": _emails(merged.get("nonprod_recipients"), ["sarthak@beacon.li"]),
         "last_scheduled_send_key": merged.get("last_scheduled_send_key"),
         "last_scheduled_send_at": merged.get("last_scheduled_send_at"),
+        "partial_send_key": merged.get("partial_send_key"),
+        "partial_sent_recipients": [
+            str(r).strip().lower()
+            for r in (merged.get("partial_sent_recipients") or [])
+            if isinstance(r, str) and "@" in r
+        ],
     }
 
 

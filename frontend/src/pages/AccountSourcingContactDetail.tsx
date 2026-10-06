@@ -27,6 +27,7 @@ import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import ProvenanceBar from "../components/ProvenanceBar";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import AddToSequenceButton from "../components/AddToSequenceButton";
+import EventTagEditor from "../components/EventTagEditor";
 import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import { useToast } from "../lib/ToastContext";
 import {
@@ -568,6 +569,14 @@ export default function AccountSourcingContactDetail() {
                     saving={statusSaving}
                     onChange={handleStatusChange}
                   />
+                  <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                    <EventTagEditor
+                      kind="contact"
+                      id={contact.id}
+                      events={contact.events}
+                      onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))}
+                    />
+                  </div>
                   <div
                     className="prospect-detail-progress"
                     style={{

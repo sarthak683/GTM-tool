@@ -95,6 +95,9 @@ export type ContactSearchParams = {
     prospectOnly?: boolean;
     // Filter by the ACCOUNT's status ("none" = account has no status yet).
     companyAccountStatus?: string[];
+    // Event tags (event names contain commas, so the wire format joins with
+    // "||"). "__empty__" = prospects with no event.
+    event?: string[];
     // Disabled (not_a_fit/dnd) accounts' prospects are excluded by default;
     // opt in to review them.
     includeDisabledAccounts?: boolean;
@@ -159,6 +162,7 @@ export const buildContactQuery = (params: ContactSearchParams): URLSearchParams 
     if (params.scopeAnyMatch) search.set("scope_any_match", "true");
     if (params.prospectOnly) search.set("prospect_only", "true");
     if (params.companyAccountStatus?.length) search.set("company_account_status", params.companyAccountStatus.join(","));
+    if (params.event?.length) search.set("event", params.event.join("||"));
     if (params.includeDisabledAccounts) search.set("include_disabled_accounts", "true");
     if (params.timezone?.length) search.set("timezone", params.timezone.join(","));
     if (params.emailsOpened) search.set("emails_opened", "true");

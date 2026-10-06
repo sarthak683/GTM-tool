@@ -343,6 +343,7 @@ class ContactRepository(BaseRepository[Contact]):
         scope_any_match: bool = False,
         prospect_only: bool = False,
         company_account_status: Optional[str] = None,
+        event: Optional[str] = None,
         include_disabled_accounts: bool = False,
         timezone: Optional[str] = None,
         call_outcome_color: Optional[list[str]] = None,
@@ -541,6 +542,21 @@ class ContactRepository(BaseRepository[Contact]):
                 status_filter = or_(*status_clauses) if len(status_clauses) > 1 else status_clauses[0]
                 base_stmt = base_stmt.where(status_filter)
                 count_stmt = count_stmt.where(status_filter)
+
+        # Event tag filter. Several events are separated by "||" (event names
+        # contain commas); "__empty__" = prospects with no event.
+        if event:
+            event_tokens = [t.strip() for t in event.split("||") if t.strip()]
+            event_clauses = []
+            named_events = [t for t in event_tokens if t != "__empty__"]
+            if named_events:
+                event_clauses.append(Contact.events.overlap(named_events))
+            if "__empty__" in event_tokens:
+                event_clauses.append(func.cardinality(Contact.events) == 0)
+            if event_clauses:
+                event_filter = or_(*event_clauses) if len(event_clauses) > 1 else event_clauses[0]
+                base_stmt = base_stmt.where(event_filter)
+                count_stmt = count_stmt.where(event_filter)
 
         # Disabled-account gate (the "single source of truth" rule): prospects
         # of not_a_fit/dnd accounts are OUT of the default queue — list, count,
@@ -1156,6 +1172,7 @@ class ContactRepository(BaseRepository[Contact]):
         scope_any_match: bool = False,
         prospect_only: bool = False,
         company_account_status: Optional[str] = None,
+        event: Optional[str] = None,
         include_disabled_accounts: bool = False,
         timezone: Optional[str] = None,
         call_outcome_color: Optional[list[str]] = None,
@@ -1201,6 +1218,7 @@ class ContactRepository(BaseRepository[Contact]):
             scope_any_match=scope_any_match,
             prospect_only=prospect_only,
             company_account_status=company_account_status,
+            event=event,
             include_disabled_accounts=include_disabled_accounts,
             timezone=timezone,
             call_outcome_color=call_outcome_color,
@@ -1317,6 +1335,7 @@ class ContactRepository(BaseRepository[Contact]):
         scope_any_match: bool = False,
         prospect_only: bool = False,
         company_account_status: Optional[str] = None,
+        event: Optional[str] = None,
         include_disabled_accounts: bool = False,
         timezone: Optional[str] = None,
         call_outcome_color: Optional[list[str]] = None,
@@ -1363,6 +1382,7 @@ class ContactRepository(BaseRepository[Contact]):
             scope_any_match=scope_any_match,
             prospect_only=prospect_only,
             company_account_status=company_account_status,
+            event=event,
             include_disabled_accounts=include_disabled_accounts,
             timezone=timezone,
             call_outcome_color=call_outcome_color,

@@ -1,7 +1,7 @@
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, sequencesApi } from "../lib/api";
+import { accountSourcingApi, activitiesApi, angelMappingApi, assignmentsApi, buildContactQuery, companiesApi, contactsApi, dealsApi, outreachApi, pushApi, remindersApi, sequencesApi, eventsApi } from "../lib/api";
 import { getCachedRolePermissions, getCachedUsers } from "../lib/cachedFetch";
 import type { ContactEngagementStats, PreCallBrief, SequenceLifecycle, LifecycleSummary, Sequence } from "../lib/api";
 import type { Activity, Contact, AngelInvestor, AngelMapping, Company, Deal, RolePermissionsSettings, User } from "../types";
@@ -12,7 +12,7 @@ import {
   Network, ChevronDown, ChevronRight, ExternalLink, Star, Plus, Link2,
   Building2, Target, Settings2, Phone, Upload, Download, MoreHorizontal,
   Mail, Clock, PhoneCall, Globe, X, AlertTriangle, ArrowLeftRight, EyeOff, GripVertical,
-  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin, Pencil, Check, Repeat,
+  Mic, ArrowRight, MessageCircle, MessageSquare, Send, Linkedin, Pencil, Check, Repeat, CalendarDays,
 } from "lucide-react";
 import { avatarColor, formatDomain, getInitials, gmailComposeUrl } from "../lib/utils";
 import {
@@ -28,6 +28,8 @@ import { CreateDealModal, DEFAULT_DEAL_STAGES } from "./Pipeline";
 import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AssignDropdown from "../components/AssignDropdown";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import EventChips from "../components/EventChips";
+import EventTagModal from "../components/EventTagModal";
 import RangeFilter from "../components/filters/RangeFilter";
 import DateRangeFilter, { type DateRangeValue } from "../components/filters/DateRangeFilter";
 import { Pagination } from "../components/ui/Pagination";
@@ -267,6 +269,7 @@ export default function Contacts() {
     personaFilter, setPersonaFilter,
     sequenceFilter, setSequenceFilter,
     accountStatusFilter, setAccountStatusFilter,
+    eventFilter, setEventFilter,
     callDispositionFilter, setCallDispositionFilter,
     linkedinStatusFilter, setLinkedinStatusFilter,
     callOutcomeColorFilter, setCallOutcomeColorFilter,
@@ -329,6 +332,16 @@ export default function Contacts() {
   const [bulkAssigningSdr, setBulkAssigningSdr] = useState(false);
   // Bulk "add to sequence" — enroll every selected prospect into an existing
   // Outreach Sequence, same picker as Account Sourcing's stakeholder list.
+  // Event tags: filter options (all events in the data) + bulk "Add to event".
+  const [eventOptions, setEventOptions] = useState<string[]>([]);
+  const [eventModalOpen, setEventModalOpen] = useState(false);
+  const eventFilterOptions = useMemo(
+    () => [...eventOptions.map((e) => ({ value: e, label: e })), { value: "__empty__", label: "No event" }],
+    [eventOptions],
+  );
+  useEffect(() => {
+    eventsApi.list().then(setEventOptions).catch(() => setEventOptions([]));
+  }, []);
   const [bulkSequenceOpen, setBulkSequenceOpen] = useState(false);
   const [bulkSequences, setBulkSequences] = useState<Sequence[]>([]);
   const [bulkSequencesLoading, setBulkSequencesLoading] = useState(false);
@@ -774,6 +787,7 @@ export default function Contacts() {
         : (ownerFilter.length ? ownerFilter : undefined),
       timezone: timezoneFilter.length ? expandTimezoneFilter(timezoneFilter) : undefined,
       companyAccountStatus: accountStatusFilter.length ? accountStatusFilter : undefined,
+      event: eventFilter.length ? eventFilter : undefined,
       // Last Touch filter: both a channel AND at least one rep must be set —
       // a rep alone is ambiguous (which of call/email/linkedin?).
       lastTouchType: lastTouchType && lastTouchRepFilter.length ? lastTouchType : undefined,
@@ -841,9 +855,11 @@ export default function Contacts() {
       // SDR / AE are OPTIONAL ownership columns: put a teammate's email or full
       // name to assign the prospect to them. Leave blank to assign it to you
       // (the uploader). Email is the most reliable; a name must match one
-      // teammate exactly.
-      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone", "SDR", "AE"],
-      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199", "mahesh@beacon.li", "Pravalika Jamalpur"],
+      // teammate exactly. Event is OPTIONAL too: tags the prospect (and its
+      // account) to an event; separate several with ";" and quote names that
+      // contain a comma (e.g. "CS Summit, London").
+      ["Company Name", "Domain", "First Name", "Last Name", "Title", "Email", "LinkedIn URL", "Mobile Phone", "Direct Phone", "SDR", "AE", "Event"],
+      ["BlackLine", "blackline.com", "Victoria", "Subbotina", "Director of Professional Services", "victoria.subbotina@blackline.com", "https://linkedin.com/in/victoriasubbotina", "+1 513-533-0040", "+1 513-533-0199", "mahesh@beacon.li", "Pravalika Jamalpur", "\"CS Summit, London\""],
     ]
       .map((row) => row.join(","))
       .join("\n");
@@ -1037,7 +1053,7 @@ export default function Contacts() {
       return;
     }
     setPage(1);
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter, accountStatusFilter, eventFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, searchScope, searchMatch, prospectSort]);
 
   // Load the rep-scoped daily call count once on mount and whenever the
   // logged-in user changes. Subsequent updates happen inline after each
@@ -1050,7 +1066,7 @@ export default function Contacts() {
   useEffect(() => {
     if (tab !== "contacts") return;
     loadContacts();
-  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
+  }, [aeFilter, callDispositionFilter, linkedinStatusFilter, personaFilter, emailFilter, cardFilter, callOutcomeColorFilter, emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax, nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to, companyFilter, debouncedSearch, ownerFilter, ownerScope, page, sdrFilter, sequenceFilter, accountStatusFilter, eventFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, user?.id, searchScope, searchMatch, prospectSort]);
 
   // Clear the selection when the FILTERS change — the selected prospects may no
   // longer be in the result set, so acting on them would be surprising.
@@ -1073,7 +1089,7 @@ export default function Contacts() {
     emailOutcomeColorFilter, callAttemptsBucketFilter, followupCountMin, followupCountMax,
     nextFollowupRange.from, nextFollowupRange.to, callLastRange.from, callLastRange.to,
     companyFilter, debouncedSearch, ownerFilter, ownerScope, sdrFilter, sequenceFilter,
-    accountStatusFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, searchScope, searchMatch,
+    accountStatusFilter, eventFilter, timezoneFilter, lastTouchType, lastTouchRepFilter, tab, searchScope, searchMatch,
   ]);
 
   // After the contacts list renders, fetch compact lifecycle summaries in
@@ -1950,6 +1966,17 @@ export default function Contacts() {
   };
 
   // Open the bulk "add to sequence" modal and load the rep's Outreach Sequences.
+  const tagSelectedWithEvent = async (event: string) => {
+    const res = await eventsApi.tag({ event, contactIds: Array.from(selectedContactIds) });
+    toast.success(
+      `${res.contacts_changed} prospect${res.contacts_changed === 1 ? "" : "s"} and ${res.companies_changed} account${res.companies_changed === 1 ? "" : "s"} tagged to "${res.event}"`,
+      "Event added",
+    );
+    eventsApi.list().then(setEventOptions).catch(() => undefined);
+    setSelectedContactIds(new Set());
+    loadContacts({ silent: true });
+  };
+
   const openSequenceModal = () => {
     if (selectedContactIds.size === 0) return;
     setBulkSequenceOpen(true);
@@ -3057,6 +3084,16 @@ export default function Contacts() {
                     allLabel="All personas"
                     minWidth={160}
                   />
+                  {/* Event tag — options come live from the events in the data. */}
+                  <MultiSelectFilter
+                    hideLabel
+                    label="Event"
+                    values={eventFilter}
+                    onChange={setEventFilter}
+                    options={eventFilterOptions}
+                    allLabel="All events"
+                    minWidth={170}
+                  />
                     </div>{/* end Prospects row */}
                   </div>{/* end Prospects group */}
 
@@ -3557,6 +3594,27 @@ export default function Contacts() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setEventModalOpen(true)}
+                    disabled={selectedContactIds.size === 0}
+                    style={{
+                      height: 36,
+                      border: "1px solid #ddd6fe",
+                      background: selectedContactIds.size ? "#f5f3ff" : "#f6f8fb",
+                      color: selectedContactIds.size ? "#6d28d9" : "#9aa8b7",
+                      borderRadius: 11,
+                      padding: "0 14px",
+                      fontSize: 13,
+                      fontWeight: 850,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: selectedContactIds.size ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    <CalendarDays size={14} /> Add to event
+                  </button>
+                  <button
+                    type="button"
                     onClick={openSequenceModal}
                     disabled={selectedContactIds.size === 0}
                     style={{
@@ -3805,6 +3863,7 @@ export default function Contacts() {
                                               {persona.label}
                                             </span>
                                           )}
+                                          <EventChips events={c.events} highlight={eventFilter} />
                                           {opens > 0 && (
                                             <span title={`${opens} email opens`} style={{
                                               fontSize: 10, fontWeight: 700, padding: "2px 7px",
@@ -6348,6 +6407,13 @@ export default function Contacts() {
           </div>
         </div>
       )}
+
+      <EventTagModal
+        open={eventModalOpen}
+        onClose={() => setEventModalOpen(false)}
+        subtitle={`${selectedContactIds.size} prospect${selectedContactIds.size === 1 ? "" : "s"} selected — their accounts are tagged too`}
+        onSubmit={tagSelectedWithEvent}
+      />
 
       {bulkSequenceOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 210, display: "flex", alignItems: "center", justifyContent: "center" }}

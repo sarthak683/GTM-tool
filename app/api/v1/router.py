@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     call_recordings,
     companies,
     contacts,
+    events,
     crm_imports,
     custom_demo,
     data_room,
@@ -62,6 +63,7 @@ router.include_router(admin_health.router)
 router.include_router(assignments.router)
 router.include_router(companies.router)
 router.include_router(contacts.router)
+router.include_router(events.router)
 router.include_router(deals.router)
 router.include_router(analytics.router)
 router.include_router(performance.router)

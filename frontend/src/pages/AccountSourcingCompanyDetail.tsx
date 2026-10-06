@@ -53,6 +53,7 @@ import { saveContactAccountStatus, shouldSyncContactStatusToAccount } from "../l
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import AddToSequenceButton from "../components/AddToSequenceButton";
+import EventTagEditor from "../components/EventTagEditor";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
@@ -1563,6 +1564,15 @@ export default function AccountSourcingCompanyDetail() {
                     </button>
                   );
                 })}
+              </div>
+              {/* Event tags — add/remove; the Account Sourcing list filters on these. */}
+              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                <EventTagEditor
+                  kind="company"
+                  id={company.id}
+                  events={company.events}
+                  onChanged={(events) => setCompany((prev) => (prev ? { ...prev, events } : prev))}
+                />
               </div>
               {/* Outbound Summary — SDR quick notes, saved on blur or via the
                   Save button. Sits directly under the status control. */}

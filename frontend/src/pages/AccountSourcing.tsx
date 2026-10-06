@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Brain,
   Building2,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -25,7 +26,7 @@ import {
   X,
 } from "lucide-react";
 
-import { accountSourcingApi, assignmentsApi } from "../lib/api";
+import { accountSourcingApi, assignmentsApi, eventsApi } from "../lib/api";
 import { useToast } from "../lib/ToastContext";
 import { ACCOUNT_STATUS_OPTIONS, accountStatusOption } from "../lib/accountStatus";
 import {
@@ -42,6 +43,8 @@ import type { AccountSourcingSummary, Company, SourcingBatch, User } from "../ty
 import AssignDropdown from "../components/AssignDropdown";
 import BulkReassignUpload from "../components/BulkReassignUpload";
 import MultiSelectFilter from "../components/filters/MultiSelectFilter";
+import EventChips from "../components/EventChips";
+import EventTagModal from "../components/EventTagModal";
 import {
   cardStyle,
   colors,
@@ -234,7 +237,7 @@ function UploadPanel({
           </>
         ) : (
           <>
-            <Upload size={14} /> Import workbook
+            <Upload size={14} /> Bulk import accounts
           </>
         )}
         <input
@@ -578,6 +581,7 @@ function CompanyCard({
           rest (status, disposition, Recotap journey/engagement, HQ) appear only
           when set. Wraps to a second line on dense rows. */}
       <div className="as-col-signals" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 5, minWidth: 0 }}>
+        <EventChips events={company.events} />
         {hasIcp ? (
           <span title="ICP fit — how well this account matches our ideal customer profile (not buying intent)" style={{ ...ICP_STYLE[tier], borderRadius: 999, fontSize: 11, fontWeight: 800, padding: "2px 8px", whiteSpace: "nowrap" }}>ICP · {tier.toUpperCase()}</span>
         ) : null}
@@ -1318,6 +1322,17 @@ export default function AccountSourcing() {
   const [statusFilter, setStatusFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("status")));
   const [laneFilter, setLaneFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("lane")));
   const [hqContinentFilter, setHqContinentFilter] = useState<string[]>(() => parseSearchParamList(initParams.get("hq")));
+  // Event tags contain commas, so the URL list is "||"-joined, not comma-joined.
+  const [eventFilter, setEventFilter] = useState<string[]>(() => (initParams.get("ev") ?? "").split("||").map((v) => v.trim()).filter(Boolean));
+  const [eventOptions, setEventOptions] = useState<string[]>([]);
+  const [eventModalOpen, setEventModalOpen] = useState(false);
+  useEffect(() => {
+    eventsApi.list().then(setEventOptions).catch(() => setEventOptions([]));
+  }, []);
+  const eventFilterOptions = useMemo(
+    () => [...eventOptions.map((e) => ({ value: e, label: e })), { value: "__empty__", label: "No event" }],
+    [eventOptions],
+  );
   // Import drill-in: "View accounts" on an Imports row pins batch_id here. It
   // has no dedicated control, so it surfaces as a removable chip.
   const [batchFilter, setBatchFilter] = useState<string>(() => initParams.get("batch") ?? "");
@@ -1419,12 +1434,13 @@ export default function AccountSourcing() {
     recommendedOutreachLane: laneFilter.length ? laneFilter : undefined,
     journeyStage: journeyFilter.length ? journeyFilter : undefined,
     headquartersContinent: hqContinentFilter.length ? hqContinentFilter : undefined,
+    event: eventFilter.length ? eventFilter : undefined,
     batchId: batchFilter || undefined,
     prospectsMin,
     prospectsMax,
   }), [
     debouncedSearch, ownerScope, user?.id, ownerFilter, sdrFilter, tierFilter,
-    dispositionFilter, statusFilter, laneFilter, journeyFilter, hqContinentFilter, batchFilter,
+    dispositionFilter, statusFilter, laneFilter, journeyFilter, hqContinentFilter, eventFilter, batchFilter,
     prospectsMin, prospectsMax,
   ]);
 
@@ -1517,6 +1533,7 @@ export default function AccountSourcing() {
       laneFilter.length ? next.set("lane", laneFilter.join(",")) : next.delete("lane");
       journeyFilter.length ? next.set("journey", journeyFilter.join(",")) : next.delete("journey");
       hqContinentFilter.length ? next.set("hq", hqContinentFilter.join(",")) : next.delete("hq");
+      eventFilter.length ? next.set("ev", eventFilter.join("||")) : next.delete("ev");
       batchFilter ? next.set("batch", batchFilter) : next.delete("batch");
       sortBy !== "recent" ? next.set("sort", sortBy) : next.delete("sort");
       page > 1 ? next.set("pg", String(page)) : next.delete("pg");
@@ -1532,7 +1549,7 @@ export default function AccountSourcing() {
       }
       return next;
     }, { replace: true });
-  }, [activeTab, batchFilter, laneFilter, dispositionFilter, statusFilter, journeyFilter, hqContinentFilter, ownerFilter, sdrFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
+  }, [activeTab, batchFilter, laneFilter, dispositionFilter, statusFilter, journeyFilter, hqContinentFilter, eventFilter, ownerFilter, sdrFilter, ownerScope, page, search, setSearchParams, sortBy, tierFilter, prospectsMin, prospectsMax]);
 
   // "Needs review" is admin-only; a stale tab=review (URL or the saved filter
   // string) must never leave a rep staring at an empty 403 tab.
@@ -1560,7 +1577,7 @@ export default function AccountSourcing() {
       return;
     }
     setPage(1);
-  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, hqContinentFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, batchFilter, sortBy, prospectsMin, prospectsMax]);
+  }, [debouncedSearch, dispositionFilter, statusFilter, journeyFilter, laneFilter, hqContinentFilter, eventFilter, ownerFilter, sdrFilter, ownerScope, tierFilter, batchFilter, sortBy, prospectsMin, prospectsMax]);
 
   const runReset = useCallback(async (scope: "account-sourcing" | "workspace") => {
     if (scope === "workspace") {
@@ -1705,11 +1722,11 @@ export default function AccountSourcing() {
     }
   }, [assignAllUserId, assignAllBusy, assignAllRole, activeFilters, companyTotal, teamUsers, toast, clearCompanySelection, load]);
 
-  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length || hqContinentFilter.length || batchFilter || hasAdvancedFilter);
+  const hasFilters = !!(search || ownerScope === "mine" || ownerFilter.length || sdrFilter.length || tierFilter.length || dispositionFilter.length || statusFilter.length || laneFilter.length || journeyFilter.length || hqContinentFilter.length || eventFilter.length || batchFilter || hasAdvancedFilter);
   // Count of active filters living behind the "More filters" toggle, so the
   // collapsed toggle still signals that hidden filters are narrowing the list.
   const moreFilterCount =
-    tierFilter.length + ownerFilter.length + dispositionFilter.length + laneFilter.length + journeyFilter.length + hqContinentFilter.length + (hasAdvancedFilter ? 1 : 0);
+    tierFilter.length + ownerFilter.length + dispositionFilter.length + laneFilter.length + journeyFilter.length + hqContinentFilter.length + eventFilter.length + (hasAdvancedFilter ? 1 : 0);
   const totalCompanies = summary?.total_companies ?? 0;
   const hotCount = summary?.hot_count ?? 0;
   const warmCount = summary?.warm_count ?? 0;
@@ -1759,8 +1776,8 @@ export default function AccountSourcing() {
 
   const downloadTemplate = useCallback(() => {
     const template = [
-      ["Company Name", "Domain", "Industry", "AE", "SDR", "Classification", "Contact", "Title", "Email", "LinkedIn URL"],
-      ["BlackLine", "blackline.com", "Finance automation", "rakesh@beacon.li", "mahesh@beacon.li", "target", "Jane Smith", "Director of Professional Services", "jane@blackline.com", "https://linkedin.com/in/janesmith"],
+      ["Company Name", "Domain", "Industry", "AE", "SDR", "Classification", "Contact", "Title", "Email", "LinkedIn URL", "Event"],
+      ["BlackLine", "blackline.com", "Finance automation", "rakesh@beacon.li", "mahesh@beacon.li", "target", "Jane Smith", "Director of Professional Services", "jane@blackline.com", "https://linkedin.com/in/janesmith", "\"CS Summit, London\""],
     ]
       .map((row) => row.join(","))
       .join("\n");
@@ -2279,6 +2296,7 @@ export default function AccountSourcing() {
             setLaneFilter([]);
             setJourneyFilter([]);
             setHqContinentFilter([]);
+            setEventFilter([]);
             setBatchFilter("");
           };
           const toggleTier = (t: string) => {
@@ -2683,6 +2701,7 @@ export default function AccountSourcing() {
                       setLaneFilter([]);
                       setJourneyFilter([]);
                       setHqContinentFilter([]);
+                      setEventFilter([]);
                       setBatchFilter("");
                       setProspectsMin(undefined);
                       setProspectsMax(undefined);
@@ -2803,6 +2822,15 @@ export default function AccountSourcing() {
                     label="Headquarters"
                     allLabel="HQ: All"
                     minWidth={140}
+                    hideLabel
+                  />
+                  <MultiSelectFilter
+                    values={eventFilter}
+                    onChange={setEventFilter}
+                    options={eventFilterOptions}
+                    label="Event"
+                    allLabel="Event: All"
+                    minWidth={150}
                     hideLabel
                   />
                   <button
@@ -3005,6 +3033,13 @@ export default function AccountSourcing() {
                     nothing is selected so they can't be confused with the
                     filter-wide control on the left. */}
                 <div style={{ display: selectedCompanyIds.size > 0 ? "flex" : "none", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setEventModalOpen(true)}
+                    style={{ height: 36, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", borderRadius: 11, padding: "0 14px", fontSize: 13, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                  >
+                    <CalendarDays size={14} /> Add to event
+                  </button>
                   <select
                     value=""
                     disabled={bulkAssigningAe || bulkAssigningSdr}
@@ -3299,6 +3334,18 @@ export default function AccountSourcing() {
           </div>
         )}
 
+        <EventTagModal
+          open={eventModalOpen}
+          onClose={() => setEventModalOpen(false)}
+          subtitle={`${selectedCompanyIds.size} account${selectedCompanyIds.size === 1 ? "" : "s"} selected`}
+          onSubmit={async (event) => {
+            const res = await eventsApi.tag({ event, companyIds: Array.from(selectedCompanyIds) });
+            toast.success(`${res.companies_changed} account${res.companies_changed === 1 ? "" : "s"} tagged to "${res.event}"`);
+            eventsApi.list().then(setEventOptions).catch(() => undefined);
+            clearCompanySelection();
+            void load();
+          }}
+        />
         {showAssignAllModal ? (
           <>
             <div onClick={() => setShowAssignAllModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.24)", zIndex: 50 }} />

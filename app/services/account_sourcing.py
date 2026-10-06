@@ -130,6 +130,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "contact_first_name": ["first", "first name"],
     "contact_last_name": ["last", "last name"],
     "contact_title":  ["title", "job title", "job", "role"],
+    "events": ["event", "events", "event tag", "event tags", "event name", "tagged event", "tagged events"],
     "contact_email":  ["email", "work email"],
     "contact_phone":  [
         "direct mobile personal", "mobile", "phone", "phone number",

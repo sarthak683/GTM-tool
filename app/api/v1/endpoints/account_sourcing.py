@@ -30,6 +30,7 @@ from sqlmodel import select
 
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.geo import COUNTRY_TO_CONTINENT, OTHER
+from app.services.event_tags import canonicalize, known_events, merge_events, parse_events
 from app.models.angel import AngelInvestor, AngelMapping
 from app.models.company import Company, CompanyRead, CompanySourcingSummary, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
 from app.models.contact import Contact, ContactRead, ContactUpdate
@@ -41,6 +42,7 @@ from app.repositories.contact import ContactRepository, visible_contact_restrict
 from app.schemas.common import PaginatedResponse
 from app.services.account_sourcing import (
     _clean_company_name,
+    _find,
     account_priority_snapshot,
     append_company_activity_log,
     merge_company_from_upload,
@@ -215,6 +217,7 @@ class CompanySourcingFilters:
     ae_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches assigned_to_id (AE) only. Use '__unassigned__' for accounts with no AE.")
     sdr_id: str | None = Query(default=None, description="One or more user UUIDs (comma-separated). Matches sdr_id only. Use '__unassigned__' for accounts with no SDR.")
     journey_stage: str | None = Query(default=None, description="Recotap journey stage(s), comma-separated. Use 'not_scored' for accounts with no Recotap journey stage.")
+    event: str | None = Query(default=None, description="One or more event tags separated by '||' (event names contain commas). Use '__empty__' for accounts with no event.")
     headquarters_continent: str | None = Query(default=None, description="One or more continents (comma-separated): asia, africa, europe, australia, north_america, south_america, other. Derived from the free-text `headquarters` field via app.core.geo. Use '__empty__' for accounts with no headquarters set.")
     batch_id: UUID | None = Query(default=None, description="Only accounts attached to this sourcing batch (import).")
     prospects_min: int | None = Query(default=None, ge=0, description="Inclusive lower bound on the count of contacts (prospects) per account.")
@@ -329,6 +332,16 @@ def build_sourced_companies_stmt(user, filters: CompanySourcingFilters):
         if status_clauses:
             stmt = stmt.where(or_(*status_clauses))
     stmt = _apply_text_multi_filter(stmt, Company.recommended_outreach_lane, filters.recommended_outreach_lane)
+    if filters.event:
+        event_tokens = [t.strip() for t in str(filters.event).split("||") if t.strip()]
+        event_clauses = []
+        real_events = [t for t in event_tokens if t != "__empty__"]
+        if real_events:
+            event_clauses.append(Company.events.overlap(real_events))
+        if "__empty__" in event_tokens:
+            event_clauses.append(func.cardinality(Company.events) == 0)
+        if event_clauses:
+            stmt = stmt.where(or_(*event_clauses))
     if filters.headquarters_continent:
         tokens = _parse_multi_query(filters.headquarters_continent)
         include_empty = "__empty__" in tokens
@@ -1149,8 +1162,12 @@ async def _process_uploaded_rows(
 
     await _update_batch_progress("import_running", f"Importing 0 of {len(rows)} rows")
 
+    known_event_names = await known_events(session)
+
     for idx, row in enumerate(rows, start=1):
         fields = row_to_company_fields(row)
+        # Optional "Event" column — tags the account (and its prospect, below).
+        row_events = canonicalize(parse_events(_find(row, "events")), known_event_names)
         domain = fields["domain"]
         name = fields["name"]
 
@@ -1241,6 +1258,13 @@ async def _process_uploaded_rows(
                 await session.commit()
                 created += 1
 
+            if row_events:
+                merged_company_events = merge_events(company.events, row_events)
+                if merged_company_events != list(company.events or []):
+                    company.events = merged_company_events
+                    session.add(company)
+                    await session.commit()
+
             profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
             inv = profile.get("investors") if isinstance(profile.get("investors"), dict) else {}
             ownership = profile.get("ownership_stage")
@@ -1328,6 +1352,9 @@ async def _process_uploaded_rows(
                     refresh_contact_sequence_plan(contact, company)
                     session.add(contact)
                     resolved_contact = contact
+                if row_events:
+                    resolved_contact.events = merge_events(resolved_contact.events, row_events)
+                    session.add(resolved_contact)
                 await session.commit()
                 await session.refresh(resolved_contact)
 

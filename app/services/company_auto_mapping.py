@@ -24,6 +24,7 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
+from app.services.event_tags import merge_events
 
 
 async def backfill_orphans_for_company(
@@ -72,6 +73,8 @@ async def backfill_orphans_for_company(
                 .where(Meeting.company_id == shadow.id)
                 .values(company_id=company.id)
             )
+            if shadow.events:
+                company.events = merge_events(company.events, shadow.events)
             shadow_companies_absorbed += 1
 
     if not domain or domain.endswith(".unknown"):
@@ -112,6 +115,10 @@ async def backfill_orphans_for_company(
         contact.company_id = company.id
         session.add(contact)
         contact_ids.append(contact.id)
+        # Event tags travel with the prospect: an account added AFTER its
+        # prospects were uploaded inherits their events.
+        if contact.events:
+            company.events = merge_events(company.events, contact.events)
 
     # 2) Link orphan deals that share any of those contacts via deal_contacts.
     deals_linked = 0

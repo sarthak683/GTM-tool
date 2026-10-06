@@ -3,8 +3,8 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_validator
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, String
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 # Manual per-prospect sourcing status (the account-level counterpart is
@@ -91,6 +91,12 @@ class Contact(ContactBase, table=True):
     # "call_back_later_rescheduled" dispositions. Auto-cleared by
     # apply_call_disposition_effects when disposition leaves that bucket.
     next_followup_at: Optional[datetime] = Field(default=None, index=True)
+    # Event tags (e.g. "CS Summit, London") — a prospect can be tagged to
+    # several. Normalized via app.services.event_tags; filterable in Prospecting.
+    events: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(ARRAY(String), nullable=False, server_default="{}"),
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -162,6 +168,7 @@ class ContactRead(ContactBase):
     # family — a "check this mapping" badge, not a filter).
     company_account_status: Optional[str] = None
     account_domain_mismatch: Optional[bool] = None
+    events: list[str] = []
     enriched_at: Optional[datetime] = None
     enrichment_data: Optional[Any] = None
     additional_phones: Optional[Any] = None

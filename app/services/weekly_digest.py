@@ -185,9 +185,14 @@ def _utc_bounds(period_start: date, period_end: date, tz: ZoneInfo) -> tuple[dat
     return start, end
 
 
-def _stage_label(stage: str | None) -> str:
+def _stage_label(stage: str | None, labels: dict[str, str] | None = None) -> str:
+    """Configured stage label first (Settings -> Pipeline), so a custom stage
+    like ``new_stage_18`` reads "Marketing Lead (MQL)" instead of the title-cased
+    id "New Stage 18"; legacy overrides / title-casing only as a fallback."""
     if not stage:
         return "—"
+    if labels and labels.get(stage):
+        return labels[stage]
     if stage in STAGE_LABEL_OVERRIDES:
         return STAGE_LABEL_OVERRIDES[stage]
     return stage.replace("_", " ").title()
@@ -231,6 +236,7 @@ class WeeklyDigest:
     period_start: date
     period_end: date
     timezone: str
+    stage_labels: dict[str, str] = field(default_factory=dict)
     stage_changes: list[StageChangeRow] = field(default_factory=list)
     account_status_changes: list[AccountStatusRow] = field(default_factory=list)
     prospect_dnd: list[ProspectDndRow] = field(default_factory=list)
@@ -252,7 +258,13 @@ async def build_weekly_digest(
     tz = ZoneInfo(config["send_timezone"])
     start_utc, end_utc = _utc_bounds(period_start, period_end, tz)
 
-    digest = WeeklyDigest(period_start=period_start, period_end=period_end, timezone=config["send_timezone"])
+    from app.services.deal_stages import get_configured_deal_stages
+
+    stage_labels = {s["id"]: s["label"] for s in await get_configured_deal_stages(session)}
+    digest = WeeklyDigest(
+        period_start=period_start, period_end=period_end,
+        timezone=config["send_timezone"], stage_labels=stage_labels,
+    )
 
     # ── Section 1: pipeline stage changes ──────────────────────────────────
     stage_rows = (
@@ -376,7 +388,7 @@ def _render_digest_text(digest: WeeklyDigest) -> str:
     if digest.stage_changes:
         for row in digest.stage_changes:
             lines.append(
-                f"   - {row.deal_name}: {_stage_label(row.from_stage)} -> {_stage_label(row.to_stage)} "
+                f"   - {row.deal_name}: {_stage_label(row.from_stage, digest.stage_labels)} -> {_stage_label(row.to_stage, digest.stage_labels)} "
                 f"by {row.changed_by} on {_fmt_when(row.changed_at, tz)}"
             )
     else:
@@ -462,7 +474,7 @@ def _render_digest_html(digest: WeeklyDigest) -> str:
         td = TD_STYLE_LAST if is_last else TD_STYLE
         return f"""<tr>
               <td style="{td}"><strong>{_e(row.deal_name)}</strong></td>
-              <td style="{td}">{_stage_pill(_stage_label(row.from_stage))}<span style="color:#94a3b8;margin:0 4px;font-size:11px;">&rarr;</span>{_stage_pill(_stage_label(row.to_stage))}</td>
+              <td style="{td}">{_stage_pill(_stage_label(row.from_stage, digest.stage_labels))}<span style="color:#94a3b8;margin:0 4px;font-size:11px;">&rarr;</span>{_stage_pill(_stage_label(row.to_stage, digest.stage_labels))}</td>
               <td style="{td}{WHO_STYLE}">{_e(row.changed_by)}</td>
               <td style="{td}{WHEN_STYLE}">{_e(_fmt_when(row.changed_at, tz))}</td>
             </tr>"""

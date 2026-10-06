@@ -30,15 +30,13 @@ async def _async_send_team_activity_report(
 ) -> dict:
     from app.database import task_session
     from app.config import settings
-    from sqlalchemy import select
 
-    from app.models.settings import WorkspaceSettings
+    from app.services.sync_settings import claim_scheduled_send, merge_sync_settings_block
     from app.services.weekly_digest import is_production_environment
     from app.services.team_activity_report import (
         TEAM_ACTIVITY_REPORT_CONFIG_KEY,
         WEEKDAY_TO_KEY,
         load_team_activity_report_settings,
-        normalize_team_activity_report_settings,
         send_team_activity_report_email,
         team_activity_report_period,
     )
@@ -94,48 +92,86 @@ async def _async_send_team_activity_report(
             if report_settings.get("last_scheduled_send_key") == send_key:
                 return {"status": "skipped", "reason": "already_sent", "send_key": send_key}
 
+            # Claim this week's send BEFORE sending, atomically. The old flow
+            # marked the week done only after sending, and wrote it by
+            # rewriting the whole settings blob — so a concurrent job (RecoTap
+            # holds a stale copy for ~4 min at 04:00 UTC) could erase the mark
+            # and the next 15-min tick sent the whole report again.
+            if not await claim_scheduled_send(
+                session, TEAM_ACTIVITY_REPORT_CONFIG_KEY, send_key, now.isoformat()
+            ):
+                return {"status": "skipped", "reason": "already_claimed", "send_key": send_key}
+
             resolved_start, resolved_end = team_activity_report_period(now, report_settings)
         else:
             send_key = None
             resolved_start = parsed_start or team_activity_report_period(report_settings=report_settings)[0]
             resolved_end = parsed_end or team_activity_report_period(report_settings=report_settings)[1]
 
-        report = await send_team_activity_report_email(
-            session,
-            resolved_start,
-            resolved_end,
-            recipients=recipients,
-            report_settings=report_settings,
-        )
+        # A retry after a partial failure only goes to whoever hasn't got it yet.
+        already_sent: set[str] = set()
+        pass_recipients = recipients
+        if scheduled_call and report_settings.get("partial_send_key") == send_key:
+            already_sent = {str(r).lower() for r in (report_settings.get("partial_sent_recipients") or [])}
+            pass_recipients = [
+                r for r in report_settings["recipients"] if str(r).lower() not in already_sent
+            ]
+
+        if scheduled_call and already_sent and not pass_recipients:
+            await merge_sync_settings_block(
+                session,
+                TEAM_ACTIVITY_REPORT_CONFIG_KEY,
+                {"partial_send_key": None, "partial_sent_recipients": []},
+            )
+            await session.commit()
+            return {"status": "completed", "reason": "all_recipients_already_covered", "send_key": send_key}
+
+        try:
+            report = await send_team_activity_report_email(
+                session,
+                resolved_start,
+                resolved_end,
+                recipients=pass_recipients,
+                report_settings=report_settings,
+            )
+        except Exception:
+            if scheduled_call:
+                # Nothing was sent (building/connecting failed) — give the
+                # week back so the next tick retries instead of skipping it.
+                await merge_sync_settings_block(
+                    session, TEAM_ACTIVITY_REPORT_CONFIG_KEY, {"last_scheduled_send_key": None}
+                )
+                await session.commit()
+            raise
+
         send_results = report.send_results or []
         all_sent = bool(send_results) and all(r.get("status") == "sent" for r in send_results)
         failed_recipients = [r.get("to") for r in send_results if r.get("status") != "sent" and r.get("to")]
+        sent_now = {str(r.get("to")).lower() for r in send_results if r.get("status") == "sent" and r.get("to")}
 
         if scheduled_call and all_sent:
-            row = (
-                await session.execute(
-                    select(WorkspaceSettings)
-                    .where(WorkspaceSettings.id == 1)
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
-                )
-            ).scalar_one_or_none()
-            if row is not None:
-                sync_settings = dict(row.sync_schedule_settings or {})
-                stored_block = sync_settings.get(TEAM_ACTIVITY_REPORT_CONFIG_KEY)
-                current = normalize_team_activity_report_settings(
-                    stored_block if isinstance(stored_block, dict) else report_settings
-                )
-                current["last_scheduled_send_key"] = send_key
-                current["last_scheduled_send_at"] = datetime.now(timezone.utc).isoformat()
-                sync_settings[TEAM_ACTIVITY_REPORT_CONFIG_KEY] = current
-                row.sync_schedule_settings = sync_settings
-                session.add(row)
-                await session.commit()
-        elif scheduled_call and not all_sent:
+            await merge_sync_settings_block(
+                session,
+                TEAM_ACTIVITY_REPORT_CONFIG_KEY,
+                {"partial_send_key": None, "partial_sent_recipients": []},
+            )
+            await session.commit()
+        elif scheduled_call:
+            # Release the claim so the next tick retries, and remember who
+            # already has it so they aren't sent a second copy.
+            await merge_sync_settings_block(
+                session,
+                TEAM_ACTIVITY_REPORT_CONFIG_KEY,
+                {
+                    "last_scheduled_send_key": None,
+                    "partial_send_key": send_key,
+                    "partial_sent_recipients": sorted(already_sent | sent_now),
+                },
+            )
+            await session.commit()
             logger.warning(
                 "Team activity report send failure: %d/%d recipients failed (%s). "
-                "Beat retries the whole send next tick since last_scheduled_send_key was not set.",
+                "Claim released; next tick retries only the recipients not yet covered.",
                 len(failed_recipients), len(send_results), failed_recipients,
             )
 

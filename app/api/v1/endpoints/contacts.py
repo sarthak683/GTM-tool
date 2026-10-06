@@ -29,6 +29,7 @@ from app.services.account_sourcing import (
     row_to_contact_fields,
 )
 from app.services.contact_tracking import apply_contact_tracking, to_contact_read
+from app.services.event_tags import canonicalize, known_events, merge_events, parse_events
 from app.services.disposition_effects import (
     apply_call_disposition_effects,
     apply_linkedin_status_effects,
@@ -85,6 +86,10 @@ class ProspectImportResponse(SQLModel):
     # each mapping deliberately instead of the import hiding the disagreement.
     conflict_count: int = 0
     conflict_details: list[str] = []
+    # Optional "Event" column: how many prospects / accounts gained an event
+    # tag from this upload (already-tagged ones don't count).
+    events_tagged_count: int = 0
+    companies_tagged_count: int = 0
     message: str
 
 
@@ -232,6 +237,7 @@ class ContactFilters:
     scope_any_match: bool = Query(default=False, description="When true, ownership filters match AE or SDR ownership instead of requiring each selected role filter")
     prospect_only: bool = Query(default=False, description="Exclude internal/generated contacts and obvious company mismatches")
     company_account_status: Optional[str] = Query(default=None, description="Filter by the ACCOUNT's status (comma-separated, e.g. 'in_progress,meeting_booked'; 'none' = account has no status yet)")
+    event: Optional[str] = Query(default=None, description="Filter by one or more event tags separated by '||' (event names contain commas); '__empty__' = no event")
     include_disabled_accounts: bool = Query(default=False, description="Include prospects of disabled (not_a_fit/dnd) accounts. Default false: disabled accounts' prospects are out of the queue everywhere.")
     timezone: Optional[str] = Query(default=None, description="Filter by one or more timezones (comma-separated, e.g. 'Asia/Kolkata,America/New_York')")
     call_outcome_color: Optional[list[str]] = Query(default=None, description="Filter by call-outcome dot color (white | green | red | blue | yellow). Repeatable; OR'd together. 'white' = no contact yet (zero call attempts).")
@@ -1008,6 +1014,11 @@ async def import_contacts_csv(
     # materialised this upload and fold a later duplicate into that same row
     # instead of minting a second pending Contact. Maps lower(email) -> Contact.
     seen_emails: dict[str, Contact] = {}
+    # Event tags (optional "Event" column). `known_event_names` makes a new
+    # spelling reuse an existing one case-insensitively, across rows too.
+    known_event_names = await known_events(session)
+    events_tagged_count = 0
+    tagged_company_ids: set[UUID] = set()
     # Uploader fallback target slot: an SDR uploader owns their uploads in the SDR
     # slot, an AE uploader in the AE slot, an admin owns neither (-> unassigned).
     uploader_role = (current_user.role or "").lower()
@@ -1055,6 +1066,7 @@ async def import_contacts_csv(
             "enrichment_sources": company.enrichment_sources if company else None,
         }
         contact_fields = row_to_contact_fields(row, company_context)
+        row_events = canonicalize(parse_events(_find(row, "events")), known_event_names)
         if not contact_fields:
             # Row has zero identifying data (no name, email, title, or LinkedIn).
             # These are genuinely empty and cannot be imported.
@@ -1111,6 +1123,12 @@ async def import_contacts_csv(
         if company:
             touched_company_ids.add(company.id)
             contact_fields["company_id"] = company.id
+            if row_events:
+                merged_company_events = merge_events(company.events, row_events)
+                if merged_company_events != list(company.events or []):
+                    company.events = merged_company_events
+                    session.add(company)
+                    tagged_company_ids.add(company.id)
         # Ownership is assigned EXPLICITLY below (not via the generic field loop)
         # so re-uploads don't reassign via the uploader fallback and a blank file
         # cell never wipes an existing owner. Resolve the file's SDR/AE columns
@@ -1226,6 +1244,12 @@ async def import_contacts_csv(
                 existing.assigned_to_id = file_ae.id
                 existing.assigned_rep_email = file_ae.email
                 changed = True
+            if row_events:
+                merged_events = merge_events(existing.events, row_events)
+                if merged_events != list(existing.events or []):
+                    existing.events = merged_events
+                    events_tagged_count += 1
+                    changed = True
             if changed or not existing.persona:
                 existing.persona = classify_persona(existing)
                 existing.updated_at = datetime.utcnow()
@@ -1275,6 +1299,8 @@ async def import_contacts_csv(
             # aborting the whole import at commit. created=False means we landed
             # on an existing row, so apply the same non-empty-field merge the
             # update branch uses.
+            if row_events:
+                contact_fields["events"] = row_events
             contact, was_created = await get_or_create_contact_by_email(
                 session,
                 email or "",
@@ -1302,9 +1328,16 @@ async def import_contacts_csv(
                 if company:
                     refresh_contact_sequence_plan(contact, company, workspace_schedule=ws_schedule)
                 created_count += 1
+                if row_events:
+                    events_tagged_count += 1
             else:
+                if row_events:
+                    merged_events = merge_events(contact.events, row_events)
+                    if merged_events != list(contact.events or []):
+                        contact.events = merged_events
+                        events_tagged_count += 1
                 for key, value in contact_fields.items():
-                    if value in (None, "", []) or key == "email":
+                    if value in (None, "", []) or key in ("email", "events"):
                         continue
                     if key == "enrichment_data":
                         # Same copy-before-mutate rule as the update branch
@@ -1367,6 +1400,11 @@ async def import_contacts_csv(
     # action (Run ICP Research / Enrich All / per-company re-enrich).
 
     message_parts = ["Prospects imported successfully."]
+    if events_tagged_count or tagged_company_ids:
+        message_parts.append(
+            f"Tagged {events_tagged_count} prospect{'s' if events_tagged_count != 1 else ''} and "
+            f"{len(tagged_company_ids)} account{'s' if len(tagged_company_ids) != 1 else ''} to events."
+        )
     if warning_count:
         message_parts.append(
             f"{warning_count} row{'s' if warning_count != 1 else ''} look{'s' if warning_count == 1 else ''} like a role mailbox or placeholder — review them in Prospecting."
@@ -1409,6 +1447,8 @@ async def import_contacts_csv(
         created_companies=created_rows,
         conflict_count=conflict_count,
         conflict_details=conflict_details,
+        events_tagged_count=events_tagged_count,
+        companies_tagged_count=len(tagged_company_ids),
         message=" ".join(message_parts),
     )
 

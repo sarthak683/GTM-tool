@@ -387,6 +387,8 @@ export interface AccountSourcingFilters {
   journeyStage?: string[];
   /** Continent derived from the free-text `headquarters` field. `__empty__` = no headquarters set. */
   headquartersContinent?: string[];
+  /** Event tags; wire format joins with "||" because event names contain commas. `__empty__` = no event. */
+  event?: string[];
   batchId?: string;
   prospectsMin?: number;
   prospectsMax?: number;
@@ -430,6 +432,7 @@ export function buildAccountSourcingQuery(
   appendMulti(search, "sdr_id", filters?.sdrId);
   appendMulti(search, "journey_stage", filters?.journeyStage);
   appendMulti(search, "headquarters_continent", filters?.headquartersContinent);
+  if (filters?.event?.length) search.set("event", filters.event.join("||"));
   if (filters?.batchId) search.set("batch_id", filters.batchId);
   if (filters?.prospectsMin !== undefined) search.set("prospects_min", String(filters.prospectsMin));
   if (filters?.prospectsMax !== undefined) search.set("prospects_max", String(filters.prospectsMax));

@@ -28,6 +28,8 @@ export type Company = Omit<
   // Product-line categorization (multi-select) — newer than the last schema
   // regeneration, same taxonomy as Deal.use_case.
   use_case?: string[] | null;
+  // Event tags — newer than the last schema regeneration.
+  events?: string[];
 };
 
 export interface RecotapSignals {
@@ -70,6 +72,8 @@ export type Contact = Omit<
   // save came from an Outreach Sequence cadence task, so the backend can
   // advance that task's step. See app.services.sequences.complete_cadence_step.
   cadence_task_id?: string;
+  // Event tags (e.g. "CS Summit, London") — newer than the last schema regeneration.
+  events?: string[];
 };
 
 /** Slim card the prospect board renders — see ContactBoardCard on the API.
@@ -439,6 +443,8 @@ export interface ProspectImportResponse {
   missing_companies: ProspectImportMissingCompany[];
   created_company_count?: number;
   created_companies?: ProspectImportCreatedCompany[];
+  events_tagged_count?: number;
+  companies_tagged_count?: number;
   message: string;
 }
 

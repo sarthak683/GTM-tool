@@ -1136,6 +1136,8 @@ async def update_team_activity_report_settings(
     if any(key in updates and updates[key] != current.get(key) for key in schedule_keys):
         current["last_scheduled_send_key"] = None
         current["last_scheduled_send_at"] = None
+        current["partial_send_key"] = None
+        current["partial_sent_recipients"] = []
     current.update(updates)
     normalized = normalize_team_activity_report_settings(current)
     sync_settings[TEAM_ACTIVITY_REPORT_CONFIG_KEY] = normalized

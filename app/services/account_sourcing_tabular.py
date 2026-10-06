@@ -84,6 +84,7 @@ _ALIASES_RAW: dict[str, list[str]] = {
     "build_vs_buy_impl_auto": ["build vs buy for impl. auto", "build vs buy for impl auto"],
     "ai_acquisition_impl": ["ai acquisition for impl.", "ai acquisition for impl"],
     "final_qual": ["final qual"],
+    "events": ["event", "events", "event tag", "event tags", "event name", "tagged event", "tagged events"],
     "sdr": ["sdr", "sdr name", "sdr rep"],
     "ae": ["ae", "ae name", "account executive", "owner", "account owner", "assigned to", "rep", "sales rep"],
     "contact_name": ["contact", "prospect name", "full name", "name"],

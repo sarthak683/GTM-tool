@@ -14,6 +14,7 @@ import OutreachDrawer from "../components/outreach/OutreachDrawer";
 import AccountSourcingContactDetail from "./AccountSourcingContactDetail";
 import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import AddToSequenceButton from "../components/AddToSequenceButton";
+import EventTagEditor from "../components/EventTagEditor";
 import UnifiedTimeline from "../components/UnifiedTimeline";
 import { SkeletonList } from "../components/ui/Skeleton";
 
@@ -163,6 +164,14 @@ export default function ContactDetail() {
             <div className="min-w-0">
               <h2 className="text-[30px] font-extrabold tracking-tight text-[#1f2d3d]">{contact.first_name} {contact.last_name}</h2>
               <p className="text-[14px] text-[#6f8399] mt-1">{contact.title ?? "-"}</p>
+              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                <EventTagEditor
+                  kind="contact"
+                  id={contact.id}
+                  events={contact.events}
+                  onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))}
+                />
+              </div>
               <div
                 className="mt-3"
                 style={{

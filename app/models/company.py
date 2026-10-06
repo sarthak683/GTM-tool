@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import field_validator
 from sqlalchemy import Column, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 from app.models.money import MoneyDecimal
@@ -80,6 +80,12 @@ class Company(CompanyBase, table=True):
     icp_score: Optional[int] = None
     icp_tier: Optional[str] = None
     enrichment_sources: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
+    # Event tags (e.g. "CS Summit, London"), normalized via
+    # app.services.event_tags; filterable in Account Sourcing.
+    events: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(ARRAY(String), nullable=False, server_default="{}"),
+    )
     enriched_at: Optional[datetime] = None
     # Account sourcing fields
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -213,6 +219,7 @@ class CompanyRead(CompanyBase):
     id: UUID
     additional_domains: Optional[Any] = None
     email_cc_alias: Optional[str] = None
+    events: list[str] = []
     deleted_at: Optional[datetime] = None
     merged_into_id: Optional[UUID] = None
     tech_stack: Optional[Any] = None

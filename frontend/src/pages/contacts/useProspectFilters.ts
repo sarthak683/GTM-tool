@@ -33,6 +33,7 @@ export interface ProspectFilters {
   personaFilter: string[];
   sequenceFilter: string[];
   accountStatusFilter: string[];
+  eventFilter: string[];
   callDispositionFilter: string[];
   linkedinStatusFilter: string[];
   callOutcomeColorFilter: string[];
@@ -92,6 +93,14 @@ const list = (param: string, map?: (value: string) => string): FilterSpecEntry<s
   write: (params, value) => setOrDelete(params, param, value.length ? value.join(",") : null),
 });
 
+// Event tags contain commas ("CS Summit, London"), so this list is "||"-joined
+// in the URL instead of comma-joined like the other multi-selects.
+const eventList = (param: string): FilterSpecEntry<string[]> => ({
+  params: [param],
+  read: (params) => (params.get(param) ?? "").split("||").map((v) => v.trim()).filter(Boolean),
+  write: (params, value) => setOrDelete(params, param, value.length ? value.join("||") : null),
+});
+
 const count = (param: string): FilterSpecEntry<number | null> => ({
   params: [param],
   read: (params) => {
@@ -144,6 +153,7 @@ export const FILTER_SPEC: { [K in keyof ProspectFilters]: FilterSpecEntry<Prospe
   // disabled (not_a_fit/dnd) accounts are hidden; explicitly selecting a
   // disabled status shows them (reviewing parked accounts is legitimate).
   accountStatusFilter: list("acct"),
+  eventFilter: eventList("ev"),
   callDispositionFilter: list("call"),
   linkedinStatusFilter: list("li"),
   // Progress-dot color filters. Map 1:1 to the dot colors rendered by
@@ -272,6 +282,7 @@ export function useProspectFilters({
     setPersonaFilter: makeSetter("personaFilter"),
     setSequenceFilter: makeSetter("sequenceFilter"),
     setAccountStatusFilter: makeSetter("accountStatusFilter"),
+    setEventFilter: makeSetter("eventFilter"),
     setCallDispositionFilter: makeSetter("callDispositionFilter"),
     setLinkedinStatusFilter: makeSetter("linkedinStatusFilter"),
     setCallOutcomeColorFilter: makeSetter("callOutcomeColorFilter"),
@@ -320,6 +331,7 @@ export function useProspectFilters({
     (!isSdrLocked && filters.ownerScope === "mine") ||
     filters.sequenceFilter.length ||
     filters.accountStatusFilter.length ||
+    filters.eventFilter.length ||
     filters.callDispositionFilter.length ||
     filters.linkedinStatusFilter.length ||
     filters.personaFilter.length ||
@@ -350,7 +362,7 @@ export function useProspectFilters({
   // pushed the first prospect to y=862 of a 900px viewport — zero rows
   // visible before scrolling. Measured 2026-08-18.
   const initiallyShowFilters = Boolean(
-    filters.sequenceFilter.length || filters.accountStatusFilter.length ||
+    filters.sequenceFilter.length || filters.accountStatusFilter.length || filters.eventFilter.length ||
     filters.callDispositionFilter.length || filters.aeFilter.length ||
     filters.sdrFilter.length || filters.ownerFilter.length ||
     filters.timezoneFilter.length || filters.companyFilter ||
