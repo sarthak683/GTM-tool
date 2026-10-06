@@ -137,7 +137,7 @@ async def deal_board(
 
 
 @router.get("/board/stream")
-async def deal_board_stream(_user: CurrentUser):
+async def deal_board_stream(_user: CurrentUser, session: DBSession):
     """Server-Sent Events stream of deal-board changes.
 
     Pushes a lightweight event (kind + deal_id + stage) whenever a deal is
@@ -146,6 +146,12 @@ async def deal_board_stream(_user: CurrentUser):
     payload, so the broker never lags behind the canonical store. A 25s
     heartbeat keeps corporate proxies from culling idle connections.
     """
+    # Authentication uses this request's shared session. FastAPI keeps yield
+    # dependencies alive until a streaming response ends, but this stream only
+    # uses the broadcaster. Return the connection before opening the stream so
+    # long-lived Pipeline tabs cannot exhaust the API's database pool.
+    await session.close()
+
     async def event_generator():
         q = await broadcaster.subscribe()
         try:
