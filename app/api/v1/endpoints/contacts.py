@@ -48,16 +48,6 @@ from app.services.contact_access import (
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
 
-def _can_delete_contact(contact, user) -> bool:
-    """Delete permission: admin, the current owner, or an unassigned (claimable) slot."""
-    role = (user.role or "").lower()
-    if role == "admin":
-        return True
-    if contact.assigned_to_id == user.id or contact.sdr_id == user.id:
-        return True
-    return contact.sdr_id is None if role == "sdr" else contact.assigned_to_id is None
-
-
 class ProspectImportMissingCompany(SQLModel):
     name: str
     domain: Optional[str] = None
@@ -761,7 +751,7 @@ async def bulk_delete_selected_contacts(
 
     Available to any signed-in user (matches the single-delete endpoint). Linked
     deals and activity history survive; outreach sequences, deal-stakeholder
-    links, reminders, angel mappings, and call recordings for these prospects are
+    links, reminders, angel mappings, cadence tasks/enrollments, and call recordings are
     removed. Returns how many of the requested prospects actually existed.
     """
     ids = [cid for cid in payload.ids if cid]
@@ -776,19 +766,9 @@ async def bulk_delete_selected_contacts(
     requested = len(set(ids))
     skipped_not_owned = 0
     if (_user.role or "").lower() != "admin":
-        # Start from the same visibility scope as the Prospecting list, then
-        # apply the stricter delete ownership rule.
-        visible_ids = await get_visible_contact_ids(session, _user, ids)
-        rows = (
-            await session.execute(
-                (await ContactRepository.visible_to(session, _user)).where(
-                    Contact.id.in_(visible_ids)
-                )
-            )
-        ).scalars().all()
-        allowed = [c.id for c in rows if _can_delete_contact(c, _user)]
-        skipped_not_owned = requested - len(allowed)
-        ids = allowed
+        # Every role may delete prospects visible in its existing list scope.
+        ids = await get_visible_contact_ids(session, _user, ids)
+        skipped_not_owned = requested - len(ids)
     deleted = await repo.delete_many(ids) if ids else 0
     return {"deleted": deleted, "requested": requested, "skipped_not_owned": skipped_not_owned}
 
@@ -796,12 +776,7 @@ async def bulk_delete_selected_contacts(
 @router.delete("/{contact_id}", status_code=204)
 async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
-    contact = await get_visible_contact(session, _user, contact_id)
-    if not _can_delete_contact(contact, _user):
-        raise HTTPException(
-            status_code=403,
-            detail="You can only delete prospects assigned to you or unassigned ones. Ask an admin to remove prospects owned by other reps.",
-        )
+    await get_visible_contact(session, _user, contact_id)
     await repo.delete_with_cascade(contact_id)
 
 

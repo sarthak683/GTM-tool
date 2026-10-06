@@ -1342,8 +1342,8 @@ export default function Contacts() {
     const n = targets.length;
     const warning =
       n === 1
-        ? "Permanently delete this prospect? Their outreach sequences, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone."
-        : `Permanently delete ${n} prospects? Their outreach sequences, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone.`;
+        ? "Permanently delete this prospect? Their sequence enrollments, tasks, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone."
+        : `Permanently delete ${n} prospects? Their sequence enrollments, tasks, reminders, stakeholder links, and call/LinkedIn recordings are also removed. Activity history and any linked deals are kept. This cannot be undone.`;
     if (!window.confirm(warning)) return;
     setDeletingContacts(true);
     try {
@@ -1366,11 +1366,11 @@ export default function Contacts() {
       setOpenActionsId(null);
       if (deleted > 0) {
         toast.success(
-          `Deleted ${deleted} prospect${deleted === 1 ? "" : "s"}${skipped ? `; ${skipped} skipped because you do not own them` : ""}.`,
+          `Deleted ${deleted} prospect${deleted === 1 ? "" : "s"}${skipped ? `; ${skipped} skipped because they are unavailable in your prospect list` : ""}.`,
           "Prospects deleted",
         );
       } else {
-        toast.warning("No prospects were deleted because you do not own the selected records.", "Nothing deleted");
+        toast.warning("No prospects were deleted because the selected records are unavailable in your prospect list.", "Nothing deleted");
       }
       await loadContacts();
     } catch (error) {

@@ -1470,7 +1470,8 @@ class ContactRepository(BaseRepository[Contact]):
         Returns the count of contacts that actually existed and were removed.
         Dependent order mirrors the admin purge endpoint: activity links are
         nulled (history is kept), then outreach steps/sequences, deal-stakeholder
-        links, reminders, and angel mappings are deleted, then the contacts
+        links, reminders, angel mappings, cadence tasks and enrollments are deleted,
+        then the contacts
         themselves. call_recordings are removed automatically by their
         ON DELETE CASCADE foreign key (migration 072). Processed in chunks so a
         very large selection stays within driver parameter limits.
@@ -1482,6 +1483,7 @@ class ContactRepository(BaseRepository[Contact]):
         from app.models.outreach import OutreachStep
         from app.models.reminder import Reminder
         from app.models.task import Task, TaskComment
+        from app.models.sequence import Enrollment
 
         # De-duplicate, preserve order, drop falsy ids defensively.
         unique_ids = list(dict.fromkeys(cid for cid in contact_ids if cid))
@@ -1526,16 +1528,20 @@ class ContactRepository(BaseRepository[Contact]):
             # tasks.entity_id is polymorphic (no FK), so contact deletion must
             # clean them explicitly or they orphan into ghost rows the Tasks
             # workspace still lists (prod had 137 contact-ghosts, 9 open).
-            task_ids_subq = select(Task.id).where(
-                Task.entity_type == "contact", Task.entity_id.in_(chunk)
+            enrollment_ids = select(Enrollment.id).where(Enrollment.contact_id.in_(chunk))
+            task_scope = or_(
+                (Task.entity_type == "contact") & Task.entity_id.in_(chunk),
+                Task.enrollment_id.in_(enrollment_ids),
             )
+            task_ids_subq = select(Task.id).where(task_scope)
             await self.session.execute(
                 sa_delete(TaskComment).where(TaskComment.task_id.in_(task_ids_subq))
             )
+            await self.session.execute(sa_delete(Task).where(task_scope))
+            # Cadence enrollments have a NO ACTION FK to contacts. Remove only
+            # these memberships, after their tasks; shared sequence templates stay.
             await self.session.execute(
-                sa_delete(Task).where(
-                    Task.entity_type == "contact", Task.entity_id.in_(chunk)
-                )
+                sa_delete(Enrollment).where(Enrollment.contact_id.in_(chunk))
             )
             await self.session.execute(
                 sa_delete(Contact).where(Contact.id.in_(chunk))
