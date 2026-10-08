@@ -443,6 +443,8 @@ export interface ProspectImportResponse {
   missing_companies: ProspectImportMissingCompany[];
   created_company_count?: number;
   created_companies?: ProspectImportCreatedCompany[];
+  existing_company_count?: number;
+  existing_companies?: ProspectImportCreatedCompany[];
   events_tagged_count?: number;
   companies_tagged_count?: number;
   message: string;

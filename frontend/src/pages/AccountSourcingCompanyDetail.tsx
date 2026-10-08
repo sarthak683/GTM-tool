@@ -55,6 +55,7 @@ import LogLinkedInDialog from "../components/LogLinkedInDialog";
 import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import AddToSequenceButton from "../components/AddToSequenceButton";
 import EventTagEditor from "../components/EventTagEditor";
+import EventChips from "../components/EventChips";
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
@@ -224,13 +225,16 @@ function ContactItem({
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
-          <Link
-            to={`/account-sourcing/contacts/${contact.id}`}
-            onClick={(e) => e.stopPropagation()}
-            style={{ color: colors.primary, fontWeight: 800, fontSize: 15, textDecoration: "none" }}
-          >
-            {contact.first_name} {contact.last_name}
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <Link
+              to={`/account-sourcing/contacts/${contact.id}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: colors.primary, fontWeight: 800, fontSize: 15, textDecoration: "none" }}
+            >
+              {contact.first_name} {contact.last_name}
+            </Link>
+            <EventChips events={contact.events} max={2} tone="ink" />
+          </div>
           <div style={{ color: colors.sub, marginTop: 3 }}>{contact.title || "No title"}</div>
           <div style={{ color: colors.faint, marginTop: 4, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
             {contact.email || "No email"}

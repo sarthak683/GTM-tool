@@ -9,6 +9,7 @@ export default function EventChips({
   highlight = [],
   onRemove,
   size = "sm",
+  tone = "violet",
 }: {
   events?: string[] | null;
   max?: number;
@@ -16,6 +17,8 @@ export default function EventChips({
   highlight?: string[];
   onRemove?: (event: string) => void;
   size?: "sm" | "md";
+  /** "ink" = solid dark chip, for crowded rows where pastel colours are already taken. */
+  tone?: "violet" | "ink";
 }) {
   const list = events ?? [];
   if (list.length === 0) return null;
@@ -35,8 +38,12 @@ export default function EventChips({
             style={{
               display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 190,
               fontSize: font, fontWeight: 700, padding: pad, borderRadius: 999, lineHeight: 1.4, whiteSpace: "nowrap",
-              background: active ? "#ede9fe" : "#f5f3ff", color: active ? "#5b21b6" : "#6d28d9",
-              border: `1px solid ${active ? "#c4b5fd" : "#ddd6fe"}`,
+              ...(tone === "ink"
+                ? { background: "#1e293b", color: "#f8fafc", border: "1px solid #0f172a" }
+                : {
+                    background: active ? "#ede9fe" : "#f5f3ff", color: active ? "#5b21b6" : "#6d28d9",
+                    border: `1px solid ${active ? "#c4b5fd" : "#ddd6fe"}`,
+                  }),
             }}
           >
             <CalendarDays size={size === "md" ? 12 : 9} style={{ flexShrink: 0 }} />

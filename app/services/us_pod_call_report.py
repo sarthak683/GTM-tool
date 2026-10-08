@@ -581,7 +581,11 @@ async def _heal_orphaned_meeting_booked_deal_links(
     if healed_activity_ids:
         activities = (
             await session.execute(
-                unscoped_for_background_job(Activity, "us pod call report deal-link self-heal")
+                # Plain select: Activity is not a visibility-scoped table, and
+                # unscoped_for_background_job() only supports Company/Contact/
+                # Deal — passing Activity raised TypeError and crashed the whole
+                # report whenever it had a booking to heal (US pod, 2026-10-07).
+                select(Activity)
                 .where(Activity.id.in_(healed_activity_ids.keys()))
             )
         ).scalars().all()

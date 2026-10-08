@@ -61,6 +61,13 @@ class ProspectImportCreatedCompany(SQLModel):
     contacts_count: int = 0
 
 
+class ProspectImportExistingCompany(SQLModel):
+    id: UUID
+    name: str
+    domain: Optional[str] = None
+    contacts_count: int = 0
+
+
 class ProspectImportResponse(SQLModel):
     imported_rows: int
     created_count: int
@@ -71,6 +78,9 @@ class ProspectImportResponse(SQLModel):
     missing_companies: list[ProspectImportMissingCompany]
     created_company_count: int = 0
     created_companies: list[ProspectImportCreatedCompany] = []
+    # Accounts from the file that were already in the CRM (matched, not created).
+    existing_company_count: int = 0
+    existing_companies: list[ProspectImportExistingCompany] = []
     # Rows whose email already belongs to a DIFFERENT account than the sheet
     # says. Never auto-moved; listed (capped at 50) so the uploader resolves
     # each mapping deliberately instead of the import hiding the disagreement.
@@ -971,6 +981,7 @@ async def import_contacts_csv(
     # auto_create_companies=True). Keyed by company id so we can queue ICP
     # enrichment once per company and return a deduped summary to the caller.
     created_companies: dict[UUID, ProspectImportCreatedCompany] = {}
+    existing_companies: dict[UUID, ProspectImportExistingCompany] = {}
 
     # The DB trigger prevent_unbatched_company_insert requires every new
     # company row to carry a sourcing_batch_id. When auto_create is on, we
@@ -1095,6 +1106,14 @@ async def import_contacts_csv(
                     contacts_count=1,
                 )
 
+        if company and company.id is not None and not created_placeholder_company and company.id not in created_companies:
+            matched = existing_companies.get(company.id)
+            if matched:
+                matched.contacts_count += 1
+            else:
+                existing_companies[company.id] = ProspectImportExistingCompany(
+                    id=company.id, name=company.name, domain=(company.domain or None), contacts_count=1,
+                )
         if company:
             touched_company_ids.add(company.id)
             contact_fields["company_id"] = company.id
@@ -1351,6 +1370,10 @@ async def import_contacts_csv(
 
     missing_rows = sorted(missing_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
     created_rows = sorted(created_companies.values(), key=lambda item: (item.name.lower(), item.domain or ""))
+    existing_rows = sorted(
+        (c for cid, c in existing_companies.items() if cid not in created_companies),
+        key=lambda item: item.name.lower(),
+    )
 
     # If we lazy-created a SourcingBatch but ended up creating zero companies
     # (e.g. every prospect's company turned out to exist after all), delete
@@ -1420,6 +1443,8 @@ async def import_contacts_csv(
         missing_companies=missing_rows,
         created_company_count=len(created_rows),
         created_companies=created_rows,
+        existing_company_count=len(existing_rows),
+        existing_companies=existing_rows,
         conflict_count=conflict_count,
         conflict_details=conflict_details,
         events_tagged_count=events_tagged_count,

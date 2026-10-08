@@ -4952,7 +4952,7 @@ export default function Contacts() {
 
       {importSummary && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setImportSummary(null)}>
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-2xl border border-[#d9e1ec]" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl border border-[#d9e1ec]" style={{ padding: "24px 28px", maxHeight: "88vh", overflowY: "auto", margin: "0 16px" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
               <div>
                 <h2 className="text-[16px] font-bold text-[#1d2b3c] mb-1">Prospect upload complete</h2>
@@ -5044,6 +5044,28 @@ export default function Contacts() {
                         </div>
                       </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(importSummary.existing_company_count ?? 0) > 0 && importSummary.existing_companies && (
+              <div style={{ marginTop: 14, border: "1px solid #d5dfec", background: "#f6f8fc", borderRadius: 14, padding: "14px 16px" }}>
+                <div style={{ color: "#3b5170", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 8 }}>
+                  Already in CRM
+                </div>
+                <div style={{ color: "#51647d", fontSize: 13, lineHeight: 1.6 }}>
+                  {importSummary.existing_company_count} account{importSummary.existing_company_count === 1 ? "" : "s"} from your file {importSummary.existing_company_count === 1 ? "was" : "were"} already in the CRM. Prospects were linked to {importSummary.existing_company_count === 1 ? "it" : "them"}; no duplicate accounts were created.
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, maxHeight: 160, overflowY: "auto" }}>
+                  {importSummary.existing_companies.map((company) => (
+                    <span
+                      key={company.id}
+                      title={company.domain ? formatDomain(company.domain) : undefined}
+                      style={{ border: "1px solid #d5dfec", background: "#fff", borderRadius: 999, padding: "5px 11px", fontSize: 12.5, fontWeight: 600, color: "#1d2b3c" }}
+                    >
+                      {company.name} <span style={{ color: "#7a8ca3", fontWeight: 500 }}>· {company.contacts_count}</span>
+                    </span>
                   ))}
                 </div>
               </div>
