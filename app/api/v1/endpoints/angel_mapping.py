@@ -13,6 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy import and_
 from sqlmodel import select
 
+from app.services.contact_access import get_actionable_contact, authorize_contact_edit
+from app.services.record_access import can_edit_record
 from app.core.dependencies import CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.angel import (
@@ -212,6 +214,7 @@ async def create_mapping(
     ).scalar_one_or_none()
     if not contact:
         raise NotFoundError("Contact not found")
+    await authorize_contact_edit(session, _user, contact)
     angel = (await session.execute(select(AngelInvestor).where(AngelInvestor.id == body.angel_investor_id))).scalar_one_or_none()
     if not angel:
         raise NotFoundError("Angel investor not found")
@@ -269,6 +272,7 @@ async def update_mapping(
     ).scalar_one_or_none()
     if not mapping:
         raise NotFoundError("Angel mapping not found")
+    await get_actionable_contact(session, _user, mapping.contact_id)
 
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(mapping, key, value)
@@ -326,6 +330,7 @@ async def delete_mapping(mapping_id: UUID, session: DBSession, _user: CurrentUse
     ).scalar_one_or_none()
     if not mapping:
         raise NotFoundError("Angel mapping not found")
+    await get_actionable_contact(session, _user, mapping.contact_id)
     await session.delete(mapping)
     await session.commit()
 
@@ -411,6 +416,8 @@ async def bulk_import(
                 errors.append(f"Row {i+1}: Contact '{row.prospect_name}' at '{row.company_name}' not found")
                 continue
 
+            await authorize_contact_edit(session, _user, contact)
+
             # Update company investor fields if present
             if contact.company_id:
                 company = (await session.execute(
@@ -418,7 +425,7 @@ async def bulk_import(
                         Company.id == contact.company_id
                     )
                 )).scalar_one_or_none()
-                if company:
+                if company and can_edit_record(_user, company):
                     changed = False
                     if row.ownership_stage and not company.ownership_stage:
                         company.ownership_stage = row.ownership_stage

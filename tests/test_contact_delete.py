@@ -18,8 +18,8 @@ from app.models.user import User
 from app.repositories.contact import ContactRepository
 
 
-@pytest.mark.parametrize("role", ["superadmin", "admin", "ae", "sdr", "marketing"])
-async def test_every_role_can_delete_visible_prospect_owned_by_another_rep(monkeypatch, role):
+@pytest.mark.parametrize("role", ["superadmin", "admin", "ae", "sdr"])
+async def test_sales_roles_can_delete_prospect_owned_by_another_rep(monkeypatch, role):
     user = SimpleNamespace(id=uuid4(), role=role)
     prospect = Contact(id=uuid4(), first_name="Visible", last_name="Prospect", assigned_to_id=uuid4(), sdr_id=uuid4())
     visible = AsyncMock(return_value=prospect)
@@ -41,7 +41,7 @@ async def test_hidden_prospect_cannot_be_deleted(monkeypatch):
     remove.assert_not_awaited()
 
 
-@pytest.mark.parametrize("role", ["ae", "sdr", "marketing"])
+@pytest.mark.parametrize("role", ["ae", "sdr"])
 async def test_bulk_delete_keeps_visibility_scope(monkeypatch, role):
     visible, hidden = uuid4(), uuid4()
     monkeypatch.setattr(contacts, "get_visible_contact_ids", AsyncMock(return_value=[visible]))

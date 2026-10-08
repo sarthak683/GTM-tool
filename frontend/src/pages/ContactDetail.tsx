@@ -1,3 +1,5 @@
+import { useAuth } from "../lib/AuthContext";
+import { canEditRecord } from "../lib/recordAccess";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Sparkles, Linkedin, Mail, Phone, UserCircle2, PenLine, Plus, Trash2 } from "lucide-react";
@@ -19,6 +21,7 @@ import UnifiedTimeline from "../components/UnifiedTimeline";
 import { SkeletonList } from "../components/ui/Skeleton";
 
 export default function ContactDetail() {
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [contact, setContact] = useState<Contact | null>(null);
@@ -169,7 +172,7 @@ export default function ContactDetail() {
                   kind="contact"
                   id={contact.id}
                   events={contact.events}
-                  onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))}
+                  onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))} readOnly={!canEditRecord(user, contact)}
                 />
               </div>
               <div
@@ -223,7 +226,7 @@ export default function ContactDetail() {
                   onClick={() => setLinkedInDialogOpen(true)}
                   className="inline-flex items-center gap-1 hover:text-[#0a66c2] transition-colors cursor-pointer"
                   style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "#4d6178" }}
-                  title="Log a LinkedIn touch on this contact"
+                  title="Log a LinkedIn touch on this contact" disabled={!canEditRecord(user, contact)}
                 >
                   <Linkedin size={13} />Log LinkedIn
                 </button>
@@ -235,15 +238,15 @@ export default function ContactDetail() {
                         value={timezoneDraft}
                         onChange={(e) => setTimezoneDraft(e.target.value)}
                         placeholder="e.g. America/Chicago"
-                        style={{ height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 12, color: "#24364b" }}
+                        style={{ height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 12, color: "#24364b" }} disabled={!canEditRecord(user, contact)}
                       />
-                      <button className="crm-button soft" onClick={handleSaveTimezone}>Save</button>
-                      <button className="crm-button soft" onClick={() => { setTimezoneDraft(contact.timezone ?? ""); setEditingTimezone(false); }}>Cancel</button>
+                      <button className="crm-button soft" onClick={handleSaveTimezone} disabled={!canEditRecord(user, contact)}>Save</button>
+                      <button className="crm-button soft" onClick={() => { setTimezoneDraft(contact.timezone ?? ""); setEditingTimezone(false); }} disabled={!canEditRecord(user, contact)}>Cancel</button>
                     </>
                   ) : (
                     <>
                       <span>{contact.timezone || "—"}</span>
-                      <button className="crm-button soft" onClick={() => setEditingTimezone(true)}>Edit</button>
+                      <button className="crm-button soft" onClick={() => setEditingTimezone(true)} disabled={!canEditRecord(user, contact)}>Edit</button>
                     </>
                   )}
                 </span>
@@ -263,13 +266,13 @@ export default function ContactDetail() {
                               value={row.number}
                               onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, number: e.target.value } : p)))}
                               placeholder="+1 555-123-4567"
-                              style={{ flex: "1 1 160px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #9ace3d", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }}
+                              style={{ flex: "1 1 160px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #9ace3d", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }} disabled={!canEditRecord(user, contact)}
                             />
                             <input
                               value={row.label || ""}
                               onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, label: e.target.value } : p)))}
                               placeholder="mobile / office"
-                              style={{ flex: "1 1 100px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }}
+                              style={{ flex: "1 1 100px", minWidth: 0, height: 32, borderRadius: 8, border: "1px solid #d5e3ef", padding: "0 10px", fontSize: 13, color: "#24364b", outline: "none" }} disabled={!canEditRecord(user, contact)}
                             />
                             <button type="button" aria-label="Remove number" onClick={() => setPhonesDraft((prev) => prev.filter((_, i) => i !== idx))}
                               style={{ height: 32, width: 32, flexShrink: 0, borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
@@ -283,12 +286,12 @@ export default function ContactDetail() {
                           style={{ border: "1px dashed #d5e3ef", background: "#fbfdff", color: "#4d6178", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <Plus size={12} /> Add number
                         </button>
-                        <button type="button" disabled={phonesSaving} onClick={() => handleSaveAdditionalPhones()}
+                        <button type="button" disabled={!canEditRecord(user, contact) || (phonesSaving)} onClick={() => handleSaveAdditionalPhones()}
                           style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #9ace3d", background: "#9ace3d", color: "#1f3a0a", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
                           {phonesSaving ? "Saving…" : "Save"}
                         </button>
                         <button type="button" onClick={() => setEditingPhones(false)}
-                          style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#8499ad", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "1px solid #d5e3ef", background: "#fff", color: "#8499ad", fontSize: 12, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           Cancel
                         </button>
                       </div>
@@ -310,13 +313,13 @@ export default function ContactDetail() {
                         </div>
                       ))}
                       <button type="button" onClick={startEditingPhones}
-                        style={{ alignSelf: "flex-start", border: "1px solid #d5e3ef", background: "#f7f9fc", color: "#2a5f8c", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        style={{ alignSelf: "flex-start", border: "1px solid #d5e3ef", background: "#f7f9fc", color: "#2a5f8c", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                         <PenLine size={12} /> Edit numbers
                       </button>
                     </>
                   ) : (
                     <button type="button" onClick={startEditingPhones}
-                      style={{ alignSelf: "flex-start", border: "1px dashed #d5e3ef", background: "#fbfdff", color: "#8499ad", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      style={{ alignSelf: "flex-start", border: "1px dashed #d5e3ef", background: "#fbfdff", color: "#8499ad", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                       <Plus size={12} /> Add number
                     </button>
                   )}
@@ -351,7 +354,7 @@ export default function ContactDetail() {
         <section className="crm-panel p-6" style={{ padding: 26 }}>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[16px] font-bold">Outreach Sequence</h3>
-            <AddToSequenceButton contactId={contact.id} />
+            <AddToSequenceButton contactId={contact.id} readOnly={!canEditRecord(user, contact)} />
           </div>
         </section>
 
@@ -359,11 +362,11 @@ export default function ContactDetail() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[16px] font-bold">Outreach (legacy)</h3>
             {sequence ? (
-              <button className="crm-button soft" onClick={() => setDrawerOpen(true)}>
+              <button className="crm-button soft" onClick={() => setDrawerOpen(true)} disabled={!canEditRecord(user, contact)}>
                 Open Sequence
               </button>
             ) : (
-              <button className="crm-button primary" onClick={handleGenerateOutreach} disabled={seqLoading}>
+              <button className="crm-button primary" onClick={handleGenerateOutreach} disabled={!canEditRecord(user, contact) || (seqLoading)}>
                 {seqLoading ? "Generating..." : "Generate Sequence"}
               </button>
             )}
@@ -385,7 +388,7 @@ export default function ContactDetail() {
             <button
               className="crm-button soft"
               onClick={() => setLinkedInDialogOpen(true)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}
             >
               <Linkedin size={13} />Log LinkedIn touch
             </button>

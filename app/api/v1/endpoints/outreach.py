@@ -9,6 +9,7 @@ from sqlmodel import select
 from app.clients.instantly import InstantlyClient, InstantlyError
 from app.clients.instantly_events import INSTANTLY_WEBHOOK_EVENTS
 from app.config import settings
+from app.services.record_access import authorize_company_edit
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.activity import Activity
@@ -642,6 +643,7 @@ async def launch_company_campaign(
     company = await session.get(Company, company_id)
     if not company:
         raise NotFoundError("Company not found")
+    authorize_company_edit(_user, company)
     if company.account_status in INACTIVE_ACCOUNT_STATUSES:
         raise ValidationError(
             f"Account '{company.name}' is disabled ({company.account_status}). "

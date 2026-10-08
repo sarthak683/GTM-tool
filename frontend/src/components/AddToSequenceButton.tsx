@@ -6,7 +6,7 @@ import { sequencesApi, type Sequence, type Enrollment } from "../lib/api";
 // Stakeholders and Contact detail (same component, two placements per the
 // spec). Once a contact is actively enrolled, the button is replaced by a
 // status line — a contact can never be double-enrolled.
-export default function AddToSequenceButton({ contactId }: { contactId: string }) {
+export default function AddToSequenceButton({ contactId, readOnly = false }: { contactId: string; readOnly?: boolean }) {
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -57,7 +57,7 @@ export default function AddToSequenceButton({ contactId }: { contactId: string }
       <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 999, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 12.5, fontWeight: 700, color: "#4338ca" }}>
         <Repeat size={13} />
         In: {enrollment.sequence_name} — Step {enrollment.current_step}/{enrollment.total_steps}
-        <button onClick={() => void handleRemove()} title="Remove / switch sequence" style={{ border: "none", background: "transparent", color: "#4338ca", cursor: "pointer", padding: 0, display: "flex" }}>
+        <button disabled={readOnly} onClick={() => void handleRemove()} title="Remove / switch sequence" style={{ border: "none", background: "transparent", color: "#4338ca", cursor: "pointer", padding: 0, display: "flex" }}>
           <X size={13} />
         </button>
       </div>
@@ -66,7 +66,7 @@ export default function AddToSequenceButton({ contactId }: { contactId: string }
 
   return (
     <>
-      <button onClick={openPicker} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #dce8f4", background: "#fff", borderRadius: 9, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, color: "#2563eb", cursor: "pointer" }}>
+      <button disabled={readOnly} onClick={openPicker} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #dce8f4", background: "#fff", borderRadius: 9, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, color: "#2563eb", cursor: "pointer" }}>
         <Repeat size={13} /> Add to sequence
       </button>
 

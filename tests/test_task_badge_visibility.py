@@ -53,7 +53,7 @@ async def test_badge_matches_workspace_entity_visibility_and_never_writes(role):
     session = SimpleNamespace(execute=AsyncMock(side_effect=execute), get=AsyncMock(return_value=None),
                               commit=AsyncMock(), add=AsyncMock())
     user = SimpleNamespace(id=uid, role=role, is_admin=role == "admin")
-    assert await get_task_count(session, user) == {"open": 5 if role == "admin" else 3}
+    assert await get_task_count(session, user) == {"open": 5}
     session.execute.assert_awaited_once()
     session.commit.assert_not_awaited()
     session.add.assert_not_awaited()

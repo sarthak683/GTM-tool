@@ -1,3 +1,4 @@
+import { canEditRecord } from "../lib/recordAccess";
 import "./account-sourcing-refresh.css";
 import { CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -176,6 +177,7 @@ function ContactItem({
   onStatusUpdated: (contactId: string, status: string | null, syncedAccountStatus?: string | null) => void;
   onChanged?: () => void;
 }) {
+  const { user } = useAuth();
   const [statusSaving, setStatusSaving] = useState(false);
   const [callDrawerOpen, setCallDrawerOpen] = useState(false);
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
@@ -256,7 +258,7 @@ function ContactItem({
             saving={statusSaving}
             compact
             stopPropagation
-            onChange={handleStatusChange}
+            onChange={handleStatusChange} readOnly={!canEditRecord(user, contact)}
           />
           <div
             style={{
@@ -325,7 +327,7 @@ function ContactItem({
                 type="button"
                 onClick={() => setCallDrawerOpen(true)}
                 style={{ border: "1px solid #dcfce7", background: "#f0fdf4", color: "#15803d", borderRadius: 10, padding: "6px 9px", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-                title={`Log a call for ${contact.first_name} ${contact.last_name}`}
+                title={`Log a call for ${contact.first_name} ${contact.last_name}`} disabled={!canEditRecord(user, contact)}
               >
                 <Phone size={14} />
               </button>
@@ -340,7 +342,7 @@ function ContactItem({
             </button>
           </div>
 
-          <AddToSequenceButton contactId={contact.id} />
+          <AddToSequenceButton contactId={contact.id} readOnly={!canEditRecord(user, contact)} />
 
           <div style={{ color: colors.faint, fontSize: 12 }}>Enriched: {ts(contact.enriched_at ?? undefined)}</div>
           <Link
@@ -472,6 +474,7 @@ function companyToOppForm(c: Company): OppForm {
 }
 
 function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSaved: () => void }) {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -573,8 +576,8 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
         )}
         {editing ? (
           isTextarea
-            ? <textarea value={val} onChange={set(fkey)} style={taBase} />
-            : <input type={type} value={val} onChange={set(fkey)} style={inputBase} />
+            ? <textarea value={val} onChange={set(fkey)} style={taBase} disabled={!canEditRecord(user, company)} />
+            : <input type={type} value={val} onChange={set(fkey)} style={inputBase} disabled={!canEditRecord(user, company)} />
         ) : (
           <div style={{ fontSize: 13.5, color: val ? colors.text : "#b0bcc8", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 20 }}>
             {val || "—"}
@@ -668,7 +671,7 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
                       Cancel
                     </button>
                     <button
-                      type="button" onClick={handleSave} disabled={saving}
+                      type="button" onClick={handleSave} disabled={!canEditRecord(user, company) || (saving)}
                       style={{ border: "none", background: "#2d6a4f", color: "#fff", borderRadius: 9, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
                     >
                       {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
@@ -678,7 +681,7 @@ function OpportunityDetailsPanel({ company, onSaved }: { company: Company; onSav
                 ) : (
                   <button
                     type="button" onClick={() => setEditing(true)}
-                    style={{ border: "1px solid #dce4ef", background: "#fff", color: colors.text, borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    style={{ border: "1px solid #dce4ef", background: "#fff", color: colors.text, borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, company)}
                   >
                     <Pencil size={13} /> Edit
                   </button>
@@ -793,7 +796,7 @@ const SHOW_DATA_FRESHNESS = false;
 export default function AccountSourcingCompanyDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const toast = useToast();
 
   const [company, setCompany] = useState<Company | null>(null);
@@ -1545,7 +1548,7 @@ export default function AccountSourcingCompanyDetail() {
                       key={option.value}
                       type="button"
                       onClick={() => handleStatusChange(option.value)}
-                      disabled={statusSaving}
+                      disabled={!canEditRecord(user, company) || (statusSaving)}
                       title={active ? "Click to clear this status" : `Set status to ${option.label}`}
                       onMouseEnter={(e) => { if (!active) e.currentTarget.style.boxShadow = `0 2px 8px ${option.color}33`; }}
                       onMouseLeave={(e) => { if (!active) e.currentTarget.style.boxShadow = "none"; }}
@@ -1579,7 +1582,7 @@ export default function AccountSourcingCompanyDetail() {
                   kind="company"
                   id={company.id}
                   events={company.events}
-                  onChanged={(events) => setCompany((prev) => (prev ? { ...prev, events } : prev))}
+                  onChanged={(events) => setCompany((prev) => (prev ? { ...prev, events } : prev))} readOnly={!canEditRecord(user, company)}
                 />
               </div>
               {/* Outbound Summary — SDR quick notes, saved on blur or via the
@@ -1602,7 +1605,7 @@ export default function AccountSourcingCompanyDetail() {
                     <button
                       type="button"
                       onClick={saveOutboundSummary}
-                      disabled={summarySaving}
+                      disabled={!canEditRecord(user, company) || (summarySaving)}
                       style={{
                         fontSize: 12,
                         fontWeight: 700,
@@ -1643,7 +1646,7 @@ export default function AccountSourcingCompanyDetail() {
                     outline: "none",
                     boxSizing: "border-box",
                     background: "#fbfdff",
-                  }}
+                  }} disabled={!canEditRecord(user, company)}
                 />
               </div>
               <ProvenanceBar
@@ -1721,11 +1724,11 @@ export default function AccountSourcingCompanyDetail() {
                         fontSize: 13,
                         color: colors.text,
                         outline: "none",
-                      }}
+                      }} disabled={!canEditRecord(user, company)}
                     />
                     <button
                       type="button"
-                      disabled={domainSaving}
+                      disabled={!canEditRecord(user, company) || (domainSaving)}
                       onClick={handleSaveDomain}
                       style={{
                         height: 30,
@@ -1754,7 +1757,7 @@ export default function AccountSourcingCompanyDetail() {
                         fontSize: 12,
                         fontWeight: 700,
                         cursor: "pointer",
-                      }}
+                      }} disabled={!canEditRecord(user, company)}
                     >
                       Cancel
                     </button>
@@ -1775,7 +1778,7 @@ export default function AccountSourcingCompanyDetail() {
                       fontSize: 12,
                       fontWeight: 700,
                       cursor: "pointer",
-                    }}
+                    }} disabled={!canEditRecord(user, company)}
                   >
                     Edit domain
                   </button>
@@ -1817,7 +1820,7 @@ export default function AccountSourcingCompanyDetail() {
                         fontWeight: 700,
                         cursor: "pointer",
                         whiteSpace: "nowrap",
-                      }}
+                      }} disabled={!canEditRecord(user, company)}
                     >
                       Fix domain
                     </button>
@@ -1892,7 +1895,7 @@ export default function AccountSourcingCompanyDetail() {
                     padding: "5px 10px",
                     cursor: "pointer",
                     textAlign: "left",
-                  }}
+                  }} disabled={!canEditRecord(user, company)}
                 >
                   {(company.use_case ?? []).length > 0 ? (
                     <span style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
@@ -1945,7 +1948,7 @@ export default function AccountSourcingCompanyDetail() {
                             fontWeight: selected ? 700 : 600,
                             cursor: "pointer",
                             textAlign: "left",
-                          }}
+                          }} disabled={!canEditRecord(user, company)}
                         >
                           {option}
                           {selected && <Check size={14} />}
@@ -2054,7 +2057,7 @@ export default function AccountSourcingCompanyDetail() {
                     load();
                   }
                 }}
-                style={{ width: "100%", border: `1px solid #d0e8d0`, background: "#eef8ef", color: "#1f8f5f", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                style={{ width: "100%", border: `1px solid #d0e8d0`, background: "#eef8ef", color: "#1f8f5f", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, company)}
               >
                 {icpResearching ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />} Refresh ICP Research
               </button>
@@ -2077,7 +2080,7 @@ export default function AccountSourcingCompanyDetail() {
                     load();
                   }
                 }}
-                style={{ width: "100%", border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                style={{ width: "100%", border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, company)}
               >
                 {re ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Re-enrich
               </button>
@@ -2085,7 +2088,7 @@ export default function AccountSourcingCompanyDetail() {
               <button
                 type="button"
                 onClick={() => setShowDealModal(true)}
-                style={{ width: "100%", border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                style={{ width: "100%", border: `1px solid #cde5ff`, background: "#eff7ff", color: "#1f5ecc", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, company)}
               >
                 <Plus size={13} /> Add to Deal
               </button>
@@ -2105,7 +2108,7 @@ export default function AccountSourcingCompanyDetail() {
                     alert(`Launch failed: ${err instanceof Error ? err.message : String(err)}`);
                   }
                 }}
-                style={{ width: "100%", border: "1px solid #ffd4b8", background: "#fdf5f0", color: "#d15b20", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}
+                style={{ width: "100%", border: "1px solid #ffd4b8", background: "#fdf5f0", color: "#d15b20", borderRadius: 12, padding: "10px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, company)}
               >
                 <Rocket size={13} /> Launch to Instantly
               </button>
@@ -2141,7 +2144,7 @@ export default function AccountSourcingCompanyDetail() {
                           type="button"
                           title="Remove alias domain"
                           onClick={() => void saveAliasDomains((company.additional_domains ?? []).filter((d) => d !== alias))}
-                          style={{ border: "none", background: "transparent", color: "#8b7bb5", cursor: "pointer", padding: 0, fontWeight: 900 }}
+                          style={{ border: "none", background: "transparent", color: "#8b7bb5", cursor: "pointer", padding: 0, fontWeight: 900 }} disabled={!canEditRecord(user, company)}
                         >
                           ×
                         </button>
@@ -2156,12 +2159,12 @@ export default function AccountSourcingCompanyDetail() {
                       onChange={(e) => setAliasDraft(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") void addAliasDomain(); }}
                       placeholder="Add alias domain (e.g. ceridian.com)"
-                      style={{ flex: 1, height: 32, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 10px", fontSize: 12.5 }}
+                      style={{ flex: 1, height: 32, border: "1px solid #d9e1ec", borderRadius: 10, padding: "0 10px", fontSize: 12.5 }} disabled={!canEditRecord(user, company)}
                     />
                     <button
                       type="button"
                       onClick={() => void addAliasDomain()}
-                      disabled={!aliasDraft.trim() || savingAliases}
+                      disabled={!canEditRecord(user, company) || (!aliasDraft.trim() || savingAliases)}
                       style={{ height: 32, border: "1px solid #bfd6ee", background: "#fff", color: "#175089", borderRadius: 10, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
                     >
                       Add
@@ -2208,7 +2211,7 @@ export default function AccountSourcingCompanyDetail() {
                       currentAssignedName={company.assigned_to_name || company.assigned_rep_name || company.assigned_rep_email || company.assigned_rep}
                       onAssigned={() => load()}
                       role="ae"
-                      label="Assign AE"
+                      label="Assign AE" readOnly={!canEditRecord(user, company)}
                     />
                   </div>
                   <div style={{ display: "grid", gap: 6 }}>
@@ -2220,7 +2223,7 @@ export default function AccountSourcingCompanyDetail() {
                       currentAssignedName={company.sdr_name || company.sdr_email}
                       onAssigned={() => load()}
                       role="sdr"
-                      label="Assign SDR"
+                      label="Assign SDR" readOnly={!canEditRecord(user, company)}
                     />
                   </div>
                 </div>
@@ -2229,6 +2232,7 @@ export default function AccountSourcingCompanyDetail() {
                 </div>
               </div>
 
+              {!canEditRecord(user, company) && <p style={{ fontSize: 12, color: colors.sub }}>View only — edits are limited to the assigned AE/SDR and admins.</p>}
               <OpportunityDetailsPanel company={company} onSaved={load} />
             </div>
           </div>
@@ -2585,7 +2589,7 @@ export default function AccountSourcingCompanyDetail() {
                     display: "flex", alignItems: "center", gap: 6,
                     padding: "7px 14px", borderRadius: 10, fontSize: 12, fontWeight: 700,
                     background: colors.primary, color: "#fff", border: "none", cursor: "pointer",
-                  }}
+                  }} disabled={!canEditRecord(user, company)}
                 >
                   <UserPlus size={13} /> Add Stakeholder
                 </button>
@@ -2641,7 +2645,7 @@ export default function AccountSourcingCompanyDetail() {
                             } else {
                               setSelectedContactIds(new Set());
                             }
-                          }}
+                          }} disabled={!canEditRecord(user, company)}
                         />
                         Select all
                       </label>
@@ -2675,7 +2679,7 @@ export default function AccountSourcingCompanyDetail() {
                           checked={selectedContactIds.has(c.id)}
                           onChange={() => toggleContactSelected(c.id)}
                           style={{ marginTop: 16 }}
-                          aria-label={`Select ${c.first_name} ${c.last_name}`}
+                          aria-label={`Select ${c.first_name} ${c.last_name}`} disabled={!canEditRecord(user, company)}
                         />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <ContactItem
@@ -2816,11 +2820,11 @@ export default function AccountSourcingCompanyDetail() {
                         toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
                       }).finally(() => setNoteSaving(false));
                     }
-                  }}
+                  }} disabled={!canEditRecord(user, company)}
                 />
                 <button
                   type="button"
-                  disabled={!noteInput.trim() || noteSaving}
+                  disabled={!canEditRecord(user, company) || (!noteInput.trim() || noteSaving)}
                   onClick={async () => {
                     if (!noteInput.trim() || noteSaving || !company) return;
                     setNoteSaving(true);
@@ -2896,7 +2900,7 @@ export default function AccountSourcingCompanyDetail() {
               value={dealForm.name}
               onChange={(e) => setDealForm((current) => ({ ...current, name: e.target.value }))}
               placeholder="Deal name"
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }} disabled={!canEditRecord(user, company)}
             />
             {existingCompanyDeals.length ? (
               <div style={{ display: "grid", gap: 8, padding: "10px 12px", borderRadius: 12, background: "#f8fbff", border: `1px solid ${colors.border}` }}>
@@ -2931,19 +2935,19 @@ export default function AccountSourcingCompanyDetail() {
                 value={dealForm.value}
                 onChange={(e) => setDealForm((current) => ({ ...current, value: e.target.value }))}
                 placeholder="Value (optional)"
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }} disabled={!canEditRecord(user, company)}
               />
               <input
                 type="date"
                 value={dealForm.close_date_est}
                 onChange={(e) => setDealForm((current) => ({ ...current, close_date_est: e.target.value }))}
-                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }}
+                style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text }} disabled={!canEditRecord(user, company)}
               />
             </div>
             <select
               value={dealForm.stage}
               onChange={(e) => setDealForm((current) => ({ ...current, stage: e.target.value }))}
-              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }}
+              style={{ border: `1px solid ${colors.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 13, color: colors.text, background: "#fff" }} disabled={!canEditRecord(user, company)}
             >
               {availableDealStages.map((stage) => (
                 <option key={stage.id} value={stage.id}>{stage.label}</option>

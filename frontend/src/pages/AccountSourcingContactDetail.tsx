@@ -1,3 +1,5 @@
+import { useAuth } from "../lib/AuthContext";
+import { canEditRecord } from "../lib/recordAccess";
 import "./prospect-detail-refresh.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -66,6 +68,7 @@ import {
 } from "./accountSourcingContactDetailShared";
 
 export default function AccountSourcingContactDetail() {
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const toast = useToast();
@@ -564,17 +567,18 @@ export default function AccountSourcingContactDetail() {
                       updatedAt={contact.updated_at}
                     />
                   </div>
+                  {!canEditRecord(user, contact) && <p style={{ fontSize: 12, color: colors.sub }}>View only — edits are limited to the assigned AE/SDR and admins.</p>}
                   <ContactStatusBar
                     value={contact.account_status}
                     saving={statusSaving}
-                    onChange={handleStatusChange}
+                    onChange={handleStatusChange} readOnly={!canEditRecord(user, contact)}
                   />
                   <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
                     <EventTagEditor
                       kind="contact"
                       id={contact.id}
                       events={contact.events}
-                      onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))}
+                      onChanged={(events) => setContact((prev) => (prev ? { ...prev, events } : prev))} readOnly={!canEditRecord(user, contact)}
                     />
                   </div>
                   <div
@@ -628,7 +632,7 @@ export default function AccountSourcingContactDetail() {
                       <button
                         type="button"
                         onClick={() => void handleEnrichCompany()}
-                        disabled={companyEnriching}
+                        disabled={!canEditRecord(user, contact) || (companyEnriching)}
                         style={{
                           border: "1px solid #e5c980",
                           background: "#fff",
@@ -660,14 +664,14 @@ export default function AccountSourcingContactDetail() {
                           onChange={(e) => setEmailInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
                           placeholder="email@example.com"
-                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
+                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }} disabled={!canEditRecord(user, contact)}
                         />
-                        <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                        <button type="button" disabled={!canEditRecord(user, contact) || (emailSaving)} onClick={() => handleSaveEmail()}
                           style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           {emailSaving ? "Saving..." : "Save"}
                         </button>
                         <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, contact)}>
                           Cancel
                         </button>
                       </span>
@@ -675,14 +679,14 @@ export default function AccountSourcingContactDetail() {
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label="Email" tone="primary" />
                         <button type="button" onClick={() => { setEmailInput(contact.email || ""); setEditingEmail(true); }}
-                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           <PenLine size={14} />
                         </button>
                       </span>
                     ) : (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
                         <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
-                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           <Plus size={14} /> Add email
                         </button>
                       </span>
@@ -727,14 +731,14 @@ export default function AccountSourcingContactDetail() {
                           onChange={(e) => setPhoneInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
                           placeholder="+1 555-123-4567"
-                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }}
+                          style={{ height: 36, borderRadius: 10, border: `1px solid ${colors.primary}`, padding: "0 10px", fontSize: 13, color: colors.text, outline: "none", minWidth: 200 }} disabled={!canEditRecord(user, contact)}
                         />
-                        <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                        <button type="button" disabled={!canEditRecord(user, contact) || (phoneSaving)} onClick={() => handleSavePhone()}
                           style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                           {phoneSaving ? "Saving..." : "Save"}
                         </button>
                         <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          style={{ height: 36, padding: "0 12px", borderRadius: 10, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }} disabled={!canEditRecord(user, contact)}>
                           Cancel
                         </button>
                       </span>
@@ -747,14 +751,14 @@ export default function AccountSourcingContactDetail() {
                           tone="green"
                         />
                         <button type="button" onClick={() => { setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
-                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                          style={{ height: 36, width: 36, borderRadius: 10, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           <PenLine size={14} />
                         </button>
                       </span>
                     ) : (
                       <span className="prospect-detail-secondary-action" style={{ display: "inline-flex" }}>
                         <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
-                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           <Plus size={14} /> Add phone
                         </button>
                       </span>
@@ -777,7 +781,7 @@ export default function AccountSourcingContactDetail() {
                       type="button"
                       className="prospect-detail-secondary-action"
                       onClick={handleOpenLinkedinLogger}
-                      disabled={!contact.linkedin_url}
+                      disabled={!canEditRecord(user, contact) || (!contact.linkedin_url)}
                       title={contact.linkedin_url ? "Log a LinkedIn touch" : "Add a LinkedIn URL first to log a LinkedIn touch"}
                       style={{ border: `1px solid ${contact.linkedin_url ? "#ddd6fe" : "#e2e8f0"}`, background: contact.linkedin_url ? "#f5f3ff" : "#f6f8fb", color: contact.linkedin_url ? "#6d28d9" : "#9aa8b7", borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: contact.linkedin_url ? "pointer" : "default", opacity: contact.linkedin_url ? 1 : 0.85 }}
                     >
@@ -797,13 +801,13 @@ export default function AccountSourcingContactDetail() {
                             <input autoFocus value={emailInput} onChange={(e) => setEmailInput(e.target.value)}
                               onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
                               placeholder="email@example.com"
-                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
-                            <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} disabled={!canEditRecord(user, contact)} />
+                            <button type="button" disabled={!canEditRecord(user, contact) || (emailSaving)} onClick={() => handleSaveEmail()}
                               style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               {emailSaving ? "..." : "Save"}
                             </button>
                             <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                               Cancel
                             </button>
                           </div>
@@ -811,13 +815,13 @@ export default function AccountSourcingContactDetail() {
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
                             <span style={{ color: colors.text, fontSize: 14, fontWeight: 700, flex: 1 }}>{contact.email}</span>
                             <button type="button" onClick={(e) => { e.preventDefault(); setEmailInput(contact.email || ""); setEditingEmail(true); }}
-                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                               <PenLine size={13} />
                             </button>
                           </div>
                         ) : (
                           <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
-                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                             <Plus size={12} /> Add email
                           </button>
                         )}
@@ -829,30 +833,30 @@ export default function AccountSourcingContactDetail() {
                             <input autoFocus value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)}
                               onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
                               placeholder="+1 555-123-4567"
-                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} />
-                            <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                              style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} disabled={!canEditRecord(user, contact)} />
+                            <button type="button" disabled={!canEditRecord(user, contact) || (phoneSaving)} onClick={() => handleSavePhone()}
                               style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                               {phoneSaving ? "..." : "Save"}
                             </button>
                             <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 12, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                               Cancel
                             </button>
                           </div>
                         ) : contact.phone ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
                             <button type="button" onClick={() => setCallDrawerOpen(true)}
-                              style={{ color: colors.green, fontSize: 14, fontWeight: 800, flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                              style={{ color: colors.green, fontSize: 14, fontWeight: 800, flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }} disabled={!canEditRecord(user, contact)}>
                               {contact.phone}
                             </button>
                             <button type="button" onClick={(e) => { e.preventDefault(); setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
-                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                              style={{ height: 30, width: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                               <PenLine size={13} />
                             </button>
                           </div>
                         ) : (
                           <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
-                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                            style={{ border: `1px dashed #bccfe0`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                             <Plus size={12} /> Add phone
                           </button>
                         )}
@@ -878,7 +882,7 @@ export default function AccountSourcingContactDetail() {
             {canConvertToDeal && company ? (
               <button
                 onClick={handleConvertToDeal}
-                disabled={convertingDeal}
+                disabled={!canEditRecord(user, contact) || (convertingDeal)}
                 style={{ border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: convertingDeal ? "wait" : "pointer", opacity: convertingDeal ? 0.8 : 1 }}
               >
                 {convertingDeal ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
@@ -900,7 +904,7 @@ export default function AccountSourcingContactDetail() {
                     setTimeout(() => setReEnrichStatus("idle"), 4000);
                   }
                 }}
-                disabled={reEnriching}
+                disabled={!canEditRecord(user, contact) || (reEnriching)}
                 style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.text, borderRadius: 10, minHeight: 36, padding: "7px 12px", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, cursor: reEnriching ? "not-allowed" : "pointer", opacity: reEnriching ? 0.7 : 1 }}
               >
                 {reEnriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -996,7 +1000,7 @@ export default function AccountSourcingContactDetail() {
             </div>
 
             <Section title="Outreach Sequence" icon={<UserRound size={15} color={colors.primary} />}>
-              <AddToSequenceButton contactId={contact.id} />
+              <AddToSequenceButton contactId={contact.id} readOnly={!canEditRecord(user, contact)} />
             </Section>
 
             <Section title="Automation Signals" icon={<UserRound size={15} color={colors.primary} />}>
@@ -1134,11 +1138,11 @@ export default function AccountSourcingContactDetail() {
                         toast.error(error instanceof Error ? error.message : "Could not save this note.", "Note not saved");
                       }).finally(() => setNoteSaving(false));
                     }
-                  }}
+                  }} disabled={!canEditRecord(user, contact)}
                 />
                 <button
                   type="button"
-                  disabled={!noteInput.trim() || noteSaving}
+                  disabled={!canEditRecord(user, contact) || (!noteInput.trim() || noteSaving)}
                   onClick={async () => {
                     if (!noteInput.trim() || noteSaving || !contact) return;
                     setNoteSaving(true);
@@ -1244,14 +1248,14 @@ export default function AccountSourcingContactDetail() {
                       onChange={(e) => setEmailInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSaveEmail(); if (e.key === "Escape") { setEditingEmail(false); setEmailInput(contact.email || ""); } }}
                       placeholder="email@example.com"
-                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }} disabled={!canEditRecord(user, contact)}
                     />
-                    <button type="button" disabled={emailSaving} onClick={() => handleSaveEmail()}
+                    <button type="button" disabled={!canEditRecord(user, contact) || (emailSaving)} onClick={() => handleSaveEmail()}
                       style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {emailSaving ? "Saving..." : "Save"}
                     </button>
                     <button type="button" onClick={() => { setEditingEmail(false); setEmailInput(contact.email || ""); }}
-                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                       Cancel
                     </button>
                   </div>
@@ -1259,13 +1263,13 @@ export default function AccountSourcingContactDetail() {
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                     <ContactActionButton icon={<Mail size={14} />} href={gmailComposeUrl(contact.email)} label={contact.email} tone="primary" />
                     <button type="button" onClick={() => { setEmailInput(contact.email || ""); setEditingEmail(true); }}
-                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                       <PenLine size={12} />
                     </button>
                   </span>
                 ) : (
                   <button type="button" onClick={() => { setEmailInput(""); setEditingEmail(true); }}
-                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                     <Plus size={12} /> Add email
                   </button>
                 )}
@@ -1280,14 +1284,14 @@ export default function AccountSourcingContactDetail() {
                       onChange={(e) => setPhoneInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") { setEditingPhone(false); setPhoneInput(contact.phone || ""); } }}
                       placeholder="+1 555-123-4567"
-                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                      style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }} disabled={!canEditRecord(user, contact)}
                     />
-                    <button type="button" disabled={phoneSaving} onClick={() => handleSavePhone()}
+                    <button type="button" disabled={!canEditRecord(user, contact) || (phoneSaving)} onClick={() => handleSavePhone()}
                       style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {phoneSaving ? "Saving..." : "Save"}
                     </button>
                     <button type="button" onClick={() => { setEditingPhone(false); setPhoneInput(contact.phone || ""); }}
-                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                       Cancel
                     </button>
                   </div>
@@ -1300,13 +1304,13 @@ export default function AccountSourcingContactDetail() {
                       tone="green"
                     />
                     <button type="button" onClick={() => { setPhoneInput(contact.phone || ""); setEditingPhone(true); }}
-                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                       <PenLine size={12} />
                     </button>
                   </span>
                 ) : (
                   <button type="button" onClick={() => { setPhoneInput(""); setEditingPhone(true); }}
-                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                     <Plus size={12} /> Add phone
                   </button>
                 )}
@@ -1326,13 +1330,13 @@ export default function AccountSourcingContactDetail() {
                                 value={row.number}
                                 onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, number: e.target.value } : p)))}
                                 placeholder="+1 555-123-4567"
-                                style={{ flex: "1 1 160px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                                style={{ flex: "1 1 160px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} disabled={!canEditRecord(user, contact)}
                               />
                               <input
                                 value={row.label || ""}
                                 onChange={(e) => setPhonesDraft((prev) => prev.map((p, i) => (i === idx ? { ...p, label: e.target.value } : p)))}
                                 placeholder="mobile / office"
-                                style={{ flex: "1 1 100px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+                                style={{ flex: "1 1 100px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} disabled={!canEditRecord(user, contact)}
                               />
                               <button type="button" aria-label="Remove number" onClick={() => setPhonesDraft((prev) => prev.filter((_, i) => i !== idx))}
                                 style={{ height: 36, width: 36, flexShrink: 0, borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: "#b42336", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
@@ -1346,12 +1350,12 @@ export default function AccountSourcingContactDetail() {
                             style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.sub, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                             <Plus size={12} /> Add number
                           </button>
-                          <button type="button" disabled={phonesSaving} onClick={() => handleSaveAdditionalPhones()}
+                          <button type="button" disabled={!canEditRecord(user, contact) || (phonesSaving)} onClick={() => handleSaveAdditionalPhones()}
                             style={{ height: 36, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.green}`, background: colors.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                             {phonesSaving ? "Saving…" : "Save"}
                           </button>
                           <button type="button" onClick={() => setEditingPhones(false)}
-                            style={{ height: 36, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                            style={{ height: 36, padding: "0 12px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                             Cancel
                           </button>
                         </div>
@@ -1370,13 +1374,13 @@ export default function AccountSourcingContactDetail() {
                           </div>
                         ))}
                         <button type="button" onClick={startEditingPhones}
-                          style={{ alignSelf: "flex-start", border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          style={{ alignSelf: "flex-start", border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                           <PenLine size={12} /> Edit numbers
                         </button>
                       </>
                     ) : (
                       <button type="button" onClick={startEditingPhones}
-                        style={{ alignSelf: "flex-start", border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        style={{ alignSelf: "flex-start", border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}>
                         <Plus size={12} /> Add number
                       </button>
                     )}
@@ -1395,9 +1399,9 @@ value={editingLinkedIn ? (
       onKeyDown={(event) => { if (event.key === "Enter") void handleSaveLinkedIn(); if (event.key === "Escape") cancelLinkedInEdit(); }}
       placeholder="linkedin.com/in/profile"
       aria-label="LinkedIn URL"
-      style={{ flex: "1 1 210px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }}
+      style={{ flex: "1 1 210px", minWidth: 0, height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none" }} disabled={!canEditRecord(user, contact)}
     />
-    <button type="button" disabled={linkedInSaving} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 36, padding: "0 12px" }}>
+    <button type="button" disabled={!canEditRecord(user, contact) || (linkedInSaving)} onClick={() => void handleSaveLinkedIn()} className="crm-button primary" style={{ height: 36, padding: "0 12px" }}>
       {linkedInSaving ? "Saving..." : "Save"}
     </button>
     <button type="button" onClick={cancelLinkedInEdit} className="crm-button soft" style={{ height: 36, padding: "0 12px" }}>Cancel</button>
@@ -1410,7 +1414,7 @@ value={editingLinkedIn ? (
       aria-label="Edit LinkedIn URL"
       title="Edit LinkedIn URL"
       onClick={() => { setLinkedInInput(contact.linkedin_url || ""); setEditingLinkedIn(true); }}
-      style={{ height: 28, width: 28, borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+      style={{ height: 28, width: 28, borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.sub, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} disabled={!canEditRecord(user, contact)}
     >
       <PenLine size={12} />
     </button>
@@ -1419,7 +1423,7 @@ value={editingLinkedIn ? (
   <button
     type="button"
     onClick={() => { setLinkedInInput(""); setEditingLinkedIn(true); }}
-    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+    style={{ border: `1px dashed ${colors.border}`, background: "#fbfdff", color: colors.faint, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} disabled={!canEditRecord(user, contact)}
   >
     <Plus size={12} /> Add LinkedIn URL
                   </button>
@@ -1435,7 +1439,7 @@ value={editingLinkedIn ? (
                     currentAssignedName={contact.assigned_to_name || contact.assigned_rep_email || company?.assigned_to_name || company?.assigned_rep_name || company?.assigned_rep_email}
                     onAssigned={() => load()}
                     role="ae"
-                    label="Assign AE"
+                    label="Assign AE" readOnly={!canEditRecord(user, contact)}
                   />
                 }
               />
@@ -1449,7 +1453,7 @@ value={editingLinkedIn ? (
                     currentAssignedName={contact.sdr_name || company?.sdr_name || company?.sdr_email}
                     onAssigned={() => load()}
                     role="sdr"
-                    label="Assign SDR"
+                    label="Assign SDR" readOnly={!canEditRecord(user, contact)}
                   />
                 }
               />
@@ -1473,14 +1477,14 @@ value={editingLinkedIn ? (
                           onChange={(e) => setDomainInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") handleSaveDomain(); if (e.key === "Escape") setEditingDomain(false); }}
                           placeholder="e.g. acme.com"
-                          style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }}
+                          style={{ height: 36, borderRadius: 8, border: `1px solid ${colors.primary}`, padding: "0 8px", fontSize: 13, color: colors.text, outline: "none", width: 180 }} disabled={!canEditRecord(user, contact)}
                         />
-                        <button type="button" disabled={domainSaving} onClick={handleSaveDomain}
+                        <button type="button" disabled={!canEditRecord(user, contact) || (domainSaving)} onClick={handleSaveDomain}
                           style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.primary}`, background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                           {domainSaving ? "Saving…" : "Save"}
                         </button>
                         <button type="button" onClick={() => setEditingDomain(false)}
-                          style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                          style={{ height: 36, padding: "0 10px", borderRadius: 8, border: `1px solid ${colors.border}`, background: "#fff", color: colors.faint, fontSize: 13, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           Cancel
                         </button>
                       </div>
@@ -1490,7 +1494,7 @@ value={editingLinkedIn ? (
                           {company.domain ? formatDomain(company.domain) : "No domain set"}
                         </span>
                         <button type="button" onClick={() => { setDomainInput(company.domain || ""); setEditingDomain(true); }}
-                          style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                          style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "#f7f9fc", color: colors.primary, fontSize: 11, fontWeight: 700, cursor: "pointer" }} disabled={!canEditRecord(user, contact)}>
                           Edit
                         </button>
                       </span>

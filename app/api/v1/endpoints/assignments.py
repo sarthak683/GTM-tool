@@ -28,6 +28,8 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import select
 
+from app.services.record_access import can_edit_record, authorize_company_edit
+from app.services.contact_access import authorize_contact_edit
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.company import Company, CompanyRead
@@ -57,6 +59,7 @@ async def _apply_contact_assignment(
     is_sdr: bool,
     current_assigned_id,
     company_cache: dict,
+    actor=None,
 ) -> bool:
     """Apply one contact assignment with the FULL shared semantics: set/clear
     the slot, reset outreach progress on an SDR handoff, and backfill an empty
@@ -92,7 +95,7 @@ async def _apply_contact_assignment(
                 )
             ).scalar_one_or_none()
             company_cache[contact.company_id] = company
-        if _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
+        if company and actor is not None and can_edit_record(actor, company) and _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
             backfilled = True
             company.updated_at = datetime.utcnow()
             session.add(company)
@@ -234,7 +237,7 @@ def _can_assign_team(actor: User) -> bool:
     set the AE/SDR slot, superseding the self-claim-only rule (Pulkit 2026-05-07,
     which still gates the *bulk* endpoints via `_is_self_claim_or_self_release`).
     """
-    return (actor.role or "").lower() in {"admin", "ae", "sdr"}
+    return actor.is_admin or (actor.role or "").lower() in {"ae", "sdr"}
 
 
 # ── Single assignment ────────────────────────────────────────────────────────
@@ -261,6 +264,8 @@ async def assign_company(
     ).scalar_one_or_none()
     if not company:
         raise NotFoundError("Company not found")
+
+    authorize_company_edit(actor, company)
 
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
@@ -380,6 +385,8 @@ async def assign_contact(
     if not contact:
         raise NotFoundError("Contact not found")
 
+    await authorize_contact_edit(session, actor, contact)
+
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
@@ -424,7 +431,7 @@ async def assign_contact(
         ).scalar_one_or_none()
         if company:
             backfilled = False
-            if body.user_id:
+            if body.user_id and can_edit_record(actor, company):
                 backfilled = _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr)
             next_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
             backfill_note = (
@@ -496,7 +503,7 @@ async def bulk_assign_companies(
                 )
             )
         ).scalar_one_or_none()
-        if not company:
+        if not company or not can_edit_record(actor, company):
             skipped += 1
             continue
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
@@ -581,7 +588,7 @@ async def bulk_assign_contacts(
                 )
             )
         ).scalar_one_or_none()
-        if not contact:
+        if not contact or not can_edit_record(actor, contact):
             skipped += 1
             continue
         current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
@@ -595,7 +602,7 @@ async def bulk_assign_contacts(
             continue
         if await _apply_contact_assignment(
             session, contact, user, is_sdr=is_sdr,
-            current_assigned_id=current_assigned_id, company_cache=company_cache,
+            current_assigned_id=current_assigned_id, company_cache=company_cache, actor=actor,
         ):
             companies_backfilled += 1
         updated += 1
@@ -702,7 +709,7 @@ async def bulk_assign_contacts_by_filter(
                 )
             )
         ).scalar_one_or_none()
-        if not contact:
+        if not contact or not can_edit_record(actor, contact):
             skipped += 1
             continue
         current_assigned_id = contact.sdr_id if is_sdr else contact.assigned_to_id
@@ -716,7 +723,7 @@ async def bulk_assign_contacts_by_filter(
             continue
         if await _apply_contact_assignment(
             session, contact, user, is_sdr=is_sdr,
-            current_assigned_id=current_assigned_id, company_cache=company_cache,
+            current_assigned_id=current_assigned_id, company_cache=company_cache, actor=actor,
         ):
             companies_backfilled += 1
         updated += 1
@@ -802,6 +809,9 @@ async def bulk_assign_companies_by_filter(
     skipped = 0
     prospects_kept_divergent = 0
     for company in companies:
+        if not can_edit_record(actor, company):
+            skipped += 1
+            continue
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
         if not actor.is_admin and not _is_self_claim_or_self_release(
             actor=actor,

@@ -1,3 +1,5 @@
+import { useAuth } from "../../lib/AuthContext";
+import { canEditRecord } from "../../lib/recordAccess";
 import { CSSProperties, memo, useEffect, useMemo, useState } from "react";
 import { outreachApi } from "../../lib/api";
 import type { Contact, OutreachSequence, OutreachStep } from "../../types";
@@ -135,6 +137,8 @@ const palette = {
 const DEFAULT_SENDING_ACCOUNT = "";
 
 function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Props) {
+  const { user } = useAuth();
+  const readOnly = !canEditRecord(user, contact);
   const isOpen = !!contact;
   const isInline = mode === "inline";
 
@@ -718,7 +722,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                       borderColor: palette.greenBorder,
                       background: "#f4fbf7",
                     }}
-                    title={`Call ${contact.phone} in Aircall`}
+                    title={`Call ${contact.phone} in Aircall`} disabled={readOnly}
                   >
                     <Phone size={12} /> {contact.phone}
                   </button>
@@ -759,7 +763,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
               <p style={{ margin: 0, color: palette.sub, lineHeight: 1.6, fontSize: 15 }}>
                 No outreach sequence yet. Generate one with AI.
               </p>
-              <button onClick={handleGenerate} disabled={generating} style={generating ? { ...primaryBtn, ...disabledBtn } : primaryBtn}>
+              <button onClick={handleGenerate} disabled={readOnly || (generating)} style={generating ? { ...primaryBtn, ...disabledBtn } : primaryBtn}>
                 {generating ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 {generating ? "Generating..." : "Generate Sequence"}
               </button>
@@ -785,7 +789,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                 </div>
                 <button
                   onClick={handleGenerate}
-                  disabled={generating || isLaunched}
+                  disabled={readOnly || (generating || isLaunched)}
                   style={(generating || isLaunched) ? { ...ghostBtn, ...disabledBtn } : ghostBtn}
                   title={isLaunched ? "Cannot regenerate after launch" : undefined}
                 >
@@ -889,7 +893,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                         </span>
                         <select
                           value={getStepChannel(step)}
-                          disabled={!canEditTiming}
+                          disabled={readOnly || (!canEditTiming)}
                           onChange={(e) => handleChannelChange(step.id, e.target.value)}
                           style={{
                             width: "100%",
@@ -912,7 +916,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                           type="number"
                           min={0}
                           value={step.delay_value}
-                          disabled={!canEditTiming}
+                          disabled={readOnly || (!canEditTiming)}
                           onChange={(e) => handleDelayChange(step.id, e.target.value)}
                           style={{
                             width: "100%",
@@ -934,7 +938,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                           <button
                             onClick={() => void handleRemoveTimingStep(step.id)}
                             type="button"
-                            style={{ ...copyBtn, justifyContent: "center" }}
+                            style={{ ...copyBtn, justifyContent: "center" }} disabled={readOnly}
                           >
                             <Trash2 size={12} />
                             Remove last step
@@ -951,14 +955,14 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                       {timingError && <span style={{ fontSize: 12, color: "#b42336" }}>{timingError}</span>}
                       {timingOk && <span style={{ fontSize: 12, color: palette.green, fontWeight: 700 }}>Timing saved</span>}
                       {canEditTiming && visibleTimingSteps.length < MAX_SEQUENCE_STEPS && (
-                        <button onClick={() => void handleAddTimingStep()} style={ghostBtn}>
+                        <button onClick={() => void handleAddTimingStep()} style={ghostBtn} disabled={readOnly}>
                           <Plus size={13} />
                           Add step
                         </button>
                       )}
                       <button
                         onClick={handleSaveTiming}
-                        disabled={!canEditTiming || savingTiming}
+                        disabled={readOnly || (!canEditTiming || savingTiming)}
                         style={{
                           ...ghostBtn,
                           opacity: canEditTiming ? 1 : 0.6,
@@ -981,7 +985,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                     <input
                       value={editSubject}
                       onChange={(e) => setEditSubject(e.target.value)}
-                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${palette.accent}`, borderRadius: 8, padding: "7px 10px", fontSize: 15, fontWeight: 700, color: palette.text, fontFamily: "inherit", outline: "none" }}
+                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${palette.accent}`, borderRadius: 8, padding: "7px 10px", fontSize: 15, fontWeight: 700, color: palette.text, fontFamily: "inherit", outline: "none" }} disabled={readOnly}
                     />
                   ) : (
                     <div style={{ color: palette.text, fontWeight: 800, fontSize: 17, lineHeight: 1.4 }}>{subject}</div>
@@ -996,7 +1000,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                     value={editBody}
                     onChange={(e) => setEditBody(e.target.value)}
                     rows={12}
-                    style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${palette.accent}`, borderRadius: 8, padding: "10px", fontSize: 15, color: palette.text, fontFamily: "inherit", lineHeight: 1.65, resize: "vertical", outline: "none" }}
+                    style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${palette.accent}`, borderRadius: 8, padding: "10px", fontSize: 15, color: palette.text, fontFamily: "inherit", lineHeight: 1.65, resize: "vertical", outline: "none" }} disabled={readOnly}
                   />
                 ) : body ? (
                   <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit", color: palette.text, lineHeight: 1.65, fontSize: 16 }}>
@@ -1009,14 +1013,14 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                 {/* Edit / Save / Copy controls */}
                 <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 6 }}>
                   {!isLaunched && !editing && body && (
-                    <button onClick={handleStartEdit} style={copyBtn}>
+                    <button onClick={handleStartEdit} style={copyBtn} disabled={readOnly}>
                       <Pencil size={12} /> Edit
                     </button>
                   )}
                   {editing && (
                     <>
                       <button onClick={() => setEditing(false)} style={copyBtn}>Cancel</button>
-                      <button onClick={handleSave} disabled={saving} style={{ ...copyBtn, color: palette.green, borderColor: palette.greenBorder }}>
+                      <button onClick={handleSave} disabled={readOnly || (saving)} style={{ ...copyBtn, color: palette.green, borderColor: palette.greenBorder }}>
                         {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
                         {saving ? "Saving..." : "Save"}
                       </button>
@@ -1065,7 +1069,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <button
                         onClick={handleSync}
-                        disabled={syncing}
+                        disabled={readOnly || (syncing)}
                         style={{ ...ghostBtn, fontSize: 12, gap: 4 }}
                         title="Pull latest stats from Instantly"
                       >
@@ -1074,7 +1078,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                       {seq.instantly_campaign_status === "paused" ? (
                         <button
                           onClick={handleResume}
-                          disabled={resuming}
+                          disabled={readOnly || (resuming)}
                           style={{ ...ghostBtn, fontSize: 12, gap: 4, color: palette.green, ...(resuming ? disabledBtn : {}) }}
                         >
                           {resuming ? <RefreshCw size={11} className="animate-spin" /> : <Play size={11} />} Resume
@@ -1082,7 +1086,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                       ) : (
                         <button
                           onClick={handlePause}
-                          disabled={pausing}
+                          disabled={readOnly || (pausing)}
                           style={{ ...ghostBtn, fontSize: 12, gap: 4, color: "#b45309", ...(pausing ? disabledBtn : {}) }}
                         >
                           {pausing ? <RefreshCw size={11} className="animate-spin" /> : <Pause size={11} />} Pause
@@ -1137,7 +1141,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                             border: `1px solid ${palette.line}`, borderRadius: 8,
                             padding: "9px 12px", fontSize: 14, color: palette.text,
                             fontFamily: "inherit", outline: "none",
-                          }}
+                          }} disabled={readOnly}
                         />
                         <p style={{ margin: "5px 0 0", fontSize: 11, color: palette.muted }}>
                           Your connected sending email in Instantly
@@ -1168,7 +1172,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                             setSequenceApproved(event.target.checked);
                             if (event.target.checked) setLaunchError("");
                           }}
-                          style={{ marginTop: 2, accentColor: palette.green }}
+                          style={{ marginTop: 2, accentColor: palette.green }} disabled={readOnly}
                         />
                         <span>
                           I reviewed the email copy, timing, and sending account. Ready to launch.
@@ -1188,7 +1192,7 @@ function OutreachDrawer({ contact, onClose, mode = "drawer", onCallContact }: Pr
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button
                           onClick={handleLaunch}
-                          disabled={launchDisabled}
+                          disabled={readOnly || (launchDisabled)}
                           style={launchDisabled ? { ...launchBtn, ...disabledBtn } : launchBtn}
                           title={!contact?.email?.trim() ? "Add an email to this contact before launching" : !sequenceApproved ? "Review and approve the sequence preview first" : undefined}
                         >

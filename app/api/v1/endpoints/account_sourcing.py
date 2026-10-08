@@ -28,6 +28,7 @@ from sqlalchemy import and_, case, func, literal_column, null, or_
 from sqlalchemy.orm import aliased, load_only
 from sqlmodel import select
 
+from app.services.record_access import authorize_company_edit
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.geo import COUNTRY_TO_CONTINENT, OTHER
 from app.services.event_tags import canonicalize, known_events, merge_events, parse_events
@@ -2304,6 +2305,7 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     company = await repo.get_or_raise(company_id)
     if not can_see_company(company, current_user):
         raise HTTPException(status_code=404, detail="Company not found")
+    authorize_company_edit(current_user, company)
 
     update_data = payload.model_dump(exclude_unset=True)
     if "additional_domains" in update_data:
@@ -3054,6 +3056,7 @@ async def re_enrich_company(company_id: UUID, _user: CurrentUser, session: DBSes
     company = await session.get(Company, company_id)
     if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
+    authorize_company_edit(_user, company)
     try:
         from app.tasks.enrichment import icp_research_single_task
 
@@ -3174,6 +3177,7 @@ async def icp_research_company(company_id: UUID, _user: CurrentUser, session: DB
     company = await session.get(Company, company_id)
     if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
+    authorize_company_edit(_user, company)
     try:
         from app.tasks.enrichment import icp_research_single_task
 
@@ -3301,6 +3305,7 @@ async def add_company_note(company_id: UUID, payload: NoteCreate, session: DBSes
     company = await session.get(Company, company_id)
     if not company or not can_see_company(company, current_user):
         raise HTTPException(status_code=404, detail="Company not found")
+    authorize_company_edit(current_user, company)
     body = (payload.body or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="Note body cannot be empty")
@@ -3381,6 +3386,7 @@ async def push_to_instantly(
     company = await session.get(Company, company_id)
     if not company or not can_see_company(company, _user):
         raise HTTPException(status_code=404, detail="Company not found")
+    authorize_company_edit(_user, company)
     if company.account_status in INACTIVE_ACCOUNT_STATUSES:
         raise HTTPException(
             status_code=400,

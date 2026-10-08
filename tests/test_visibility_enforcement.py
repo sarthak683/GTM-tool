@@ -74,7 +74,7 @@ def test_system_modules_name_every_unscoped_entity_query(model_name: str):
 
 
 @pytest.mark.parametrize("role", ["ae", "sdr"])
-def test_company_rule_refuses_cross_rep(role: str):
+def test_company_rule_allows_cross_rep_viewing(role: str):
     owner_id, outsider_id = uuid4(), uuid4()
     outsider = SimpleNamespace(id=outsider_id, role=role, is_admin=False)
     company = Company(
@@ -85,28 +85,25 @@ def test_company_rule_refuses_cross_rep(role: str):
         sdr_id=owner_id,
     )
 
-    assert can_see_company(company, outsider) is False
+    assert can_see_company(company, outsider) is True
     sql = str(
         company_visibility_filter(outsider_id, False, include_disabled=True).compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
         )
     )
-    assert str(outsider_id) in sql
-    assert "assigned_to_id" in sql and "sdr_id" in sql
+    assert str(outsider_id) not in sql
+    assert "deleted_at IS NULL" in sql
 
 
 @pytest.mark.parametrize("role", ["ae", "sdr"])
-def test_contact_rule_keeps_account_ownership_as_outer_gate(role: str):
+def test_contact_rule_allows_shared_viewing(role: str):
     outsider_id = uuid4()
     sql = str(
         contact_visibility_filter(outsider_id, role).compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
         )
     )
-    assert str(outsider_id) in sql
-    assert "contacts.company_id IN (SELECT companies.id" in sql
-    assert "companies.assigned_to_id" in sql
-    assert "companies.sdr_id" in sql
+    assert sql == "true"
 
 
 def test_deal_rule_refuses_soft_deleted_record():

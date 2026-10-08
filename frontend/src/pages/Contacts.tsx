@@ -1,3 +1,4 @@
+import { canEditRecord, canDeleteProspects } from "../lib/recordAccess";
 import "./prospects-refresh.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -259,7 +260,7 @@ export default function Contacts() {
   // own-assigned for this role). The owner-scope control's "All reps" /
   // "Unassigned" views would be misleading (they'd return only the SDR's own),
   // so for non-admin SDRs we force scope to "mine" and lock the toggle.
-  const isSdrLocked = !isAdmin && user?.role === "sdr";
+  const isSdrLocked = false;
   const {
     viewMode, setViewMode,
     search, setSearch,
@@ -2621,7 +2622,7 @@ export default function Contacts() {
                     <div>
                       <div style={{ fontSize: 18, fontWeight: 850, color: "#102a43", lineHeight: 1.1 }}>Prospects</div>
                       <div style={{ fontSize: 12, color: "#6f8297", fontWeight: 650, marginTop: 2 }}>
-                        {contactsTotal} total · {myCallsTodayCount} calls today
+                        {contactsTotal} total · {myCallsTodayCount} calls today · Shared view; edit your assigned prospects
                       </div>
                     </div>
                     {isSdrLocked ? (
@@ -2658,7 +2659,7 @@ export default function Contacts() {
                         fontWeight: 800,
                       }}
                     >
-                      {ownerScope === "mine" ? "My list" : isAdmin ? "All reps" : "Mine + unassigned"}
+                      {ownerScope === "mine" ? "My list" : "All reps"}
                     </button>
                     )}
                   </div>
@@ -2733,7 +2734,7 @@ export default function Contacts() {
                       <button
                         type="button"
                         onClick={() => void deleteContactsByIds(Array.from(selectedContactIds))}
-                        disabled={selectedContactIds.size === 0 || deletingContacts}
+                        disabled={!canDeleteProspects(user) || (selectedContactIds.size === 0 || deletingContacts)}
                         style={{ height: 34, border: "1px solid #f0c2c2", borderRadius: 10, background: selectedContactIds.size ? "#fff1f1" : "#f6f8fb", color: selectedContactIds.size ? "#b3261e" : "#9aa8b7", padding: "0 12px", fontSize: 12, fontWeight: 850, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                       >
                         <Trash2 size={13} /> {deletingContacts ? "Deleting..." : "Delete selected"}
@@ -3574,7 +3575,7 @@ export default function Contacts() {
                   <button
                     type="button"
                     onClick={() => void deleteContactsByIds(Array.from(selectedContactIds))}
-                    disabled={selectedContactIds.size === 0 || deletingContacts}
+                    disabled={!canDeleteProspects(user) || (selectedContactIds.size === 0 || deletingContacts)}
                     style={{
                       height: 36,
                       border: "1px solid #f0c2c2",
@@ -4194,7 +4195,7 @@ export default function Contacts() {
                                           cursor: "pointer",
                                           whiteSpace: "nowrap",
                                         }}
-                                        title="Click to edit timezone"
+                                        title="Click to edit timezone" disabled={!canEditRecord(user, c)}
                                       >
                                         <Globe size={11} />
                                         {currentLabel || "Add TZ"}
@@ -4206,13 +4207,13 @@ export default function Contacts() {
                               case "ae":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 104 }}>
-                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={c.assigned_to_name || c.assigned_rep_email} onAssigned={() => loadContacts()} role="ae" label="AE" compact />
+                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.assigned_to_id} currentAssignedName={c.assigned_to_name || c.assigned_rep_email} onAssigned={() => loadContacts()} role="ae" label="AE" compact readOnly={!canEditRecord(user, c)} />
                                   </td>
                                 );
                               case "sdr":
                                 return (
                                   <td key={column.key} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 104 }}>
-                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact />
+                                    <AssignDropdown entityType="contact" entityId={c.id} currentAssignedId={c.sdr_id} currentAssignedName={c.sdr_name} onAssigned={() => loadContacts()} role="sdr" label="SDR" compact readOnly={!canEditRecord(user, c)} />
                                   </td>
                                 );
                               case "last_touch": {
@@ -4382,16 +4383,16 @@ export default function Contacts() {
                                       {/* Email "Log" — the email twin of the LinkedIn Log button.
                                           Gmail compose records nothing, so without this a personally
                                           sent email stayed grey "Not sent" in the progress cell. */}
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setEmailLogContact(c); setEmailLogStatus(getManualEmailLog(c)?.status || "sent"); setEmailLogNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: "#ecfdf3", color: "#1f7a4d", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log an email you sent or a reply you received">
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setEmailLogContact(c); setEmailLogStatus(getManualEmailLog(c)?.status || "sent"); setEmailLogNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #bfd8c7", background: "#ecfdf3", color: "#1f7a4d", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log an email you sent or a reply you received" disabled={!canEditRecord(user, c)}>
                                         <Mail size={13} /> Log
                                       </button>
                                       <a href={c.linkedin_url || undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); if (!c.linkedin_url) e.preventDefault(); }} style={{ height: 38, borderRadius: 10, border: "1px solid #b8d4f0", background: c.linkedin_url ? "#e8f2ff" : "#f6f8fb", color: c.linkedin_url ? "#0a66c2" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.linkedin_url ? "pointer" : "default", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }} title={c.linkedin_url ? "Open LinkedIn profile" : "No LinkedIn profile"}>
                                         <Link2 size={13} /> LinkedIn
                                       </a>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setLinkedinContact(c); setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent"); setLinkedinNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log LinkedIn touch">
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setLinkedinContact(c); setLinkedinStatus(c.linkedin_status && c.linkedin_status !== "none" ? c.linkedin_status : "sent"); setLinkedinNotes(""); }} style={{ height: 38, borderRadius: 10, border: "1px solid #ddd6fe", background: "#f5f3ff", color: "#6d28d9", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }} title="Log LinkedIn touch" disabled={!canEditRecord(user, c)}>
                                         <Link2 size={13} /> Log
                                       </button>
-                                      <button type="button" disabled={!c.phone} onClick={(e) => { e.stopPropagation(); if (c.phone) { setWhatsappContact(c); setWhatsappOutcome("sent"); setWhatsappNotes(""); } }} style={{ height: 38, borderRadius: 10, border: "1px solid #b7e3c5", background: c.phone ? "#e7f9ef" : "#f6f8fb", color: c.phone ? "#0f9d58" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? "WhatsApp & log message" : "No phone number"}>
+                                      <button type="button" disabled={!canEditRecord(user, c) || (!c.phone)} onClick={(e) => { e.stopPropagation(); if (c.phone) { setWhatsappContact(c); setWhatsappOutcome("sent"); setWhatsappNotes(""); } }} style={{ height: 38, borderRadius: 10, border: "1px solid #b7e3c5", background: c.phone ? "#e7f9ef" : "#f6f8fb", color: c.phone ? "#0f9d58" : "#9aa8b7", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: c.phone ? "pointer" : "default", fontSize: 12.5, fontWeight: 700 }} title={c.phone ? "WhatsApp & log message" : "No phone number"}>
                                         <MessageCircle size={13} /> WhatsApp
                                       </button>
                                       <button type="button" onClick={(e) => { e.stopPropagation(); setOpenActionsId((current) => (current === c.id ? null : c.id)); }} style={{ width: 38, height: 38, borderRadius: 12, border: "1px solid #dce8f4", background: "#fff", color: "#4a6580", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} title="Prospect actions">
@@ -4399,16 +4400,16 @@ export default function Contacts() {
                                       </button>
                                       {openActionsId === c.id ? (
                                         <div style={{ position: "absolute", top: 44, right: 0, zIndex: 20, minWidth: 180, borderRadius: 14, border: "1px solid #dce8f4", background: "#fff", boxShadow: "0 16px 36px rgba(15, 23, 42, 0.12)", padding: 8, display: "grid", gap: 4 }}>
-                                          <button type="button" onClick={() => { setSelectedContact(c); setOpenActionsId(null); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}>
+                                          <button type="button" onClick={() => { setSelectedContact(c); setOpenActionsId(null); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }} disabled={!canEditRecord(user, c)}>
                                             <Sparkles className="h-3.5 w-3.5" />Outreach
                                           </button>
                                           <button type="button" onClick={() => { setTaskContact(c); setOpenActionsId(null); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5 }}>
                                             <Plus className="h-3.5 w-3.5" />Manual task
                                           </button>
-                                          <button type="button" disabled={!c.company_id} onClick={() => { setOpenActionsId(null); void handleConvertContactToDeal(c); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}>
+                                          <button type="button" disabled={!canEditRecord(user, c) || (!c.company_id)} onClick={() => { setOpenActionsId(null); void handleConvertContactToDeal(c); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, opacity: c.company_id ? 1 : 0.55 }}>
                                             <Target className="h-3.5 w-3.5" />Convert to deal
                                           </button>
-                                          <button type="button" disabled={deletingContacts} onClick={() => { void deleteContactsByIds([c.id]); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, color: "#b3261e" }}>
+                                          <button type="button" disabled={!canDeleteProspects(user) || (deletingContacts)} onClick={() => { void deleteContactsByIds([c.id]); }} className="crm-button soft" style={{ width: "100%", justifyContent: "flex-start", height: 38, fontSize: 12.5, color: "#b3261e" }}>
                                             <Trash2 className="h-3.5 w-3.5" />Delete prospect
                                           </button>
                                         </div>
@@ -4603,7 +4604,7 @@ export default function Contacts() {
                               <button
                                 onClick={() => handleDeleteInvestor(inv.id)}
                                 className="opacity-0 group-hover:opacity-100 rounded-lg p-1 text-[#aac0d4] transition hover:bg-[#fff2f2] hover:text-[#c0392b]"
-                                title="Delete investor"
+                                title="Delete investor" disabled={!canDeleteProspects(user)}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -4769,7 +4770,7 @@ export default function Contacts() {
                                         <button
                                           onClick={() => handleDeleteMapping(m.id)}
                                           className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-[#b7c6d4] transition hover:bg-[#fff2f2] hover:text-[#c0392b]"
-                                          title="Remove mapping"
+                                          title="Remove mapping" disabled={!canDeleteProspects(user)}
                                         >
                                           <Trash2 className="h-3.5 w-3.5" />
                                         </button>
@@ -5458,7 +5459,7 @@ export default function Contacts() {
                         type="button"
                         onClick={() => setLinkedinContact(callContact)}
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, padding: "8px 10px", borderRadius: 10, background: "#f5f3ff", color: "#6d28d9", border: "1px solid #ddd6fe", cursor: "pointer" }}
-                        title="Log a LinkedIn touch"
+                        title="Log a LinkedIn touch" disabled={!canEditRecord(user, callContact)}
                       >
                         <Link2 size={12} /> Log LinkedIn
                       </button>

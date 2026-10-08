@@ -236,6 +236,7 @@
   .account-sourcing-detail-page {
     padding: 12px 10px 80px !important;
   }
+  .account-sourcing-detail-page .ascd-hero-grid,
   .account-sourcing-detail-page .ascd-main-grid {
     grid-template-columns: 1fr !important;
   }

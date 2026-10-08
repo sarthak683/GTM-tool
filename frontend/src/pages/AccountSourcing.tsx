@@ -1,3 +1,4 @@
+import { canEditRecord } from "../lib/recordAccess";
 import "./account-sourcing-refresh.css";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
@@ -521,6 +522,7 @@ function CompanyCard({
   selected?: boolean;
   onToggleSelect?: (companyId: string) => void;
 }) {
+  const { user } = useAuth();
   const nav = useNavigate();
 
   const tier = company.icp_tier || "cold";
@@ -626,7 +628,7 @@ function CompanyCard({
             currentAssignedName={firstNameOnly(aeName)}
             onAssigned={onAssigned}
             compact
-            label="AE"
+            label="AE" readOnly={!canEditRecord(user, company)}
           />
         </span>
         <span title={sdrName ? `SDR · ${sdrName}` : "Assign SDR"} style={{ display: "inline-flex" }}>
@@ -638,7 +640,7 @@ function CompanyCard({
             currentAssignedName={firstNameOnly(sdrName)}
             onAssigned={onAssigned}
             compact
-            label="SDR"
+            label="SDR" readOnly={!canEditRecord(user, company)}
           />
         </span>
         <ChevronRight size={16} color={colors.faint} style={{ flexShrink: 0 }} />

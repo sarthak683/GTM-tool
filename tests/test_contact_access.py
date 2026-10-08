@@ -21,46 +21,34 @@ class _Result:
         return SimpleNamespace(all=lambda: self._scalars)
 
 
-async def test_account_owner_can_edit_visible_prospect():
-    user = SimpleNamespace(id=uuid4(), role="ae", email="ae@beacon.li", name="AE")
-    contact = Contact(
-        id=uuid4(),
-        company_id=uuid4(),
-        assigned_to_id=uuid4(),
-        sdr_id=uuid4(),
-    )
-    session = SimpleNamespace(execute=AsyncMock(return_value=_Result(first=(contact.company_id,))))
+@pytest.mark.parametrize("role", ["admin", "superadmin", "ae", "sdr", "marketing", "agency"])
+@pytest.mark.parametrize("slot", ["assigned_to_id", "sdr_id", "neither"])
+async def test_edit_requires_record_assignment_or_admin(role, slot):
+    user = SimpleNamespace(id=uuid4(), role=role)
+    contact = Contact(id=uuid4(), company_id=uuid4(), assigned_to_id=uuid4(), sdr_id=uuid4())
+    if slot != "neither":
+        setattr(contact, slot, user.id)
+    session = SimpleNamespace(execute=AsyncMock())
+    before = contact.model_dump()
+    if slot != "neither" or role in {"admin", "superadmin"}:
+        await authorize_contact_edit(session, user, contact)
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await authorize_contact_edit(session, user, contact)
+        assert exc.value.status_code == 403
+    assert contact.model_dump() == before
+    session.execute.assert_not_awaited()
 
-    await authorize_contact_edit(session, user, contact)
 
-    session.execute.assert_awaited_once()
-
-
-async def test_outsider_cannot_edit_owned_prospect():
-    user = SimpleNamespace(id=uuid4(), role="ae", email="ae@beacon.li", name="AE")
-    contact = Contact(
-        id=uuid4(),
-        company_id=uuid4(),
-        assigned_to_id=uuid4(),
-        sdr_id=uuid4(),
-    )
-    session = SimpleNamespace(execute=AsyncMock(side_effect=[_Result(first=None), _Result(first=None)]))
-
+@pytest.mark.parametrize("role", ["ae", "sdr"])
+async def test_unassigned_contact_is_not_automatically_claimed(role):
+    user = SimpleNamespace(id=uuid4(), role=role)
+    contact = Contact(id=uuid4(), company_id=uuid4())
+    session = SimpleNamespace(execute=AsyncMock())
     with pytest.raises(HTTPException) as exc:
         await authorize_contact_edit(session, user, contact)
-
     assert exc.value.status_code == 403
-
-
-async def test_claiming_unassigned_ae_slot_sets_owner_identity():
-    user = SimpleNamespace(id=uuid4(), role="ae", email="ae@beacon.li", name="AE")
-    contact = Contact(id=uuid4(), assigned_to_id=None, sdr_id=uuid4())
-    session = SimpleNamespace(execute=AsyncMock())
-
-    await authorize_contact_edit(session, user, contact)
-
-    assert contact.assigned_to_id == user.id
-    assert contact.assigned_rep_email == user.email
+    assert contact.assigned_to_id is None and contact.sdr_id is None
     session.execute.assert_not_awaited()
 
 

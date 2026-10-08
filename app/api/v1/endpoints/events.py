@@ -15,6 +15,8 @@ from app.models.company import Company
 from app.models.contact import Contact
 from app.repositories.company import CompanyRepository
 from app.repositories.contact import ContactRepository
+from app.services.contact_access import authorize_contact_edit
+from app.services.record_access import authorize_company_edit, can_edit_record
 from app.services.event_tags import canonicalize, clean_event, known_events, merge_events
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -71,6 +73,9 @@ async def tag_event(payload: EventTagPayload, session: DBSession, current_user: 
             ).scalars().all()
         )
 
+    for contact in contacts:
+        await authorize_contact_edit(session, current_user, contact)
+
     company_ids = set(payload.company_ids)
     if adding and payload.include_companies:
         company_ids.update(c.company_id for c in contacts if c.company_id)
@@ -85,6 +90,11 @@ async def tag_event(payload: EventTagPayload, session: DBSession, current_user: 
                 )
             ).scalars().all()
         )
+
+    for company in companies:
+        if company.id in payload.company_ids:
+            authorize_company_edit(current_user, company)
+    companies = [company for company in companies if can_edit_record(current_user, company)]
 
     def _apply(record) -> bool:
         current = list(record.events or [])

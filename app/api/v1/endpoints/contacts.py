@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlmodel import SQLModel, select
 
+from app.services.record_access import can_edit_record, authorize_prospect_delete
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company
@@ -759,11 +760,12 @@ async def bulk_delete_selected_contacts(
 ):
     """Hard-delete a specific set of prospects and their dependents.
 
-    Available to any signed-in user (matches the single-delete endpoint). Linked
+    Available to admins, AEs and SDRs (matches the single-delete endpoint). Linked
     deals and activity history survive; outreach sequences, deal-stakeholder
     links, reminders, angel mappings, cadence tasks/enrollments, and call recordings are
     removed. Returns how many of the requested prospects actually existed.
     """
+    authorize_prospect_delete(_user)
     ids = [cid for cid in payload.ids if cid]
     if not ids:
         raise HTTPException(status_code=422, detail="Select at least one prospect to delete.")
@@ -776,7 +778,7 @@ async def bulk_delete_selected_contacts(
     requested = len(set(ids))
     skipped_not_owned = 0
     if (_user.role or "").lower() != "admin":
-        # Every role may delete prospects visible in its existing list scope.
+        # Authorized sales roles may delete any visible prospect.
         ids = await get_visible_contact_ids(session, _user, ids)
         skipped_not_owned = requested - len(ids)
     deleted = await repo.delete_many(ids) if ids else 0
@@ -785,6 +787,7 @@ async def bulk_delete_selected_contacts(
 
 @router.delete("/{contact_id}", status_code=204)
 async def delete_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
+    authorize_prospect_delete(_user)
     repo = ContactRepository(session)
     await get_visible_contact(session, _user, contact_id)
     await repo.delete_with_cascade(contact_id)
@@ -1041,6 +1044,9 @@ async def import_contacts_csv(
             auto_create=auto_create_companies,
             sourcing_batch_id=batch_id_for_row,
         )
+        if company and not created_placeholder_company and not can_edit_record(current_user, company):
+            skipped_count += 1
+            continue
         company_fields = row_to_company_fields(row)
         company_context = {
             "name": company.name if company else company_fields.get("name"),
@@ -1187,6 +1193,9 @@ async def import_contacts_csv(
                 )
             ).scalars().first()
 
+        if existing and not can_edit_record(current_user, existing):
+            skipped_count += 1
+            continue
         if existing and company and existing.company_id and existing.company_id != company.id:
             # The sheet maps this person to `company`, but the row already
             # belongs to another account. Not silently correctable — report it

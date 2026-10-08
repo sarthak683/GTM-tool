@@ -75,22 +75,8 @@ async def require_workspace_permission(session: AsyncSession, user: User, permis
 
 
 async def can_view_all_prospects(session: AsyncSession, user: User) -> bool:
-    """True if the user may see every prospect (not just their own + unassigned).
-
-    Admins always can. Specific non-admins can be granted broader access by an
-    admin via WorkspaceSettings.prospect_view_all_user_ids.
-
-    SDRs are NEVER view-all, even if their id sits in the grant list: SDRs are
-    hard-restricted to their OWN prospects everywhere, so the own-only rule can't
-    be bypassed via a grant.
-    """
-    if user.is_admin:
-        return True
-    if (user.role or "").lower() == "sdr":
-        return False
-    row = await session.get(WorkspaceSettings, 1)
-    granted = (row.prospect_view_all_user_ids if row else None) or []
-    return str(user.id) in {str(uid) for uid in granted}
+    """Every authenticated teammate can view all prospects; edits require ownership."""
+    return True
 
 
 async def can_view_all_deals(session: AsyncSession, user: User) -> bool:

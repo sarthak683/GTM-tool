@@ -12,6 +12,7 @@ function roleLabel(role: User["role"]) {
 }
 
 interface Props {
+  readOnly?: boolean;
   entityType: "company" | "contact";
   entityId: string;
   currentAssignedId?: string | null;
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export default function AssignDropdown({
+  readOnly = false,
   entityType,
   entityId,
   currentAssignedId,
@@ -61,7 +63,7 @@ export default function AssignDropdown({
   // for an account, so the full picker is shown to every sales-team member. The
   // backend enforces the same rule; roles outside the sales team stay read-only.
   const canAssign =
-    isAdmin || currentUser?.role === "ae" || currentUser?.role === "sdr";
+    !readOnly && (isAdmin || currentUser?.role === "ae" || currentUser?.role === "sdr");
 
   const handleAssign = async (userId: string | null) => {
     setLoading(true);

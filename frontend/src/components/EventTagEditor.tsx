@@ -8,11 +8,13 @@ import EventTagModal from "./EventTagModal";
 // "+ Event" chip to add one. `onChanged` receives the entity's new event list
 // so the page can update without a full reload.
 export default function EventTagEditor({
+  readOnly = false,
   kind,
   id,
   events,
   onChanged,
 }: {
+  readOnly?: boolean;
   kind: "contact" | "company";
   id: string;
   events?: string[] | null;
@@ -40,6 +42,8 @@ export default function EventTagEditor({
     });
     onChanged(current.filter((e) => e.toLowerCase() !== event.toLowerCase()));
   };
+
+  if (readOnly) return <EventChips events={current} size="md" />;
 
   return (
     <>

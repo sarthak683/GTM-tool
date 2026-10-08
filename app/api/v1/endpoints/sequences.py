@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from app.services.contact_access import get_actionable_contact
 from app.core.dependencies import CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.models.sequence import (
@@ -268,6 +269,7 @@ class EnrollPayload(BaseModel):
 
 @router.post("/enroll", response_model=EnrollmentRead, status_code=201)
 async def enroll(payload: EnrollPayload, session: DBSession, current_user: CurrentUser):
+    await get_actionable_contact(session, current_user, payload.contact_id)
     try:
         enrollment = await enroll_contact(
             session, contact_id=payload.contact_id, sequence_id=payload.sequence_id, enrolled_by=current_user.id
@@ -313,6 +315,10 @@ async def get_contact_enrollment(contact_id: UUID, session: DBSession, current_u
 
 @router.delete("/enrollments/{enrollment_id}", status_code=204)
 async def unenroll(enrollment_id: UUID, session: DBSession, current_user: CurrentUser):
+    enrollment = await session.get(Enrollment, enrollment_id)
+    if not enrollment:
+        raise NotFoundError("Enrollment not found")
+    await get_actionable_contact(session, current_user, enrollment.contact_id)
     await remove_enrollment(session, enrollment_id=enrollment_id)
 
 
@@ -335,7 +341,7 @@ async def add_task_contact_to_instantly(task_id: UUID, session: DBSession, curre
     step = await session.get(SequenceStep, task.step_id)
     if not step or step.type != "email" or step.send_via != "instantly" or not step.instantly_campaign_id:
         raise ValidationError("This task is not an Instantly email step")
-    contact = await session.get(Contact, task.entity_id)
+    contact = await get_actionable_contact(session, current_user, task.entity_id)
     if not contact or not contact.email:
         raise ValidationError("Contact has no email on file")
 

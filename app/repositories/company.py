@@ -78,67 +78,13 @@ def _user_is_admin(user: User) -> bool:
 
 
 def company_visibility_filter(user_id: UUID, is_admin: bool, include_disabled: bool = False):
-    """SQLAlchemy predicate enforcing company (account) visibility for ONE user.
-
-    SINGLE SOURCE OF TRUTH for the account-level visibility rule — reuse it on
-    EVERY company-browse surface so access can never diverge between endpoints.
-
-    - Admins (``is_admin``) see ALL companies, including disabled ones, so they
-      can manage/reverse them. Returns ``true()`` — a no-op in ``.where()``.
-    - A non-admin sees a company ONLY if they own it in either slot
-      (``assigned_to_id`` = AE, or ``sdr_id`` = SDR). Unassigned accounts are
-      NOT visible to non-admins.
-    - Disabled accounts (``INACTIVE_ACCOUNT_STATUSES`` — not_a_fit/dnd) are
-      hidden from default lists, but a caller may pass ``include_disabled=True``
-      when the request EXPLICITLY filters for a disabled status (an owner
-      reviewing their parked accounts is legitimate — hiding them outright made
-      re-enabling impossible for non-admins). Single-object guards
-      (``_can_see_company``) key on ownership only, for the same reason.
-    """
-    # Soft-deleted accounts are gone from every browse surface for everyone —
-    # admins included. They are reachable only through the trash view
-    # (GET /api/v1/companies/trash) and restored via
-    # POST /api/v1/companies/{id}/restore, which deliberately do NOT go
-    # through this filter.
-    live = Company.deleted_at.is_(None)
-    if is_admin:
-        return live
-    owns = or_(
-        Company.assigned_to_id == user_id,
-        Company.sdr_id == user_id,
-    )
-    if include_disabled:
-        return and_(live, owns)
-    return and_(
-        live,
-        owns,
-        or_(
-            Company.account_status.is_(None),
-            Company.account_status.not_in(INACTIVE_ACCOUNT_STATUSES),
-        ),
-    )
+    """All teammates can browse every live account; list filters handle parked records."""
+    return Company.deleted_at.is_(None)
 
 
 def can_see_company(company: Company, user: User) -> bool:
-    """Python mirror of ``company_visibility_filter`` for single-object guards.
-
-    Admins see every company; a non-admin sees a company they own (AE or SDR).
-    Ownership is the ONLY gate here — deliberately NOT the disabled-status
-    check the list filter applies: an owner must be able to OPEN their parked
-    (not_a_fit/dnd) account to review or re-enable it. Lists hide parked
-    accounts by default; direct access never dead-ends. Use on single-company
-    detail/update routes to 404 a company the caller can't see (so existence
-    isn't leaked).
-    """
-    if company.deleted_at is not None:
-        # Soft-deleted: gone from every detail/update route for everyone. The
-        # row is reachable only through GET /companies/trash (admin) and
-        # GET /companies/{id}/tombstone (which says "deleted" or "merged into
-        # X" without exposing the record).
-        return False
-    if _user_is_admin(user):
-        return True
-    return company.assigned_to_id == user.id or company.sdr_id == user.id
+    """Every authenticated teammate can open any account outside the trash."""
+    return company.deleted_at is None
 
 
 def _normalize_domain(domain: str) -> str:

@@ -147,11 +147,11 @@ def test_full_filter_set_is_applied(m, admin_user):
     assert "companies.id IN" in sql
 
 
-def test_non_admin_visibility_is_ownership_gated(m):
+def test_non_admin_visibility_is_shared(m):
     rep = SimpleNamespace(id=uuid4(), role="sdr")
     compiled = _compiled(m.build_sourced_companies_stmt(rep, m.CompanySourcingFilters()))
     sql = str(compiled)
-    assert "companies.assigned_to_id = " in sql and rep.id in compiled.params.values()
+    assert "companies.assigned_to_id = " not in sql and rep.id not in compiled.params.values()
     # Default lists hide parked (not_a_fit/dnd) accounts for non-admins…
     assert "companies.account_status" in sql
     # …but explicitly filtering for a disabled status lifts that hiding so an
@@ -544,7 +544,7 @@ def test_recotap_summary_reports_accounts_with_no_intent_score(m):
 
 
 def test_recotap_summary_visibility_matches_the_accounts_list(m, admin_user):
-    """Admins keep workspace-wide numbers; a rep is narrowed to owned accounts."""
+    """Reps and admins have the same workspace-wide read scope."""
     from sqlalchemy.dialects import postgresql
 
     rep = SimpleNamespace(id=uuid4(), role="sdr")
@@ -555,7 +555,7 @@ def test_recotap_summary_visibility_matches_the_accounts_list(m, admin_user):
         return str(stmt.compile(dialect=postgresql.dialect()))
 
     rep_sql = _where(rep)
-    assert "companies.assigned_to_id = " in rep_sql and "companies.sdr_id = " in rep_sql
+    assert "companies.assigned_to_id = " not in rep_sql and "companies.sdr_id = " not in rep_sql
     admin_sql = _where(admin_user)
     assert "companies.assigned_to_id = " not in admin_sql
     assert "companies.deleted_at IS NULL" in admin_sql

@@ -185,75 +185,9 @@ def _search_tokens(value: str) -> list[str]:
 
 
 def contact_visibility_filter(user_id: UUID, role: Optional[str] = None):
-    """SQLAlchemy predicate enforcing prospect visibility for ONE non-admin user.
-
-    ACCOUNT OWNERSHIP IS THE OUTER GATE ON EVERY BRANCH. Owning the PROSPECT is
-    never on its own enough: a rep reaches a prospect only inside an account
-    that is theirs, or that nobody has claimed at all. Prospect-level ownership
-    is allowed to diverge from the account (the company->contact cascade
-    deliberately keeps a third rep's override — see ``CascadeResult``), so
-    without this gate a bulk prospect assignment silently opens a window into a
-    teammate's account: 48 of DayForce's 98 prospects sat with a second SDR, so
-    that account appeared in their Prospecting list even though it was owned
-    end-to-end by another SDR.
-
-    SDR (``role == "sdr"``): account-gated own-only. An SDR sees a contact if
-    they own it in either slot (``assigned_to_id`` or ``sdr_id``) AND the account
-    is theirs or unclaimed, OR they are on the account itself (which keeps a
-    teammate-held prospect inside their account from being orphaned). NO
-    deal-owner clause, NO unassigned clause — SDRs still never browse an
-    unclaimed prospect or reach into a teammate's account.
-
-    Every other non-admin role (AE etc.): a non-admin may see a contact if they
-    own it in either slot **inside an account that is theirs or unclaimed**, OR
-    they are the AE **or SDR** on the contact's COMPANY
-    (account-scoped: whoever owns the account sees every prospect inside it,
-    including ones a teammate is assigned at the prospect level — e.g. the account
-    SDR sees prospects the AE holds), OR they own a DEAL on the contact's company
-    (an AE running a demo/POC sees the prospects at that account even when the
-    company/contacts are still held by the sourcing SDR or another company AE).
-    NO unassigned clause — same as SDR, an AE never browses an unclaimed
-    prospect they have no ownership tie to. This is the SINGLE SOURCE OF TRUTH
-    for the rule; reuse it on EVERY contact-browse surface (the prospects list,
-    the account-sourcing company page, global search) so visibility can never
-    diverge between surfaces. Mirrors the inline `.in_()` form in
-    ``list_with_company_name`` (which supports a multi-id list).
-    """
-    from app.models.deal import Deal
-
-    owns_account = Contact.company_id.in_(
-        select(Company.id).where(
-            or_(Company.assigned_to_id == user_id, Company.sdr_id == user_id)
-        )
-    )
-    # Unclaimed in BOTH slots. A half-owned account (one slot filled by someone
-    # else) is still somebody's account and stays closed.
-    account_unclaimed = Contact.company_id.in_(
-        select(Company.id).where(
-            Company.assigned_to_id.is_(None), Company.sdr_id.is_(None)
-        )
-    )
-    owns_contact_in_scope = and_(
-        or_(Contact.assigned_to_id == user_id, Contact.sdr_id == user_id),
-        or_(Contact.company_id.is_(None), owns_account, account_unclaimed),
-    )
-    if (role or "").lower() == "sdr":
-        # Own prospects inside their own/unclaimed accounts, PLUS every prospect
-        # inside an account they own. The second half is not a widening — it is
-        # what keeps the gate from orphaning rows: a prospect held by SDR-A
-        # inside SDR-B's account would otherwise be invisible to A (foreign
-        # account) AND to B (not the prospect owner), leaving it worked by
-        # nobody. Whoever is on the ACCOUNT can always see inside it.
-        return or_(owns_contact_in_scope, owns_account)
-    return or_(
-        owns_contact_in_scope,
-        owns_account,
-        Contact.company_id.in_(
-            select(Deal.company_id).where(
-                Deal.assigned_to_id == user_id, Deal.company_id.is_not(None)
-            )
-        ),
-    )
+    """All authenticated teammates can view prospects, regardless of ownership."""
+    from sqlalchemy import true
+    return true()
 
 
 def active_account_contact_filter():

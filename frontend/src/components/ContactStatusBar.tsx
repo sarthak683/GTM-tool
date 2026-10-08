@@ -2,6 +2,7 @@ import { Check } from "lucide-react";
 import { CONTACT_STATUS_OPTIONS, type ContactStatusValue } from "../lib/contactStatus";
 
 type ContactStatusBarProps = {
+  readOnly?: boolean;
   value?: string | null;
   saving?: boolean;
   compact?: boolean;
@@ -11,6 +12,7 @@ type ContactStatusBarProps = {
 };
 
 export default function ContactStatusBar({
+  readOnly = false,
   value,
   saving = false,
   compact = false,
@@ -66,7 +68,7 @@ export default function ContactStatusBar({
               if (stopPropagation) e.stopPropagation();
               onChange(option.value);
             }}
-            disabled={saving}
+            disabled={saving || readOnly}
             title={active ? "Click to clear this status" : `Set status to ${option.label}`}
             onMouseEnter={(e) => {
               if (!active) e.currentTarget.style.boxShadow = `0 2px 8px ${option.color}33`;
