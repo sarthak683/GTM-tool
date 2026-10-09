@@ -40,7 +40,7 @@ MILESTONE_STAGE_MAP: dict[str, str] = {
 
 MILESTONE_LABELS: dict[str, str] = {
     "demo_scheduled": "Demo Scheduled",
-    "qualified_lead": "Converted",
+    "qualified_lead": "Qualified",
     "demo_done": "Demo Done",
     "poc_agreed": "POC Agreed",
     "poc_wip": "POC WIP",

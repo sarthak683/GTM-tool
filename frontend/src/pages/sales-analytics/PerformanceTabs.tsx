@@ -1566,7 +1566,7 @@ export function RiskTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsF
           const alertBuckets = [
             { key: "demo_scheduled",     label: "Demo Scheduled",   threshold: "> 3 Weeks" },
             { key: "demo_done",          label: "Demo Done",         threshold: "> 3 Weeks" },
-            { key: "qualified_lead",     label: "Converted",         threshold: "> 3 Weeks" },
+            { key: "qualified_lead",     label: "Qualified",         threshold: "> 3 Weeks" },
             { key: "poc_agreed",         label: "PoC Agreed",        threshold: "> 4 Weeks" },
             { key: "poc_wip",            label: "PoC WIP",           threshold: "> 3 Weeks" },
             { key: "poc_done_and_later", label: "PoC Done & Later",  threshold: "> 8 Weeks" },
@@ -2617,7 +2617,7 @@ function IncentiveDealsModal({
   rows: IncentiveDealRow[];
   onClose: () => void;
 }) {
-  const bucketLabel = bucket === "direct_sql" ? "Direct SQL" : "Converted";
+  const bucketLabel = bucket === "direct_sql" ? "Direct SQL" : "Qualified";
   const dateHeader = bucket === "direct_sql" ? "Date of Meeting" : "Date of Conversion";
   return (
     <div
@@ -2827,7 +2827,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
               <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 12, alignItems: "center", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: PALETTE.subtle }}>
                 <span>Rep</span>
                 <span style={{ textAlign: "right" }}>Direct SQL</span>
-                <span style={{ textAlign: "right" }}>Converted</span>
+                <span style={{ textAlign: "right" }}>Qualified</span>
                 <span style={{ textAlign: "right" }}>Total</span>
                 <span>Progress vs target</span>
                 {isAdmin && <span style={{ textAlign: "right" }}>Target</span>}
@@ -2862,7 +2862,7 @@ function IncentiveTab({ filters = EMPTY_FILTER_SCOPE }: { filters?: AnalyticsFil
                     <button
                       type="button"
                       onClick={() => setOpenSdr({ sdr_id: row.sdr_id, sdr_name: row.sdr_name, bucket: "converted" })}
-                      title="View the deals behind this Converted count"
+                      title="View the deals behind this Qualified count"
                       style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", textAlign: "right", background: "transparent", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}
                     >
                       {row.converted}

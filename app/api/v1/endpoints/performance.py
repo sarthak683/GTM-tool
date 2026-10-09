@@ -1039,7 +1039,7 @@ _ALL_ACTIVE_STAGES = ["demo_scheduled", "demo_done", "qualified_lead"] + _LATE_S
 _STAGE_LABELS: dict[str, str] = {
     "demo_scheduled": "Demo Scheduled",
     "demo_done": "Demo Done",
-    "qualified_lead": "Converted",
+    "qualified_lead": "Qualified",
     "poc_agreed": "PoC Agreed",
     "poc_wip": "PoC WIP",
     "poc_done": "PoC Done",

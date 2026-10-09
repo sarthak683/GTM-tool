@@ -1622,7 +1622,7 @@ const REP_LEADERBOARD_CSV_HEADERS = [
   "Emails", "Prev Emails", "Manual Emails", "Instantly Emails", "Emails In",
   "Calls", "Prev Calls", "Connected Calls", "Prev Connected Calls",
   "LinkedIn", "Prev LinkedIn", "Meetings", "Prev Meetings",
-  "Demos Scheduled", "Demos Done", "Demos Converted",
+  "Demos Scheduled", "Demos Done", "Demos Qualified",
 ];
 
 function repLeaderboardCsvRow(row: SalesRepActivityRow, useAeDemos: boolean) {
@@ -1748,7 +1748,7 @@ function RepActivityTable({
                 <StatPill label="Demos Sched" value={row.demos_scheduled} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "demos_scheduled")} />
                 <StatPill label="Demos Done" value={row.demos_done} tone="#eafaf1" text="#1c7a4f" onClick={() => onOpenMetric(row, "demos_done")} />
                 <StatPill
-                  label="Converted"
+                  label="Qualified"
                   value={row.demos_converted}
                   tone="#fdf1e3"
                   text="#b4690e"
@@ -1762,7 +1762,7 @@ function RepActivityTable({
                 <StatPill label="Demos Sched" value={row.ae_demos_scheduled ?? 0} tone="#eef3ff" text="#3b5bdb" onClick={() => onOpenMetric(row, "ae_demos_scheduled")} />
                 <StatPill label="Demos Done" value={row.ae_demos_done ?? 0} tone="#eafaf1" text="#1c7a4f" onClick={() => onOpenMetric(row, "ae_demos_done")} />
                 <StatPill
-                  label="Converted"
+                  label="Qualified"
                   value={row.ae_demos_converted ?? 0}
                   tone="#fdf1e3"
                   text="#b4690e"
@@ -3313,9 +3313,9 @@ export default function SalesAnalytics() {
       trend: { curr: s.demo_done_count, prev: s.prev_demo_done_count ?? 0 },
     },
     {
-      label: "Converted",
+      label: "Qualified",
       value: String(s.qualified_lead_count ?? 0),
-      hint: "Unique companies that converted to a qualified lead for the first time in this window",
+      hint: "Unique companies that became a qualified lead for the first time in this window",
       tone: "blue" as const,
       icon: ArrowUpRight,
       deals: (s.milestone_deals ?? []).filter((d) => d.milestone_key === "qualified_lead"),
@@ -3788,7 +3788,7 @@ export default function SalesAnalytics() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 14 }}>
             <SectionCard
               title="SDR Leaderboard"
-              subtitle="Outbound touches (email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and converted."
+              subtitle="Outbound touches (email, calls, LinkedIn, meetings) plus the demo funnel each SDR drives: demos scheduled, completed, and qualified."
               className="sa-leaderboard"
               style={{ background: "linear-gradient(160deg, #f2faf3 0%, #eaf6eb 100%)", border: "1px solid #c8e6ca" }}
             >
