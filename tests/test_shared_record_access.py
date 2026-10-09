@@ -82,7 +82,10 @@ async def test_assignment_cannot_be_used_to_claim_foreign_record(kind):
         await getattr(assignments, 'assign_' + kind)(*args)
     assert exc.value.status_code == 403
     assert record.assigned_to_id != actor.id
-    session.execute.assert_awaited_once()
+    if kind == "company":
+        session.execute.assert_not_awaited()
+    else:
+        session.execute.assert_awaited_once()
 
 
 @pytest.mark.parametrize('role', ['ae', 'sdr'])

@@ -28,7 +28,7 @@ from sqlalchemy import and_, case, func, literal_column, null, or_
 from sqlalchemy.orm import aliased, load_only
 from sqlmodel import select
 
-from app.services.record_access import authorize_company_edit
+from app.services.record_access import authorize_account_owner_update, authorize_company_edit
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.geo import COUNTRY_TO_CONTINENT, OTHER
 from app.services.event_tags import canonicalize, known_events, merge_events, parse_events
@@ -2308,6 +2308,7 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
     authorize_company_edit(current_user, company)
 
     update_data = payload.model_dump(exclude_unset=True)
+    authorize_account_owner_update(current_user, company, update_data)
     if "additional_domains" in update_data:
         # Alias domains are normalized + checked for cross-account collisions
         # before they can influence any matcher.

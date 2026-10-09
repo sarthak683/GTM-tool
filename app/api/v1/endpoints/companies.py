@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 
-from app.services.record_access import authorize_company_edit
+from app.services.record_access import authorize_account_owner_update, authorize_company_edit
 from app.core.dependencies import AdminUser, CurrentUser, DBSession, Pagination
 from app.core.exceptions import NotFoundError
 from app.models.company import Company, CompanyCreate, CompanyRead, CompanyUpdate, INACTIVE_ACCOUNT_STATUSES
@@ -370,6 +370,7 @@ async def update_company(company_id: UUID, payload: CompanyUpdate, session: DBSe
         raise HTTPException(status_code=404, detail="Company not found")
     authorize_company_edit(_user, company)
     update_data = payload.model_dump(exclude_unset=True)
+    authorize_account_owner_update(_user, company, update_data)
     await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
     company.icp_score, company.icp_tier = score_company(company)
     company.updated_at = datetime.utcnow()
@@ -384,6 +385,7 @@ async def patch_company(company_id: UUID, payload: CompanyUpdate, session: DBSes
         raise HTTPException(status_code=404, detail="Company not found")
     authorize_company_edit(_user, company)
     update_data = payload.model_dump(exclude_unset=True)
+    authorize_account_owner_update(_user, company, update_data)
     await _apply_company_update(session, company, update_data, changed_by_id=_user.id)
     company.updated_at = datetime.utcnow()
     return await repo.save(company)

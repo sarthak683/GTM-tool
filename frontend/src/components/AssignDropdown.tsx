@@ -59,13 +59,12 @@ export default function AssignDropdown({
     }
   }, [open, users.length]);
 
-  // Per Annie 2026-06-17: any AE or SDR (not just admins) can assign the AE/SDR
-  // for an account, so the full picker is shown to every sales-team member. The
-  // backend enforces the same rule; roles outside the sales team stay read-only.
-  const canAssign =
-    !readOnly && (isAdmin || currentUser?.role === "ae" || currentUser?.role === "sdr");
+  // Account ownership is admin-managed, independently of record edit access.
+  const canAssign = !readOnly && (isAdmin ||
+    (entityType === "contact" && (currentUser?.role === "ae" || currentUser?.role === "sdr")));
 
   const handleAssign = async (userId: string | null) => {
+    if (!canAssign) return;
     setLoading(true);
     try {
       if (entityType === "company") {

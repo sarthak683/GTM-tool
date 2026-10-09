@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.services.record_access import can_edit_record, authorize_company_edit
+from app.services.record_access import can_edit_record, authorize_company_edit, authorize_account_assignment
 from app.services.contact_access import authorize_contact_edit
 from app.core.dependencies import AdminUser, CurrentUser, DBSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
@@ -95,7 +95,7 @@ async def _apply_contact_assignment(
                 )
             ).scalar_one_or_none()
             company_cache[contact.company_id] = company
-        if company and actor is not None and can_edit_record(actor, company) and _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
+        if company and actor is not None and actor.is_admin and _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr):
             backfilled = True
             company.updated_at = datetime.utcnow()
             session.add(company)
@@ -251,10 +251,8 @@ async def assign_company(
     actor: CurrentUser,
     background_tasks: BackgroundTasks,
 ):
-    """Assign a company-level AE or SDR. Admins can assign anyone; non-admin
-    reps can only self-claim an unassigned slot that matches their role, or
-    release a slot they currently hold. Pass user_id=null to unassign.
-    """
+    """Admins assign or unassign account owners; shared viewing grants no assignment rights."""
+    authorize_account_assignment(actor)
     company = (
         await session.execute(
             CompanyRepository.visible_to(actor, include_disabled=True).where(
@@ -270,8 +268,6 @@ async def assign_company(
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-    if not _can_assign_team(actor):
-        raise ForbiddenError("You do not have permission to assign account owners.")
     previous_name = (
         company.sdr_name or company.sdr_email
         if is_sdr
@@ -431,7 +427,7 @@ async def assign_contact(
         ).scalar_one_or_none()
         if company:
             backfilled = False
-            if body.user_id and can_edit_record(actor, company):
+            if body.user_id and actor.is_admin:
                 backfilled = _backfill_company_owner_from_contact(company, user, is_sdr=is_sdr)
             next_name = contact.sdr_name if is_sdr else contact.assigned_rep_email
             backfill_note = (
@@ -471,11 +467,8 @@ async def bulk_assign_companies(
     actor: CurrentUser,
     background_tasks: BackgroundTasks,
 ):
-    """Bulk assign multiple companies to a sales rep.
-
-    Admins can assign/reassign any AE/SDR slot. Non-admin reps can only
-    bulk self-claim unassigned slots, or bulk release slots they own.
-    """
+    """Admins assign or unassign account owners; shared viewing grants no assignment rights."""
+    authorize_account_assignment(actor)
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     user = None
@@ -484,13 +477,6 @@ async def bulk_assign_companies(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if not actor.is_admin and not (
-        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
-    ):
-        raise ForbiddenError(
-            "Only admins can bulk reassign accounts. You can bulk claim unassigned "
-            f"{role_key.upper()} slots or release your own assignments."
-        )
 
     updated = 0
     skipped = 0
@@ -507,14 +493,6 @@ async def bulk_assign_companies(
             skipped += 1
             continue
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-        if not actor.is_admin and not _is_self_claim_or_self_release(
-            actor=actor,
-            target_user_id=body.user_id,
-            current_assigned_id=current_assigned_id,
-            role=role_key,
-        ):
-            skipped += 1
-            continue
         cascade = await _apply_company_assignment(
             session, company, user, is_sdr=is_sdr, current_assigned_id=current_assigned_id
         )
@@ -747,19 +725,8 @@ async def bulk_assign_companies_by_filter(
     background_tasks: BackgroundTasks,
     filters: CompanySourcingFilters = Depends(),
 ):
-    """Assign EVERY account matching the current Account Sourcing filters —
-    the accounts twin of ``PATCH /assignments/contacts/by-filter``.
-
-    Shares ``CompanySourcingFilters`` (and the statement builder) with the
-    accounts list/export, so the population can't drift from what the rep is
-    looking at; applies the same hard visibility gate (a non-admin can only
-    mass-assign accounts they can already see), the same admin-or-self-claim
-    permission rule as the id-based bulk endpoint, and runs every company
-    through the same assignment semantics (prospect cascade + SDR handoff
-    reset) via ``_apply_company_assignment`` — never a reimplementation.
-    Mirrors the contacts endpoint's cap (422 past FILTER_ASSIGN_MAX_ROWS) and
-    ``expected_total`` confirm-count check (409 when the set changed size).
-    """
+    """Admins assign or unassign account owners; shared viewing grants no assignment rights."""
+    authorize_account_assignment(actor)
     is_sdr = (body.role or "ae") == "sdr"
     role_key = "sdr" if is_sdr else "ae"
     user = None
@@ -768,13 +735,6 @@ async def bulk_assign_companies_by_filter(
         if not user:
             raise NotFoundError("User not found")
         _validate_assignment_user(user, role=role_key)
-    if not actor.is_admin and not (
-        (body.user_id == actor.id or body.user_id is None) and actor.role == role_key
-    ):
-        raise ForbiddenError(
-            "Only admins can bulk reassign accounts. You can bulk claim unassigned "
-            f"{role_key.upper()} slots or release your own assignments."
-        )
 
     stmt = build_sourced_companies_stmt(actor, filters)
     total = (
@@ -813,14 +773,6 @@ async def bulk_assign_companies_by_filter(
             skipped += 1
             continue
         current_assigned_id = company.sdr_id if is_sdr else company.assigned_to_id
-        if not actor.is_admin and not _is_self_claim_or_self_release(
-            actor=actor,
-            target_user_id=body.user_id,
-            current_assigned_id=current_assigned_id,
-            role=role_key,
-        ):
-            skipped += 1
-            continue
         cascade = await _apply_company_assignment(
             session, company, user, is_sdr=is_sdr, current_assigned_id=current_assigned_id
         )
