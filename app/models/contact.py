@@ -3,7 +3,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_validator
-from sqlalchemy import Column, String
+from sqlalchemy import Column, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
@@ -63,6 +63,8 @@ class Contact(ContactBase, table=True):
     # from sequence_status, which call/LinkedIn automation drives. Set by reps on
     # the prospect detail page.
     account_status: Optional[str] = Field(default=None, index=True)
+    # Why the prospect was last moved to Not the Right Prospect / Reach Out Later / DND.
+    account_status_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -182,6 +184,7 @@ class ContactRead(ContactBase):
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     account_status: Optional[str] = None
+    account_status_reason: Optional[str] = None
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None
@@ -249,6 +252,7 @@ class ContactUpdate(SQLModel):
     outreach_lane: Optional[str] = None
     sequence_status: Optional[str] = None
     account_status: Optional[str] = None
+    account_status_reason: Optional[str] = None
     instantly_status: Optional[str] = None
     instantly_campaign_id: Optional[str] = None
     warm_intro_strength: Optional[int] = None

@@ -72,3 +72,20 @@ export default function EventChips({
     </>
   );
 }
+
+// "MQL" tag for a deal ticked as a Marketing Lead in the pipeline; sits beside
+// the event chips in the same pill shape.
+export function MqlChip({ size = "sm" }: { size?: "sm" | "md" }) {
+  return (
+    <span
+      title="Marketing Lead (MQL)"
+      style={{
+        display: "inline-flex", alignItems: "center", fontSize: size === "md" ? 12 : 10, fontWeight: 700,
+        padding: size === "md" ? "3px 9px" : "2px 7px", borderRadius: 999, lineHeight: 1.4, whiteSpace: "nowrap",
+        background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa",
+      }}
+    >
+      MQL
+    </span>
+  );
+}

@@ -72,6 +72,8 @@ import type { Deal, User } from "../types";
 import { useAuth } from "../lib/AuthContext";
 import { performanceApi, type RepSummary, type PodSummary } from "../lib/api";
 import { SkeletonList } from "../components/ui/Skeleton";
+import EventChips, { MqlChip } from "../components/EventChips";
+import { useStageLabels } from "../lib/stageLabels";
 import {
   PerformanceTabContent,
   PERFORMANCE_TABS,
@@ -458,12 +460,12 @@ function MilestoneDealsModal({
                   `${label.toLowerCase().replace(/\s+/g, "-")}-deals`,
                   showDateOfMeeting
                     ? (hideAmount
-                      ? ["Deal", "AE", "SDR", ...(showScheduledOn ? ["Scheduled On"] : []), "Date of Meeting", "Meeting Booked With"]
+                      ? ["Deal", "AE", "SDR", ...(showScheduledOn ? ["Scheduled On"] : []), "Date of Meeting", "Meeting Booked With", "Event"]
                       : ["Deal", "Amount", "AE", "SDR", "Date of Meeting"])
                     : ["Deal", "Amount", "AE", "SDR"],
                   deals.map((d) => showDateOfMeeting
                     ? (hideAmount
-                      ? [d.deal_name || "", d.assigned_ae || "", d.assigned_sdr || "", ...(showScheduledOn ? [d.reached_at || ""] : []), d.close_date_est || "", d.meeting_booked_with || ""]
+                      ? [d.deal_name || "", d.assigned_ae || "", d.assigned_sdr || "", ...(showScheduledOn ? [d.reached_at || ""] : []), d.close_date_est || "", d.meeting_booked_with || "", (d.events ?? []).join("; ")]
                       : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || "", d.close_date_est || ""])
                     : [d.deal_name || "", d.deal_value ?? 0, d.assigned_ae || "", d.assigned_sdr || ""]),
                 )}
@@ -528,6 +530,12 @@ function MilestoneDealsModal({
                       <span style={{ fontWeight: 700, color: "#1d2b3a" }}>
                         {d.deal_name || "—"}
                       </span>
+                      {((d.events?.length ?? 0) > 0 || d.is_marketing_lead) && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                          {d.is_marketing_lead && <MqlChip />}
+                          <EventChips events={d.events} max={2} tone="ink" />
+                        </div>
+                      )}
                     </td>
                     {!hideAmount && (
                       <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: amt > 0 ? accentColor : "#aab4c2", whiteSpace: "nowrap" }}>
@@ -720,6 +728,7 @@ function HighlightDealsModal({
   onCreateTasks?: () => void;
   onClose: () => void;
 }) {
+  const { stageLabel } = useStageLabels();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -789,7 +798,7 @@ function HighlightDealsModal({
                 onClick={() => downloadCsv(
                   `${title.toLowerCase().replace(/\s+/g, "-")}`,
                   ["Deal", "Company", "Stage", "Owner", "Close Date", "Days In Stage", "Amount"],
-                  deals.map((d) => [d.name || "", d.company_name || "", d.stage.replace(/_/g, " "), d.assigned_rep_name || "Unassigned", fmtMilestoneDate(d.close_date_est), d.days_in_stage ?? 0, Number(d.value ?? 0)]),
+                  deals.map((d) => [d.name || "", d.company_name || "", stageLabel(d.stage), d.assigned_rep_name || "Unassigned", fmtMilestoneDate(d.close_date_est), d.days_in_stage ?? 0, Number(d.value ?? 0)]),
                 )}
                 style={exportBtnStyle}
               >
@@ -845,7 +854,7 @@ function HighlightDealsModal({
                   <tr key={deal.id} style={{ borderBottom: "1px solid #f0f3f8" }}>
                     <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.name || "—"}</span></td>
                     <td style={{ ...tdSty, color: "#62748a" }}>{deal.company_name || "—"}</td>
-                    <td style={{ ...tdSty, color: "#62748a" }}>{deal.stage.replace(/_/g, " ")}</td>
+                    <td style={{ ...tdSty, color: "#62748a" }}>{stageLabel(deal.stage)}</td>
                     <td style={{ ...tdSty, color: "#62748a" }}>{deal.assigned_rep_name || "Unassigned"}</td>
                     <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>{fmtMilestoneDate(deal.close_date_est)}</td>
                     <td style={{ ...tdSty, textAlign: "right", fontWeight: 700, color: (deal.days_in_stage ?? 0) >= 30 ? "#b45309" : "#62748a" }}>{deal.days_in_stage ?? 0}d</td>
@@ -937,12 +946,12 @@ function MeetingBucketModal({
               onClick={() => downloadCsv(
                 `meetings-${bucket}`,
                 showMeetingBookedWith
-                  ? ["Deal", "AE", "SDR", "Date of Meeting", "Meeting Booked With"]
-                  : ["Deal", "AE", "SDR", "Date of Meeting"],
+                  ? ["Deal", "AE", "SDR", "Date of Meeting", "Meeting Booked With", "Event"]
+                  : ["Deal", "AE", "SDR", "Date of Meeting", "Event"],
                 deals.map((d) =>
                   showMeetingBookedWith
-                    ? [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? "", d.meeting_booked_with ?? ""]
-                    : [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? ""],
+                    ? [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? "", d.meeting_booked_with ?? "", (d.events ?? []).join("; ")]
+                    : [d.deal_name, d.ae_name, d.sdr_name, d.date_of_meeting ?? "", (d.events ?? []).join("; ")],
                 ),
               )}
               style={exportBtnStyle}
@@ -977,7 +986,15 @@ function MeetingBucketModal({
               <tbody>
                 {deals.map((deal, idx) => (
                   <tr key={`${deal.deal_id}-${idx}`} style={{ borderBottom: "1px solid #f0f3f8" }}>
-                    <td style={tdSty}><span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.deal_name || "—"}</span></td>
+                    <td style={tdSty}>
+                      <span style={{ fontWeight: 700, color: "#1d2b3a" }}>{deal.deal_name || "—"}</span>
+                      {((deal.events?.length ?? 0) > 0 || deal.is_marketing_lead) && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                          {deal.is_marketing_lead && <MqlChip />}
+                          <EventChips events={deal.events} max={2} tone="ink" />
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...tdSty, color: "#62748a" }}>{deal.ae_name || "—"}</td>
                     <td style={{ ...tdSty, color: "#62748a" }}>{deal.sdr_name || "—"}</td>
                     <td style={{ ...tdSty, color: "#62748a", whiteSpace: "nowrap" }}>{fmtMilestoneDate(deal.date_of_meeting)}</td>

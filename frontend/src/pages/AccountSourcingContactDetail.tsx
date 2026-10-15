@@ -106,20 +106,21 @@ export default function AccountSourcingContactDetail() {
 
   // Manual prospect status. Clicking the active status clears it. Optimistic
   // update with rollback so the segmented control feels instant.
-  const handleStatusChange = async (value: ContactStatusValue) => {
+  const handleStatusChange = async (value: ContactStatusValue, reason?: string) => {
     if (!contact || statusSaving) return;
     const next = contact.account_status === value ? null : value;
     const previous = contact.account_status ?? null;
+    const previousReason = contact.account_status_reason ?? null;
     const previousCompanyStatus = company?.account_status ?? null;
     setStatusSaving(true);
-    setContact((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
+    setContact((prev) => (prev ? { ...prev, account_status: next ?? undefined, account_status_reason: reason ?? null } : prev));
     if (shouldSyncContactStatusToAccount(next)) {
       setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
     }
     try {
-      await saveContactAccountStatus(contact.id, contact.company_id, next);
+      await saveContactAccountStatus(contact.id, contact.company_id, next, reason);
     } catch {
-      setContact((prev) => (prev ? { ...prev, account_status: previous ?? undefined } : prev));
+      setContact((prev) => (prev ? { ...prev, account_status: previous ?? undefined, account_status_reason: previousReason } : prev));
       if (shouldSyncContactStatusToAccount(next)) {
         setCompany((prev) =>
           prev ? { ...prev, account_status: previousCompanyStatus ?? undefined } : prev,
@@ -571,6 +572,8 @@ export default function AccountSourcingContactDetail() {
                   <ContactStatusBar
                     value={contact.account_status}
                     saving={statusSaving}
+                    reason={contact.account_status_reason}
+                    subjectName={`${contact.first_name} ${contact.last_name}`.trim()}
                     onChange={handleStatusChange} readOnly={!canEditRecord(user, contact)}
                   />
                   <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>

@@ -32,6 +32,7 @@ from app.models.user import User
 from app.repositories.company import CompanyRepository
 from app.repositories.contact import ContactRepository
 from app.repositories.deal import DealRepository
+from app.services.deal_stages import get_stage_label_map, stage_display_label
 from app.services.tasks import (
     backfill_open_task_assignments,
     complete_system_task,
@@ -247,6 +248,7 @@ async def _build_workspace_task_reads(
         ).scalars().all()
         deal_map = {row.id: row for row in rows if row.id}
 
+    stage_labels = await get_stage_label_map(session) if deal_map else {}
     reads: list[TaskWorkspaceRead] = []
     for task in base_reads:
         entity_name = ""
@@ -272,7 +274,7 @@ async def _build_workspace_task_reads(
             if not deal:
                 continue
             entity_name = deal.name
-            entity_subtitle = deal.stage.replace("_", " ")
+            entity_subtitle = stage_display_label(deal.stage, stage_labels)
             entity_link = f"/pipeline?deal={task.entity_id}"
 
         reads.append(

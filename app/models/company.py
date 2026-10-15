@@ -51,6 +51,11 @@ ACCOUNT_STATUS_VALUES = {
 # same reason.
 INACTIVE_ACCOUNT_STATUSES = ("not_a_fit", "dnd")
 
+# Moving an account into one of these requires a written reason (min length
+# below). Enforced server-side on both company update paths.
+REASON_REQUIRED_ACCOUNT_STATUSES = ("not_a_fit", "reach_out_later", "dnd")
+ACCOUNT_STATUS_REASON_MIN_LEN = 5
+
 
 class CompanyBase(SQLModel):
     name: str
@@ -105,6 +110,8 @@ class Company(CompanyBase, table=True):
     # Manual sourcing status (see ACCOUNT_STATUS_VALUES). Distinct from
     # disposition; set by reps on the detail page.
     account_status: Optional[str] = Field(default=None, index=True)
+    # Why the account was last moved to Not a Fit / Reach Out Later / DND.
+    account_status_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Free-text quick notes SDRs keep on the account ("Outbound Summary"),
     # surfaced under the status control on the detail page.
     outbound_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -243,6 +250,7 @@ class CompanyRead(CompanyBase):
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     account_status: Optional[str] = None
+    account_status_reason: Optional[str] = None
     outbound_summary: Optional[str] = None
     use_case: list[str] = []
     rep_feedback: Optional[str] = None
@@ -356,6 +364,7 @@ class CompanyUpdate(SQLModel):
     outreach_status: Optional[str] = None
     disposition: Optional[str] = None
     account_status: Optional[str] = None
+    account_status_reason: Optional[str] = None
     outbound_summary: Optional[str] = None
     use_case: Optional[list[str]] = None
     rep_feedback: Optional[str] = None

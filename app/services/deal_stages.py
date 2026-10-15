@@ -83,6 +83,20 @@ async def get_configured_deal_stages(session) -> list[dict[str, Any]]:
     return normalize_deal_stage_settings(row.deal_stage_settings)
 
 
+async def get_stage_label_map(session) -> dict[str, str]:
+    """stage id -> configured label (e.g. new_stage_18 -> "Marketing Lead (MQL)").
+    Use this for anything a person reads; ids are internal.
+    """
+    return {s["id"]: s["label"] for s in await get_configured_deal_stages(session)}
+
+
+def stage_display_label(stage: str | None, labels: dict[str, str]) -> str:
+    """Configured label, else a readable fallback — never the raw id."""
+    if not stage:
+        return ""
+    return labels.get(stage) or stage.replace("_", " ").title()
+
+
 async def get_configured_deal_stage_ids(session) -> list[str]:
     return [stage["id"] for stage in await get_configured_deal_stages(session)]
 

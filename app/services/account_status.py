@@ -202,3 +202,43 @@ async def apply_account_disable_effects(
         "campaigns_paused": len(paused),
         "campaigns_skipped_shared": len(skipped_shared),
     }
+
+
+def resolve_status_reason(
+    update_data: dict,
+    previous_status: str | None,
+) -> str | None:
+    """Validate + normalise the reason for an account_status change.
+
+    Moving an account INTO not_a_fit / reach_out_later / dnd requires a written
+    reason. Mutates ``update_data`` (trimmed reason; cleared when the account
+    leaves those statuses) and returns the reason to log, or None.
+    Raises HTTPException(422) when a required reason is missing/too short.
+    """
+    from fastapi import HTTPException
+
+    from app.models.company import (
+        ACCOUNT_STATUS_REASON_MIN_LEN,
+        REASON_REQUIRED_ACCOUNT_STATUSES,
+    )
+
+    if "account_status" not in update_data:
+        if "account_status_reason" in update_data:
+            raw = (update_data.get("account_status_reason") or "").strip()
+            update_data["account_status_reason"] = raw or None
+        return None
+    new_status = update_data.get("account_status")
+    raw = (update_data.get("account_status_reason") or "").strip()
+    if new_status in REASON_REQUIRED_ACCOUNT_STATUSES and new_status != previous_status:
+        if len(raw) < ACCOUNT_STATUS_REASON_MIN_LEN:
+            raise HTTPException(
+                status_code=422,
+                detail=f"A reason (at least {ACCOUNT_STATUS_REASON_MIN_LEN} characters) is required to move an account to this status.",
+            )
+        update_data["account_status_reason"] = raw
+        return raw
+    if new_status not in REASON_REQUIRED_ACCOUNT_STATUSES:
+        update_data["account_status_reason"] = None
+        return None
+    update_data["account_status_reason"] = raw or None
+    return None

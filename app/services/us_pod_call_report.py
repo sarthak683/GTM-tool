@@ -34,7 +34,15 @@ LOOKBACK_DAYS = 7
 DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 WEEKDAY_TO_KEY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
-US_POD_REPS = get_pod("us")["reps"]
+# Pod members left out of the daily call report TABLE only. They stay in the US
+# pod everywhere else (Sales Analytics POD filter, pod rosters) — e.g. Pulkit
+# Anand is a US-pod AE who isn't a caller, so his permanent "0 calls logged"
+# row was noise in the report.
+US_POD_REPORT_EXCLUDED_EMAILS = {"pulkit@beacon.li"}
+US_POD_REPS = [
+    rep for rep in get_pod("us")["reps"]
+    if rep["email"].lower() not in US_POD_REPORT_EXCLUDED_EMAILS
+]
 
 US_POD_REPORT_RECIPIENTS = [
     "awinja@beacon.li",
@@ -661,9 +669,11 @@ async def _build_call_detail_rows(
     deals = (
         await session.execute(unscoped_for_background_job(Deal, "us pod call report system work").where(Deal.id.in_(booked_deal_ids)))
     ).scalars().all()
+    mql_by_deal: dict[UUID, bool] = {}
     for deal in deals:
         if deal.close_date_est:
             close_date_by_deal[deal.id] = deal.close_date_est
+        mql_by_deal[deal.id] = bool(deal.is_marketing_lead)
 
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -684,6 +694,8 @@ async def _build_call_detail_rows(
                 "company_name": company.name if company else "—",
                 "prospect_name": f"{contact.first_name} {contact.last_name}".strip() if contact else "—",
                 "designation": (contact.title if contact and contact.title else "—"),
+                "events": list(company.events or []) if company else [],
+                "is_marketing_lead": mql_by_deal.get(deal_id, False) if deal_id else False,
                 "outcome_label": candidate["outcome_label"],
                 "meeting_date": meeting_date_display,
                 "created_at": candidate["created_at"],
@@ -1138,6 +1150,42 @@ def _report_title(report: dict[str, Any]) -> str:
     return f"{pod} Daily Call Report - {report['report_date']}"
 
 
+EVENT_TAGS_SHOWN = 2
+
+
+def _event_tags_text(events: list[str] | None, is_mql: bool = False) -> str:
+    tags = [str(e) for e in (events or []) if e]
+    if not tags and not is_mql:
+        return ""
+    shown = ", ".join((["MQL"] if is_mql else []) + tags[:EVENT_TAGS_SHOWN])
+    extra = f" +{len(tags) - EVENT_TAGS_SHOWN}" if len(tags) > EVENT_TAGS_SHOWN else ""
+    return f"[{shown}]{extra}"
+
+
+def _event_tags_html(events: list[str] | None, is_mql: bool = False) -> str:
+    """Small violet pills under the company name — same look as the app's event
+    chips. Inline-styled because Gmail strips <style> and ignores flexbox. The
+    first EVENT_TAGS_SHOWN show; the rest collapse to "+N" (full list on hover).
+    """
+    tags = [str(e) for e in (events or []) if e]
+    if not tags and not is_mql:
+        return ""
+    pill = (
+        "display:inline-block;margin:0 4px 0 0;padding:1px 7px;border-radius:999px;"
+        "background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:10px;"
+        "font-weight:700;line-height:1.5;white-space:nowrap;"
+    )
+    mql_pill = pill.replace("#f5f3ff", "#fff7ed").replace("#ddd6fe", "#fed7aa").replace("#6d28d9", "#c2410c")
+    parts = [f'<span style="{mql_pill}">MQL</span>'] if is_mql else []
+    parts += [f'<span style="{pill}">{html.escape(t)}</span>' for t in tags[:EVENT_TAGS_SHOWN]]
+    hidden = tags[EVENT_TAGS_SHOWN:]
+    if hidden:
+        parts.append(
+            f'<span title="{html.escape(", ".join(hidden), quote=True)}" style="{pill}">+{len(hidden)}</span>'
+        )
+    return f'<div style="margin-top:4px;">{"".join(parts)}</div>'
+
+
 def _render_report_text(report: dict[str, Any]) -> str:
     lines = [
         _report_title(report),
@@ -1181,6 +1229,9 @@ def _render_report_text(report: dict[str, Any]) -> str:
                 f"{row['outcome_label'][:11]:11}  "
                 f"{row['meeting_date']}"
             )
+            event_tags = _event_tags_text(row.get("events"), bool(row.get("is_marketing_lead")))
+            if event_tags:
+                lines.append(f"{'':13}  {event_tags}")
 
     lines.extend(
         [
@@ -1268,7 +1319,11 @@ def _render_report_html(report: dict[str, Any]) -> str:
                 meeting_date_html = html.escape(meeting_date)
             cells_html = (
                 _grid_td(row["rep_name"], last=False)
-                + _grid_td(row["company_name"], last=False)
+                + (
+                    '<td style="padding:12px 14px;text-align:left;color:#1f2a37;font-size:12.5px;'
+                    'border-right:1px solid #eeece5;border-bottom:1px solid #eeece5;">'
+                    f'{html.escape(str(row["company_name"]))}{_event_tags_html(row.get("events"), bool(row.get("is_marketing_lead")))}</td>'
+                )
                 + _grid_td(row["prospect_name"], last=False)
                 + _grid_td(row["designation"], last=False, color="#6b7280")
                 + f'<td style="padding:12px 14px;border-bottom:1px solid #eeece5;">{meeting_date_html}</td>'

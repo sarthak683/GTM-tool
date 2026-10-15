@@ -480,6 +480,7 @@ async def bulk_assign_companies(
 
     updated = 0
     skipped = 0
+    updated_names: list[str] = []
     prospects_kept_divergent = 0
     for cid in body.ids:
         company = (
@@ -498,6 +499,7 @@ async def bulk_assign_companies(
         )
         prospects_kept_divergent += len(cascade.kept_divergent)
         updated += 1
+        updated_names.append(company.name)
 
     await session.commit()
 
@@ -514,6 +516,7 @@ async def bulk_assign_companies(
             assignee_email=user.email,
             assigned_by_name=actor.name or actor.email,
             assigned_at=datetime.utcnow(),
+            account_names=updated_names,
         )
 
     return {
@@ -767,6 +770,7 @@ async def bulk_assign_companies_by_filter(
 
     updated = 0
     skipped = 0
+    updated_names: list[str] = []
     prospects_kept_divergent = 0
     for company in companies:
         if not can_edit_record(actor, company):
@@ -778,6 +782,7 @@ async def bulk_assign_companies_by_filter(
         )
         prospects_kept_divergent += len(cascade.kept_divergent)
         updated += 1
+        updated_names.append(company.name)
 
     await session.commit()
 
@@ -793,6 +798,7 @@ async def bulk_assign_companies_by_filter(
             assignee_email=user.email,
             assigned_by_name=actor.name or actor.email,
             assigned_at=datetime.utcnow(),
+            account_names=updated_names,
         )
 
     return {
@@ -901,15 +907,19 @@ async def bulk_assign_from_upload(
 
         ae_tally: dict[UUID, int] = defaultdict(int)
         ae_users: dict[UUID, User] = {}
+        ae_names: dict[UUID, list[str]] = defaultdict(list)
         sdr_tally: dict[UUID, int] = defaultdict(int)
         sdr_users: dict[UUID, User] = {}
+        sdr_names: dict[UUID, list[str]] = defaultdict(list)
         for entry in planned:
             if entry.ae_moves and entry.ae.user and not entry.ae.unassign:
                 ae_tally[entry.ae.user.id] += 1
                 ae_users[entry.ae.user.id] = entry.ae.user
+                ae_names[entry.ae.user.id].append(entry.company_name or entry.identifier)
             if entry.sdr_moves and entry.sdr.user and not entry.sdr.unassign:
                 sdr_tally[entry.sdr.user.id] += 1
                 sdr_users[entry.sdr.user.id] = entry.sdr.user
+                sdr_names[entry.sdr.user.id].append(entry.company_name or entry.identifier)
 
         assigned_at = datetime.utcnow()
         for uid, count in ae_tally.items():
@@ -919,7 +929,7 @@ async def bulk_assign_from_upload(
                     notify_accounts_bulk_assigned,
                     count=count, role_label="AE", assignee_name=u.name or u.email,
                     assignee_email=u.email, assigned_by_name=admin.name or admin.email,
-                    assigned_at=assigned_at,
+                    assigned_at=assigned_at, account_names=ae_names[uid],
                 )
         for uid, count in sdr_tally.items():
             u = sdr_users[uid]
@@ -928,7 +938,7 @@ async def bulk_assign_from_upload(
                     notify_accounts_bulk_assigned,
                     count=count, role_label="SDR", assignee_name=u.name or u.email,
                     assignee_email=u.email, assigned_by_name=admin.name or admin.email,
-                    assigned_at=assigned_at,
+                    assigned_at=assigned_at, account_names=sdr_names[uid],
                 )
 
     return AssignmentUploadResult(

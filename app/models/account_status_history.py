@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import Column, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -27,3 +28,4 @@ class AccountStatusHistory(SQLModel, table=True):
     to_status: Optional[str] = Field(default=None, index=True)
     changed_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
     changed_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text))

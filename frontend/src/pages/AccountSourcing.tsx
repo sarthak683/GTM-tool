@@ -186,107 +186,47 @@ const MENU_ITEM_STYLE: CSSProperties = {
   textAlign: "left",
 };
 
-function UploadPanel({
-  onUploaded,
-  onDownloadTemplate,
-}: {
-  onUploaded: (batch: SourcingBatch) => void;
-  onDownloadTemplate: () => void;
-}) {
+function UploadPanel({ onUploaded }: { onUploaded: (batch: SourcingBatch) => void }) {
+  const toast = useToast();
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
 
   const onFile = async (file: File) => {
     const lowerName = file.name.toLowerCase();
     if (!lowerName.endsWith(".csv") && !lowerName.endsWith(".xlsx")) {
-      setError("Please upload a .csv or .xlsx file");
+      toast.error("Please upload a .csv or .xlsx file", "Upload failed");
       return;
     }
     setUploading(true);
-    setError("");
     try {
       const batch = await accountSourcingApi.upload(file);
       onUploaded(batch);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      toast.error(e instanceof Error ? e.message : "Upload failed", "Upload failed");
     } finally {
       setUploading(false);
     }
   };
 
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-      <label
-        title="Upload a CSV/XLSX workbook to import accounts in bulk"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          background: uploading ? "#eef7db" : "#6fae27",
-          color: uploading ? colors.sub : "#fff",
-          padding: "8px 14px",
-          borderRadius: 10,
-          fontWeight: 700,
-          fontSize: 13,
-          cursor: uploading ? "wait" : "pointer",
-          border: "1px solid transparent",
+    <label
+      className="crm-button soft"
+      title="Upload a CSV/XLSX workbook to import accounts in bulk (download the template from More)"
+      style={{ cursor: uploading ? "wait" : "pointer", opacity: uploading ? 0.7 : 1 }}
+    >
+      {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+      {uploading ? "Uploading…" : "Bulk import accounts"}
+      <input
+        type="file"
+        accept=".csv,.xlsx"
+        disabled={uploading}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.currentTarget.value = "";
         }}
-      >
-        {uploading ? (
-          <>
-            <Loader2 size={14} className="animate-spin" /> Uploading…
-          </>
-        ) : (
-          <>
-            <Upload size={14} /> Bulk import accounts
-          </>
-        )}
-        <input
-          type="file"
-          accept=".csv,.xlsx"
-          disabled={uploading}
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) onFile(f);
-            e.currentTarget.value = "";
-          }}
-        />
-      </label>
-      <button
-        type="button"
-        onClick={onDownloadTemplate}
-        style={{
-          border: `1px solid ${colors.border}`,
-          background: "#fff",
-          color: colors.sub,
-          borderRadius: 10,
-          padding: "8px 12px",
-          fontSize: 12,
-          fontWeight: 700,
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <Download size={12} /> Template
-      </button>
-      {error ? (
-        <span
-          style={{
-            color: colors.red,
-            fontSize: 12,
-            fontWeight: 600,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <AlertCircle size={12} /> {error}
-        </span>
-      ) : null}
-    </div>
+      />
+    </label>
   );
 }
 
@@ -1282,6 +1222,7 @@ export default function AccountSourcing() {
   // hosts was restored from the URL/localStorage, so active filters are never
   // hidden behind a collapsed toggle.
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [showBulkReassign, setShowBulkReassign] = useState(false);
   const [showMoreFilters, setShowMoreFilters] = useState<boolean>(() => Boolean(
     parseSearchParamList(initParams.get("tier")).length ||
     parseSearchParamList(initParams.get("own")).length ||
@@ -2089,6 +2030,7 @@ export default function AccountSourcing() {
                 Add Accounts
               </button>
             )}
+            {isAdmin && <UploadPanel onUploaded={handleBatchUploaded} />}
             {isAdmin && (
               <button
                 type="button"
@@ -2231,6 +2173,31 @@ export default function AccountSourcing() {
                     </button>
                     {isAdmin && (
                       <>
+                        <div style={{ height: 1, background: "#e3e9f2", margin: "4px 6px" }} />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          style={MENU_ITEM_STYLE}
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            downloadTemplate();
+                          }}
+                        >
+                          <Download size={14} />
+                          Download import template
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          style={MENU_ITEM_STYLE}
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            setShowBulkReassign(true);
+                          }}
+                        >
+                          <Users size={14} />
+                          Bulk reassign owners
+                        </button>
                         <div style={{ height: 1, background: "#e3e9f2", margin: "4px 6px" }} />
                         <button
                           type="button"
@@ -3172,14 +3139,27 @@ export default function AccountSourcing() {
               syncing={syncingRecotap}
             />
             {!batchNeedsAttention ? importStatusCard : null}
-            {isAdmin ? (
-              <div style={{ ...cardStyle, borderRadius: 14, padding: "14px 16px", display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 2 }}>
-                  <span style={{ color: colors.faint, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>IMPORT &amp; BULK TOOLS</span>
-                  <span style={{ color: colors.sub, fontSize: 12.5 }}>Bring accounts in from a workbook, or reassign owners in bulk.</span>
+            {isAdmin && showBulkReassign ? (
+              <div
+                className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+                onClick={() => setShowBulkReassign(false)}
+              >
+                <div
+                  className="bg-white rounded-2xl shadow-xl w-full max-w-2xl border border-[#d9e1ec]"
+                  style={{ padding: "22px 24px", margin: "0 16px", maxHeight: "88vh", overflowY: "auto" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+                    <button
+                      type="button"
+                      className="crm-button soft"
+                      onClick={() => setShowBulkReassign(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <BulkReassignUpload onApplied={() => { setShowBulkReassign(false); void load(); }} />
                 </div>
-                <UploadPanel onUploaded={handleBatchUploaded} onDownloadTemplate={downloadTemplate} />
-                <BulkReassignUpload onApplied={() => load()} />
               </div>
             ) : null}
           </>

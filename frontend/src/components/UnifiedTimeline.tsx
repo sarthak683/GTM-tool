@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { timelineApi, type TimelineEvent } from "../lib/api";
 import { formatDate } from "../lib/utils";
+import { useStageLabels } from "../lib/stageLabels";
 
 interface Props {
   scope: { type: "contact" | "deal" | "company"; id: string };
@@ -59,6 +60,7 @@ function iconFor(kind: string): { Icon: typeof Mail; color: string } {
 }
 
 export default function UnifiedTimeline({ scope, limit, emptyMessage }: Props) {
+  const { humanizeStageText } = useStageLabels();
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
@@ -162,7 +164,7 @@ export default function UnifiedTimeline({ scope, limit, emptyMessage }: Props) {
                 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#31485f" }}>
-                      {event.title}
+                      {humanizeStageText(event.title)}
                     </p>
                     <span style={{ fontSize: 11, color: "#7a8ea4", whiteSpace: "nowrap" }}>
                       {event.occurred_at ? formatDate(event.occurred_at) : "—"}
@@ -170,7 +172,7 @@ export default function UnifiedTimeline({ scope, limit, emptyMessage }: Props) {
                   </div>
                   {event.subtitle && (
                     <p style={{ margin: "6px 0 0", fontSize: 13, color: "#4d6178", lineHeight: 1.45 }}>
-                      {event.subtitle}
+                      {humanizeStageText(event.subtitle)}
                     </p>
                   )}
                   {event.actor_name && (

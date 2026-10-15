@@ -30,6 +30,8 @@ export type Company = Omit<
   use_case?: string[] | null;
   // Event tags — newer than the last schema regeneration.
   events?: string[];
+  // Why the account was last moved to Not a Fit / Reach Out Later / DND.
+  account_status_reason?: string | null;
 };
 
 export interface RecotapSignals {
@@ -65,6 +67,8 @@ export type Contact = Omit<
   "additional_phones" | "enrichment_data" | "warm_intro_path" | "talking_points"
 > & {
   additional_phones?: { number: string; label?: string }[] | null;
+  // Why the prospect was last moved to Not the Right Prospect / Reach Out Later / DND.
+  account_status_reason?: string | null;
   enrichment_data?: Record<string, unknown> | null;
   warm_intro_path?: Record<string, unknown> | null;
   talking_points?: string[] | null;

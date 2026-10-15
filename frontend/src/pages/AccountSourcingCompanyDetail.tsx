@@ -57,6 +57,8 @@ import CallDispositionDrawer from "./contacts/CallDispositionDrawer";
 import AddToSequenceButton from "../components/AddToSequenceButton";
 import EventTagEditor from "../components/EventTagEditor";
 import EventChips from "../components/EventChips";
+
+const STATUS_REASON_REQUIRED = new Set(["not_a_fit", "reach_out_later", "dnd"]);
 import ProvenanceBar from "../components/ProvenanceBar";
 import TaskCenterModal from "../components/tasks/TaskCenterModal";
 import {
@@ -174,7 +176,7 @@ function ContactItem({
   contact: Contact;
   companyId?: string | null;
   companyAccountStatus?: string | null;
-  onStatusUpdated: (contactId: string, status: string | null, syncedAccountStatus?: string | null) => void;
+  onStatusUpdated: (contactId: string, status: string | null, syncedAccountStatus?: string | null, reason?: string | null) => void;
   onChanged?: () => void;
 }) {
   const { user } = useAuth();
@@ -193,20 +195,22 @@ function ContactItem({
   const emailConfidence = typeof enrichData.confidence === "number" ? enrichData.confidence : null;
   const trackingTone = getProspectTrackingTone(contact);
 
-  const handleStatusChange = async (value: ContactStatusValue) => {
+  const handleStatusChange = async (value: ContactStatusValue, reason?: string) => {
     if (statusSaving) return;
     const next = contact.account_status === value ? null : value;
     const previous = contact.account_status ?? null;
+    const previousReason = contact.account_status_reason ?? null;
     const syncAccount = shouldSyncContactStatusToAccount(next);
     setStatusSaving(true);
-    onStatusUpdated(contact.id, next, syncAccount ? next : undefined);
+    onStatusUpdated(contact.id, next, syncAccount ? next : undefined, reason ?? null);
     try {
-      await saveContactAccountStatus(contact.id, companyId, next);
+      await saveContactAccountStatus(contact.id, companyId, next, reason);
     } catch {
       onStatusUpdated(
         contact.id,
         previous,
         syncAccount ? (companyAccountStatus ?? null) : undefined,
+        previousReason,
       );
       toast.error("Could not update status. Please try again.", "Update failed");
     } finally {
@@ -258,6 +262,8 @@ function ContactItem({
             saving={statusSaving}
             compact
             stopPropagation
+            reason={contact.account_status_reason}
+            subjectName={`${contact.first_name} ${contact.last_name}`.trim()}
             onChange={handleStatusChange} readOnly={!canEditRecord(user, contact)}
           />
           <div
@@ -848,6 +854,9 @@ export default function AccountSourcingCompanyDetail() {
   const [domainSaving, setDomainSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
+  // Not a Fit / Reach Out Later / DND need a written reason before saving.
+  const [pendingReasonStatus, setPendingReasonStatus] = useState<string | null>(null);
+  const [statusReasonDraft, setStatusReasonDraft] = useState("");
   const [useCaseMenuOpen, setUseCaseMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -1169,9 +1178,9 @@ export default function AccountSourcingCompanyDetail() {
   }, [company?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContactStatusUpdated = useCallback(
-    (contactId: string, status: string | null, syncedAccountStatus?: string | null) => {
+    (contactId: string, status: string | null, syncedAccountStatus?: string | null, reason?: string | null) => {
       setContacts((prev) =>
-        prev.map((c) => (c.id === contactId ? { ...c, account_status: status ?? undefined } : c)),
+        prev.map((c) => (c.id === contactId ? { ...c, account_status: status ?? undefined, account_status_reason: reason ?? null } : c)),
       );
       if (syncedAccountStatus !== undefined) {
         setCompany((prev) => (prev ? { ...prev, account_status: syncedAccountStatus ?? undefined } : prev));
@@ -1389,14 +1398,21 @@ export default function AccountSourcingCompanyDetail() {
     }
   };
 
-  const handleStatusChange = async (value: string) => {
+  const handleStatusChange = async (value: string, reason?: string) => {
     if (!company || statusSaving) return;
     const next = company.account_status === value ? null : value;
     const previous = company.account_status ?? null;
+    if (next && STATUS_REASON_REQUIRED.has(next) && reason === undefined) {
+      setStatusReasonDraft("");
+      setPendingReasonStatus(next);
+      return;
+    }
+    const previousReason = company.account_status_reason ?? null;
     setStatusSaving(true);
-    setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined } : prev));
+    setCompany((prev) => (prev ? { ...prev, account_status: next ?? undefined, account_status_reason: reason ?? null } : prev));
     try {
-      await accountSourcingApi.updateCompany(company.id, { account_status: next });
+      await accountSourcingApi.updateCompany(company.id, { account_status: next, ...(reason !== undefined ? { account_status_reason: reason } : {}) });
+      setPendingReasonStatus(null);
       const wasDisabled = previous === "not_a_fit" || previous === "dnd";
       const nowDisabled = next === "not_a_fit" || next === "dnd";
       if (nowDisabled && !wasDisabled) {
@@ -1414,7 +1430,7 @@ export default function AccountSourcingCompanyDetail() {
         );
       }
     } catch {
-      setCompany((prev) => (prev ? { ...prev, account_status: previous ?? undefined } : prev));
+      setCompany((prev) => (prev ? { ...prev, account_status: previous ?? undefined, account_status_reason: previousReason } : prev));
       toast.error("Could not update status. Please try again.", "Update failed");
     } finally {
       setStatusSaving(false);
@@ -1576,6 +1592,11 @@ export default function AccountSourcingCompanyDetail() {
                   );
                 })}
               </div>
+              {company.account_status && STATUS_REASON_REQUIRED.has(company.account_status) && company.account_status_reason ? (
+                <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.5, color: colors.sub }}>
+                  <strong style={{ color: colors.text }}>Reason:</strong> {company.account_status_reason}
+                </div>
+              ) : null}
               {/* Event tags — add/remove; the Account Sourcing list filters on these. */}
               <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
                 <EventTagEditor
@@ -2763,6 +2784,47 @@ export default function AccountSourcingCompanyDetail() {
         }}
       />
 
+      {pendingReasonStatus && company && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => { if (!statusSaving) setPendingReasonStatus(null); }}
+          style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(15,26,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(480px, 100%)", background: "#fff", borderRadius: 16, padding: "22px 24px", boxShadow: "0 24px 60px rgba(15,23,42,0.25)" }}
+          >
+            <div style={{ fontSize: 17, fontWeight: 800, color: colors.text }}>
+              Why is {company.name} being moved to {ACCOUNT_STATUS_OPTIONS.find((o) => o.value === pendingReasonStatus)?.label ?? pendingReasonStatus}?
+            </div>
+            <div style={{ marginTop: 6, fontSize: 13, color: colors.sub, lineHeight: 1.5 }}>
+              A short reason is required. It is saved on the account&apos;s activity and status history.
+            </div>
+            <textarea
+              autoFocus
+              value={statusReasonDraft}
+              onChange={(e) => setStatusReasonDraft(e.target.value)}
+              placeholder="e.g. Reseller, not our ICP / asked us to reach out in Q1 / on do-not-contact list"
+              rows={4}
+              style={{ marginTop: 14, width: "100%", boxSizing: "border-box", borderRadius: 12, border: `1px solid ${colors.border}`, padding: "10px 12px", fontSize: 14, lineHeight: 1.5, resize: "vertical", fontFamily: "inherit" }}
+            />
+            <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="crm-button soft" disabled={statusSaving} onClick={() => setPendingReasonStatus(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="crm-button primary"
+                disabled={statusSaving || statusReasonDraft.trim().length < 5}
+                onClick={() => void handleStatusChange(pendingReasonStatus, statusReasonDraft.trim())}
+              >
+                {statusSaving ? "Saving…" : "Save status"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showActivityModal && (
         <>
           <div onClick={() => setShowActivityModal(false)} style={{

@@ -294,6 +294,9 @@ async def global_search(
 
     sections: list[GlobalSearchSection] = []
 
+    from app.services.deal_stages import get_stage_label_map, stage_display_label
+
+    stage_labels = await get_stage_label_map(session)
     deal_items = []
     for deal, company_name in deal_rows:
         deal_items.append(
@@ -301,8 +304,8 @@ async def global_search(
                 id=str(deal.id),
                 kind="deal",
                 title=deal.name,
-                subtitle=company_name or deal.stage.replace("_", " "),
-                meta=deal.stage.replace("_", " ").title(),
+                subtitle=company_name or stage_display_label(deal.stage, stage_labels),
+                meta=stage_display_label(deal.stage, stage_labels),
                 link=f"/pipeline?deal={deal.id}",
             )
         )

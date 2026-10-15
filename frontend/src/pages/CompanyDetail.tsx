@@ -658,7 +658,7 @@ export default function CompanyDetail() {
                         <Link to={`/pipeline?deal=${d.id}`} className="text-[14px] font-bold text-[#24364b] hover:text-[#9ace3d]">
                           {d.name}
                         </Link>
-                        <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{d.stage.replace(/_/g, " ")} · {formatDateOnly(d.close_date_est)}</p>
+                        <p className="text-[12px] text-[#7a8ea4] mt-1 capitalize">{availableDealStages.find((s) => s.id === d.stage)?.label ?? d.stage.replace(/_/g, " ")} · {formatDateOnly(d.close_date_est)}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[14px] font-bold tabular text-[#2d4056]">{formatCurrency(d.value)}</span>

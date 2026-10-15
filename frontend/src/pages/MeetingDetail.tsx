@@ -15,6 +15,7 @@ import TldvRecordingLink from "../components/meetings/TldvRecordingLink";
 import CallLevelCard from "../components/meetings/CallLevelCard";
 import { accountSourcingApi, companiesApi, contactsApi, dealsApi, intelligenceApi, meetingsApi, signalsApi } from "../lib/api";
 import type { Company, Contact, Deal, Meeting, Signal } from "../types";
+import { useStageLabels } from "../lib/stageLabels";
 import { formatCurrency, formatDate, formatOptionalDate, avatarColor, getInitials, isValidDateValue, suggestCompanyNameFromMeetingTitle } from "../lib/utils";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -459,6 +460,7 @@ function SearchSelect<T extends { id: string }>({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function MeetingDetail() {
+  const { stageLabel } = useStageLabels();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -1103,7 +1105,7 @@ export default function MeetingDetail() {
                 query={dealSearchQuery}
                 options={linkDealOptions}
                 getLabel={(item) => item.name}
-                getMeta={(item) => `${item.company_name || "No company"} · ${item.stage?.replace(/_/g, " ") || "No stage"}`}
+                getMeta={(item) => `${item.company_name || "No company"} · ${(item.stage ? stageLabel(item.stage) : "No stage")}`}
                 onQueryChange={setDealSearchQuery}
                 onClear={() => setLinkDealId("")}
                 onSelect={(item) => {

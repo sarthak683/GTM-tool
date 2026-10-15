@@ -31,6 +31,10 @@ class MilestoneDealRow(BaseModel):
     assigned_ae: Optional[str] = None
     assigned_sdr: Optional[str] = None
     meeting_booked_with: Optional[str] = None
+    # Event tags on the deal's account.
+    events: list[str] = []
+    # Deal ticked "Marketing Lead" in the pipeline (shown as an MQL tag).
+    is_marketing_lead: bool = False
 
 
 class SalesSummary(BaseModel):
@@ -332,6 +336,10 @@ class MeetingBucketDealRow(BaseModel):
     sdr_name: str
     date_of_meeting: Optional[str] = None
     meeting_booked_with: Optional[str] = None
+    # Event tags on the deal's account (Account Sourcing / Prospecting tags).
+    events: list[str] = []
+    # Deal ticked "Marketing Lead" in the pipeline (shown as an MQL tag).
+    is_marketing_lead: bool = False
 
 
 class MeetingBucketDealsResponse(BaseModel):

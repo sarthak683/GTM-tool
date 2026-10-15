@@ -51,6 +51,9 @@ async def _apply_company_update(session, company: Company, update_data: dict, ch
             raise HTTPException(status_code=422, detail=str(exc))
     previous_sdr_id = company.sdr_id
     previous_account_status = company.account_status
+    from app.services.account_status import resolve_status_reason
+
+    status_reason = resolve_status_reason(update_data, previous_account_status)
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     for key, value in update_data.items():
         setattr(company, key, value)
@@ -76,6 +79,7 @@ async def _apply_company_update(session, company: Company, update_data: dict, ch
             from_status=previous_account_status,
             to_status=company.account_status,
             changed_by_id=changed_by_id,
+            reason=status_reason,
         )
 
 

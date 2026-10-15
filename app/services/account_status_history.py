@@ -24,6 +24,7 @@ async def record_account_status_change(
     to_status: Optional[str],
     changed_by_id: Optional[UUID] = None,
     changed_at: Optional[datetime] = None,
+    reason: Optional[str] = None,
 ) -> AccountStatusHistory:
     """Add a history row to the session. Caller is responsible for commit."""
     row = AccountStatusHistory(
@@ -32,6 +33,7 @@ async def record_account_status_change(
         to_status=to_status,
         changed_by_id=changed_by_id,
         changed_at=changed_at or datetime.utcnow(),
+        reason=reason,
     )
     session.add(row)
     return row

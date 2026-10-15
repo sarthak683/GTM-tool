@@ -471,6 +471,8 @@ export type MilestoneDealRow = {
   assigned_ae: string | null;
   assigned_sdr: string | null;
   meeting_booked_with: string | null;
+  events?: string[];
+  is_marketing_lead?: boolean;
 };
 
 export type SalesDashboardSummary = {
@@ -755,6 +757,8 @@ export type MeetingBucketDeal = {
   sdr_name: string;
   date_of_meeting: string | null;
   meeting_booked_with?: string | null;
+  events?: string[];
+  is_marketing_lead?: boolean;
 };
 
 // Accepts the single id the per-rep drilldowns pass and the multi-select list

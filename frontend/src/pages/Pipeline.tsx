@@ -734,7 +734,17 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
             <button onClick={onClose} style={{ color: "#7a8ea4", cursor: "pointer", background: "none", border: "none" }}>Close</button>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <style>{`
+            .deal-form > div[style*="grid-template-columns"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+            .deal-form select {
+              -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; box-sizing: border-box;
+              padding-right: 40px !important;
+              background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+              background-repeat: no-repeat !important; background-position: right 16px center !important; background-size: 12px 8px !important;
+              text-overflow: ellipsis;
+            }
+          `}</style>
+          <div className="deal-form" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <input
               style={{
                 ...modalInputStyle,
@@ -824,21 +834,18 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 <option value="LinkedIn">LinkedIn</option>
                 <option value="Email">Email</option>
               </select>
-              <div />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <input type="number" style={modalInputStyle} placeholder="Value" value={form.value} onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))} />
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
-                  Meeting Booked Date {!isMarketingLeadStage && <span style={{ color: "#dc2626" }}>*</span>}
-                </label>
-                <input
-                  type="date"
-                  style={{ ...modalInputStyle, border: validationErrors.close_date_est ? "1.5px solid #fbbf24" : modalInputStyle.border, background: validationErrors.close_date_est ? "#fffbf5" : "#fff" }}
-                  value={form.close_date_est}
-                  onChange={(event) => { setForm((current) => ({ ...current, close_date_est: event.target.value })); if (validationErrors.close_date_est && event.target.value) setValidationErrors((current) => ({ ...current, close_date_est: false })); }}
-                />
-              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}>
+                Meeting Booked Date {!isMarketingLeadStage && <span style={{ color: "#dc2626" }}>*</span>}
+              </label>
+              <input
+                type="date"
+                style={{ ...modalInputStyle, width: "100%", boxSizing: "border-box", border: validationErrors.close_date_est ? "1.5px solid #fbbf24" : modalInputStyle.border, background: validationErrors.close_date_est ? "#fffbf5" : "#fff" }}
+                value={form.close_date_est}
+                onChange={(event) => { setForm((current) => ({ ...current, close_date_est: event.target.value })); if (validationErrors.close_date_est && event.target.value) setValidationErrors((current) => ({ ...current, close_date_est: false })); }}
+              />
             </div>
             <input style={modalInputStyle} placeholder="Tags, comma separated" value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} />
             <div>
@@ -846,7 +853,7 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 Deal Source <span style={{ color: "#dc2626" }}>*</span>
               </label>
               <select
-                style={{ ...modalInputStyle, background: form.source ? "#fff" : "#fffbf5", border: form.source ? "1px solid #dbe6f2" : "1.5px solid #fbbf24", color: form.source ? "#1f2d3d" : "#92400e" }}
+                style={{ ...modalInputStyle, width: "100%", boxSizing: "border-box", background: form.source ? "#fff" : "#fffbf5", border: form.source ? "1px solid #dbe6f2" : "1.5px solid #fbbf24", color: form.source ? "#1f2d3d" : "#92400e" }}
                 value={form.source}
                 onChange={(event) => {
                   const nextSource = event.target.value;
@@ -865,10 +872,11 @@ export function CreateDealModal({ defaultStage, companies, users, stages, onClos
                 <option value="event">Event</option>
               </select>
             </div>
-            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#5e738b", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <div style={{ padding: "12px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <label style={{ fontSize: 14, fontWeight: 700, color: "#1f2d3d", display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
+                  style={{ width: 16, height: 16, margin: 0 }}
                   checked={form.is_marketing_lead}
                   onChange={(event) => {
                     const checked = event.target.checked;
@@ -1732,6 +1740,10 @@ export default function Pipeline() {
   const [geographyFilters, setGeographyFilters] = useState<string[]>([]);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  // Marketing-lead filter: "__any__" = every marketing lead, "__none__" = not a
+  // marketing lead, otherwise a channel value (google_ads, events, ...).
+  const [marketingFilters, setMarketingFilters] = useState<string[]>([]);
+  const [eventFilters, setEventFilters] = useState<string[]>([]);
   const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
   const [commitFilter, setCommitFilter] = useState<string[]>([]);
   const [stalledOnly, setStalledOnly] = useState(false);
@@ -2062,6 +2074,17 @@ export default function Pipeline() {
       });
       if (tagFilters.length) items = items.filter((deal) => (deal.tags ?? []).some((tag) => tagFilters.includes(tag)));
       if (sourceFilters.length) items = items.filter((deal) => (deal.source ? sourceFilters.includes(deal.source) : false));
+      if (marketingFilters.length) items = items.filter((deal) => {
+        const base = parseMarketingSource(deal.marketing_source).base;
+        if (!base) return marketingFilters.includes("__none__");
+        return marketingFilters.includes("__any__") || marketingFilters.includes(base);
+      });
+      if (eventFilters.length) items = items.filter((deal) => {
+        const m = parseMarketingSource(deal.marketing_source);
+        if (m.base !== "events") return false;
+        const name = m.custom.trim().toLowerCase();
+        return eventFilters.some((e) => e.toLowerCase() === name);
+      });
       if (priorityFilters.length) items = items.filter((deal) => {
         const tag = deal.priority_tag ?? null;
         return tag ? priorityFilters.includes(tag) : false;
@@ -2144,7 +2167,7 @@ export default function Pipeline() {
       next[stage.id] = items;
     }
     return next;
-  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, sourceFilters, stageFilters, stalledOnly, tagFilters]);
+  }, [activityFilters, assigneeFilters, closeDateFilters, closeMonthFilter, commitFilter, companyMap, contactFilters, dealBoard, effectiveDealStages, geographyFilters, healthFilters, missingCloseDateOnly, needsAttentionOnly, nextStepFilters, overdueOnly, priorityFilters, search, sourceFilters, marketingFilters, eventFilters, stageFilters, stalledOnly, tagFilters]);
 
   const filteredProspects = useMemo(() => {
     const next: Record<ProspectStageId, Contact[]> = { outreach: [], in_progress: [], meeting_booked: [], negative_response: [], no_response: [], not_a_fit: [] };
@@ -2300,7 +2323,7 @@ export default function Pipeline() {
     isAdmin || Boolean(user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") && rolePermissions?.[user.role]?.crm_import);
   const canMigrateProspects =
     isAdmin || Boolean(user && (user.role === "ae" || user.role === "sdr" || user.role === "marketing") && rolePermissions?.[user.role]?.prospect_migration);
-  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || sourceFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
+  const hasFilters = Boolean(search) || stageFilters.length > 0 || assigneeFilters.length > 0 || geographyFilters.length > 0 || tagFilters.length > 0 || sourceFilters.length > 0 || marketingFilters.length > 0 || eventFilters.length > 0 || priorityFilters.length > 0 || commitFilter.length > 0 || healthFilters.length > 0 || closeDateFilters.length > 0 || nextStepFilters.length > 0 || activityFilters.length > 0 || contactFilters.length > 0 || stalledOnly || overdueOnly || missingCloseDateOnly || needsAttentionOnly || Boolean(closeMonthFilter);
   const stages = tab === "deal" ? effectiveDealStages : effectiveProspectStages;
   const pipelineTableDeals = effectiveDealStages.flatMap(
     (stage) => filteredDealBoard[stage.id] ?? [],
@@ -2347,6 +2370,16 @@ export default function Pipeline() {
   ];
   const tagOptions = dealTags.map((tag) => ({ value: tag, label: tag }));
   const sourceOptions = Array.from(new Set([...KNOWN_SOURCES, ...dealSources])).map((value) => ({ value, label: sourceLabel(value) }));
+  const marketingOptions = [
+    { value: "__any__", label: "All marketing leads" },
+    ...MARKETING_LEAD_SOURCES.map((m) => ({ value: m.value, label: m.label })),
+    { value: "__none__", label: "Not a marketing lead" },
+  ];
+  const eventOptions = Array.from(new Set([
+    ...EVENT_OPTIONS,
+    ...allDeals.map((d) => parseMarketingSource(d.marketing_source)).filter((m) => m.base === "events" && m.custom.trim()).map((m) => m.custom.trim()),
+  ])).map((value) => ({ value, label: value }));
+  const showEventFilter = marketingFilters.includes("events") || marketingFilters.includes("__any__") || eventFilters.length > 0;
   const accentColor = tab === "deal" ? "#175089" : "#177b75";
   const accentBg = tab === "deal" ? "#f0f6ff" : "#f0faf9";
   const accentBorder = tab === "deal" ? "#b8d0f0" : "#b2e0dc";
@@ -2474,6 +2507,8 @@ export default function Pipeline() {
     setGeographyFilters([]);
     setTagFilters([]);
     setSourceFilters([]);
+    setMarketingFilters([]);
+    setEventFilters([]);
     setPriorityFilters([]);
     setCommitFilter([]);
     setHealthFilters([]);
@@ -3073,6 +3108,8 @@ export default function Pipeline() {
             <MultiSelectFilter variant="compact" values={geographyFilters} onChange={setGeographyFilters} label="Geography" allLabel="All Geographies" options={geographyOptions} />
             {tab === "deal" && <MultiSelectFilter variant="compact" values={tagFilters} onChange={setTagFilters} label="Tags" allLabel="All Tags" options={tagOptions} />}
             {tab === "deal" && <MultiSelectFilter variant="compact" values={sourceFilters} onChange={setSourceFilters} label="Source" allLabel="All Sources" options={sourceOptions} />}
+            {tab === "deal" && <MultiSelectFilter variant="compact" values={marketingFilters} onChange={(next) => { setMarketingFilters(next); if (!(next.includes("events") || next.includes("__any__"))) setEventFilters([]); }} label="Marketing lead" allLabel="All deals" options={marketingOptions} />}
+            {tab === "deal" && showEventFilter && <MultiSelectFilter variant="compact" values={eventFilters} onChange={setEventFilters} label="Event" allLabel="All events" options={eventOptions} />}
             {tab === "deal" && <MultiSelectFilter variant="compact" values={priorityFilters} onChange={setPriorityFilters} label="Priority" allLabel="All Priorities" options={priorityOptions} />}
             {tab === "deal" && <MultiSelectFilter variant="compact" values={healthFilters} onChange={setHealthFilters} label="Health" allLabel="All Health" options={healthOptions} />}
             {tab === "deal" && <MultiSelectFilter variant="compact" values={closeDateFilters} onChange={setCloseDateFilters} label="Close Date" allLabel="Any Close Date" options={closeDateOptions} />}
@@ -3082,12 +3119,12 @@ export default function Pipeline() {
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label className="pr-rail-label">AE Triage</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: needsAttentionOnly ? "1.5px solid #c4b5fd" : "1px solid #e2eaf2", background: needsAttentionOnly ? "#f5f3ff" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: needsAttentionOnly ? "1.5px solid #c4b5fd" : "1px solid #e2eaf2", background: needsAttentionOnly ? "#f5f3ff" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={needsAttentionOnly}
                     onChange={(e) => handleNeedsAttentionOnlyChange(e.target.checked)}
-                    style={{ accentColor: "#7c3aed", width: 14, height: 14 }}
+                    style={{ accentColor: "#7c3aed", width: 15, height: 15, flexShrink: 0, margin: 0 }}
                   />
                   <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3, color: needsAttentionOnly ? "#6d28d9" : "#2d4258" }}>Needs attention (no next step / overdue / stale / no contact)</span>
                 </label>
@@ -3096,12 +3133,12 @@ export default function Pipeline() {
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label className="pr-rail-label">Deal Aging</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: stalledOnly ? "1.5px solid #fcd34d" : "1px solid #e2eaf2", background: stalledOnly ? "#fffbeb" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: stalledOnly ? "1.5px solid #fcd34d" : "1px solid #e2eaf2", background: stalledOnly ? "#fffbeb" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={stalledOnly}
                     onChange={(e) => handleStalledOnlyChange(e.target.checked)}
-                    style={{ accentColor: "#d97706", width: 14, height: 14 }}
+                    style={{ accentColor: "#d97706", width: 15, height: 15, flexShrink: 0, margin: 0 }}
                   />
                   <span title="Uses the workspace's per-stage stuck thresholds (business days) — same rule as the performance scorecard." style={{ fontSize: 12.5, fontWeight: 600, color: stalledOnly ? "#b45309" : "#2d4258" }}>Stalled only (over stage threshold)</span>
                 </label>
@@ -3110,26 +3147,26 @@ export default function Pipeline() {
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label className="pr-rail-label">Close Date Hygiene</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: overdueOnly ? "1.5px solid #fecaca" : "1px solid #e2eaf2", background: overdueOnly ? "#fef2f2" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: overdueOnly ? "1.5px solid #fecaca" : "1px solid #e2eaf2", background: overdueOnly ? "#fef2f2" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={overdueOnly}
                     onChange={(e) => handleOverdueOnlyChange(e.target.checked)}
-                    style={{ accentColor: "#dc2626", width: 14, height: 14 }}
+                    style={{ accentColor: "#dc2626", width: 15, height: 15, flexShrink: 0, margin: 0 }}
                   />
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: overdueOnly ? "#b91c1c" : "#2d4258" }}>Overdue close dates only</span>
                 </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: missingCloseDateOnly ? "1.5px solid #fde68a" : "1px solid #e2eaf2", background: missingCloseDateOnly ? "#fffbeb" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: missingCloseDateOnly ? "1.5px solid #fde68a" : "1px solid #e2eaf2", background: missingCloseDateOnly ? "#fffbeb" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={missingCloseDateOnly}
                     onChange={(e) => handleMissingCloseDateOnlyChange(e.target.checked)}
-                    style={{ accentColor: "#d97706", width: 14, height: 14 }}
+                    style={{ accentColor: "#d97706", width: 15, height: 15, flexShrink: 0, margin: 0 }}
                   />
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: missingCloseDateOnly ? "#b45309" : "#2d4258" }}>Missing close date only</span>
                 </label>
                 {closeMonthFilter && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, height: 34, padding: "0 10px", borderRadius: 10, border: "1.5px solid #c7d2fe", background: "#eef2ff" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: "1.5px solid #c7d2fe", background: "#eef2ff" }}>
                     <span style={{ fontSize: 12.5, fontWeight: 600, color: "#4338ca" }}>Close month: {closeMonthFilter}</span>
                     <button
                       type="button"
@@ -3152,12 +3189,12 @@ export default function Pipeline() {
             {tab === "deal" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label className="pr-rail-label">Commit to Deal</label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 34, padding: "0 10px", borderRadius: 10, border: commitFilter.length ? "1.5px solid #bbf7d0" : "1px solid #e2eaf2", background: commitFilter.length ? "#f0fdf4" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 40, padding: "8px 12px", boxSizing: "border-box", borderRadius: 10, border: commitFilter.length ? "1.5px solid #bbf7d0" : "1px solid #e2eaf2", background: commitFilter.length ? "#f0fdf4" : "#f8fafc" }}>
                   <input
                     type="checkbox"
                     checked={commitFilter.length > 0}
                     onChange={(e) => setCommitFilter(e.target.checked ? ["committed"] : [])}
-                    style={{ accentColor: "#22c55e", width: 14, height: 14 }}
+                    style={{ accentColor: "#22c55e", width: 15, height: 15, flexShrink: 0, margin: 0 }}
                   />
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: commitFilter.length ? "#15803d" : "#2d4258" }}>Committed only</span>
                 </label>
@@ -3238,7 +3275,7 @@ export default function Pipeline() {
                           <LoadingCard key={`${stage.id}-skeleton-${skeletonIndex}`} kind={tab === "deal" ? "deal" : "prospect"} />
                         ))
                       ) : tab === "deal" ? (
-                        dealItems.length ? <PagedCards key={`${stage.id}-${search}-${JSON.stringify([stageFilters, assigneeFilters, geographyFilters, tagFilters, sourceFilters, priorityFilters, healthFilters, commitFilter, stalledOnly, overdueOnly, missingCloseDateOnly, needsAttentionOnly, closeMonthFilter, closeDateFilters, nextStepFilters, activityFilters, contactFilters])}`}>{dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => {
+                        dealItems.length ? <PagedCards key={`${stage.id}-${search}-${JSON.stringify([stageFilters, assigneeFilters, geographyFilters, tagFilters, sourceFilters, marketingFilters, eventFilters, priorityFilters, healthFilters, commitFilter, stalledOnly, overdueOnly, missingCloseDateOnly, needsAttentionOnly, closeMonthFilter, closeDateFilters, nextStepFilters, activityFilters, contactFilters])}`}>{dealItems.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => {
                           setSelectedDeal(deal);
                           setSearchParams((current) => {
                             const next = new URLSearchParams(current);

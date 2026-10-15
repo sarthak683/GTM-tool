@@ -3809,7 +3809,9 @@ async def sales_dashboard(
             Deal.close_date_est.label("close_date_est"),
             Deal.geography.label("deal_geography"),
             Deal.meeting_booked_with.label("meeting_booked_with"),
+            Deal.is_marketing_lead.label("is_marketing_lead"),
             Company.name.label("company_name"),
+            Company.events.label("company_events"),
             AEUser.name.label("ae_name"),
             Company.sdr_name.label("sdr_name"),
         )
@@ -3900,6 +3902,8 @@ async def sales_dashboard(
             assigned_ae=r.ae_name or None,
             assigned_sdr=r.sdr_name or None,
             meeting_booked_with=r.meeting_booked_with or None,
+            events=list(r.company_events or []),
+            is_marketing_lead=bool(r.is_marketing_lead),
         )
         for r in milestone_summary_rows
     ]
@@ -4248,6 +4252,21 @@ async def meeting_bucket_deals(
                 date_of_meeting=row.close_date_est.isoformat() if row.close_date_est else None,
                 meeting_booked_with=row.meeting_booked_with,
             ))
+
+    if deals:
+        event_rows = (
+            await session.execute(
+                select(Deal.id, Company.events, Deal.is_marketing_lead)
+                .select_from(Deal)
+                .join(Company, Deal.company_id == Company.id)
+                .where(Deal.id.in_([UUID(d.deal_id) for d in deals]))
+            )
+        ).all()
+        events_by_deal = {str(r[0]): list(r[1] or []) for r in event_rows}
+        mql_by_deal = {str(r[0]): bool(r[2]) for r in event_rows}
+        for d in deals:
+            d.events = events_by_deal.get(d.deal_id, [])
+            d.is_marketing_lead = mql_by_deal.get(d.deal_id, False)
 
     return MeetingBucketDealsResponse(deals=deals)
 

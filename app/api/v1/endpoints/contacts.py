@@ -654,6 +654,9 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
     # Not a Contact column — pulled out before the generic setattr loop below.
     cadence_task_id = update_data.pop("cadence_task_id", None)
     previous_call_disposition = contact.call_disposition
+    from app.services.contact_status_reason import resolve_contact_status_reason
+
+    status_reason = resolve_contact_status_reason(update_data, contact.account_status)
     for key, value in update_data.items():
         # Normalize to naive UTC so asyncpg doesn't mix aware/naive datetimes
         # (replace() alone would keep the foreign wall-clock time)
@@ -691,6 +694,19 @@ async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSe
                 contact.timezone = inferred
 
     contact.updated_at = datetime.utcnow()
+    if status_reason:
+        from app.models.activity import Activity
+        from app.services.contact_status_reason import status_reason_note
+
+        session.add(
+            Activity(
+                type="note",
+                source="manual",
+                contact_id=contact.id,
+                content=status_reason_note(contact.account_status, status_reason),
+                created_by_id=_user.id,
+            )
+        )
     saved = await repo.save(contact)
 
     # Server-side source of truth for the rep-driven state machine: when a

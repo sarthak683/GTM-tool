@@ -15,8 +15,12 @@ export async function saveContactAccountStatus(
   contactId: string,
   companyId: string | null | undefined,
   status: string | null,
+  reason?: string,
 ): Promise<void> {
-  await accountSourcingApi.updateContact(contactId, { account_status: status });
+  await accountSourcingApi.updateContact(contactId, {
+    account_status: status,
+    ...(reason !== undefined ? { account_status_reason: reason } : {}),
+  });
   if (companyId && shouldSyncContactStatusToAccount(status)) {
     await accountSourcingApi.updateCompany(companyId, { account_status: status });
   }

@@ -24,6 +24,7 @@ from app.models.deal import Deal, DealContact
 from app.models.meeting import Meeting
 from app.repositories.contact import ContactRepository
 from app.services.contact_tracking import apply_contact_tracking
+from app.services.deal_stages import get_stage_label_map, stage_display_label
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
@@ -238,6 +239,7 @@ async def _compute_alerts(
     alerts: list[Alert] = []
     now = datetime.utcnow()
     alert_ids: set[str] = set()
+    stage_labels = await get_stage_label_map(session)
 
     def push(alert: Alert) -> None:
         if alert.id in alert_ids:
@@ -263,7 +265,7 @@ async def _compute_alerts(
             type="stale_deal",
             severity="high" if row.days_in_stage > 30 else "medium",
             title=f"Deal stalled: {row.name}",
-            description=f"Stuck in '{row.stage}' for {row.days_in_stage} days with no stage movement.",
+            description=f"Stuck in '{stage_display_label(row.stage, stage_labels)}' for {row.days_in_stage} days with no stage movement.",
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
@@ -284,7 +286,7 @@ async def _compute_alerts(
             type="at_risk",
             severity="high",
             title=f"At-risk deal: {row.name}",
-            description=f"Deal is flagged red in '{row.stage}' stage. Review and update health score.",
+            description=f"Deal is flagged red in '{stage_display_label(row.stage, stage_labels)}' stage. Review and update health score.",
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
@@ -308,7 +310,7 @@ async def _compute_alerts(
             type="missing_close_date",
             severity="medium",
             title=f"No close date: {row.name}",
-            description=f"Deal is in '{row.stage}' but has no estimated close date. Forecast is blind.",
+            description=f"Deal is in '{stage_display_label(row.stage, stage_labels)}' but has no estimated close date. Forecast is blind.",
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",
@@ -333,7 +335,7 @@ async def _compute_alerts(
             type="deal_no_next_step",
             severity="medium",
             title=f"No next step: {row.name}",
-            description=f"Deal is active in '{row.stage}' but no next step is logged.",
+            description=f"Deal is active in '{stage_display_label(row.stage, stage_labels)}' but no next step is logged.",
             entity_id=row.id,
             entity_name=row.name,
             entity_type="deal",

@@ -15,10 +15,14 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 ALWAYS_NOTIFY_EMAILS = ["maithili@beacon.li", "annie@beacon.li"]
+
+# A bulk email lists account names up to this many, then "…and N more".
+BULK_EMAIL_MAX_ACCOUNT_NAMES = 50
 
 
 def _dedupe_emails(emails: list[str | None]) -> list[str]:
@@ -144,6 +148,7 @@ async def notify_accounts_bulk_assigned(
     assignee_email: str,
     assigned_by_name: str,
     assigned_at: datetime,
+    account_names: Optional[list[str]] = None,
 ) -> None:
     """Many accounts, one recipient, one action — a single summary email
     instead of one email per account, so a large bulk reassignment doesn't
@@ -155,8 +160,24 @@ async def notify_accounts_bulk_assigned(
     safe_assignee = html.escape(assignee_name)
     safe_by = html.escape(assigned_by_name)
     plural = "account" if count == 1 else "accounts"
+    names = sorted({n.strip() for n in (account_names or []) if n and n.strip()}, key=str.lower)
+    shown = names[:BULK_EMAIL_MAX_ACCOUNT_NAMES]
+    extra = max(count - len(shown), 0) if shown else 0
 
     subject = f"{count} {plural} bulk-assigned to {assignee_name} ({role_label})"
+    names_html = ""
+    names_plain = ""
+    if shown:
+        items = "".join(f"<li>{html.escape(n)}</li>" for n in shown)
+        more_html = f'<p style="margin:4px 0 0;color:#5b6b7f;">…and {extra} more</p>' if extra else ""
+        names_html = (
+            '<p style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:700;color:#1f2d3d;margin:16px 0 4px;">Accounts</p>'
+            f'<ul style="font-family:-apple-system,sans-serif;font-size:14px;color:#1f2d3d;margin:0;padding-left:20px;">{items}</ul>'
+            f'<div style="font-family:-apple-system,sans-serif;font-size:14px;">{more_html}</div>'
+        )
+        names_plain = "\n\nAccounts:\n" + "\n".join(f"- {n}" for n in shown)
+        if extra:
+            names_plain += f"\n…and {extra} more"
     html_body = f"""
     <p style="font-family:-apple-system,sans-serif;font-size:14px;color:#1f2d3d;">
       <strong>{count}</strong> {plural} {"was" if count == 1 else "were"} bulk-assigned to <strong>{safe_assignee}</strong> as <strong>{role_label}</strong>.
@@ -167,12 +188,14 @@ async def notify_accounts_bulk_assigned(
       {_table_row("Assigned by", safe_by)}
       {_table_row("When", html.escape(when_str))}
     </table>
+    {names_html}
     """
     plain_body = (
         f"Accounts: {count}\n"
         f"Assigned to: {assignee_name} ({role_label})\n"
         f"Assigned by: {assigned_by_name}\n"
         f"When: {when_str}"
+        f"{names_plain}"
     )
     recipients = _dedupe_emails([assignee_email, *ALWAYS_NOTIFY_EMAILS])
     await _send_to_recipients(subject, plain_body, html_body, recipients, log_ref=f"bulk:{assignee_name}:{count}")

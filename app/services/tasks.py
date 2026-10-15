@@ -26,7 +26,7 @@ from app.services.activity_signal_classifier import ActivitySignal, classify_act
 from app.services.ai_task_emitter import TaskProposal, emit_ai_tasks
 from app.services.company_stage_milestones import record_deal_stage_milestone
 from app.services.deal_stage_history import record_stage_transition
-from app.services.deal_stages import resolve_valid_deal_stage
+from app.services.deal_stages import get_stage_label_map, resolve_valid_deal_stage, stage_display_label
 from app.services.critical_task_rules import CriticalFinding, evaluate_critical_rules
 from app.services.deal_activity import deal_activity_condition, engagement_only
 from app.services.deal_activity_interpreter import DealActivityInterpretation, interpret_deal_activity
@@ -3252,7 +3252,7 @@ async def apply_task_action(
             reached_at=deal.stage_entered_at or deal.updated_at,
             source="system_task_move_deal_stage",
         )
-        return {"message": f"Deal moved to {stage}"}
+        return {"message": f"Deal moved to {stage_display_label(stage, await get_stage_label_map(session))}"}
 
     if action == "convert_contact_to_deal":
         contact_id = UUID(str(payload["contact_id"]))
@@ -3630,7 +3630,7 @@ async def apply_task_action(
             reached_at=deal.stage_entered_at or deal.updated_at,
             source="t_stage_apply",
         )
-        return {"message": f"Deal moved to {target_stage}"}
+        return {"message": f"Deal moved to {stage_display_label(target_stage, await get_stage_label_map(session))}"}
 
     if action == "t_amount_apply":
         deal_id = UUID(str(payload["deal_id"]))

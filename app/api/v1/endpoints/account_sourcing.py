@@ -2323,6 +2323,9 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
             raise HTTPException(status_code=422, detail=str(exc))
     previous_sdr_id = company.sdr_id
     previous_account_status = company.account_status
+    from app.services.account_status import resolve_status_reason
+
+    status_reason = resolve_status_reason(update_data, previous_account_status)
     sdr_update_requested = any(key in update_data for key in ("sdr_id", "sdr_email", "sdr_name"))
     changed_fields = {
         key: {"before": getattr(company, key, None), "after": value}
@@ -2424,7 +2427,17 @@ async def update_sourced_company(company_id: UUID, payload: CompanyUpdate, curre
             from_status=previous_account_status,
             to_status=company.account_status,
             changed_by_id=current_user.id,
+            reason=status_reason,
         )
+        if status_reason:
+            append_company_activity_log(
+                company,
+                action="account_status_reason",
+                actor_name=current_user.name,
+                actor_email=current_user.email,
+                message=f"Moved to {company.account_status.replace('_', ' ')} — reason: {status_reason}",
+                metadata={"status": company.account_status, "reason": status_reason},
+            )
 
     company.updated_at = datetime.utcnow()
     company.icp_score, company.icp_tier = score_company(company)
@@ -3263,8 +3276,23 @@ async def update_company_contact(contact_id: UUID, payload: ContactUpdate, _user
     contact = await get_actionable_contact(session, _user, contact_id)
 
     update_data = payload.model_dump(exclude_unset=True)
+    from app.services.contact_status_reason import resolve_contact_status_reason, status_reason_note
+
+    status_reason = resolve_contact_status_reason(update_data, contact.account_status)
     for key, value in update_data.items():
         setattr(contact, key, value)
+    if status_reason:
+        from app.models.activity import Activity
+
+        session.add(
+            Activity(
+                type="note",
+                source="manual",
+                contact_id=contact.id,
+                content=status_reason_note(contact.account_status, status_reason),
+                created_by_id=_user.id,
+            )
+        )
 
     if contact.company_id:
         company = await session.get(Company, contact.company_id)
