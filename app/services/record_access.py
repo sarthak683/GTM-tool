@@ -11,6 +11,13 @@ def can_edit_record(user, record) -> bool:
     )
 
 
+def can_log_call(user) -> bool:
+    """Calling is a team activity: any AE, SDR or admin may log a call on any prospect."""
+    return getattr(user, "is_admin", False) or str(getattr(user, "role", "")).lower() in {
+        "admin", "superadmin", "ae", "sdr",
+    }
+
+
 def authorize_company_edit(user, company) -> None:
     if not can_edit_record(user, company):
         raise HTTPException(403, "Only the assigned AE/SDR or an admin can edit this account.")

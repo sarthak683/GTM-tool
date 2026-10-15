@@ -41,6 +41,8 @@ from app.services.permissions import can_view_all_prospects, require_workspace_p
 from app.services.persona_classifier import classify_persona
 from app.services.prospect_hygiene import is_valid_prospect_candidate
 from app.services.contact_access import (
+    CALL_LOG_FIELDS,
+    authorize_call_logging,
     authorize_contact_edit,
     get_visible_contact,
     get_visible_contact_ids,
@@ -647,10 +649,15 @@ async def get_contact(contact_id: UUID, session: DBSession, _user: CurrentUser):
 async def update_contact(contact_id: UUID, payload: ContactUpdate, session: DBSession, _user: CurrentUser):
     repo = ContactRepository(session)
     contact = await get_visible_contact(session, _user, contact_id)
-    # Reps may only edit prospects they own (or own a deal on the company);
-    # editing an unassigned one claims it.
-    await authorize_contact_edit(session, _user, contact)
     update_data = payload.model_dump(exclude_unset=True)
+    # Prospect edits are owner-only. The exception is logging a call: any
+    # AE/SDR/admin may do that on any prospect, so a payload made only of
+    # call-log fields takes the call-logging rule. Must be decided before
+    # update_data is mutated below (status-reason handling adds keys).
+    if update_data and set(update_data) <= CALL_LOG_FIELDS:
+        await authorize_call_logging(session, _user, contact)
+    else:
+        await authorize_contact_edit(session, _user, contact)
     # Not a Contact column — pulled out before the generic setattr loop below.
     cadence_task_id = update_data.pop("cadence_task_id", None)
     previous_call_disposition = contact.call_disposition
