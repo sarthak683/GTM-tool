@@ -661,119 +661,76 @@ def _parse_uuid_list(raw: str | None) -> list[UUID] | None:
     return parsed or None
 
 
-def _company_export_row(company: Company) -> dict[str, str]:
-    # Prefer uploaded analyst values when they exist, but fall back to generated
-    # research so exports stay usable for both manual and AI-enriched batches.
-    import_block = company.enrichment_sources.get("import") if isinstance(company.enrichment_sources, dict) else {}
-    raw_row = import_block.get("raw_row") if isinstance(import_block, dict) and isinstance(import_block.get("raw_row"), dict) else {}
-    uploaded_analyst = import_block.get("uploaded_analyst") if isinstance(import_block, dict) and isinstance(import_block.get("uploaded_analyst"), dict) else {}
-    analyst = uploaded_analyst or (import_block.get("analyst") if isinstance(import_block, dict) and isinstance(import_block.get("analyst"), dict) else {})
-    generated_analyst = import_block.get("generated_analyst") if isinstance(import_block, dict) and isinstance(import_block.get("generated_analyst"), dict) else {}
-    uploaded_signals = import_block.get("uploaded_signals") if isinstance(import_block, dict) and isinstance(import_block.get("uploaded_signals"), dict) else {}
-    generated_signals = import_block.get("generated_signals") if isinstance(import_block, dict) and isinstance(import_block.get("generated_signals"), dict) else {}
-    profile = company.prospecting_profile if isinstance(company.prospecting_profile, dict) else {}
-    outreach_plan = company.outreach_plan if isinstance(company.outreach_plan, dict) else {}
-    cache = company.enrichment_cache if isinstance(company.enrichment_cache, dict) else {}
-    icp_entry = cache.get("icp_analysis") if isinstance(cache.get("icp_analysis"), dict) else {}
-    icp = icp_entry.get("data") if isinstance(icp_entry, dict) and isinstance(icp_entry.get("data"), dict) else {}
-    research_quality_entry = cache.get("research_quality") if isinstance(cache.get("research_quality"), dict) else {}
-    research_quality = research_quality_entry.get("data") if isinstance(research_quality_entry, dict) and isinstance(research_quality_entry.get("data"), dict) else {}
-    priority = account_priority_snapshot(company)
+ACCOUNT_STATUS_EXPORT_LABELS = {
+    "cold": "Cold",
+    "in_progress": "In Progress",
+    "meeting_booked": "Meeting Booked",
+    "meeting_done": "Meeting Done",
+    "in_pipeline": "In Pipeline",
+    "not_a_fit": "Not a Fit",
+    "dnd": "DND",
+    "reach_out_later": "Reach Out Later",
+}
 
-    row = {
+
+def _export_dt(value: datetime | None) -> str:
+    return value.strftime("%Y-%m-%d %H:%M") if value else ""
+
+
+def _export_number(value: object) -> str:
+    """Plain number, no decimals/commas, blank when unset. 0 stays 0."""
+    if value is None or value == "":
+        return ""
+    number = float(value)
+    return str(int(number)) if number == int(number) else str(number)
+
+
+def _company_export_row(
+    company: Company,
+    *,
+    users_by_id: dict[UUID, User],
+    deal_stages: list[str],
+    is_mql: bool,
+) -> dict[str, str]:
+    """One CSV row: the account's own facts, ownership, status and tags.
+
+    Everything is read straight from the record (or the owner's user row), never
+    inferred. Placeholder domains (``x.unknown``) export blank rather than as a
+    fake website. Owners come from the user the account is assigned to, falling
+    back to the denormalised name/email only when the user row is gone.
+    """
+    ae_user = users_by_id.get(company.assigned_to_id) if company.assigned_to_id else None
+    sdr_user = users_by_id.get(company.sdr_id) if company.sdr_id else None
+    domain = company.domain or ""
+    if domain.endswith(".unknown"):
+        domain = ""
+    return {
         "company_id": str(company.id),
         "name": company.name,
-        "domain": company.domain,
+        "domain": domain,
         "industry": company.industry or "",
-        "employee_count": str(company.employee_count or ""),
+        "employee_count": _export_number(company.employee_count),
         "funding_stage": company.funding_stage or "",
-        "arr_estimate": str(company.arr_estimate or ""),
-        "icp_score": str(company.icp_score or ""),
+        "arr_estimate_usd": _export_number(company.arr_estimate),
+        "icp_score": _export_number(company.icp_score),
         "icp_tier": company.icp_tier or "",
-        "assigned_rep": company.assigned_rep or "",
-        "assigned_rep_email": company.assigned_rep_email or "",
-        "assigned_rep_name": company.assigned_rep_name or "",
+        "account_status": ACCOUNT_STATUS_EXPORT_LABELS.get(company.account_status or "", company.account_status or ""),
+        "deal_stage": "; ".join(deal_stages),
+        "mql": "Yes" if is_mql else "No",
+        "events": "; ".join(company.events or []),
+        "ae_name": (ae_user.name if ae_user else None) or company.assigned_rep_name or company.assigned_rep or "",
+        "ae_email": (ae_user.email if ae_user else None) or company.assigned_rep_email or "",
+        "sdr_name": (sdr_user.name if sdr_user else None) or company.sdr_name or "",
+        "sdr_email": (sdr_user.email if sdr_user else None) or company.sdr_email or "",
         "outreach_status": company.outreach_status or "",
         "disposition": company.disposition or "",
         "rep_feedback": company.rep_feedback or "",
-        "recommended_outreach_lane": company.recommended_outreach_lane or "",
+        "last_outreach_utc": _export_dt(company.last_outreach_at),
         "instantly_campaign_id": company.instantly_campaign_id or "",
-        "account_thesis": company.account_thesis or "",
-        "why_now": company.why_now or "",
-        "beacon_angle": company.beacon_angle or "",
-        "prospecting_recommended_strategy": str(profile.get("recommended_outreach_strategy") or ""),
-        "prospecting_conversation_starter": str(profile.get("conversation_starter") or ""),
-        "prospecting_warm_path_count": str(len(profile.get("warm_paths") or []) if isinstance(profile.get("warm_paths"), list) else 0),
-        "outreach_owner_email": str(outreach_plan.get("owner_email") or ""),
-        "outreach_sequence_family": str(outreach_plan.get("sequence_family") or ""),
-        "outreach_next_best_action": str(outreach_plan.get("next_best_action") or ""),
-        "last_outreach_at": company.last_outreach_at.isoformat() if company.last_outreach_at else "",
-        "priority_score": str(priority["priority_score"]),
-        "priority_band": str(priority["priority_band"]),
-        "interest_level": str(priority["interest_level"]),
-        "description": company.description or "",
-        "uploaded_classification": str(analyst.get("classification") or ""),
-        "uploaded_fit_type": str(analyst.get("fit_type") or ""),
-        "uploaded_confidence": str(analyst.get("confidence") or ""),
-        "uploaded_icp_score_0_10": str(analyst.get("icp_fit_score") or ""),
-        "uploaded_intent_score_0_10": str(analyst.get("intent_score") or ""),
-        "uploaded_icp_why": str(analyst.get("icp_why") or ""),
-        "uploaded_intent_why": str(analyst.get("intent_why") or ""),
-        "uploaded_positive_signals": _joined_signal_values(uploaded_signals.get("positive") if isinstance(uploaded_signals, dict) else []),
-        "uploaded_negative_signals": _joined_signal_values(uploaded_signals.get("negative") if isinstance(uploaded_signals, dict) else []),
-        "researched_company_overview": str(icp.get("company_overview") or generated_analyst.get("company_overview") or company.description or ""),
-        "researched_industry": str(icp.get("industry") or generated_analyst.get("industry") or company.industry or ""),
-        "researched_category": str(icp.get("category") or generated_analyst.get("category") or company.vertical or ""),
-        "researched_core_focus": str(icp.get("core_focus") or generated_analyst.get("core_focus") or ""),
-        "researched_fit_type": str(icp.get("fit_type") or generated_analyst.get("fit_type") or ""),
-        "researched_classification": str(icp.get("classification") or generated_analyst.get("classification") or ""),
-        "researched_confidence": str(icp.get("confidence") or generated_analyst.get("confidence") or ""),
-        "researched_financial_capacity_met": str(icp.get("financial_capacity_met") or generated_analyst.get("financial_capacity_met") or ""),
-        "researched_revenue_funding": str(icp.get("revenue_funding") or generated_analyst.get("revenue_funding") or ""),
-        "researched_icp_score_0_10": str(icp.get("icp_fit_score") or generated_analyst.get("icp_fit_score") or ""),
-        "researched_icp_why": str(icp.get("icp_why") or generated_analyst.get("icp_why") or ""),
-        "researched_intent_score_0_10": str(icp.get("intent_score") or generated_analyst.get("intent_score") or ""),
-        "researched_intent_why": str(icp.get("intent_why") or generated_analyst.get("intent_why") or ""),
-        "researched_ps_impl_hiring": str(icp.get("ps_impl_hiring") or ""),
-        "researched_leadership_org_moves": str(icp.get("leadership_org_moves") or ""),
-        "researched_pr_funding_expansion": str(icp.get("pr_funding_expansion") or ""),
-        "researched_events_thought_leadership": str(icp.get("events_thought_leadership") or ""),
-        "researched_reviews_case_studies": str(icp.get("reviews_case_studies") or ""),
-        "researched_internal_ai_overlap": str(icp.get("internal_ai_overlap") or ""),
-        "researched_strategic_constraints": str(icp.get("strategic_constraints") or ""),
-        "researched_ps_cs_contraction": str(icp.get("ps_cs_contraction") or ""),
-        "researched_build_vs_buy": str(icp.get("build_vs_buy") or ""),
-        "researched_ai_acquisition": str(icp.get("ai_acquisition") or ""),
-        "researched_employee_count": str(icp.get("employee_count") or generated_analyst.get("employee_count") or company.employee_count or ""),
-        "researched_funding_stage": str(icp.get("funding_stage") or generated_analyst.get("funding_stage") or company.funding_stage or ""),
-        "researched_arr_estimate": str(icp.get("arr_estimate") or generated_analyst.get("arr_estimate") or company.arr_estimate or ""),
-        "researched_committee_coverage": str(icp.get("committee_coverage") or generated_analyst.get("committee_coverage") or profile.get("committee_coverage") or ""),
-        "researched_open_gaps": " | ".join(str(item).strip() for item in (icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps") or []) if str(item).strip()) if isinstance((icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps")), list) else str(icp.get("open_gaps") or generated_analyst.get("open_gaps") or profile.get("open_gaps") or ""),
-        "researched_icp_personas": " | ".join(
-            " - ".join(part for part in [str(item.get("title") or "").strip(), str(item.get("name") or "").strip(), str(item.get("relevance") or "").strip()] if part)
-            for item in (icp.get("icp_personas") or profile.get("icp_personas") or [])
-            if isinstance(item, dict)
-        ),
-        "researched_account_thesis": str(icp.get("account_thesis") or generated_analyst.get("account_thesis") or company.account_thesis or ""),
-        "researched_why_now": str(icp.get("why_now") or generated_analyst.get("why_now") or company.why_now or ""),
-        "researched_beacon_angle": str(icp.get("beacon_angle") or generated_analyst.get("beacon_angle") or company.beacon_angle or ""),
-        "researched_recommended_outreach_strategy": str(icp.get("recommended_outreach_strategy") or generated_analyst.get("recommended_outreach_strategy") or profile.get("recommended_outreach_strategy") or ""),
-        "researched_conversation_starter": str(icp.get("conversation_starter") or generated_analyst.get("conversation_starter") or profile.get("conversation_starter") or ""),
-        "researched_next_steps": str(icp.get("next_steps") or generated_analyst.get("next_steps") or profile.get("next_steps") or ""),
-        "researched_generated_positive_signals": _joined_signal_values(generated_signals.get("positive") if isinstance(generated_signals, dict) else []),
-        "researched_generated_negative_signals": _joined_signal_values(generated_signals.get("negative") if isinstance(generated_signals, dict) else []),
-        "researched_evidence_level": str(research_quality.get("evidence_level") or ""),
-        "researched_evidence_score": str(research_quality.get("evidence_score") or ""),
-        "enriched_at": company.enriched_at.isoformat() if company.enriched_at else "",
-        "created_at": company.created_at.isoformat(),
-        "updated_at": company.updated_at.isoformat(),
+        "created_utc": _export_dt(company.created_at),
+        "updated_utc": _export_dt(company.updated_at),
+        "enriched_utc": _export_dt(company.enriched_at),
     }
-
-    if isinstance(raw_row, dict):
-        for key, value in raw_row.items():
-            row[f"source_{key}"] = str(value or "")
-
-    return row
 
 
 def _contact_export_row(company: Company, contact: Contact) -> dict[str, str]:
@@ -2986,7 +2943,49 @@ async def export_sourced_companies(
     stmt = apply_company_sort(build_sourced_companies_stmt(_user, filters), sort, order)
 
     companies = (await session.execute(stmt)).scalars().all()
-    rows = [_company_export_row(company) for company in companies]
+
+    from app.repositories.deal import DealRepository
+    from app.services.deal_stages import get_stage_label_map, stage_display_label
+
+    stage_labels = await get_stage_label_map(session)
+    company_ids = [c.id for c in companies]
+    user_ids = {uid for c in companies for uid in (c.assigned_to_id, c.sdr_id) if uid}
+    users_by_id: dict[UUID, User] = {}
+    if user_ids:
+        users_by_id = {
+            u.id: u
+            for u in (await session.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        }
+    stages_by_company: dict[UUID, list[str]] = {}
+    mql_companies: set[UUID] = set()
+    if company_ids:
+        deal_rows = (
+            await session.execute(
+                DealRepository.visible_to(_user)
+                .where(
+                    Deal.company_id.in_(company_ids),
+                    Deal.pipeline_type == "deal",
+                    Deal.deleted_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        for deal in deal_rows:
+            label = stage_display_label(deal.stage, stage_labels)
+            labels = stages_by_company.setdefault(deal.company_id, [])
+            if label and label not in labels:
+                labels.append(label)
+            if deal.is_marketing_lead:
+                mql_companies.add(deal.company_id)
+
+    rows = [
+        _company_export_row(
+            company,
+            users_by_id=users_by_id,
+            deal_stages=stages_by_company.get(company.id, []),
+            is_mql=company.id in mql_companies,
+        )
+        for company in companies
+    ]
 
     headers: list[str] = []
     for row in rows:

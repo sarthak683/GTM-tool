@@ -1268,6 +1268,21 @@ def _build_competitive_landscape_cards(company_name: str, icp: dict[str, Any]) -
     return cards
 
 
+_ARR_SUFFIX_MULTIPLIERS = {
+    "billion": 1_000_000_000, "bn": 1_000_000_000, "b": 1_000_000_000,
+    "million": 1_000_000, "mm": 1_000_000, "mn": 1_000_000, "m": 1_000_000,
+    "thousand": 1_000, "k": 1_000,
+}
+# A number with its unit ATTACHED ("$5M", "800M+", "$18+ billion"), optionally a
+# range ("$50-80M" -> low end 50M). The unit must follow the number directly:
+# scanning the whole sentence for the letters b/m/k read "likely sub-$5M" or
+# "public filings" as billions.
+_ARR_AMOUNT_RE = re.compile(
+    r"(\d+(?:\.\d+)?)(?:\s*(?:-|\u2013|\u2014|to)\s*\d+(?:\.\d+)?)?\+?\s*"
+    r"(billion|million|thousand|bn|mm|mn|b|m|k)\b"
+)
+
+
 def _parse_arr_estimate(value: Any) -> float | None:
     if value is None:
         return None
@@ -1277,17 +1292,15 @@ def _parse_arr_estimate(value: Any) -> float | None:
     if not text:
         return None
     text = text.replace("$", "").replace(",", "")
-    match = re.search(r"(\d+(?:\.\d+)?)", text)
-    if not match:
-        return None
-    amount = float(match.group(1))
-    if "b" in text or "billion" in text:
-        amount *= 1_000_000_000
-    elif "m" in text or "million" in text:
-        amount *= 1_000_000
-    elif "k" in text or "thousand" in text:
-        amount *= 1_000
-    return amount
+    match = _ARR_AMOUNT_RE.search(text)
+    if match:
+        return float(match.group(1)) * _ARR_SUFFIX_MULTIPLIERS[match.group(2)]
+    # No unit: only trust a plain dollar figure ("5000000"), never a stray digit
+    # like the "1" in "trading at 1x ARR".
+    plain = re.fullmatch(r"(\d+(?:\.\d+)?)", text)
+    if plain and float(plain.group(1)) >= 1_000:
+        return float(plain.group(1))
+    return None
 
 
 def _build_extra_context(company) -> dict[str, Any]:
