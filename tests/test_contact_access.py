@@ -6,7 +6,12 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.contact import Contact
-from app.services.contact_access import authorize_contact_edit, get_visible_contact_ids
+from app.services.contact_access import (
+    CALL_LOG_FIELDS,
+    authorize_call_logging,
+    authorize_contact_edit,
+    get_visible_contact_ids,
+)
 
 
 class _Result:
@@ -50,6 +55,38 @@ async def test_unassigned_contact_is_not_automatically_claimed(role):
     assert exc.value.status_code == 403
     assert contact.assigned_to_id is None and contact.sdr_id is None
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("role", ["admin", "superadmin", "ae", "sdr"])
+async def test_calling_team_can_log_call_on_prospect_they_do_not_own(role):
+    user = SimpleNamespace(id=uuid4(), role=role)
+    contact = Contact(id=uuid4(), company_id=uuid4(), assigned_to_id=uuid4(), sdr_id=uuid4())
+    session = SimpleNamespace(execute=AsyncMock())
+    before = contact.model_dump()
+
+    await authorize_call_logging(session, user, contact)
+
+    # Logging a call never changes who owns the prospect.
+    assert contact.model_dump() == before
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("role", ["marketing", "agency"])
+async def test_non_calling_roles_cannot_log_call_on_foreign_prospect(role):
+    user = SimpleNamespace(id=uuid4(), role=role)
+    contact = Contact(id=uuid4(), company_id=uuid4(), assigned_to_id=uuid4(), sdr_id=uuid4())
+
+    with pytest.raises(HTTPException) as exc:
+        await authorize_call_logging(SimpleNamespace(execute=AsyncMock()), user, contact)
+
+    assert exc.value.status_code == 403
+
+
+def test_call_log_fields_never_cover_ownership_or_contact_details():
+    assert not CALL_LOG_FIELDS & {
+        "assigned_to_id", "sdr_id", "assigned_rep_email", "sdr_name",
+        "email", "phone", "company_id", "first_name", "last_name", "title",
+    }
 
 
 async def test_visible_ids_preserve_input_order_and_remove_duplicates(monkeypatch):

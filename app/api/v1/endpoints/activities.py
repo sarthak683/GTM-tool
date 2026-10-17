@@ -30,7 +30,7 @@ from app.services.tasks import (
     refresh_system_tasks_for_entity,
     should_queue_deal_task_refresh,
 )
-from app.services.contact_access import get_actionable_contact, get_visible_contact
+from app.services.contact_access import get_actionable_contact, get_call_loggable_contact, get_visible_contact
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 logger = logging.getLogger(__name__)
@@ -268,7 +268,12 @@ async def create_activity(payload: ActivityCreate, session: DBSession, current_u
     # attribution, without requiring the frontend to send it.
     data = payload.model_dump()
     if data.get("contact_id"):
-        await get_actionable_contact(session, current_user, data["contact_id"])
+        # Any AE/SDR/admin may log a call on any prospect; every other activity
+        # type keeps the owner-only rule.
+        if data.get("type") == "call":
+            await get_call_loggable_contact(session, current_user, data["contact_id"])
+        else:
+            await get_actionable_contact(session, current_user, data["contact_id"])
     if data.get("deal_id"):
         await _ensure_visible_deal(session, current_user, data["deal_id"])
     # API-created activities always belong to the authenticated actor. Accepting

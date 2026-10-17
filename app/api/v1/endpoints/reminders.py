@@ -15,7 +15,7 @@ from app.models.contact import Contact
 from app.models.reminder import Reminder, ReminderCreate, ReminderRead, ReminderUpdate
 from app.models.user import User
 from app.repositories.contact import contact_visibility_filter
-from app.services.contact_access import get_actionable_contact, get_visible_contact
+from app.services.contact_access import get_actionable_contact, get_call_loggable_contact, get_visible_contact
 from app.services.permissions import can_view_all_prospects
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
@@ -82,7 +82,8 @@ async def list_reminders(
 
 @router.post("/", response_model=ReminderRead, status_code=201)
 async def create_reminder(payload: ReminderCreate, session: DBSession, _user: CurrentUser):
-    contact = await get_actionable_contact(session, _user, payload.contact_id)
+    # The call drawer files its follow-up here, so it follows the call-logging rule.
+    contact = await get_call_loggable_contact(session, _user, payload.contact_id)
 
     reminder = Reminder(
         contact_id=payload.contact_id,

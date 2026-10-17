@@ -30,7 +30,7 @@ from sqlmodel import select
 
 from app.core.dependencies import CurrentUser, DBSession
 from app.models.call_recording import CALL_RECORDING_STATUSES, CallRecording, CallRecordingRead
-from app.services.contact_access import get_actionable_contact, get_visible_contact
+from app.services.contact_access import get_call_loggable_contact, get_visible_contact
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ async def upload_call_recording(
     if contact_id is None and deal_id is None:
         raise HTTPException(400, "A recording must be linked to a contact or a deal.")
     if contact_id is not None:
-        await get_actionable_contact(session, user, contact_id)
+        await get_call_loggable_contact(session, user, contact_id)
 
     audio_bytes = await audio.read()
     if not audio_bytes:
